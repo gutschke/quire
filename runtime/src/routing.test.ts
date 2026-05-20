@@ -65,6 +65,50 @@ describe('parseRoute', () => {
   it('ignores empty strings for campaign/episode/scene', () => {
     expect(parseRoute('?campaign=&episode=&scene=')).toEqual({ kind: 'home' });
   });
+
+  it('parses ?campaign=...&pc=... as a character route', () => {
+    expect(
+      parseRoute('?campaign=gutschke/underleaf&pc=example-character')
+    ).toEqual({
+      kind: 'character',
+      slug: 'gutschke/underleaf',
+      characterKind: 'pc',
+      characterId: 'example-character'
+    });
+  });
+
+  it('parses ?campaign=...&npc=... as a character route', () => {
+    expect(
+      parseRoute('?campaign=gutschke/underleaf&npc=yui-tanaka')
+    ).toEqual({
+      kind: 'character',
+      slug: 'gutschke/underleaf',
+      characterKind: 'npc',
+      characterId: 'yui-tanaka'
+    });
+  });
+
+  it('character route wins when both pc and npc are set (pc wins)', () => {
+    expect(
+      parseRoute('?campaign=g/u&pc=alice&npc=bob')
+    ).toEqual({
+      kind: 'character',
+      slug: 'g/u',
+      characterKind: 'pc',
+      characterId: 'alice'
+    });
+  });
+
+  it('character route wins over episode/scene when both present', () => {
+    expect(
+      parseRoute('?campaign=g/u&episode=001&pc=alice')
+    ).toEqual({
+      kind: 'character',
+      slug: 'g/u',
+      characterKind: 'pc',
+      characterId: 'alice'
+    });
+  });
 });
 
 describe('routeToSearch', () => {
@@ -101,12 +145,44 @@ describe('routeToSearch', () => {
     );
   });
 
-  it('roundtrips through parseRoute', () => {
+  it('roundtrips scene route through parseRoute', () => {
     const original = {
       kind: 'scene' as const,
       slug: 'a/b',
       episode: 'ep1',
       scene: 'scenes/01.md'
+    };
+    expect(parseRoute(routeToSearch(original))).toEqual(original);
+  });
+
+  it('serializes pc character route', () => {
+    expect(
+      routeToSearch({
+        kind: 'character',
+        slug: 'g/u',
+        characterKind: 'pc',
+        characterId: 'alice'
+      })
+    ).toBe('?campaign=g%2Fu&pc=alice');
+  });
+
+  it('serializes npc character route', () => {
+    expect(
+      routeToSearch({
+        kind: 'character',
+        slug: 'g/u',
+        characterKind: 'npc',
+        characterId: 'yui-tanaka'
+      })
+    ).toBe('?campaign=g%2Fu&npc=yui-tanaka');
+  });
+
+  it('roundtrips character route through parseRoute', () => {
+    const original = {
+      kind: 'character' as const,
+      slug: 'g/u',
+      characterKind: 'npc' as const,
+      characterId: 'yui-tanaka'
     };
     expect(parseRoute(routeToSearch(original))).toEqual(original);
   });

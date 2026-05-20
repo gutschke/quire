@@ -13,11 +13,19 @@
  * campaign) fall back to the most-specific valid prefix.
  */
 
+export type CharacterKind = 'pc' | 'npc';
+
 export type AppRoute =
   | { kind: 'home' }
   | { kind: 'campaign'; slug: string }
   | { kind: 'episode'; slug: string; episode: string }
-  | { kind: 'scene'; slug: string; episode: string; scene: string };
+  | { kind: 'scene'; slug: string; episode: string; scene: string }
+  | {
+      kind: 'character';
+      slug: string;
+      characterKind: CharacterKind;
+      characterId: string;
+    };
 
 export function parseRoute(input: string | URLSearchParams): AppRoute {
   const params =
@@ -28,8 +36,22 @@ export function parseRoute(input: string | URLSearchParams): AppRoute {
   const slug = params.get('campaign') ?? '';
   const episode = params.get('episode') ?? '';
   const scene = params.get('scene') ?? '';
+  const pc = params.get('pc') ?? '';
+  const npc = params.get('npc') ?? '';
 
   if (!slug) return { kind: 'home' };
+  // Character route (pc wins over npc when both set).
+  if (pc) {
+    return { kind: 'character', slug, characterKind: 'pc', characterId: pc };
+  }
+  if (npc) {
+    return {
+      kind: 'character',
+      slug,
+      characterKind: 'npc',
+      characterId: npc
+    };
+  }
   if (!episode) return { kind: 'campaign', slug };
   if (!scene) return { kind: 'episode', slug, episode };
   return { kind: 'scene', slug, episode, scene };
@@ -44,6 +66,9 @@ export function routeToSearch(route: AppRoute): string {
   }
   if (route.kind === 'scene') {
     params.set('scene', route.scene);
+  }
+  if (route.kind === 'character') {
+    params.set(route.characterKind, route.characterId);
   }
   return '?' + params.toString();
 }

@@ -25,6 +25,10 @@ export interface CampaignManifest {
   authors?: string[];
   homepage?: string;
   episodes?: string[];
+  characters?: {
+    pcs?: string[];
+    npcs?: string[];
+  };
 }
 
 export interface CampaignSource {

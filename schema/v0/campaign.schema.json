@@ -83,6 +83,21 @@
         "type": "string",
         "pattern": "^[A-Za-z0-9._-]+$"
       }
+    },
+    "characters": {
+      "type": "object",
+      "description": "Optional menu of player and non-player characters the runtime should surface in the campaign navigation. PC/NPC ids are basenames (without .json) of files under characters/pcs/ and characters/npcs/.",
+      "additionalProperties": false,
+      "properties": {
+        "pcs": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+        },
+        "npcs": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+        }
+      }
     }
   }
 }

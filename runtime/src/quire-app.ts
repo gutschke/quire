@@ -8,6 +8,12 @@ import {
   type LoadedCampaign as LoadedCampaignBase
 } from './campaign-loader';
 import { loadEpisode, loadScene, type LoadedEpisode } from './episode-loader';
+import {
+  loadCharacter,
+  CharacterLoadError,
+  type LoadedCharacter,
+  type CharacterKind
+} from './character-loader';
 import { renderMarkdown, type SanitizedHtml } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 
@@ -16,9 +22,11 @@ interface LoadedCampaign {
   worldOverview: string | null;
 }
 
+type LoadingLayer = 'campaign' | 'episode' | 'scene' | 'character';
+
 type AppState =
   | { kind: 'idle' }
-  | { kind: 'loading'; slug: string; layer: 'campaign' | 'episode' | 'scene' }
+  | { kind: 'loading'; slug: string; layer: LoadingLayer }
   | { kind: 'campaign'; campaign: LoadedCampaign }
   | { kind: 'episode'; campaign: LoadedCampaign; episode: LoadedEpisode }
   | {
@@ -27,10 +35,15 @@ type AppState =
       episode: LoadedEpisode;
       scene: { path: string; html: SanitizedHtml };
     }
+  | { kind: 'character'; campaign: LoadedCampaign; character: LoadedCharacter }
   | { kind: 'error'; message: string; details?: string };
 
 function isAbortError(e: unknown): boolean {
   return (e as Error)?.name === 'AbortError';
+}
+
+function formatStat(value: number): string {
+  return value >= 0 ? `+${value}` : `${value}`;
 }
 
 /**
@@ -281,6 +294,24 @@ export class QuireApp extends LitElement {
         return;
       }
 
+      // Character layer (independent of episode/scene)
+      if (route.kind === 'character') {
+        this.appState = {
+          kind: 'loading',
+          slug: route.characterId,
+          layer: 'character'
+        };
+        const character = await loadCharacter(
+          campaign.base.source,
+          route.characterKind,
+          route.characterId,
+          { signal }
+        );
+        if (signal.aborted || !this.isConnected) return;
+        this.appState = { kind: 'character', campaign, character };
+        return;
+      }
+
       // Episode layer
       let episode = this.getCurrentEpisode();
       if (!episode || episode.slug !== route.episode) {
@@ -326,7 +357,7 @@ export class QuireApp extends LitElement {
       };
     } catch (e) {
       if (isAbortError(e)) return;
-      if (e instanceof CampaignLoadError) {
+      if (e instanceof CampaignLoadError || e instanceof CharacterLoadError) {
         this.appState = {
           kind: 'error',
           message: e.message,
@@ -347,7 +378,8 @@ export class QuireApp extends LitElement {
     if (
       s.kind === 'campaign' ||
       s.kind === 'episode' ||
-      s.kind === 'scene'
+      s.kind === 'scene' ||
+      s.kind === 'character'
     ) {
       return s.campaign;
     }
@@ -399,6 +431,11 @@ export class QuireApp extends LitElement {
           this.appState.episode,
           this.appState.scene
         );
+      case 'character':
+        return this.renderCharacter(
+          this.appState.campaign,
+          this.appState.character
+        );
       case 'error':
         return this.renderError(
           this.appState.message,
@@ -440,10 +477,7 @@ export class QuireApp extends LitElement {
     `;
   }
 
-  private renderLoading(
-    slug: string,
-    layer: 'campaign' | 'episode' | 'scene'
-  ): TemplateResult {
+  private renderLoading(slug: string, layer: LoadingLayer): TemplateResult {
     return html`
       <header>
         <h1>Quire</h1>
@@ -526,6 +560,7 @@ export class QuireApp extends LitElement {
             </section>
           `
         : nothing}
+      ${this.renderCharacterMenus(slug, m.characters)}
       ${worldOverview
         ? html`
             <section class="card">
@@ -640,6 +675,207 @@ export class QuireApp extends LitElement {
       <section class="card">
         <div class="markdown">${unsafeHTML(scene.html)}</div>
       </section>
+    `;
+  }
+
+  private renderCharacterMenus(
+    slug: string,
+    characters: { pcs?: string[]; npcs?: string[] } | undefined
+  ): TemplateResult {
+    if (!characters) return html``;
+    const hasPcs = !!characters.pcs?.length;
+    const hasNpcs = !!characters.npcs?.length;
+    if (!hasPcs && !hasNpcs) return html``;
+    return html`
+      <section class="card">
+        <h2>Characters</h2>
+        ${hasPcs
+          ? html`
+              <h3>Player characters</h3>
+              <ul class="scene-list">
+                ${characters.pcs!.map(
+                  (id) => html`
+                    <li>${this.characterLink(slug, 'pc', id)}</li>
+                  `
+                )}
+              </ul>
+            `
+          : nothing}
+        ${hasNpcs
+          ? html`
+              <h3>Non-player characters</h3>
+              <ul class="scene-list">
+                ${characters.npcs!.map(
+                  (id) => html`
+                    <li>${this.characterLink(slug, 'npc', id)}</li>
+                  `
+                )}
+              </ul>
+            `
+          : nothing}
+      </section>
+    `;
+  }
+
+  private characterLink(
+    slug: string,
+    characterKind: CharacterKind,
+    characterId: string
+  ): TemplateResult {
+    return html`
+      <a
+        href=${routeToSearch({
+          kind: 'character',
+          slug,
+          characterKind,
+          characterId
+        })}
+        @click=${(e: Event) =>
+          this.navigate(e, {
+            kind: 'character',
+            slug,
+            characterKind,
+            characterId
+          })}
+        >${characterId}</a
+      >
+    `;
+  }
+
+  private renderCharacter(
+    campaign: LoadedCampaign,
+    character: LoadedCharacter
+  ): TemplateResult {
+    const slug = this.slugFor(campaign);
+    const r = character.record;
+    const kindLabel = character.kind === 'pc' ? 'PC' : 'NPC';
+    return html`
+      <header>
+        <nav class="breadcrumb">
+          <a
+            href=${routeToSearch({ kind: 'campaign', slug })}
+            @click=${(e: Event) =>
+              this.navigate(e, { kind: 'campaign', slug })}
+            >${campaign.base.manifest.name}</a
+          >
+          → ${kindLabel}
+        </nav>
+        <h1>${r.name}</h1>
+        ${r.pronouns
+          ? html`<p class="summary">${r.pronouns}</p>`
+          : nothing}
+      </header>
+      <section class="card">
+        <h2>Details</h2>
+        <dl>
+          ${r.role ? html`<dt>Role</dt><dd>${r.role}</dd>` : nothing}
+          ${r.disposition
+            ? html`<dt>Disposition</dt><dd>${r.disposition}</dd>`
+            : nothing}
+          ${r.alignment
+            ? html`<dt>Alignment</dt><dd>${r.alignment}</dd>`
+            : nothing}
+          ${typeof r.harm === 'number'
+            ? html`<dt>Harm</dt><dd>${r.harm}/4</dd>`
+            : nothing}
+          ${typeof r.stress === 'number'
+            ? html`<dt>Stress</dt><dd>${r.stress}/4</dd>`
+            : nothing}
+        </dl>
+        ${r.stats ? this.renderStatBlock(r.stats) : nothing}
+        ${r.skills?.length
+          ? html`
+              <h3>Skills</h3>
+              <ul>
+                ${r.skills.map((s) => html`<li>${s}</li>`)}
+              </ul>
+            `
+          : nothing}
+        ${r.tags?.length
+          ? html`
+              <h3>Tags</h3>
+              <ul>
+                ${r.tags.map((t) => html`<li>${t}</li>`)}
+              </ul>
+            `
+          : nothing}
+        ${r.foci?.length
+          ? html`
+              <h3>Foci</h3>
+              <ul>
+                ${r.foci.map(
+                  (f) => html`
+                    <li>
+                      <strong>${f.name}</strong>${f.domain
+                        ? html` — ${f.domain}`
+                        : nothing}${f.condition
+                        ? html` (${f.condition})`
+                        : nothing}
+                    </li>
+                  `
+                )}
+              </ul>
+            `
+          : nothing}
+        ${r.signature?.length
+          ? html`
+              <h3>Signature</h3>
+              <ul>
+                ${r.signature.map((s) => html`<li>${s}</li>`)}
+              </ul>
+            `
+          : nothing}
+        ${r.voice ? html`<h3>Voice</h3><p>${r.voice}</p>` : nothing}
+      </section>
+      ${r.description
+        ? html`
+            <section class="card">
+              <h2>Description</h2>
+              <div class="markdown">
+                ${unsafeHTML(renderMarkdown(r.description))}
+              </div>
+            </section>
+          `
+        : nothing}
+      ${r.backstory
+        ? html`
+            <section class="card">
+              <h2>Backstory</h2>
+              <div class="markdown">
+                ${unsafeHTML(renderMarkdown(r.backstory))}
+              </div>
+            </section>
+          `
+        : nothing}
+    `;
+  }
+
+  private renderStatBlock(stats: {
+    str?: number;
+    dex?: number;
+    con?: number;
+    int?: number;
+    wis?: number;
+    cha?: number;
+  }): TemplateResult {
+    const rows: Array<[string, number | undefined]> = [
+      ['STR', stats.str],
+      ['DEX', stats.dex],
+      ['CON', stats.con],
+      ['INT', stats.int],
+      ['WIS', stats.wis],
+      ['CHA', stats.cha]
+    ];
+    return html`
+      <h3>Stats</h3>
+      <dl>
+        ${rows.map(
+          ([label, val]) => html`
+            <dt>${label}</dt>
+            <dd>${typeof val === 'number' ? formatStat(val) : '—'}</dd>
+          `
+        )}
+      </dl>
     `;
   }
 
