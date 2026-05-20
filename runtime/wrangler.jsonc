@@ -10,6 +10,15 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "quire",
   "compatibility_date": "2026-05-20",
+
+  // The canonical-origin trust anchor is play.quire.games (custom domain).
+  // Disable the parallel *.workers.dev URL so there is exactly one origin
+  // serving the runtime.  Preview URLs depend on workers_dev being enabled,
+  // so they are off too — re-enable both later if branch previews become
+  // useful for testing.
+  "workers_dev": false,
+  "preview_urls": false,
+
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
