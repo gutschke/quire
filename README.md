@@ -48,8 +48,10 @@ Tracking what has landed and what is still missing:
 
 - [x] Repos created on GitHub, canonical domain registered
 - [x] Design memory mirrored into [`design/`](design/)
-- [ ] JSON schemas for all record types (v0.1)
-- [ ] Codemod registry + golden-file test harness
-- [ ] CLI skeleton (`quire lint / encrypt-dm / decrypt-dm / migrate`)
-- [ ] Underleaf scaffold with DM-only spoiler-safe structure
-- [ ] First playable round-trip (phase 1)
+- [x] JSON schemas for all record types (v0.1) under [`schema/v0/`](schema/v0/)
+- [x] Codemod registry skeleton under [`schema/codemods/`](schema/codemods/) (no codemods yet — v0.1 is the first major)
+- [x] CLI skeleton ([`cli/`](cli/)) — `quire lint` works; `encrypt-dm`, `decrypt-dm`, `migrate` are documented stubs
+- [x] Underleaf scaffold with DM-only spoiler-safe structure ([gutschke/underleaf](https://github.com/gutschke/underleaf))
+- [ ] Full JSON Schema validation in `quire lint` (Ajv) — minimal checks for now
+- [ ] Encryption pipeline (`quire encrypt-dm` / `decrypt-dm`) — phase 1
+- [ ] First playable round-trip — phase 1
