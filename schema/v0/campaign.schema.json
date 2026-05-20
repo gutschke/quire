@@ -75,6 +75,14 @@
       "type": "string",
       "format": "uri",
       "description": "Optional URL for the campaign's homepage or extended documentation."
+    },
+    "episodes": {
+      "type": "array",
+      "description": "Optional list of episode slug directory names (under episodes/). The runtime renders these in the order given as the campaign's navigation menu. Slugs that match this regex are accepted: [A-Za-z0-9._-]+.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
     }
   }
 }

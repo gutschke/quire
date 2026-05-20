@@ -24,6 +24,7 @@ export interface CampaignManifest {
   ruleset?: string;
   authors?: string[];
   homepage?: string;
+  episodes?: string[];
 }
 
 export interface CampaignSource {

@@ -5,19 +5,28 @@ import {
   loadCampaign,
   fetchCampaignFile,
   CampaignLoadError,
-  type LoadedCampaign
+  type LoadedCampaign as LoadedCampaignBase
 } from './campaign-loader';
-import { renderMarkdown } from './markdown';
+import { loadEpisode, loadScene, type LoadedEpisode } from './episode-loader';
+import { renderMarkdown, type SanitizedHtml } from './markdown';
+import { parseRoute, routeToSearch, type AppRoute } from './routing';
 
-interface CampaignWithExtras {
-  data: LoadedCampaign;
+interface LoadedCampaign {
+  base: LoadedCampaignBase;
   worldOverview: string | null;
 }
 
 type AppState =
   | { kind: 'idle' }
-  | { kind: 'loading'; slug: string }
-  | { kind: 'loaded'; loaded: CampaignWithExtras }
+  | { kind: 'loading'; slug: string; layer: 'campaign' | 'episode' | 'scene' }
+  | { kind: 'campaign'; campaign: LoadedCampaign }
+  | { kind: 'episode'; campaign: LoadedCampaign; episode: LoadedEpisode }
+  | {
+      kind: 'scene';
+      campaign: LoadedCampaign;
+      episode: LoadedEpisode;
+      scene: { path: string; html: SanitizedHtml };
+    }
   | { kind: 'error'; message: string; details?: string };
 
 function isAbortError(e: unknown): boolean {
@@ -27,10 +36,13 @@ function isAbortError(e: unknown): boolean {
 /**
  * Root component for the Quire play app.
  *
- * Phase 1: reads ?campaign=<owner>/<repo>[@ref], fetches the manifest and
- * (optionally) the public world overview, validates, and renders.  The play
- * UI proper — scenes, sheets, dice, AI prompt-bar — lands in subsequent
- * commits.
+ * Handles four URL-driven views:
+ *   /                                                  → welcome
+ *   /?campaign=<slug>                                   → campaign overview + episode list
+ *   /?campaign=<slug>&episode=<ep>                       → episode summary + scene list
+ *   /?campaign=<slug>&episode=<ep>&scene=<path>          → single scene
+ *
+ * Navigates via History API; popstate restores prior views on back/forward.
  */
 @customElement('quire-app')
 export class QuireApp extends LitElement {
@@ -55,6 +67,16 @@ export class QuireApp extends LitElement {
       font-style: italic;
       margin: 0.5rem 0 1.5rem;
       color: light-dark(#444, #aaa);
+    }
+
+    nav.breadcrumb {
+      font-size: 0.9rem;
+      margin: 0 0 1rem;
+      color: light-dark(#555, #aaa);
+    }
+
+    nav.breadcrumb a {
+      color: light-dark(#0050a0, #6bb6ff);
     }
 
     .card {
@@ -114,6 +136,18 @@ export class QuireApp extends LitElement {
     ul {
       padding-left: 1.5em;
       margin: 0.5rem 0 0;
+    }
+
+    ul.episode-list,
+    ul.scene-list {
+      list-style: none;
+      padding-left: 0;
+      margin: 0.5rem 0 0;
+    }
+
+    ul.episode-list li,
+    ul.scene-list li {
+      padding: 0.25rem 0;
     }
 
     code {
@@ -194,48 +228,156 @@ export class QuireApp extends LitElement {
 
   @state() private appState: AppState = { kind: 'idle' };
 
-  // AbortController for in-flight fetches.  Aborted from disconnectedCallback
-  // so that an element removed mid-load doesn't update state after detach.
   private abortController?: AbortController;
+  private readonly popstateHandler = (): void => {
+    void this.navigateToRoute(parseRoute(window.location.search));
+  };
 
-  override async connectedCallback(): Promise<void> {
+  override connectedCallback(): void {
     super.connectedCallback();
-    const params = new URLSearchParams(window.location.search);
-    const slug = params.get('campaign');
-    if (!slug) return;
+    window.addEventListener('popstate', this.popstateHandler);
+    void this.navigateToRoute(parseRoute(window.location.search));
+  }
 
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('popstate', this.popstateHandler);
+    this.abortController?.abort();
+  }
+
+  /** Resolve a route into the right loaded state, fetching as needed. */
+  private async navigateToRoute(route: AppRoute): Promise<void> {
+    this.abortController?.abort();
     this.abortController = new AbortController();
     const { signal } = this.abortController;
 
-    this.appState = { kind: 'loading', slug };
+    if (route.kind === 'home') {
+      this.appState = { kind: 'idle' };
+      return;
+    }
+
     try {
-      const data = await loadCampaign(slug, { signal });
-      if (signal.aborted || !this.isConnected) return;
-      // World overview is optional content — skip on 404, propagate other errors.
-      const worldOverview = await fetchCampaignFile(
-        data.source,
-        'world/overview.md',
+      // Reuse already-loaded campaign if the slug matches.
+      let campaign = this.getCurrentCampaign();
+      if (!campaign || this.currentCampaignSlugMatches(route.slug) === false) {
+        this.appState = {
+          kind: 'loading',
+          slug: route.slug,
+          layer: 'campaign'
+        };
+        const base = await loadCampaign(route.slug, { signal });
+        if (signal.aborted || !this.isConnected) return;
+        const worldOverview = await fetchCampaignFile(
+          base.source,
+          'world/overview.md',
+          { signal }
+        );
+        if (signal.aborted || !this.isConnected) return;
+        campaign = { base, worldOverview };
+      }
+
+      if (route.kind === 'campaign') {
+        this.appState = { kind: 'campaign', campaign };
+        return;
+      }
+
+      // Episode layer
+      let episode = this.getCurrentEpisode();
+      if (!episode || episode.slug !== route.episode) {
+        this.appState = {
+          kind: 'loading',
+          slug: route.episode,
+          layer: 'episode'
+        };
+        episode = await loadEpisode(campaign.base.source, route.episode, {
+          signal
+        });
+        if (signal.aborted || !this.isConnected) return;
+      }
+
+      if (route.kind === 'episode') {
+        this.appState = { kind: 'episode', campaign, episode };
+        return;
+      }
+
+      // Scene layer
+      this.appState = {
+        kind: 'loading',
+        slug: route.scene,
+        layer: 'scene'
+      };
+      const sceneText = await loadScene(
+        campaign.base.source,
+        route.episode,
+        route.scene,
         { signal }
       );
       if (signal.aborted || !this.isConnected) return;
-      this.appState = { kind: 'loaded', loaded: { data, worldOverview } };
+      if (sceneText === null) {
+        throw new CampaignLoadError(
+          `Scene "${route.scene}" not found in episode "${route.episode}".`
+        );
+      }
+      this.appState = {
+        kind: 'scene',
+        campaign,
+        episode,
+        scene: { path: route.scene, html: renderMarkdown(sceneText) }
+      };
     } catch (e) {
       if (isAbortError(e)) return;
       if (e instanceof CampaignLoadError) {
-        this.appState = { kind: 'error', message: e.message, details: e.details };
+        this.appState = {
+          kind: 'error',
+          message: e.message,
+          details: e.details
+        };
       } else {
         this.appState = {
           kind: 'error',
-          message: 'Unexpected error while loading campaign.',
+          message: 'Unexpected error.',
           details: (e as Error)?.message ?? String(e)
         };
       }
     }
   }
 
-  override disconnectedCallback(): void {
-    super.disconnectedCallback();
-    this.abortController?.abort();
+  private getCurrentCampaign(): LoadedCampaign | undefined {
+    const s = this.appState;
+    if (
+      s.kind === 'campaign' ||
+      s.kind === 'episode' ||
+      s.kind === 'scene'
+    ) {
+      return s.campaign;
+    }
+    return undefined;
+  }
+
+  private getCurrentEpisode(): LoadedEpisode | undefined {
+    const s = this.appState;
+    if (s.kind === 'episode' || s.kind === 'scene') return s.episode;
+    return undefined;
+  }
+
+  private currentCampaignSlugMatches(slug: string): boolean {
+    const c = this.getCurrentCampaign();
+    if (!c) return false;
+    const src = c.base.source;
+    // Reconstruct the slug used in the URL.
+    const reconstructed =
+      src.ref === 'main'
+        ? `${src.owner}/${src.repo}`
+        : `${src.owner}/${src.repo}@${src.ref}`;
+    return reconstructed === slug;
+  }
+
+  /** Click handler: pushState the new route, then re-render via navigate. */
+  private navigate(e: Event, route: AppRoute): void {
+    e.preventDefault();
+    const url = window.location.pathname + routeToSearch(route);
+    history.pushState({}, '', url);
+    void this.navigateToRoute(route);
   }
 
   override render(): TemplateResult {
@@ -243,11 +385,25 @@ export class QuireApp extends LitElement {
       case 'idle':
         return this.renderIdle();
       case 'loading':
-        return this.renderLoading(this.appState.slug);
-      case 'loaded':
-        return this.renderLoaded(this.appState.loaded);
+        return this.renderLoading(this.appState.slug, this.appState.layer);
+      case 'campaign':
+        return this.renderCampaign(this.appState.campaign);
+      case 'episode':
+        return this.renderEpisode(
+          this.appState.campaign,
+          this.appState.episode
+        );
+      case 'scene':
+        return this.renderScene(
+          this.appState.campaign,
+          this.appState.episode,
+          this.appState.scene
+        );
       case 'error':
-        return this.renderError(this.appState.message, this.appState.details);
+        return this.renderError(
+          this.appState.message,
+          this.appState.details
+        );
     }
   }
 
@@ -270,26 +426,44 @@ export class QuireApp extends LitElement {
         </p>
         <p>The sample campaign:</p>
         <p>
-          <a href="?campaign=gutschke/underleaf">Open Underleaf →</a>
+          <a
+            href="?campaign=gutschke/underleaf"
+            @click=${(e: Event) =>
+              this.navigate(e, {
+                kind: 'campaign',
+                slug: 'gutschke/underleaf'
+              })}
+            >Open Underleaf →</a
+          >
         </p>
       </section>
     `;
   }
 
-  private renderLoading(slug: string): TemplateResult {
+  private renderLoading(
+    slug: string,
+    layer: 'campaign' | 'episode' | 'scene'
+  ): TemplateResult {
     return html`
       <header>
         <h1>Quire</h1>
       </header>
       <section class="card">
-        <p>Loading campaign <code>${slug}</code>…</p>
+        <p>Loading ${layer} <code>${slug}</code>…</p>
       </section>
     `;
   }
 
-  private renderLoaded({ data, worldOverview }: CampaignWithExtras): TemplateResult {
-    const m = data.manifest;
-    const src = data.source;
+  private renderCampaign({
+    base,
+    worldOverview
+  }: LoadedCampaign): TemplateResult {
+    const m = base.manifest;
+    const src = base.source;
+    const slug =
+      src.ref === 'main'
+        ? `${src.owner}/${src.repo}`
+        : `${src.owner}/${src.repo}@${src.ref}`;
     return html`
       <header>
         <h1>${m.name}</h1>
@@ -299,7 +473,9 @@ export class QuireApp extends LitElement {
         <h2>About</h2>
         <dl>
           ${m.ip ? html`<dt>Setting</dt><dd>${m.ip}</dd>` : nothing}
-          ${m.ageBand ? html`<dt>Recommended age</dt><dd>${m.ageBand}</dd>` : nothing}
+          ${m.ageBand
+            ? html`<dt>Recommended age</dt><dd>${m.ageBand}</dd>`
+            : nothing}
           ${m.ruleset
             ? html`<dt>Ruleset</dt><dd><code>${m.ruleset}</code></dd>`
             : nothing}
@@ -321,6 +497,35 @@ export class QuireApp extends LitElement {
             `
           : nothing}
       </section>
+      ${m.episodes?.length
+        ? html`
+            <section class="card">
+              <h2>Episodes</h2>
+              <ul class="episode-list">
+                ${m.episodes.map(
+                  (epSlug) => html`
+                    <li>
+                      <a
+                        href=${routeToSearch({
+                          kind: 'episode',
+                          slug,
+                          episode: epSlug
+                        })}
+                        @click=${(e: Event) =>
+                          this.navigate(e, {
+                            kind: 'episode',
+                            slug,
+                            episode: epSlug
+                          })}
+                        >${epSlug}</a
+                      >
+                    </li>
+                  `
+                )}
+              </ul>
+            </section>
+          `
+        : nothing}
       ${worldOverview
         ? html`
             <section class="card">
@@ -331,33 +536,141 @@ export class QuireApp extends LitElement {
             </section>
           `
         : nothing}
-      <section class="card placeholder">
-        <p><strong>Play UI not yet implemented.</strong></p>
-        <p>
-          Scenes, character sheets, the dice helper, the AI prompt bar, and
-          the multiplayer surface arrive in subsequent commits.
-        </p>
+    `;
+  }
+
+  private renderEpisode(
+    campaign: LoadedCampaign,
+    episode: LoadedEpisode
+  ): TemplateResult {
+    const m = episode.manifest;
+    const slug = this.slugFor(campaign);
+    return html`
+      <header>
+        <nav class="breadcrumb">
+          <a
+            href=${routeToSearch({ kind: 'campaign', slug })}
+            @click=${(e: Event) =>
+              this.navigate(e, { kind: 'campaign', slug })}
+            >${campaign.base.manifest.name}</a
+          >
+          →
+        </nav>
+        <h1>${m.name}</h1>
+        ${m.summary ? html`<p class="summary">${m.summary}</p>` : nothing}
+      </header>
+      <section class="card">
+        <h2>Scenes</h2>
+        ${m.scenes?.length
+          ? html`
+              <ul class="scene-list">
+                ${m.scenes.map(
+                  (scenePath) => html`
+                    <li>
+                      <a
+                        href=${routeToSearch({
+                          kind: 'scene',
+                          slug,
+                          episode: episode.slug,
+                          scene: scenePath
+                        })}
+                        @click=${(e: Event) =>
+                          this.navigate(e, {
+                            kind: 'scene',
+                            slug,
+                            episode: episode.slug,
+                            scene: scenePath
+                          })}
+                        >${scenePath}</a
+                      >
+                    </li>
+                  `
+                )}
+              </ul>
+            `
+          : html`<p>This episode has no scene list yet.</p>`}
+      </section>
+      ${m.hooks?.length
+        ? html`
+            <section class="card">
+              <h3>Hooks</h3>
+              <ul>
+                ${m.hooks.map((h) => html`<li>${h}</li>`)}
+              </ul>
+            </section>
+          `
+        : nothing}
+    `;
+  }
+
+  private renderScene(
+    campaign: LoadedCampaign,
+    episode: LoadedEpisode,
+    scene: { path: string; html: SanitizedHtml }
+  ): TemplateResult {
+    const slug = this.slugFor(campaign);
+    return html`
+      <header>
+        <nav class="breadcrumb">
+          <a
+            href=${routeToSearch({ kind: 'campaign', slug })}
+            @click=${(e: Event) =>
+              this.navigate(e, { kind: 'campaign', slug })}
+            >${campaign.base.manifest.name}</a
+          >
+          →
+          <a
+            href=${routeToSearch({
+              kind: 'episode',
+              slug,
+              episode: episode.slug
+            })}
+            @click=${(e: Event) =>
+              this.navigate(e, {
+                kind: 'episode',
+                slug,
+                episode: episode.slug
+              })}
+            >${episode.manifest.name}</a
+          >
+          →
+        </nav>
+        <h1>${scene.path}</h1>
+      </header>
+      <section class="card">
+        <div class="markdown">${unsafeHTML(scene.html)}</div>
       </section>
     `;
   }
 
   private renderError(message: string, details?: string): TemplateResult {
     // `message` and `details` originate from CampaignLoadError and may echo
-    // user-controllable URL parts (the campaign slug).  Lit's text-context
-    // interpolation auto-escapes — do NOT switch these to `unsafeHTML`.
+    // user-controllable URL parts.  Lit's text-context interpolation
+    // auto-escapes — do NOT switch these to `unsafeHTML`.
     return html`
       <header>
         <h1>Quire</h1>
       </header>
       <section class="card error">
-        <h2>Couldn't load campaign</h2>
+        <h2>Couldn't load</h2>
         <p>${message}</p>
         ${details ? html`<pre>${details}</pre>` : nothing}
         <p>
-          <a href="${window.location.pathname}">← Back to home</a>
+          <a
+            href=${window.location.pathname}
+            @click=${(e: Event) => this.navigate(e, { kind: 'home' })}
+            >← Back to home</a
+          >
         </p>
       </section>
     `;
+  }
+
+  private slugFor(campaign: LoadedCampaign): string {
+    const src = campaign.base.source;
+    return src.ref === 'main'
+      ? `${src.owner}/${src.repo}`
+      : `${src.owner}/${src.repo}@${src.ref}`;
   }
 }
 
