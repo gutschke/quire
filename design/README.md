@@ -6,6 +6,7 @@ This directory holds the canonical design documents for the Quire framework. Rea
 2. **[rules-reference.md](rules-reference.md)** — the v0.1 reference ruleset that the bundled play app supports out of the box. Stats, resolution, harm, stress, magic-tier adjudication, advancement.
 3. **[schemas.md](schemas.md)** — the schema philosophy (hints, not gates), the versioning policy, and what to expect from `quire/schema/`.
 4. **[security.md](security.md)** — threat model, what the canonical-origin trust anchor buys, what it doesn't, and what forkers need to know.
+5. **[authoring.md](authoring.md)** — conventions for writing Quire campaigns: public vs DM-only, scene file structure, NPC quick-references, stakes menus, pacing files, and what NOT to do.
 
 None of these documents describe a specific campaign. Sample-campaign-specific design — including the narrative arc, antagonist, and world cosmology of [Underleaf](https://github.com/gutschke/underleaf) — lives in that repository, much of it under a `design/DM-ONLY/` folder that players should not browse.
 
