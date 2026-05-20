@@ -383,6 +383,62 @@ export class QuireApp extends LitElement {
     .session-bar .session-error-msg {
       color: light-dark(#a01010, #ff7070);
     }
+
+    .chat-panel .chat-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.5rem 0;
+      max-height: 14rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      background: light-dark(#fafafa, #1a1a1a);
+      border: 1px solid light-dark(#eee, #2a2a2a);
+      border-radius: 4px;
+      padding: 0.4rem 0.6rem;
+    }
+
+    .chat-panel .chat-list li {
+      display: flex;
+      gap: 0.4rem;
+      font-size: 0.95em;
+    }
+
+    .chat-panel .chat-author {
+      font-weight: 600;
+      color: light-dark(#0050a0, #6bb6ff);
+      flex-shrink: 0;
+    }
+
+    .chat-panel .chat-text {
+      flex: 1;
+      word-break: break-word;
+    }
+
+    .chat-form {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .chat-form input {
+      flex: 1;
+      padding: 0.3rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+    }
+
+    .chat-form button {
+      padding: 0.3rem 0.75rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
@@ -392,6 +448,7 @@ export class QuireApp extends LitElement {
   @state() sessionView: SessionView | null = null;
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
+  @state() chatDraft: string = '';
 
   // Tests can replace this before connectedCallback runs to swap in
   // an in-memory transport factory.
@@ -579,7 +636,7 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
-    return html`${this.renderSessionBar()}${this.renderBody()}`;
+    return html`${this.renderSessionBar()}${this.renderBody()}${this.renderChatPanel()}`;
   }
 
   private renderBody(): TemplateResult {
@@ -933,6 +990,52 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  private renderChatPanel(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return html``;
+    const messages = v.shared.chat;
+    return html`
+      <section class="card chat-panel">
+        <h2>Chat</h2>
+        ${messages.length === 0
+          ? html`<p class="muted">No messages yet. Say hello.</p>`
+          : html`
+              <ul class="chat-list">
+                ${messages.map(
+                  (m) => html`
+                    <li>
+                      <span class="chat-author">
+                        ${this.displayNameFor(m.peerId)}
+                      </span>
+                      <span class="chat-text">${m.text}</span>
+                    </li>
+                  `
+                )}
+              </ul>
+            `}
+        <form
+          class="chat-form"
+          @submit=${(e: Event) => {
+            e.preventDefault();
+            this.submitChat(this.chatDraft);
+          }}
+        >
+          <input
+            type="text"
+            .value=${this.chatDraft}
+            placeholder="Say something…"
+            aria-label="Chat message"
+            maxlength="500"
+            @input=${(e: Event) => {
+              this.chatDraft = (e.target as HTMLInputElement).value;
+            }}
+          />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    `;
+  }
+
   private renderRollPanel(): TemplateResult {
     return html`
       <section class="card">
@@ -1018,6 +1121,22 @@ export class QuireApp extends LitElement {
   leaveSession(): void {
     this.session?.leave();
     this.joinCodeDraft = '';
+    this.chatDraft = '';
+  }
+
+  submitChat(text: string): boolean {
+    if (!this.session || this.sessionView?.status !== 'active') return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    this.session.append('chat', { text: trimmed });
+    this.chatDraft = '';
+    return true;
+  }
+
+  private displayNameFor(peerId: string): string {
+    const peer = this.sessionView?.shared.peers[peerId];
+    if (peer?.name && peer.name.length > 0) return peer.name;
+    return peerId;
   }
 
   // Overridable from tests for determinism.
