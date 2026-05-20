@@ -52,16 +52,17 @@ export async function run(args) {
 
   // Episodes: each subdir under episodes/ may have its own episode.json.
   try {
-    const episodes = await readdir(join(root, 'episodes'));
-    for (const epDir of episodes) {
-      if (epDir.startsWith('.') || epDir === '_discarded') continue;
-      const epJson = join(root, 'episodes', epDir, 'episode.json');
+    const episodes = await readdir(join(root, 'episodes'), { withFileTypes: true });
+    for (const ep of episodes) {
+      if (!ep.isDirectory()) continue;
+      if (ep.name.startsWith('.') || ep.name === '_discarded') continue;
+      const epJson = join(root, 'episodes', ep.name, 'episode.json');
       try {
         const record = await readJson(epJson);
         checkRecord(relative(root, epJson), record, warnings);
       } catch (e) {
         if (e.code !== 'ENOENT') {
-          warnings.push(`episodes/${epDir}/episode.json: ${e.message}`);
+          warnings.push(`episodes/${ep.name}/episode.json: ${e.message}`);
         }
       }
     }
