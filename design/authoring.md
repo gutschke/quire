@@ -90,6 +90,38 @@ For each NPC, include a one-line voice or manner cue that helps the DM perform t
 
 This is more useful than physical description for at-the-table improvisation. The DM doesn't need to remember what someone looks like; they need to know what voice to put on.
 
+## Every session ends with a concrete beat
+
+Sessions that close on *"...and we agreed to meet again next week"* lose the surface-layer player by the tenth session. Per-session resolution is a load-bearing DM-craft principle, separate from arc progress.
+
+For each session, plan a **session-shaped beat** — a small thing that resolves *in this session*, independent of whether the larger arc moved forward. Types:
+
+- A confrontation resolved (or escalated to a known cliffhanger).
+- A kindness given or received.
+- A small cast that worked (or visibly failed in an interesting way).
+- A relationship moment crystallized.
+- An investigative breakthrough (small, not arc-level).
+- A misdirection planted or paid off.
+
+The beat doesn't have to be plot-significant. It has to be *concretely complete* — the players leave the table able to name what happened.
+
+This applies especially in middle acts of long campaigns, where mid-arc sessions risk feeling like "another conversation with NPCs." Surface-layer players cannot tell whether an arc is moving forward; they can absolutely tell whether their evening had a shape.
+
+## NPC encounters are *problems*, not lectures
+
+When a recurring NPC is introduced, **the encounter is also a current problem the PCs can engage with**. Meeting an NPC must do something or cost something — not just transfer information.
+
+Examples:
+
+- An engineer with quiet misgivings is being pressured to ship something *this week*. PCs can advise, intervene, slow the ship, or sabotage.
+- A user-experience designer is collecting interview data *tonight*. PCs can help her analyze, choose what to publish, decide who to show first.
+- A founder is preparing a public keynote. PCs can attend, ask hard questions in Q&A, or work backstage.
+- A gate agent has been written up by a supervisor. PCs can vouch for them, escalate further, or stay clear.
+
+The contrast is *"meeting NPC X teaches you Y about the world"* (lecture) vs. *"meeting NPC X means the PCs walk into a situation NPC X is mid-decision in"* (problem). Problem-mode encounters yield the same information *and* give the table something to do.
+
+Across an act, every recurring NPC should be encountered through at least one problem-mode scene. The Casual Player and the Combat Fan especially benefit; the Social Player gets relationship-as-stakes; the Lore Reader still gets the lore via the situation's texture.
+
 ## Stakes menus for high-tension scenes
 
 Scenes that hinge on PCs' personal investment work better with a *menu* of stakes than a single fixed one. The DM picks per-PC during prep based on who's at the table.

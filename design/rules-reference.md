@@ -122,7 +122,19 @@ For the world rationale (The Quiet, plausibility, foci as cognitive anchors), se
 | **Hard** | 2d6 + WIS with -1 to -2 penalty | 10+ partial only (the most consistent reading granted); 7-9 fail with major thread debt; ≤6 backlash. Auto-marks 2 stress. |
 | **Prohibited** | — | Not allowed. |
 
-**Thread debt** is a soft narrative meter the DM tracks. High debt means the world pushes back in story: NPCs comment on suspicious luck, banks flag accounts, weird coincidences happen *to* the caster instead of *for* them. Debt ebbs slowly with restraint.
+**Thread debt** is a soft narrative meter — not a number. The DM tracks the caster's current state on a five-step ladder and **narrates the state in fiction** so the player can perceive where they stand without referring to a sheet:
+
+| State | What the world is doing |
+|---|---|
+| **Quiet** | Nothing notable. The Quiet has not noticed. |
+| **Noticed** | Small comments from NPCs about "lucky timing." The universe is registering. |
+| **Watched** | Coincidences actively accumulating around the caster. Banks flag, friends ask, the weather seems to consult about whether to cooperate. |
+| **Pushing Back** | The world begins working against the caster — bad luck for them specifically; suspicion; narrative friction. Casts in this state are harder than their tier alone suggests. |
+| **Hunted** | (Very rare; only after sustained overreach.) The world is actively obstructing. Severe consequences. The caster cannot easily cast at all. |
+
+The DM advances and retreats the state aloud in fiction, never by number: *"You're starting to feel watched."* *"Things have eased; the world's eye has drifted."* The Skeptic player needs to see the cost; the Wonder Chaser needs the state to feel like part of the world. The ladder serves both.
+
+Debt **eases slowly** with restraint — typically one step per session of low-key behaviour, faster with deliberate withdrawal and apology to the threads being kept open.
 
 **Foci** shift the plausibility tier of an in-domain cast down by one (Costly → Cheap, Hard → Costly; Prohibited stays Prohibited). Foci have a domain (emotion, systems/information, identity, motion, knowledge, etc.) and only apply within it. Foci can break, fade, corrupt, or transform when spent on Hard-tier casts.
 
@@ -165,8 +177,12 @@ For the sample campaign, PCs *can* cast from session one but do not know it. The
 
 1. **Accidental** (sessions 1-3): players have no cast action on their sheets; the DM may silently grant Free or Cheap effects to strong intent, attributed in fiction to luck. Tracked in a DM-private out-of-session log.
 2. **Realization** (scripted beat, around session 3-5): DM reveals the pattern. The player gains access to cast mechanics on their sheet.
-3. **Trying-too-hard tax** (next 2-3 sessions): intentional casts take -2; drops to -1, then 0 as the PC learns to hold intent without forcing it.
+3. **Trying-too-hard tax** (next 2-3 sessions): intentional casts take -2 until the PC learns to hold intent without forcing it.
 
-Each PC realizes on their own schedule. No real-time computer work at the table — the DM's hidden log is post-session work.
+The tax is framed in-fiction: *"Now that you know magic exists, you're trying. Trying breaks intent. Until you re-learn how to hold an intention without forcing it."* The end-condition is concrete and player-perceivable: the PC must experience **one quiet moment of release** — a calming conversation, an emotional acceptance, an unforced spontaneous cast they didn't aim for. The release **drops the tax to 0** for that PC. Until then it stays at -2.
+
+This is not a fade-out (no gradual -2 → -1 → 0); it's a gating beat. The PC either has had their moment or hasn't.
+
+Each PC realizes on their own schedule. The moment of release is itself the cue for the act break in Underleaf's three-act structure.
 
 This arc is specific to Underleaf and would not apply to a Quire campaign with different cosmology.
