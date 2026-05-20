@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/pc.json",
+  "title": "Player character",
+  "description": "A PC record. Only $schemaVersion and name are required. The runtime renders whatever fields are present; absent fields are simply omitted from view.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "player": {
+      "type": "string",
+      "description": "Optional name of the human player. May be a handle, real name, or omitted."
+    },
+    "pronouns": { "type": "string" },
+    "alignment": {
+      "type": "string",
+      "description": "Standard 9-grid alignment.",
+      "enum": [
+        "lawful-good", "neutral-good", "chaotic-good",
+        "lawful-neutral", "true-neutral", "chaotic-neutral",
+        "lawful-evil", "neutral-evil", "chaotic-evil"
+      ]
+    },
+    "stats": {
+      "type": "object",
+      "description": "Six-stat block. Each defaults to 0 if absent.",
+      "properties": {
+        "str": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "dex": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "con": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "int": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "wis": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "cha": { "type": "integer", "minimum": -2, "maximum": 3 }
+      },
+      "additionalProperties": false
+    },
+    "skills": {
+      "type": "array",
+      "description": "Category masteries. Each name should match a known category (Action, Subterfuge, Knowledge, Insight, Influence, Tech, Craft, Medic) but the validator does not enforce this.",
+      "items": { "type": "string" }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Open free-text expertise tags from backstory.",
+      "items": { "type": "string" }
+    },
+    "harm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "description": "Number of filled boxes on the 4-box Harm track."
+    },
+    "stress": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "description": "Number of filled boxes on the 4-box Stress track."
+    },
+    "foci": {
+      "type": "array",
+      "description": "Cognitive anchors for casting. Each focus has a domain and an optional condition.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "domain": { "type": "string", "description": "What category of intent this focus resonates with. E.g. 'identity', 'emotion', 'systems', 'motion'." },
+          "condition": { "type": "string", "enum": ["intact", "worn", "near-breaking", "broken", "transformed"] },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "advancements": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8,
+      "description": "Number of advancements taken. Cap is 8."
+    },
+    "marks": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Accumulated session-end milestone marks. Every 5 marks unlocks an advancement."
+    },
+    "backstory": {
+      "type": "string",
+      "description": "Freeform Markdown. The primary place for character voice, history, and motivation. PCs in Underleaf should answer 'what in your life taught you to hold an intention against pressure?' somewhere in here."
+    },
+    "relationships": {
+      "type": "array",
+      "description": "References to NPCs by id or name.",
+      "items": {
+        "type": "object",
+        "required": ["who"],
+        "properties": {
+          "who": { "type": "string" },
+          "kind": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "description": "Resources the PC has access to: safe houses, contacts, equipment, vehicles.",
+      "items": { "type": "string" }
+    },
+    "threadDebt": {
+      "type": "string",
+      "description": "Soft narrative state. DM-tracked. Free-text summary of how much the world has 'noticed' this PC's casting."
+    },
+    "knowsTheyCanCast": {
+      "type": "boolean",
+      "description": "Whether this PC has completed the realization phase of the magic-discovery arc. Defaults to false.",
+      "default": false
+    },
+    "tryingTooHardSessionsRemaining": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sessions remaining of the -2 'trying-too-hard' tax after realization. 0 when fully resolved."
+    }
+  }
+}

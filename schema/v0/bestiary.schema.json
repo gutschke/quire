@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/bestiary.json",
+  "title": "Bestiary entry",
+  "description": "A creature, threat, or generic antagonist that may appear across multiple scenes. Story-forward bestiary entries lean on signature moves rather than full stat blocks.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "threatLevel": {
+      "type": "string",
+      "description": "Narrative gauge of how dangerous this is to a typical party. Not a number.",
+      "enum": ["minor", "moderate", "serious", "lethal", "campaign-ending"]
+    },
+    "description": {
+      "type": "string",
+      "description": "Public-facing description. Markdown."
+    },
+    "harm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4,
+      "description": "Number of harm boxes before this is out of action. 1-2 for a typical mook, 3-4 for a serious threat."
+    },
+    "signature": {
+      "type": "array",
+      "description": "What this threat does on its turn in a fight, or how it pressures a scene out of combat. 1-4 entries.",
+      "items": { "type": "string" }
+    },
+    "weaknesses": {
+      "type": "array",
+      "description": "Narrative weaknesses that clever PCs can exploit. Not stat penalties.",
+      "items": { "type": "string" }
+    },
+    "habitat": {
+      "type": "string",
+      "description": "Where this is encountered. Free text."
+    },
+    "loot": {
+      "type": "array",
+      "description": "What might be recovered from this threat. Treated as story prompts, not currency.",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/session-log.json",
+  "title": "Session log",
+  "description": "Post-session summary. Lives alongside the session's events.jsonl and snapshot.json under sessions/<date>/.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": {
+      "type": "string",
+      "description": "Usually the session date in YYYY-MM-DD form, optionally suffixed with a short title."
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Real-world date the session was played."
+    },
+    "inGameDate": {
+      "type": "string",
+      "description": "In-game date at the end of the session."
+    },
+    "episode": {
+      "type": "string",
+      "description": "Reference to the episode that was played, by id or name."
+    },
+    "scenes": {
+      "type": "array",
+      "description": "Scenes touched during this session, in order.",
+      "items": { "type": "string" }
+    },
+    "presentPcs": {
+      "type": "array",
+      "description": "Which PCs were present (their players were at the table or online).",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Narrative summary for sharing with players. Markdown. Players review and remember; this also seeds the next session's prep."
+    },
+    "drift": {
+      "type": "array",
+      "description": "DM-private alignment-drift notes (per-PC). May be moved to dm/ if it includes spoilers.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pc": { "type": "string" },
+          "toward": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "marks": {
+      "type": "array",
+      "description": "Milestone marks earned this session, per PC.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pc": { "type": "string" },
+          "category": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "dmReflections": {
+      "type": "string",
+      "description": "DM's private notes on how the session went. Often lives in dm/ subfolders rather than the public log."
+    }
+  }
+}

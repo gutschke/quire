@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/scene.json",
+  "title": "Scene",
+  "description": "A single scene. Usually authored as Markdown with optional frontmatter; this schema describes the frontmatter shape.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "summary": {
+      "type": "string",
+      "description": "One-line summary for the storyboard view."
+    },
+    "location": {
+      "type": "string",
+      "description": "Where the scene takes place. Free text or reference to a place record."
+    },
+    "presentNpcs": {
+      "type": "array",
+      "description": "NPCs likely to be present. References by name or id.",
+      "items": { "type": "string" }
+    },
+    "presentThreats": {
+      "type": "array",
+      "description": "Bestiary references for any threats present.",
+      "items": { "type": "string" }
+    },
+    "expectedDuration": {
+      "type": "string",
+      "description": "Estimated wall-clock duration at the table. Free text.",
+      "examples": ["5 minutes", "20-30 minutes", "an hour or more"]
+    },
+    "mood": {
+      "type": "string",
+      "description": "Tone the DM should aim for. Free text or one-word tag."
+    },
+    "rolls": {
+      "type": "array",
+      "description": "Anticipated rolls or moves this scene typically prompts. DM aide-memoire.",
+      "items": { "type": "string" }
+    }
+  }
+}

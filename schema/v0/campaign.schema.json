@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/campaign.json",
+  "title": "Campaign manifest",
+  "description": "The campaign.json file at the root of a Quire campaign repository. Only $schemaVersion and name are required; everything else is a hint.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": {
+      "type": "string",
+      "description": "SemVer of the Quire schema this campaign was authored against.",
+      "pattern": "^0\\.[0-9]+\\.[0-9]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable campaign name."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One-paragraph public description. No spoilers."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX identifier for the campaign content license. Defaults to CC-BY-SA-4.0.",
+      "default": "CC-BY-SA-4.0"
+    },
+    "ip": {
+      "type": "string",
+      "description": "Free-text statement of IP / copyright attribution. E.g. 'Original world by <name>; mechanics adapted from Quire v0.1'."
+    },
+    "ageBand": {
+      "type": "string",
+      "description": "Recommended minimum player age. E.g. '15+'."
+    },
+    "contentNotes": {
+      "type": "array",
+      "description": "List of content topics that prospective players should be aware of (violence, drugs, intimacy, etc.). Not a content warning system; an honesty signal.",
+      "items": { "type": "string" }
+    },
+    "defaultAiProvider": {
+      "type": "string",
+      "description": "Hint to the runtime about which AI provider the campaign expects. Players may override.",
+      "enum": ["claude", "gemini", "none"]
+    },
+    "signaling": {
+      "type": "object",
+      "description": "Optional override of the default signaling broker.",
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "key": { "type": "string" }
+      }
+    },
+    "turn": {
+      "type": "object",
+      "description": "Optional TURN server override. v0.1 ships STUN-only; this is reserved for future use.",
+      "properties": {
+        "urls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+        "username": { "type": "string" },
+        "credential": { "type": "string" }
+      }
+    },
+    "ruleset": {
+      "type": "string",
+      "description": "Identifier for the ruleset this campaign uses. Defaults to 'quire-v0.1' which is the bundled reference ruleset.",
+      "default": "quire-v0.1"
+    },
+    "authors": {
+      "type": "array",
+      "description": "Free-text list of authors.",
+      "items": { "type": "string" }
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Optional URL for the campaign's homepage or extended documentation."
+    }
+  }
+}

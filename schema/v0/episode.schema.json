@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/episode.json",
+  "title": "Episode",
+  "description": "An episode arc. References scenes in order, with optional hooks and DM-only beats.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "summary": {
+      "type": "string",
+      "description": "Public-facing summary. No spoilers. Markdown."
+    },
+    "prerequisites": {
+      "type": "array",
+      "description": "Other episodes that must have played before this one. By id or name.",
+      "items": { "type": "string" }
+    },
+    "hooks": {
+      "type": "array",
+      "description": "Ways PCs typically end up in this episode.",
+      "items": { "type": "string" }
+    },
+    "scenes": {
+      "type": "array",
+      "description": "Ordered list of scene file names (relative paths under scenes/) that this episode reveals during play. Public scenes only — DM-only beats live elsewhere.",
+      "items": { "type": "string" }
+    },
+    "arcBeats": {
+      "type": "array",
+      "description": "Which main-arc beats this episode touches. DM-only. References by id.",
+      "items": { "type": "string" }
+    },
+    "inGameDate": {
+      "type": "string",
+      "description": "In-game date or rough timeframe. Used by the AI prompt-bar to reason about which world events are anchored at play time."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

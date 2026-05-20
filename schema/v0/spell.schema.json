@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/spell.json",
+  "title": "Spell or pattern",
+  "description": "A documented spell, ritual, or pattern. In Underleaf, spells are emergent — they are records of casts that have reliably worked, not a fixed list a caster knows. In other campaigns, this may be a traditional spell entry.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "intent": {
+      "type": "string",
+      "description": "What this pattern aims to do. Plain language description of the desired effect."
+    },
+    "algorithm": {
+      "type": "string",
+      "description": "The shape of the asking — words, gestures, code, image, sequence. Markdown."
+    },
+    "domain": {
+      "type": "string",
+      "description": "Which conceptual domain this operates in. E.g. 'identity', 'emotion', 'systems', 'motion', 'knowledge'."
+    },
+    "typicalTier": {
+      "type": "string",
+      "description": "What plausibility tier this pattern usually resolves at. The DM's actual ruling depends on the specific request.",
+      "enum": ["free", "cheap", "costly", "hard", "prohibited"]
+    },
+    "compatibleFoci": {
+      "type": "array",
+      "description": "Domains of foci that resonate with this pattern.",
+      "items": { "type": "string" }
+    },
+    "history": {
+      "type": "string",
+      "description": "Where this pattern was first observed, who has used it, what happened. Markdown."
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/item.json",
+  "title": "Item",
+  "description": "An object — mundane or otherwise. Includes equipment, artifacts, foci candidates.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "description": "Free text. E.g. 'tool', 'weapon', 'document', 'jewelry', 'electronic'."
+    },
+    "description": { "type": "string", "description": "Markdown." },
+    "properties": {
+      "type": "array",
+      "description": "Notable properties or affordances. E.g. 'concealable', 'fragile', 'requires power', 'illegal'.",
+      "items": { "type": "string" }
+    },
+    "focusDomain": {
+      "type": "string",
+      "description": "If this item can serve as a focus, which domain it resonates with. Items don't have to be foci; this field is left absent for ordinary objects."
+    },
+    "carriedBy": {
+      "type": "string",
+      "description": "Who currently has this. Reference by name or id."
+    },
+    "origin": {
+      "type": "string",
+      "description": "Where this came from. Free text."
+    },
+    "value": {
+      "type": "string",
+      "description": "Approximate worth, in narrative rather than numeric terms. 'pocket change', 'a month's rent', 'inheritance-tier'."
+    }
+  }
+}

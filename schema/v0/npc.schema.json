@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quire.games/schema/v0/npc.json",
+  "title": "Non-player character",
+  "description": "An NPC record. Same shape as PC, with extra fields for DM-tracked state. Only $schemaVersion and name are required.",
+  "type": "object",
+  "required": ["$schemaVersion", "name"],
+  "additionalProperties": true,
+  "properties": {
+    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "pronouns": { "type": "string" },
+    "role": {
+      "type": "string",
+      "description": "What role this NPC plays in the campaign. E.g. 'antagonist', 'ally', 'shopkeeper', 'mentor', 'unknown'."
+    },
+    "disposition": {
+      "type": "string",
+      "description": "Current attitude toward the party. Free text, evolving.",
+      "examples": ["friendly", "suspicious", "hostile", "indifferent", "manipulative"]
+    },
+    "alignment": {
+      "type": "string",
+      "enum": [
+        "lawful-good", "neutral-good", "chaotic-good",
+        "lawful-neutral", "true-neutral", "chaotic-neutral",
+        "lawful-evil", "neutral-evil", "chaotic-evil"
+      ]
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "str": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "dex": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "con": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "int": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "wis": { "type": "integer", "minimum": -2, "maximum": 3 },
+        "cha": { "type": "integer", "minimum": -2, "maximum": 3 }
+      },
+      "additionalProperties": false
+    },
+    "harm": { "type": "integer", "minimum": 0, "maximum": 4 },
+    "signature": {
+      "type": "array",
+      "description": "Signature moves this NPC reliably does in a scene. Used in lieu of a full stat block for narrative threats.",
+      "items": { "type": "string" }
+    },
+    "description": {
+      "type": "string",
+      "description": "Public-facing description. Markdown. Visible to players when this NPC is introduced."
+    },
+    "dmNotes": {
+      "type": "string",
+      "description": "DM-only notes. SHOULD live in dm/ subfolders rather than here when it includes spoilers, but allowed inline for non-spoiler context."
+    },
+    "knownTo": {
+      "type": "array",
+      "description": "Which PCs (or which groups) currently know of this NPC. References by name or id.",
+      "items": { "type": "string" }
+    },
+    "voice": {
+      "type": "string",
+      "description": "Quick reference for how this NPC sounds, talks, holds themselves. Useful at the table."
+    }
+  }
+}
