@@ -1,0 +1,26 @@
+{
+  "name": "quire",
+  "version": "0.0.0",
+  "description": "Quire TTRPG framework CLI: lint campaigns, encrypt DM-only content, migrate schemas.",
+  "type": "module",
+  "bin": {
+    "quire": "bin/quire.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test src/"
+  },
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gutschke/quire.git"
+  }
+}
