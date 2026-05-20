@@ -1,9 +1,16 @@
 import { readFile, readdir } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, relative } from 'node:path';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 
-const SCHEMA_VERSION_RE = /^0\.[0-9]+\.[0-9]+$/;
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Map of relative paths in a campaign repo to the record type expected there.
+// Where the v0 schemas live relative to this CLI source.  The CLI is bundled
+// inside the quire repository so we can resolve schemas by relative path.
+const SCHEMA_DIR = join(__dirname, '..', '..', '..', 'schema', 'v0');
+
+// Directories that hold one record per file, mapped to the schema key.
 const RECORD_DIRS = {
   'characters/pcs': 'pc',
   'characters/npcs': 'npc',
@@ -12,14 +19,24 @@ const RECORD_DIRS = {
   'spells': 'spell'
 };
 
+const SCHEMA_TYPES = [
+  'campaign', 'pc', 'npc', 'bestiary', 'item',
+  'spell', 'episode', 'scene', 'session-log'
+];
+
 export async function run(args) {
   const root = args[0] || '.';
   const warnings = [];
 
+  const ajv = new Ajv2020.default({ allErrors: true, strict: false });
+  addFormats.default(ajv);
+
+  const validators = await loadSchemas(ajv);
+
   // Campaign manifest.
   try {
     const manifest = await readJson(join(root, 'campaign.json'));
-    checkRecord('campaign.json', manifest, warnings);
+    validate('campaign.json', manifest, validators.campaign, warnings);
   } catch (e) {
     if (e.code === 'ENOENT') {
       warnings.push('campaign.json not found at campaign root');
@@ -28,7 +45,7 @@ export async function run(args) {
     }
   }
 
-  // Records under known directories.
+  // Per-record directories.
   for (const [dir, type] of Object.entries(RECORD_DIRS)) {
     const full = join(root, dir);
     let entries;
@@ -43,7 +60,7 @@ export async function run(args) {
       const rel = relative(root, join(full, entry));
       try {
         const record = await readJson(join(full, entry));
-        checkRecord(rel, record, warnings);
+        validate(rel, record, validators[type], warnings);
       } catch (e) {
         warnings.push(`${rel}: ${e.message}`);
       }
@@ -59,7 +76,7 @@ export async function run(args) {
       const epJson = join(root, 'episodes', ep.name, 'episode.json');
       try {
         const record = await readJson(epJson);
-        checkRecord(relative(root, epJson), record, warnings);
+        validate(relative(root, epJson), record, validators.episode, warnings);
       } catch (e) {
         if (e.code !== 'ENOENT') {
           warnings.push(`episodes/${ep.name}/episode.json: ${e.message}`);
@@ -78,18 +95,32 @@ export async function run(args) {
   process.exit(1);
 }
 
-function checkRecord(path, record, warnings) {
+async function loadSchemas(ajv) {
+  const validators = {};
+  for (const type of SCHEMA_TYPES) {
+    const schemaPath = join(SCHEMA_DIR, `${type}.schema.json`);
+    const schema = JSON.parse(await readFile(schemaPath, 'utf8'));
+    validators[type] = ajv.compile(schema);
+  }
+  return validators;
+}
+
+function validate(path, record, validator, warnings) {
+  if (!validator) {
+    warnings.push(`${path}: no validator available`);
+    return;
+  }
   if (typeof record !== 'object' || record === null) {
     warnings.push(`${path}: not a JSON object`);
     return;
   }
-  if (!record.$schemaVersion) {
-    warnings.push(`${path}: missing $schemaVersion`);
-  } else if (!SCHEMA_VERSION_RE.test(record.$schemaVersion)) {
-    warnings.push(`${path}: $schemaVersion "${record.$schemaVersion}" does not match 0.x.y`);
-  }
-  if (!record.name) {
-    warnings.push(`${path}: missing name`);
+  const valid = validator(record);
+  if (!valid) {
+    for (const err of validator.errors) {
+      const where = err.instancePath || '/';
+      const detail = err.message || JSON.stringify(err);
+      warnings.push(`${path}: ${where} ${detail}`);
+    }
   }
 }
 
