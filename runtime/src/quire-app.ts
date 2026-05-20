@@ -16,7 +16,19 @@ import {
 } from './character-loader';
 import { renderMarkdown, type SanitizedHtml } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
-import { parseDiceCommand, rollDice, formatRoll, type DiceRoll } from './dice';
+import {
+  parseDiceCommand,
+  rollDice,
+  formatRoll,
+  formatCommand,
+  type DiceRoll
+} from './dice';
+import {
+  SessionController,
+  type SessionView,
+  type TransportFactory
+} from './session-controller';
+import { createPeerjsFactory } from './session-peerjs';
 
 const ROLL_HISTORY_MAX = 5;
 
@@ -300,12 +312,92 @@ export class QuireApp extends LitElement {
       font-size: 0.9em;
       margin: 0.25rem 0;
     }
+
+    .session-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      margin: 0 0 1rem;
+      border: 1px solid light-dark(#ddd, #333);
+      border-radius: 6px;
+      background: light-dark(#fafafa, #1f1f1f);
+      font-size: 0.9em;
+      flex-wrap: wrap;
+    }
+
+    .session-bar input {
+      padding: 0.2rem 0.4rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+      font-family: ui-monospace, monospace;
+    }
+
+    .session-bar input.session-code {
+      text-transform: uppercase;
+      width: 8.5rem;
+    }
+
+    .session-bar input.session-name {
+      width: 7rem;
+    }
+
+    .session-bar button {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+
+    .session-bar .session-label {
+      font-weight: 600;
+    }
+
+    .session-bar .session-sep {
+      color: light-dark(#888, #777);
+    }
+
+    .session-bar .session-code-display code {
+      font-size: 0.95em;
+    }
+
+    .session-bar .session-peers {
+      color: light-dark(#555, #aaa);
+    }
+
+    .session-bar.session-active {
+      border-color: light-dark(#9bb09b, #4a6a4a);
+      background: light-dark(#f4faf4, #1a221a);
+    }
+
+    .session-bar.session-error {
+      border-color: light-dark(#cc8888, #884444);
+      background: light-dark(#fcf4f4, #221a1a);
+    }
+
+    .session-bar .session-error-msg {
+      color: light-dark(#a01010, #ff7070);
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
-  @state() private rolls: DiceRoll[] = [];
-  @state() private rollDraft: string = '';
-  @state() private rollError: string | null = null;
+  @state() rolls: DiceRoll[] = [];
+  @state() rollDraft: string = '';
+  @state() rollError: string | null = null;
+  @state() sessionView: SessionView | null = null;
+  @state() joinCodeDraft: string = '';
+  @state() displayNameDraft: string = '';
+
+  // Tests can replace this before connectedCallback runs to swap in
+  // an in-memory transport factory.
+  sessionFactory: TransportFactory = createPeerjsFactory();
+  private session: SessionController | null = null;
+  private unsubscribeSession: (() => void) | null = null;
 
   private abortController?: AbortController;
   private readonly popstateHandler = (): void => {
@@ -315,6 +407,10 @@ export class QuireApp extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('popstate', this.popstateHandler);
+    this.session = new SessionController(this.sessionFactory);
+    this.unsubscribeSession = this.session.subscribe((v) => {
+      this.sessionView = v;
+    });
     void this.navigateToRoute(parseRoute(window.location.search));
   }
 
@@ -322,6 +418,10 @@ export class QuireApp extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this.popstateHandler);
     this.abortController?.abort();
+    this.unsubscribeSession?.();
+    this.unsubscribeSession = null;
+    this.session?.leave();
+    this.session = null;
   }
 
   /** Resolve a route into the right loaded state, fetching as needed. */
@@ -479,6 +579,10 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
+    return html`${this.renderSessionBar()}${this.renderBody()}`;
+  }
+
+  private renderBody(): TemplateResult {
     switch (this.appState.kind) {
       case 'idle':
         return this.renderIdle();
@@ -745,6 +849,90 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  private renderSessionBar(): TemplateResult {
+    const v = this.sessionView;
+    if (!v) return html``;
+    if (v.status === 'idle' && v.mode === 'solo') {
+      return html`
+        <div class="session-bar session-solo">
+          <span class="session-label">Solo</span>
+          <input
+            type="text"
+            class="session-name"
+            .value=${this.displayNameDraft}
+            placeholder="Your name"
+            aria-label="Display name"
+            @input=${(e: Event) => {
+              this.displayNameDraft = (e.target as HTMLInputElement).value;
+            }}
+          />
+          <button @click=${() => this.startHosting()}>Host session</button>
+          <span class="session-sep">or</span>
+          <input
+            type="text"
+            class="session-code"
+            .value=${this.joinCodeDraft}
+            placeholder="ABCD2345"
+            aria-label="Pairing code"
+            maxlength="12"
+            @input=${(e: Event) => {
+              this.joinCodeDraft = (
+                e.target as HTMLInputElement
+              ).value.toUpperCase();
+            }}
+          />
+          <button @click=${() => this.joinSession()}>Join</button>
+        </div>
+      `;
+    }
+    if (v.status === 'connecting') {
+      return html`
+        <div class="session-bar session-connecting">
+          <span class="session-label">
+            ${v.mode === 'host' ? 'Starting session…' : 'Joining…'}
+          </span>
+          <button @click=${() => this.leaveSession()}>Cancel</button>
+        </div>
+      `;
+    }
+    if (v.status === 'error') {
+      return html`
+        <div class="session-bar session-error">
+          <span class="session-label">Session error</span>
+          <span class="session-error-msg">${v.error}</span>
+          <button @click=${() => this.leaveSession()}>Dismiss</button>
+        </div>
+      `;
+    }
+    // active
+    const peerCount = v.connectedPeers.length;
+    return html`
+      <div class="session-bar session-active">
+        ${v.mode === 'host'
+          ? html`
+              <span class="session-label">Hosting</span>
+              <span class="session-code-display">
+                code: <code>${v.pairingCode}</code>
+              </span>
+            `
+          : html`
+              <span class="session-label">Joined</span>
+              <span class="session-code-display">
+                as <code>${v.peerId}</code>
+              </span>
+            `}
+        <span class="session-peers">
+          ${peerCount === 0
+            ? 'no peers yet'
+            : peerCount === 1
+              ? '1 peer'
+              : `${peerCount} peers`}
+        </span>
+        <button @click=${() => this.leaveSession()}>Leave</button>
+      </div>
+    `;
+  }
+
   private renderRollPanel(): TemplateResult {
     return html`
       <section class="card">
@@ -796,7 +984,40 @@ export class QuireApp extends LitElement {
     const roll = rollDice(cmd, this.rngForRoll);
     this.rolls = [roll, ...this.rolls].slice(0, ROLL_HISTORY_MAX);
     this.rollDraft = '';
+    // If we're in an active session, publish so other peers see the roll.
+    if (this.session && this.sessionView?.status === 'active') {
+      this.session.append('dice-roll', {
+        expression: formatCommand(roll.command),
+        result: roll.total,
+        dice: roll.rolls
+      });
+    }
     return roll;
+  }
+
+  startHosting(): void {
+    if (!this.session) return;
+    const name = this.displayNameDraft.trim() || undefined;
+    void this.session
+      .host(name)
+      .catch(() => {
+        /* error already surfaced via sessionView */
+      });
+  }
+
+  joinSession(): void {
+    if (!this.session) return;
+    const code = this.joinCodeDraft.trim().toUpperCase();
+    if (!code) return;
+    const name = this.displayNameDraft.trim() || undefined;
+    void this.session.join(code, name).catch(() => {
+      /* surfaced via sessionView */
+    });
+  }
+
+  leaveSession(): void {
+    this.session?.leave();
+    this.joinCodeDraft = '';
   }
 
   // Overridable from tests for determinism.
