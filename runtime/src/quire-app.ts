@@ -1,23 +1,36 @@
 import { LitElement, html, css, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import {
   loadCampaign,
+  fetchCampaignFile,
   CampaignLoadError,
   type LoadedCampaign
 } from './campaign-loader';
+import { renderMarkdown } from './markdown';
+
+interface CampaignWithExtras {
+  data: LoadedCampaign;
+  worldOverview: string | null;
+}
 
 type AppState =
   | { kind: 'idle' }
   | { kind: 'loading'; slug: string }
-  | { kind: 'loaded'; data: LoadedCampaign }
+  | { kind: 'loaded'; loaded: CampaignWithExtras }
   | { kind: 'error'; message: string; details?: string };
+
+function isAbortError(e: unknown): boolean {
+  return (e as Error)?.name === 'AbortError';
+}
 
 /**
  * Root component for the Quire play app.
  *
- * Phase 1: reads ?campaign=<owner>/<repo>[@ref], fetches the manifest from
- * raw.githubusercontent.com, validates it minimally, and renders.  The play
- * UI proper (scenes, sheets, dice, AI prompt-bar) lands in subsequent commits.
+ * Phase 1: reads ?campaign=<owner>/<repo>[@ref], fetches the manifest and
+ * (optionally) the public world overview, validates, and renders.  The play
+ * UI proper — scenes, sheets, dice, AI prompt-bar — lands in subsequent
+ * commits.
  */
 @customElement('quire-app')
 export class QuireApp extends LitElement {
@@ -113,9 +126,77 @@ export class QuireApp extends LitElement {
     a {
       color: light-dark(#0050a0, #6bb6ff);
     }
+
+    .markdown > :first-child {
+      margin-top: 0;
+    }
+
+    .markdown > :last-child {
+      margin-bottom: 0;
+    }
+
+    .markdown h1 {
+      font-size: 1.25rem;
+      margin: 1.5rem 0 0.5rem;
+    }
+
+    .markdown h2 {
+      font-size: 1.1rem;
+      margin: 1.25rem 0 0.5rem;
+    }
+
+    .markdown h3 {
+      font-size: 1rem;
+      margin: 1rem 0 0.5rem;
+    }
+
+    .markdown p {
+      margin: 0.75rem 0;
+    }
+
+    .markdown blockquote {
+      border-left: 3px solid light-dark(#ccc, #555);
+      padding: 0.25rem 1rem;
+      margin: 0.75rem 0;
+      color: light-dark(#555, #aaa);
+    }
+
+    .markdown pre {
+      background: light-dark(#f4f4f4, #222);
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.9em;
+    }
+
+    .markdown pre code {
+      background: transparent;
+      padding: 0;
+    }
+
+    .markdown hr {
+      border: none;
+      border-top: 1px solid light-dark(#e0e0e0, #333);
+      margin: 1.5rem 0;
+    }
+
+    .markdown table {
+      border-collapse: collapse;
+      margin: 0.75rem 0;
+    }
+
+    .markdown th,
+    .markdown td {
+      border: 1px solid light-dark(#ddd, #333);
+      padding: 0.25rem 0.5rem;
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
+
+  // AbortController for in-flight fetches.  Aborted from disconnectedCallback
+  // so that an element removed mid-load doesn't update state after detach.
+  private abortController?: AbortController;
 
   override async connectedCallback(): Promise<void> {
     super.connectedCallback();
@@ -123,11 +204,23 @@ export class QuireApp extends LitElement {
     const slug = params.get('campaign');
     if (!slug) return;
 
+    this.abortController = new AbortController();
+    const { signal } = this.abortController;
+
     this.appState = { kind: 'loading', slug };
     try {
-      const data = await loadCampaign(slug);
-      this.appState = { kind: 'loaded', data };
+      const data = await loadCampaign(slug, { signal });
+      if (signal.aborted || !this.isConnected) return;
+      // World overview is optional content — skip on 404, propagate other errors.
+      const worldOverview = await fetchCampaignFile(
+        data.source,
+        'world/overview.md',
+        { signal }
+      );
+      if (signal.aborted || !this.isConnected) return;
+      this.appState = { kind: 'loaded', loaded: { data, worldOverview } };
     } catch (e) {
+      if (isAbortError(e)) return;
       if (e instanceof CampaignLoadError) {
         this.appState = { kind: 'error', message: e.message, details: e.details };
       } else {
@@ -140,6 +233,11 @@ export class QuireApp extends LitElement {
     }
   }
 
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.abortController?.abort();
+  }
+
   override render(): TemplateResult {
     switch (this.appState.kind) {
       case 'idle':
@@ -147,7 +245,7 @@ export class QuireApp extends LitElement {
       case 'loading':
         return this.renderLoading(this.appState.slug);
       case 'loaded':
-        return this.renderLoaded(this.appState.data);
+        return this.renderLoaded(this.appState.loaded);
       case 'error':
         return this.renderError(this.appState.message, this.appState.details);
     }
@@ -172,9 +270,7 @@ export class QuireApp extends LitElement {
         </p>
         <p>The sample campaign:</p>
         <p>
-          <a href="?campaign=gutschke/underleaf"
-            >Open Underleaf →</a
-          >
+          <a href="?campaign=gutschke/underleaf">Open Underleaf →</a>
         </p>
       </section>
     `;
@@ -191,7 +287,7 @@ export class QuireApp extends LitElement {
     `;
   }
 
-  private renderLoaded(data: LoadedCampaign): TemplateResult {
+  private renderLoaded({ data, worldOverview }: CampaignWithExtras): TemplateResult {
     const m = data.manifest;
     const src = data.source;
     return html`
@@ -225,18 +321,30 @@ export class QuireApp extends LitElement {
             `
           : nothing}
       </section>
+      ${worldOverview
+        ? html`
+            <section class="card">
+              <h2>World overview</h2>
+              <div class="markdown">
+                ${unsafeHTML(renderMarkdown(worldOverview))}
+              </div>
+            </section>
+          `
+        : nothing}
       <section class="card placeholder">
         <p><strong>Play UI not yet implemented.</strong></p>
         <p>
-          This view is the campaign manifest only. Scene rendering, character
-          sheets, the dice helper, the AI prompt bar, and the multiplayer
-          surface arrive in subsequent commits.
+          Scenes, character sheets, the dice helper, the AI prompt bar, and
+          the multiplayer surface arrive in subsequent commits.
         </p>
       </section>
     `;
   }
 
   private renderError(message: string, details?: string): TemplateResult {
+    // `message` and `details` originate from CampaignLoadError and may echo
+    // user-controllable URL parts (the campaign slug).  Lit's text-context
+    // interpolation auto-escapes — do NOT switch these to `unsafeHTML`.
     return html`
       <header>
         <h1>Quire</h1>

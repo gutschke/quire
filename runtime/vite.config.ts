@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 
@@ -18,5 +19,10 @@ export default defineConfig({
     target: 'es2022',
     sourcemap: true
   },
-  publicDir: 'public'
+  publicDir: 'public',
+  test: {
+    environment: 'happy-dom',
+    include: ['src/**/*.test.ts'],
+    globals: false
+  }
 });
