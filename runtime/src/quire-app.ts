@@ -439,6 +439,57 @@ export class QuireApp extends LitElement {
       color: inherit;
       cursor: pointer;
     }
+
+    .reveal-banner {
+      display: flex;
+      gap: 0.5rem;
+      align-items: baseline;
+      padding: 0.4rem 0.6rem;
+      margin: 0 0 1rem;
+      border: 1px solid light-dark(#d9c89b, #5a4d2a);
+      background: light-dark(#fdf8e7, #2a2418);
+      border-radius: 6px;
+      font-size: 0.92em;
+      flex-wrap: wrap;
+    }
+
+    .reveal-banner-label {
+      font-weight: 600;
+    }
+
+    .reveal-control {
+      margin: 0.25rem 0 0;
+    }
+
+    .reveal-control button {
+      padding: 0.3rem 0.75rem;
+      border: 1px solid light-dark(#9a7e2a, #b8983e);
+      border-radius: 4px;
+      background: light-dark(#fdf3c8, #3a3018);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+
+    .reveal-badge {
+      display: inline-block;
+      margin: 0.25rem 0 0;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+
+    .reveal-badge-revealed {
+      background: light-dark(#e0f0e0, #1f2a1f);
+      color: light-dark(#2a6a2a, #88c088);
+      border: 1px solid light-dark(#b0d0b0, #3a5a3a);
+    }
+
+    .reveal-badge-private {
+      background: light-dark(#f0f0f0, #222);
+      color: light-dark(#666, #888);
+      border: 1px solid light-dark(#ddd, #333);
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
@@ -636,7 +687,45 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
-    return html`${this.renderSessionBar()}${this.renderBody()}${this.renderChatPanel()}`;
+    return html`${this.renderSessionBar()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}`;
+  }
+
+  private renderRevealBanner(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return html``;
+    const list = v.shared.revealedScenes;
+    if (list.length === 0) return html``;
+    const latest = list[list.length - 1];
+    const parsed = QuireApp.parseRevealedPath(latest);
+    if (!parsed) return html``;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return html``;
+    const slug = this.slugFor(campaign);
+    // If we're already viewing the revealed scene, don't repeat ourselves.
+    if (
+      this.appState.kind === 'scene' &&
+      this.appState.episode.slug === parsed.episode &&
+      this.appState.scene.path === parsed.scene
+    ) {
+      return html``;
+    }
+    const route: AppRoute = {
+      kind: 'scene',
+      slug,
+      episode: parsed.episode,
+      scene: parsed.scene
+    };
+    return html`
+      <div class="reveal-banner">
+        <span class="reveal-banner-label">DM revealed:</span>
+        <a
+          href=${routeToSearch(route)}
+          @click=${(e: Event) => this.navigate(e, route)}
+          ><code>${parsed.scene}</code></a
+        >
+        <span class="muted">in ${parsed.episode}</span>
+      </div>
+    `;
   }
 
   private renderBody(): TemplateResult {
@@ -899,10 +988,37 @@ export class QuireApp extends LitElement {
           →
         </nav>
         <h1>${scene.path}</h1>
+        ${this.renderRevealControl(episode.slug, scene.path)}
       </header>
       <section class="card">
         <div class="markdown">${unsafeHTML(scene.html)}</div>
       </section>
+    `;
+  }
+
+  private renderRevealControl(
+    episodeSlug: string,
+    scenePath: string
+  ): TemplateResult {
+    if (!this.sessionView || this.sessionView.status !== 'active')
+      return html``;
+    const full = QuireApp.scenePathFor(episodeSlug, scenePath);
+    const already =
+      this.sessionView.shared.revealedScenes.includes(full);
+    if (!this.isCoordinator()) {
+      return already
+        ? html`<p class="reveal-badge reveal-badge-revealed">Revealed to players</p>`
+        : html`<p class="reveal-badge reveal-badge-private">Not yet revealed</p>`;
+    }
+    if (already) {
+      return html`<p class="reveal-badge reveal-badge-revealed">Already revealed</p>`;
+    }
+    return html`
+      <p class="reveal-control">
+        <button @click=${() => this.revealCurrentScene()}>
+          Reveal to players
+        </button>
+      </p>
     `;
   }
 
@@ -1122,6 +1238,53 @@ export class QuireApp extends LitElement {
     this.session?.leave();
     this.joinCodeDraft = '';
     this.chatDraft = '';
+  }
+
+  /** True if the local peer is the coordinator in an active session. */
+  isCoordinator(): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    return v.shared.coordinator === v.peerId;
+  }
+
+  /** Encode a scene's full repo path for the revealedScenes list. */
+  private static scenePathFor(episodeSlug: string, scenePath: string): string {
+    return `episodes/${episodeSlug}/${scenePath}`;
+  }
+
+  /**
+   * Parse a revealedScenes entry back into URL components.  Returns null
+   * if the entry doesn't have the expected `episodes/<ep>/<path>` shape.
+   */
+  static parseRevealedPath(
+    full: string
+  ): { episode: string; scene: string } | null {
+    if (!full.startsWith('episodes/')) return null;
+    const rest = full.slice('episodes/'.length);
+    const slash = rest.indexOf('/');
+    if (slash < 0) return null;
+    const episode = rest.slice(0, slash);
+    const scene = rest.slice(slash + 1);
+    if (!episode || !scene) return null;
+    return { episode, scene };
+  }
+
+  /**
+   * Coordinator-only: append a scene-reveal event for the current scene.
+   * Silently no-ops in solo, when not on a scene view, when not the
+   * coordinator, or when the scene is already revealed (the core
+   * materializer dedups anyway, but skipping the event keeps the log
+   * tidy).
+   */
+  revealCurrentScene(): boolean {
+    if (!this.session || !this.isCoordinator()) return false;
+    if (this.appState.kind !== 'scene') return false;
+    const ep = this.appState.episode.slug;
+    const sp = this.appState.scene.path;
+    const full = QuireApp.scenePathFor(ep, sp);
+    if (this.sessionView!.shared.revealedScenes.includes(full)) return false;
+    this.session.append('scene-reveal', { scenePath: full });
+    return true;
   }
 
   submitChat(text: string): boolean {

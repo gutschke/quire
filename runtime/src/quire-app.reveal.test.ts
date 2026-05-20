@@ -1,0 +1,196 @@
+// @vitest-environment happy-dom
+
+import { describe, it, expect } from 'vitest';
+import './quire-app';
+import { QuireApp } from './quire-app';
+import { SessionController, type TransportFactory } from './session-controller';
+import {
+  InMemoryNetwork,
+  InMemoryTransport
+} from './core/transports/in-memory';
+import type { SanitizedHtml } from './markdown';
+import type { LoadedEpisode } from './episode-loader';
+
+function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
+  return {
+    createHost: async () => ({
+      transport: new InMemoryTransport(id, network),
+      pairingCode: id
+    }),
+    createGuest: async () => ({
+      transport: new InMemoryTransport(id, network)
+    })
+  };
+}
+
+function mountApp(factory: TransportFactory): QuireApp {
+  const el = document.createElement('quire-app') as QuireApp;
+  el.sessionFactory = factory;
+  document.body.appendChild(el);
+  return el;
+}
+
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function fakeCampaign(): {
+  base: {
+    manifest: { $schemaVersion: string; name: string };
+    source: { owner: string; repo: string; ref: string };
+  };
+  worldOverview: string | null;
+} {
+  return {
+    base: {
+      manifest: { $schemaVersion: '0.1.0', name: 'Test Campaign' },
+      source: { owner: 'x', repo: 'y', ref: 'main' }
+    },
+    worldOverview: null
+  };
+}
+
+function fakeEpisode(slug: string): LoadedEpisode {
+  return {
+    slug,
+    manifest: {
+      $schemaVersion: '0.1.0',
+      name: `Episode ${slug}`,
+      scenes: ['scenes/01.md']
+    },
+    source: { owner: 'x', repo: 'y', ref: 'main' }
+  };
+}
+
+function fakeScene(path: string): { path: string; html: SanitizedHtml } {
+  return { path, html: '<p>scene body</p>' as SanitizedHtml };
+}
+
+describe('QuireApp scene-reveal', () => {
+  it('parseRevealedPath round-trips episode + scene paths', () => {
+    expect(QuireApp.parseRevealedPath('episodes/001/scenes/intro.md')).toEqual({
+      episode: '001',
+      scene: 'scenes/intro.md'
+    });
+    expect(QuireApp.parseRevealedPath('not/a/reveal')).toBeNull();
+    expect(QuireApp.parseRevealedPath('episodes/justanepisode')).toBeNull();
+    expect(QuireApp.parseRevealedPath('')).toBeNull();
+  });
+
+  it('revealCurrentScene is a no-op outside an active session', () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    // Inject a scene state manually (we're not testing route loading here).
+    (app as unknown as { appState: unknown }).appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(app.revealCurrentScene()).toBe(false);
+  });
+
+  it('coordinator (host) can reveal; event lands in shared state', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    expect(app.isCoordinator()).toBe(true);
+    (app as unknown as { appState: unknown }).appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(app.revealCurrentScene()).toBe(true);
+    expect(app.sessionView!.shared.revealedScenes).toEqual([
+      'episodes/001/scenes/intro.md'
+    ]);
+  });
+
+  it('second reveal of the same scene is suppressed at the app level', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { appState: unknown }).appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(app.revealCurrentScene()).toBe(true);
+    expect(app.revealCurrentScene()).toBe(false);
+    expect(app.sessionView!.shared.revealedScenes).toHaveLength(1);
+  });
+
+  it('non-coordinator reveals are dropped by the materializer', async () => {
+    const network = new InMemoryNetwork();
+    // Host claims coordinator.
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+
+    // Guest joins.
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    // joinSession reads from the joinCodeDraft.
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    expect(guest.sessionView!.status).toBe('active');
+    expect(guest.isCoordinator()).toBe(false);
+
+    // Bypass the UI gate by writing the event directly via the controller.
+    // The core materializer must still reject it.
+    (
+      guest as unknown as { session: SessionController }
+    ).session.append('scene-reveal', { scenePath: 'rogue.md' });
+    await flush();
+    expect(host.sessionView!.shared.revealedScenes).toEqual([]);
+    expect(guest.sessionView!.shared.revealedScenes).toEqual([]);
+  });
+
+  it("guest sees the host's reveal in shared state", async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+
+    (host as unknown as { appState: unknown }).appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(host.revealCurrentScene()).toBe(true);
+    await flush();
+    expect(guest.sessionView!.shared.revealedScenes).toEqual([
+      'episodes/001/scenes/intro.md'
+    ]);
+  });
+
+  it('multiple reveals accumulate in order', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    for (const scene of ['a.md', 'b.md', 'c.md']) {
+      (host as unknown as { appState: unknown }).appState = {
+        kind: 'scene',
+        campaign: fakeCampaign(),
+        episode: fakeEpisode('001'),
+        scene: fakeScene(scene)
+      };
+      host.revealCurrentScene();
+    }
+    expect(host.sessionView!.shared.revealedScenes).toEqual([
+      'episodes/001/a.md',
+      'episodes/001/b.md',
+      'episodes/001/c.md'
+    ]);
+  });
+});
