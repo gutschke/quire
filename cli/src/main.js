@@ -25,16 +25,19 @@ Usage: quire <command> [args]
 
 Commands:
   lint <path>           Validate a campaign repository against v0 schemas.
-  encrypt-dm <path>     Encrypt every episode's dm/ subfolder.        (stub)
-  decrypt-dm <path>     Decrypt previously-encrypted dm/ content.      (stub)
+  encrypt-dm <path>     Encrypt every dm/ and DM-ONLY/ file with the
+                        campaign passphrase.  Plaintext files are removed
+                        after successful encryption.
+  decrypt-dm <path>     Decrypt every .qenc file under dm/ and DM-ONLY/
+                        using the passphrase.  Refuses to overwrite an
+                        existing plaintext file (DM may be mid-edit).
   migrate <path>        Apply codemods to upgrade record schemas.
   help                  Show this message.
 
-Status: v0.0.0 — only \`lint\` is implemented.  \`encrypt-dm\` and
-\`decrypt-dm\` are stubs that print a not-yet-implemented notice.
-\`migrate\` is a no-op until v0.2 ships and the codemod registry has
-its first entry.
+Status: lint, encrypt-dm, decrypt-dm functional.  migrate is a no-op
+until v0.2 ships and the codemod registry has its first entry.
 
-Run \`quire <command> --help\` for command-specific help (where
-available).`);
+For automation: set QUIRE_PASSPHRASE in the environment to skip the
+interactive passphrase prompt (encrypt-dm also skips its confirm
+prompt when QUIRE_PASSPHRASE is set).`);
 }

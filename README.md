@@ -52,6 +52,7 @@ Tracking what has landed and what is still missing:
 - [x] Codemod registry skeleton under [`schema/codemods/`](schema/codemods/) (no codemods yet — v0.1 is the first major)
 - [x] CLI skeleton ([`cli/`](cli/)) — `quire lint` works; `encrypt-dm`, `decrypt-dm`, `migrate` are documented stubs
 - [x] Underleaf scaffold with DM-only spoiler-safe structure ([gutschke/underleaf](https://github.com/gutschke/underleaf))
-- [ ] Full JSON Schema validation in `quire lint` (Ajv) — minimal checks for now
-- [ ] Encryption pipeline (`quire encrypt-dm` / `decrypt-dm`) — phase 1
-- [ ] First playable round-trip — phase 1
+- [x] Full JSON Schema validation in `quire lint` via Ajv
+- [x] Encryption pipeline (`quire encrypt-dm` / `decrypt-dm`) with Argon2id KDF + XSalsa20-Poly1305
+- [ ] Play-app runtime scaffold (phase 1, in progress)
+- [ ] First playable round-trip (phase 1)
