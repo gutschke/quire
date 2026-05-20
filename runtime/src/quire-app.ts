@@ -16,6 +16,9 @@ import {
 } from './character-loader';
 import { renderMarkdown, type SanitizedHtml } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
+import { parseDiceCommand, rollDice, formatRoll, type DiceRoll } from './dice';
+
+const ROLL_HISTORY_MAX = 5;
 
 interface LoadedCampaign {
   base: LoadedCampaignBase;
@@ -237,9 +240,72 @@ export class QuireApp extends LitElement {
       border: 1px solid light-dark(#ddd, #333);
       padding: 0.25rem 0.5rem;
     }
+
+    .roll-form {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.25rem 0;
+    }
+
+    .roll-form label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 1;
+    }
+
+    .roll-form .roll-label {
+      font-family: ui-monospace, monospace;
+      color: light-dark(#555, #aaa);
+    }
+
+    .roll-form input[type='text'] {
+      flex: 1;
+      padding: 0.25rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+      font-family: ui-monospace, monospace;
+    }
+
+    .roll-form button {
+      padding: 0.25rem 0.75rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .roll-error {
+      color: light-dark(#a01010, #ff7070);
+      font-size: 0.9em;
+      margin: 0.25rem 0;
+    }
+
+    .roll-history {
+      list-style: none;
+      padding: 0;
+      margin: 0.5rem 0 0;
+    }
+
+    .roll-history li {
+      padding: 0.15rem 0;
+    }
+
+    .muted {
+      color: light-dark(#666, #888);
+      font-size: 0.9em;
+      margin: 0.25rem 0;
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
+  @state() private rolls: DiceRoll[] = [];
+  @state() private rollDraft: string = '';
+  @state() private rollError: string | null = null;
 
   private abortController?: AbortController;
   private readonly popstateHandler = (): void => {
@@ -561,6 +627,7 @@ export class QuireApp extends LitElement {
           `
         : nothing}
       ${this.renderCharacterMenus(slug, m.characters)}
+      ${this.renderRollPanel()}
       ${worldOverview
         ? html`
             <section class="card">
@@ -677,6 +744,63 @@ export class QuireApp extends LitElement {
       </section>
     `;
   }
+
+  private renderRollPanel(): TemplateResult {
+    return html`
+      <section class="card">
+        <h2>Dice</h2>
+        <form
+          class="roll-form"
+          @submit=${(e: Event) => {
+            e.preventDefault();
+            this.submitRoll(this.rollDraft);
+          }}
+        >
+          <label>
+            <span class="roll-label">/roll</span>
+            <input
+              type="text"
+              .value=${this.rollDraft}
+              placeholder="2d6+1"
+              aria-label="Dice expression"
+              @input=${(e: Event) => {
+                this.rollDraft = (e.target as HTMLInputElement).value;
+              }}
+            />
+          </label>
+          <button type="submit">Roll</button>
+        </form>
+        ${this.rollError
+          ? html`<p class="roll-error">${this.rollError}</p>`
+          : nothing}
+        ${this.rolls.length
+          ? html`
+              <ul class="roll-history">
+                ${this.rolls.map(
+                  (r) => html`<li><code>${formatRoll(r)}</code></li>`
+                )}
+              </ul>
+            `
+          : html`<p class="muted">No rolls yet.</p>`}
+      </section>
+    `;
+  }
+
+  submitRoll(input: string): DiceRoll | null {
+    const cmd = parseDiceCommand(input);
+    if (!cmd) {
+      this.rollError = `Couldn't parse "${input}". Try 2d6, 2d6+1, 1d20, etc.`;
+      return null;
+    }
+    this.rollError = null;
+    const roll = rollDice(cmd, this.rngForRoll);
+    this.rolls = [roll, ...this.rolls].slice(0, ROLL_HISTORY_MAX);
+    this.rollDraft = '';
+    return roll;
+  }
+
+  // Overridable from tests for determinism.
+  rngForRoll: () => number = Math.random;
 
   private renderCharacterMenus(
     slug: string,
@@ -847,6 +971,7 @@ export class QuireApp extends LitElement {
             </section>
           `
         : nothing}
+      ${this.renderRollPanel()}
     `;
   }
 
