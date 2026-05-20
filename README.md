@@ -54,10 +54,12 @@ Tracking what has landed and what is still missing:
 - [x] Underleaf scaffold with DM-only spoiler-safe structure ([gutschke/underleaf](https://github.com/gutschke/underleaf))
 - [x] Full JSON Schema validation in `quire lint` via Ajv
 - [x] Encryption pipeline (`quire encrypt-dm` / `decrypt-dm`) with Argon2id KDF + XSalsa20-Poly1305
-- [x] Play-app runtime scaffold under [`runtime/`](runtime/) (Vite + TypeScript + Lit; builds to ~9 KB gzip)
+- [x] Play-app runtime scaffold under [`runtime/`](runtime/) (Vite + TypeScript + Lit; builds to ~36 KB gzip)
 - [x] Cloudflare Pages deployment at <https://play.quire.games>
 - [x] Campaign loader: parse `?campaign=` URL, fetch and validate manifest
-- [ ] Markdown rendering pipeline (sanitized, no raw HTML from campaign content)
-- [ ] Scene viewer + character sheets + dice helper
+- [x] Markdown rendering pipeline (marked + DOMPurify + js-yaml; branded `SanitizedHtml` type; 101 tests)
+- [ ] Episode + scene navigation: load `episodes/<NNN>/episode.json`, render scene list
+- [ ] Character sheets (mobile-first)
+- [ ] Dice helper (slash commands)
 - [ ] AI prompt bar (DM-only)
 - [ ] Multiplayer surface (pairing codes + WebRTC star)
