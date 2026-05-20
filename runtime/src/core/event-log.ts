@@ -1,0 +1,117 @@
+/**
+ * Append-only event log with vector-clock-based causal ordering.
+ *
+ * Each peer owns one EventLog instance.  Locally-authored events are added
+ * via `append`; events received from other peers come in via `apply`.  The
+ * log produces a deterministic causal-then-lexicographic total order on
+ * `events()` so multiple peers can materialize identical state from the
+ * same set of events.
+ *
+ * Vector clock semantics:
+ *   - each event carries the author's seq plus everything the author had
+ *     already seen at the moment of authorship.
+ *   - `apply` merges the incoming clock element-wise max into the local
+ *     clock so subsequent local appends correctly reference everything seen.
+ *   - dedup is by event id (`peerId:seq`), which is deterministic.
+ *
+ * Total order:
+ *   - primary sort: sum of vector-clock entries.  Happens-before implies
+ *     strictly smaller sum, so the sort respects causality.
+ *   - tiebreak (concurrent events): lexicographic on peerId, then seq.
+ *     Deterministic across peers.
+ */
+
+export type PeerId = string;
+export type EventKind = string;
+
+export interface VectorClock {
+  readonly [peerId: string]: number;
+}
+
+export interface QuireEvent {
+  readonly id: string;
+  readonly peerId: PeerId;
+  readonly seq: number;
+  readonly clock: VectorClock;
+  readonly kind: EventKind;
+  readonly payload: unknown;
+  readonly ts: number;
+}
+
+export class EventLog {
+  private readonly _events = new Map<string, QuireEvent>();
+  private _clock: Record<string, number> = {};
+
+  constructor(public readonly peerId: PeerId) {}
+
+  append(kind: EventKind, payload: unknown): QuireEvent {
+    const seq = (this._clock[this.peerId] ?? 0) + 1;
+    this._clock = { ...this._clock, [this.peerId]: seq };
+    const event: QuireEvent = {
+      id: `${this.peerId}:${seq}`,
+      peerId: this.peerId,
+      seq,
+      clock: { ...this._clock },
+      kind,
+      payload,
+      ts: Date.now()
+    };
+    this._events.set(event.id, event);
+    return event;
+  }
+
+  apply(event: QuireEvent): boolean {
+    if (this._events.has(event.id)) return false;
+    this._events.set(event.id, event);
+    const next = { ...this._clock };
+    for (const [pid, n] of Object.entries(event.clock)) {
+      next[pid] = Math.max(next[pid] ?? 0, n);
+    }
+    this._clock = next;
+    return true;
+  }
+
+  events(): readonly QuireEvent[] {
+    return Array.from(this._events.values()).sort(causalCompare);
+  }
+
+  snapshot(): VectorClock {
+    return { ...this._clock };
+  }
+
+  since(clock: VectorClock): QuireEvent[] {
+    return this.events().filter((ev) => (clock[ev.peerId] ?? 0) < ev.seq);
+  }
+}
+
+function causalCompare(a: QuireEvent, b: QuireEvent): number {
+  const sumA = sumOfClock(a.clock);
+  const sumB = sumOfClock(b.clock);
+  if (sumA !== sumB) return sumA - sumB;
+  if (a.peerId !== b.peerId) return a.peerId < b.peerId ? -1 : 1;
+  return a.seq - b.seq;
+}
+
+function sumOfClock(clock: VectorClock): number {
+  let n = 0;
+  for (const v of Object.values(clock)) n += v;
+  return n;
+}
+
+export type ClockRelation = 'before' | 'after' | 'equal' | 'concurrent';
+
+export function compareClocks(a: VectorClock, b: VectorClock): ClockRelation {
+  const peers = new Set([...Object.keys(a), ...Object.keys(b)]);
+  let aSmaller = false;
+  let bSmaller = false;
+  for (const p of peers) {
+    const av = a[p] ?? 0;
+    const bv = b[p] ?? 0;
+    if (av < bv) aSmaller = true;
+    if (bv < av) bSmaller = true;
+  }
+  if (aSmaller && bSmaller) return 'concurrent';
+  if (aSmaller) return 'before';
+  if (bSmaller) return 'after';
+  return 'equal';
+}
