@@ -1,0 +1,17 @@
+// Cloudflare Pages / Workers deploy config for the Quire runtime.
+//
+// The runtime is a static SPA — no server-side Worker code.  The `assets`
+// block tells Cloudflare to serve the built `dist/` directory and to fall
+// back to index.html for unknown paths so client-side routing (the
+// `?campaign=` URL parameter, future hash routes) works without 404s.
+//
+// compatibility_date pins the Workers runtime semantics; bump as needed.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "quire",
+  "compatibility_date": "2026-05-20",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}
