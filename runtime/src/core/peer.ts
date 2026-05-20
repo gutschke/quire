@@ -42,8 +42,17 @@ type ProtocolMessage = ShareMessage | SyncRequestMessage | SyncResponseMessage;
 
 function isProtocolMessage(value: unknown): value is ProtocolMessage {
   if (!value || typeof value !== 'object') return false;
-  const k = (value as { kind?: unknown }).kind;
-  return k === 'share' || k === 'sync-request' || k === 'sync-response';
+  const v = value as Record<string, unknown>;
+  switch (v.kind) {
+    case 'share':
+      return !!v.event && typeof v.event === 'object';
+    case 'sync-request':
+      return !!v.clock && typeof v.clock === 'object' && !Array.isArray(v.clock);
+    case 'sync-response':
+      return Array.isArray(v.events);
+    default:
+      return false;
+  }
 }
 
 export type StateChangeHandler = (state: SessionState) => void;
@@ -67,10 +76,22 @@ export class Peer {
     );
     // onPeerDisconnect: nothing to do; events stay in log for next-sync catchup.
 
-    // Catch up on peers that were already connected when our handlers attached.
-    // For in-memory tests the transport's register happens during its constructor,
-    // before this Peer constructor runs, so those connect notifications fire into
-    // a void.  This loop emulates what onPeerConnect would have done for each.
+    // Catch up on peers that were already connected when our handlers
+    // attached.  The in-memory transport's `register` runs synchronously in
+    // its constructor, before this Peer constructor body runs, so:
+    //
+    //   - Connect notifications from other transports targeting us fire
+    //     into a void (our onPeerConnect handler isn't attached yet).
+    //   - Sync-requests sent by other peers' onPeerConnect handlers in
+    //     response to seeing us join *also* land in a void (our onMessage
+    //     handler isn't attached yet).
+    //
+    // The pull below is what saves convergence: we ask every already-
+    // connected peer for their events, they respond with sync-response, we
+    // catch up.  If anyone ever adds a "push initial state on connect"
+    // optimization to this protocol, that push must NOT assume the new
+    // peer's onMessage is wired — it isn't, until after this loop runs.
+    // Convergence must stay pull-driven from the new peer's side.
     for (const other of transport.connectedPeers()) {
       this.requestSync(other);
     }

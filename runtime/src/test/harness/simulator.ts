@@ -84,5 +84,6 @@ export class Simulator {
   close(): void {
     for (const p of this.peers.values()) p.close();
     this.peers.clear();
+    this.network.cleanup();
   }
 }

@@ -26,6 +26,7 @@ export class InMemoryNetwork {
   private readonly transports = new Map<PeerId, InMemoryTransport>();
   private readonly partitioned = new Set<PeerId>();
   private readonly config: NetworkConfig = { latencyMs: 0, dropRate: 0 };
+  private readonly pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   register(transport: InMemoryTransport): void {
     const existing = Array.from(this.transports.keys());
@@ -67,11 +68,25 @@ export class InMemoryNetwork {
       }
       const dispatch = (): void => r._notifyMessage(from, payload);
       if (this.config.latencyMs > 0) {
-        setTimeout(dispatch, this.config.latencyMs);
+        const id = setTimeout(() => {
+          this.pendingTimers.delete(id);
+          dispatch();
+        }, this.config.latencyMs);
+        this.pendingTimers.add(id);
       } else {
         dispatch();
       }
     }
+  }
+
+  /**
+   * Clear all in-flight delayed deliveries.  Call from test teardown so
+   * pending timers don't leak into the next test (vitest will eventually
+   * complain about lingering handles).
+   */
+  cleanup(): void {
+    for (const id of this.pendingTimers) clearTimeout(id);
+    this.pendingTimers.clear();
   }
 
   setPartition(peerId: PeerId, isolated: boolean): void {

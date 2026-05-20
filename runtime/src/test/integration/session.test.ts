@@ -166,6 +166,45 @@ describe('Session — chaos', () => {
   });
 });
 
+describe('Session — chaos with latency', () => {
+  it('converges under interleaved partitions and delayed delivery', async () => {
+    const sim = new Simulator();
+    sim.setLatency(5);
+    const dm = sim.addPeer('dm');
+    const p1 = sim.addPeer('p1');
+    const p2 = sim.addPeer('p2');
+    const p3 = sim.addPeer('p3');
+
+    dm.append('coordinator-claim', {});
+
+    sim.partition('p1', true);
+    p2.append('chat', { text: 'p2-1' });
+    p3.append('chat', { text: 'p3-1' });
+
+    sim.partition('p2', true);
+    p3.append('chat', { text: 'p3-2' });
+    dm.append('chat', { text: 'dm-1' });
+
+    sim.partition('p1', false);
+    p1.append('chat', { text: 'p1-1' });
+
+    sim.partition('p2', false);
+    p2.append('chat', { text: 'p2-2' });
+
+    // Wait for in-flight deliveries to settle.  ~10 latency cycles is more
+    // than enough for sync-request → sync-response round-trips to finish.
+    await new Promise((r) => setTimeout(r, 80));
+
+    sim.verifyConvergence();
+    const chatLen = dm.state().chat.length;
+    expect(chatLen).toBe(6);
+    for (const p of [p1, p2, p3]) {
+      expect(p.state().chat.length).toBe(chatLen);
+    }
+    sim.close();
+  });
+});
+
 describe('Session — peer leave', () => {
   it('a peer leaving via close still appears in state with leftAt set after explicit peer-leave', () => {
     const sim = new Simulator();
