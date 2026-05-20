@@ -54,5 +54,8 @@ Tracking what has landed and what is still missing:
 - [x] Underleaf scaffold with DM-only spoiler-safe structure ([gutschke/underleaf](https://github.com/gutschke/underleaf))
 - [x] Full JSON Schema validation in `quire lint` via Ajv
 - [x] Encryption pipeline (`quire encrypt-dm` / `decrypt-dm`) with Argon2id KDF + XSalsa20-Poly1305
-- [ ] Play-app runtime scaffold (phase 1, in progress)
-- [ ] First playable round-trip (phase 1)
+- [x] Play-app runtime scaffold under [`runtime/`](runtime/) (Vite + TypeScript + Lit; builds to ~7 KB gzip)
+- [ ] Cloudflare Pages deployment at `play.quire.games`
+- [ ] Campaign loader: parse `?campaign=` URL, fetch and validate manifest
+- [ ] Reference-shelf UI: episode outline + cmd-K search + inline edit
+- [ ] First playable round-trip
