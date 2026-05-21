@@ -11,6 +11,7 @@ import './ui/shell/quire-rail';
 import './ui/shell/quire-stage';
 import './ui/shell/quire-aside';
 import './ui/shell/quire-dock';
+import './ui/regions/player-rail';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -34,8 +35,6 @@ import {
 } from './character-loader';
 import {
   applyCharacterEdits,
-  HARM_MAX,
-  STRESS_MAX,
   STAT_MIN,
   STAT_MAX
 } from './character-edits';
@@ -164,10 +163,6 @@ function formatTimeAgo(iso: string): string {
 
 function isAbortError(e: unknown): boolean {
   return (e as Error)?.name === 'AbortError';
-}
-
-function formatStat(value: number): string {
-  return value >= 0 ? `+${value}` : `${value}`;
 }
 
 /**
@@ -2455,227 +2450,48 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * Render a character page.  Delegates the sheet itself to
+   * <player-rail> (M2.3, P1-1); the roll panel still renders here
+   * until M2.6 (dice-dock) moves it to the Dock slot of the shell.
+   *
+   * Edit handlers (bumpStat, toggleTrackBox, navigate) stay on
+   * QuireApp per the facade-migration pattern — passed as callback
+   * properties to the region component so the existing test surface
+   * (quire-app.pc-edit.test.ts) is unchanged.
+   */
   private renderCharacter(
     campaign: LoadedCampaign,
     character: LoadedCharacter
   ): TemplateResult {
     const slug = this.slugFor(campaign);
     const r = this.effectiveCharacter(character);
-    const kindLabel = character.kind === 'pc' ? 'PC' : 'NPC';
     const editable =
       character.kind === 'pc' && this.sessionView?.status === 'active';
     return html`
-      <header>
-        <nav class="breadcrumb">
-          <a
-            href=${routeToSearch({ kind: 'campaign', slug })}
-            @click=${(e: Event) =>
-              this.navigate(e, { kind: 'campaign', slug })}
-            >${campaign.base.manifest.name}</a
-          >
-          → ${kindLabel}
-        </nav>
-        <h1>${r.name}</h1>
-        ${r.pronouns
-          ? html`<p class="summary">${r.pronouns}</p>`
-          : nothing}
-      </header>
-      <section class="card">
-        <h2>Details</h2>
-        <dl>
-          ${r.role ? html`<dt>Role</dt><dd>${r.role}</dd>` : nothing}
-          ${r.disposition
-            ? html`<dt>Disposition</dt><dd>${r.disposition}</dd>`
-            : nothing}
-          ${r.alignment
-            ? html`<dt>Alignment</dt><dd>${r.alignment}</dd>`
-            : nothing}
-          ${typeof r.harm === 'number' || editable
-            ? html`
-                <dt>Harm</dt>
-                <dd>${this.renderTrackBoxes(
-                  'harm',
-                  r.harm ?? 0,
-                  HARM_MAX,
-                  character.id,
-                  editable
-                )}</dd>
-              `
-            : nothing}
-          ${typeof r.stress === 'number' || editable
-            ? html`
-                <dt>Stress</dt>
-                <dd>${this.renderTrackBoxes(
-                  'stress',
-                  r.stress ?? 0,
-                  STRESS_MAX,
-                  character.id,
-                  editable
-                )}</dd>
-              `
-            : nothing}
-        </dl>
-        ${r.stats || editable
-          ? this.renderStatBlock(
-              r.stats ?? {},
-              editable ? character.id : null
-            )
-          : nothing}
-        ${r.skills?.length
-          ? html`
-              <h3>Skills</h3>
-              <ul>
-                ${r.skills.map((s) => html`<li>${s}</li>`)}
-              </ul>
-            `
-          : nothing}
-        ${r.tags?.length
-          ? html`
-              <h3>Tags</h3>
-              <ul>
-                ${r.tags.map((t) => html`<li>${t}</li>`)}
-              </ul>
-            `
-          : nothing}
-        ${r.foci?.length
-          ? html`
-              <h3>Foci</h3>
-              <ul>
-                ${r.foci.map(
-                  (f) => html`
-                    <li>
-                      <strong>${f.name}</strong>${f.domain
-                        ? html` — ${f.domain}`
-                        : nothing}${f.condition
-                        ? html` (${f.condition})`
-                        : nothing}
-                    </li>
-                  `
-                )}
-              </ul>
-            `
-          : nothing}
-        ${r.signature?.length
-          ? html`
-              <h3>Signature</h3>
-              <ul>
-                ${r.signature.map((s) => html`<li>${s}</li>`)}
-              </ul>
-            `
-          : nothing}
-        ${r.voice ? html`<h3>Voice</h3><p>${r.voice}</p>` : nothing}
-      </section>
-      ${r.description
-        ? html`
-            <section class="card">
-              <h2>Description</h2>
-              <div class="markdown">
-                ${unsafeHTML(renderMarkdown(r.description))}
-              </div>
-            </section>
-          `
-        : nothing}
-      ${r.backstory
-        ? html`
-            <section class="card">
-              <h2>Backstory</h2>
-              <div class="markdown">
-                ${unsafeHTML(renderMarkdown(r.backstory))}
-              </div>
-            </section>
-          `
-        : nothing}
+      <player-rail
+        .character=${character}
+        .effective=${r}
+        .campaignName=${campaign.base.manifest.name}
+        .campaignSlug=${slug}
+        .editable=${editable}
+        .onBumpStat=${(
+          pcId: string,
+          key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+          current: number,
+          delta: number
+        ) => this.bumpStat(pcId, key, current, delta)}
+        .onToggleTrackBox=${(
+          pcId: string,
+          field: 'harm' | 'stress',
+          box: number,
+          current: number
+        ) => this.toggleTrackBox(pcId, field, box, current)}
+        .onNavigate=${(e: Event, route: AppRoute) =>
+          this.navigate(e, route)}
+      ></player-rail>
       ${this.renderRollPanel()}
     `;
-  }
-
-  private renderStatBlock(
-    stats: {
-      str?: number;
-      dex?: number;
-      con?: number;
-      int?: number;
-      wis?: number;
-      cha?: number;
-    },
-    editablePcId: string | null
-  ): TemplateResult {
-    const rows: Array<[string, keyof typeof stats, number | undefined]> = [
-      ['STR', 'str', stats.str],
-      ['DEX', 'dex', stats.dex],
-      ['CON', 'con', stats.con],
-      ['INT', 'int', stats.int],
-      ['WIS', 'wis', stats.wis],
-      ['CHA', 'cha', stats.cha]
-    ];
-    return html`
-      <h3>Stats</h3>
-      <dl class="stat-grid">
-        ${rows.map(
-          ([label, key, val]) => html`
-            <dt>${label}</dt>
-            <dd>
-              ${typeof val === 'number' ? formatStat(val) : '—'}
-              ${editablePcId
-                ? html`
-                    <span class="stat-bumpers">
-                      <button
-                        type="button"
-                        aria-label="Decrease ${label}"
-                        ?disabled=${typeof val === 'number' && val <= STAT_MIN}
-                        @click=${() =>
-                          this.bumpStat(editablePcId, key, val ?? 0, -1)}
-                      >
-                        −
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Increase ${label}"
-                        ?disabled=${typeof val === 'number' && val >= STAT_MAX}
-                        @click=${() =>
-                          this.bumpStat(editablePcId, key, val ?? 0, +1)}
-                      >
-                        +
-                      </button>
-                    </span>
-                  `
-                : nothing}
-            </dd>
-          `
-        )}
-      </dl>
-    `;
-  }
-
-  private renderTrackBoxes(
-    field: 'harm' | 'stress',
-    current: number,
-    max: number,
-    pcId: string,
-    editable: boolean
-  ): TemplateResult {
-    const boxes: TemplateResult[] = [];
-    for (let i = 1; i <= max; i++) {
-      const filled = i <= current;
-      boxes.push(
-        editable
-          ? html`<button
-              type="button"
-              class="track-box ${filled ? 'track-box-filled' : ''}"
-              aria-label="${field} box ${i}, ${filled ? 'filled' : 'empty'}"
-              @click=${() => this.toggleTrackBox(pcId, field, i, current)}
-            >
-              ${filled ? '■' : '□'}
-            </button>`
-          : html`<span
-              class="track-box ${filled ? 'track-box-filled' : ''}"
-              aria-label="${field} box ${i}, ${filled ? 'filled' : 'empty'}"
-            >
-              ${filled ? '■' : '□'}
-            </span>`
-      );
-    }
-    return html`<span class="track-boxes">${boxes} <span class="track-count">${current}/${max}</span></span>`;
   }
 
   private bumpStat(
