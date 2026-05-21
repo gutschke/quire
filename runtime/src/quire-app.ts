@@ -23,10 +23,33 @@ import {
   STAT_MAX
 } from './character-edits';
 import { callAnthropic, AnthropicError } from './ai/anthropic';
+import { callGemini, GeminiError } from './ai/gemini';
 
-const AI_KEY_STORAGE = 'quire.ai.apiKey';
+export type AiProvider = 'claude' | 'gemini';
+
+const AI_LEGACY_KEY_STORAGE = 'quire.ai.apiKey'; // pre-provider-split
+const AI_PROVIDER_STORAGE = 'quire.ai.provider';
+const AI_KEY_STORAGE = (p: AiProvider): string => `quire.ai.${p}.apiKey`;
+const AI_MODEL_STORAGE = (p: AiProvider): string => `quire.ai.${p}.model`;
 const AI_SYSTEM_STORAGE = 'quire.ai.systemPrompt';
-const AI_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+
+const AI_DEFAULTS: Record<AiProvider, { model: string; label: string; models: string[] }> = {
+  claude: {
+    label: 'Anthropic (Claude)',
+    model: 'claude-haiku-4-5-20251001',
+    models: [
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-6',
+      'claude-opus-4-7'
+    ]
+  },
+  gemini: {
+    label: 'Google (Gemini)',
+    model: 'gemini-2.5-flash',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro']
+  }
+};
+
 const AI_DEFAULT_SYSTEM = `You are a quiet TTRPG-aide voice for a DM running a session of Quire.
 Respond in 1–3 short paragraphs, in-fiction when describing scenes or NPC
 beats. Avoid meta-commentary, headers, lists, and "as the DM" framing.
@@ -613,6 +636,43 @@ export class QuireApp extends LitElement {
       margin: 0;
     }
 
+    .ai-panel-head .ai-provider-tag {
+      font-size: 0.8em;
+      color: light-dark(#666, #888);
+      margin-left: 0.5rem;
+    }
+
+    .ai-provider-choice {
+      display: flex;
+      gap: 0.75rem;
+      border: 1px solid light-dark(#ddd, #333);
+      border-radius: 4px;
+      padding: 0.3rem 0.6rem;
+      margin: 0;
+    }
+
+    .ai-provider-choice legend {
+      font-size: 0.85em;
+      padding: 0 0.3rem;
+      color: light-dark(#666, #888);
+    }
+
+    .ai-provider-radio {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.9em;
+    }
+
+    .ai-settings select {
+      padding: 0.3rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+      font-family: ui-monospace, monospace;
+    }
+
     .ai-settings-toggle {
       padding: 0.2rem 0.6rem;
       border: 1px solid light-dark(#ccc, #444);
@@ -713,7 +773,12 @@ export class QuireApp extends LitElement {
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
-  @state() aiApiKey: string = '';
+  @state() aiProvider: AiProvider = 'claude';
+  @state() aiApiKeys: Record<AiProvider, string> = { claude: '', gemini: '' };
+  @state() aiModels: Record<AiProvider, string> = {
+    claude: AI_DEFAULTS.claude.model,
+    gemini: AI_DEFAULTS.gemini.model
+  };
   @state() aiSystemPrompt: string = AI_DEFAULT_SYSTEM;
   @state() aiPromptDraft: string = '';
   @state() aiResponse: string | null = null;
@@ -721,9 +786,11 @@ export class QuireApp extends LitElement {
   @state() aiError: string | null = null;
   @state() aiShowSettings: boolean = false;
 
-  // Tests can replace this; production uses Anthropic via fetch.
-  aiClient: AiClient = callAnthropic;
-  aiModel: string = AI_DEFAULT_MODEL;
+  // Tests can replace these; production uses real fetch-based clients.
+  aiClients: Record<AiProvider, AiClient> = {
+    claude: callAnthropic,
+    gemini: callGemini
+  };
   private aiAbort: AbortController | null = null;
 
   // Tests can replace this before connectedCallback runs to swap in
@@ -747,10 +814,28 @@ export class QuireApp extends LitElement {
     // Hydrate AI settings from localStorage if available.  Wrapped in
     // a try because localStorage can throw in some sandboxed contexts.
     try {
-      const k = window.localStorage?.getItem(AI_KEY_STORAGE);
-      if (k) this.aiApiKey = k;
-      const s = window.localStorage?.getItem(AI_SYSTEM_STORAGE);
-      if (s) this.aiSystemPrompt = s;
+      const ls = window.localStorage;
+      if (ls) {
+        const provider = ls.getItem(AI_PROVIDER_STORAGE);
+        if (provider === 'claude' || provider === 'gemini') {
+          this.aiProvider = provider;
+        }
+        const claudeKey = ls.getItem(AI_KEY_STORAGE('claude'));
+        const legacyKey = ls.getItem(AI_LEGACY_KEY_STORAGE);
+        const geminiKey = ls.getItem(AI_KEY_STORAGE('gemini'));
+        this.aiApiKeys = {
+          claude: claudeKey ?? legacyKey ?? '',
+          gemini: geminiKey ?? ''
+        };
+        const claudeModel = ls.getItem(AI_MODEL_STORAGE('claude'));
+        const geminiModel = ls.getItem(AI_MODEL_STORAGE('gemini'));
+        this.aiModels = {
+          claude: claudeModel ?? AI_DEFAULTS.claude.model,
+          gemini: geminiModel ?? AI_DEFAULTS.gemini.model
+        };
+        const s = ls.getItem(AI_SYSTEM_STORAGE);
+        if (s) this.aiSystemPrompt = s;
+      }
     } catch {
       /* ignore */
     }
@@ -789,6 +874,7 @@ export class QuireApp extends LitElement {
         };
         const base = await loadCampaign(route.slug, { signal });
         if (signal.aborted || !this.isConnected) return;
+        this.applyCampaignAiDefault(base.manifest.defaultAiProvider);
         const worldOverview = await fetchCampaignFile(
           base.source,
           'world/overview.md',
@@ -931,7 +1017,10 @@ export class QuireApp extends LitElement {
     return html`
       <section class="card ai-panel">
         <div class="ai-panel-head">
-          <h2>DM aide</h2>
+          <h2>
+            DM aide
+            <span class="ai-provider-tag">${AI_DEFAULTS[this.aiProvider].label}</span>
+          </h2>
           <button
             type="button"
             class="ai-settings-toggle"
@@ -973,18 +1062,58 @@ export class QuireApp extends LitElement {
   }
 
   private renderAiSettings(): TemplateResult {
+    const provider = this.aiProvider;
+    const defs = AI_DEFAULTS[provider];
+    const keyPlaceholder =
+      provider === 'claude' ? 'sk-ant-…' : 'AIza…';
+    const endpointLabel =
+      provider === 'claude'
+        ? 'api.anthropic.com'
+        : 'generativelanguage.googleapis.com';
     return html`
       <div class="ai-settings">
+        <fieldset class="ai-provider-choice">
+          <legend>Provider</legend>
+          ${(['claude', 'gemini'] as AiProvider[]).map(
+            (p) => html`
+              <label class="ai-provider-radio">
+                <input
+                  type="radio"
+                  name="ai-provider"
+                  .checked=${this.aiProvider === p}
+                  @change=${() => this.setAiProvider(p)}
+                />
+                ${AI_DEFAULTS[p].label}
+              </label>
+            `
+          )}
+        </fieldset>
         <label>
-          <span>Anthropic API key</span>
+          <span>${defs.label} API key</span>
           <input
             type="password"
-            .value=${this.aiApiKey}
-            placeholder="sk-ant-…"
+            .value=${this.aiApiKeys[provider]}
+            placeholder=${keyPlaceholder}
             autocomplete="off"
             @input=${(e: Event) =>
               this.setAiApiKey((e.target as HTMLInputElement).value)}
           />
+        </label>
+        <label>
+          <span>Model</span>
+          <select
+            .value=${this.aiModels[provider]}
+            @change=${(e: Event) =>
+              this.setAiModel((e.target as HTMLSelectElement).value)}
+          >
+            ${defs.models.map(
+              (m) => html`
+                <option .value=${m} ?selected=${m === this.aiModels[provider]}>
+                  ${m}
+                </option>
+              `
+            )}
+          </select>
         </label>
         <label>
           <span>System prompt</span>
@@ -997,7 +1126,7 @@ export class QuireApp extends LitElement {
         </label>
         <p class="muted">
           Stored only in this browser's localStorage. Sent directly to
-          api.anthropic.com using your key.
+          ${endpointLabel} using your key.
         </p>
       </div>
     `;
@@ -1673,14 +1802,34 @@ export class QuireApp extends LitElement {
     return false;
   }
 
-  setAiApiKey(key: string): void {
-    this.aiApiKey = key;
+  setAiProvider(provider: AiProvider): void {
+    this.aiProvider = provider;
+    try {
+      window.localStorage?.setItem(AI_PROVIDER_STORAGE, provider);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  setAiApiKey(key: string, provider: AiProvider = this.aiProvider): void {
+    this.aiApiKeys = { ...this.aiApiKeys, [provider]: key };
     try {
       if (key) {
-        window.localStorage?.setItem(AI_KEY_STORAGE, key);
+        window.localStorage?.setItem(AI_KEY_STORAGE(provider), key);
       } else {
-        window.localStorage?.removeItem(AI_KEY_STORAGE);
+        window.localStorage?.removeItem(AI_KEY_STORAGE(provider));
       }
+      // Clear the pre-split key once a new provider-scoped key exists.
+      window.localStorage?.removeItem(AI_LEGACY_KEY_STORAGE);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  setAiModel(model: string, provider: AiProvider = this.aiProvider): void {
+    this.aiModels = { ...this.aiModels, [provider]: model };
+    try {
+      window.localStorage?.setItem(AI_MODEL_STORAGE(provider), model);
     } catch {
       /* ignore */
     }
@@ -1697,6 +1846,34 @@ export class QuireApp extends LitElement {
     } catch {
       /* ignore */
     }
+  }
+
+  get aiApiKey(): string {
+    return this.aiApiKeys[this.aiProvider];
+  }
+
+  get aiModel(): string {
+    return this.aiModels[this.aiProvider];
+  }
+
+  /**
+   * Apply the campaign's defaultAiProvider hint only if the user has
+   * not explicitly chosen a provider in localStorage.  The manifest
+   * default is a "first-run suggestion", not a hard override — once
+   * the user has touched the radio (or had a prior provider stored),
+   * we respect their choice.
+   */
+  private applyCampaignAiDefault(
+    manifestProvider: 'claude' | 'gemini' | 'none' | undefined
+  ): void {
+    if (!manifestProvider || manifestProvider === 'none') return;
+    try {
+      const explicit = window.localStorage?.getItem(AI_PROVIDER_STORAGE);
+      if (explicit === 'claude' || explicit === 'gemini') return;
+    } catch {
+      /* fall through and apply the default */
+    }
+    if (this.aiProvider !== manifestProvider) this.aiProvider = manifestProvider;
   }
 
   async submitAiPrompt(prompt: string): Promise<string | null> {
@@ -1716,8 +1893,9 @@ export class QuireApp extends LitElement {
     this.aiLoading = true;
     this.aiError = null;
     this.aiResponse = null;
+    const client = this.aiClients[this.aiProvider];
     try {
-      const text = await this.aiClient({
+      const text = await client({
         apiKey: this.aiApiKey,
         model: this.aiModel,
         system: this.aiSystemPrompt || undefined,
@@ -1730,7 +1908,7 @@ export class QuireApp extends LitElement {
       return text;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
-      if (e instanceof AnthropicError) {
+      if (e instanceof AnthropicError || e instanceof GeminiError) {
         this.aiError =
           e.status != null
             ? `API ${e.status}: ${e.message}`

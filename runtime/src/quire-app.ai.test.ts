@@ -91,7 +91,7 @@ describe('QuireApp AI panel — submit flow', () => {
   it('happy path: stores response, clears draft and loading', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClient = vi.fn().mockResolvedValue('a quiet description.');
+    app.aiClients = { ...app.aiClients, claude: vi.fn().mockResolvedValue('a quiet description.') };
     app.aiPromptDraft = 'describe the cabin';
     const result = await app.submitAiPrompt(app.aiPromptDraft);
     expect(result).toBe('a quiet description.');
@@ -104,7 +104,7 @@ describe('QuireApp AI panel — submit flow', () => {
   it('error path: stores error message and clears loading', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClient = vi.fn().mockRejectedValue(new Error('boom'));
+    app.aiClients = { ...app.aiClients, claude: vi.fn().mockRejectedValue(new Error('boom')) };
     const result = await app.submitAiPrompt('hi');
     expect(result).toBeNull();
     expect(app.aiResponse).toBeNull();
@@ -119,7 +119,7 @@ describe('QuireApp AI panel — submit flow', () => {
     const pending = new Promise<string>((res) => {
       release = () => res('late response');
     });
-    app.aiClient = vi.fn().mockReturnValue(pending);
+    app.aiClients = { ...app.aiClients, claude: vi.fn().mockReturnValue(pending) };
     const p = app.submitAiPrompt('hi');
     expect(app.aiLoading).toBe(true);
     app.cancelAiPrompt();
@@ -137,16 +137,24 @@ describe('QuireApp AI panel — settings persistence', () => {
     window.localStorage.clear();
   });
 
-  it('persists the API key to localStorage', () => {
+  it('persists the API key under the current provider', () => {
     const app = mountApp();
     app.setAiApiKey('sk-persisted');
-    expect(window.localStorage.getItem('quire.ai.apiKey')).toBe('sk-persisted');
+    expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBe(
+      'sk-persisted'
+    );
   });
 
-  it('hydrates the API key from localStorage on mount', () => {
-    window.localStorage.setItem('quire.ai.apiKey', 'sk-hydrated');
+  it('hydrates the API key from per-provider storage on mount', () => {
+    window.localStorage.setItem('quire.ai.claude.apiKey', 'sk-hydrated');
     const app = mountApp();
     expect(app.aiApiKey).toBe('sk-hydrated');
+  });
+
+  it('hydrates from the pre-split legacy key when no per-provider key exists', () => {
+    window.localStorage.setItem('quire.ai.apiKey', 'sk-legacy');
+    const app = mountApp();
+    expect(app.aiApiKey).toBe('sk-legacy');
   });
 
   it('persists a custom system prompt', () => {
@@ -155,6 +163,68 @@ describe('QuireApp AI panel — settings persistence', () => {
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBe(
       'Pirate voice, please.'
     );
+  });
+});
+
+describe('QuireApp AI panel — provider switching', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it('default provider is claude when nothing is stored', () => {
+    const app = mountApp();
+    expect(app.aiProvider).toBe('claude');
+  });
+
+  it('setAiProvider persists and changes the active key/model', () => {
+    const app = mountApp();
+    app.setAiApiKey('sk-claude', 'claude');
+    app.setAiApiKey('AIza-gemini', 'gemini');
+    app.setAiProvider('gemini');
+    expect(app.aiProvider).toBe('gemini');
+    expect(app.aiApiKey).toBe('AIza-gemini');
+    expect(app.aiModel).toMatch(/^gemini-/);
+    expect(window.localStorage.getItem('quire.ai.provider')).toBe('gemini');
+  });
+
+  it('per-provider API keys are kept separately', () => {
+    const app = mountApp();
+    app.setAiApiKey('sk-claude', 'claude');
+    app.setAiApiKey('AIza-gemini', 'gemini');
+    expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBe('sk-claude');
+    expect(window.localStorage.getItem('quire.ai.gemini.apiKey')).toBe(
+      'AIza-gemini'
+    );
+  });
+
+  it('submitAiPrompt picks the client matching aiProvider', async () => {
+    const app = mountApp();
+    const claude = vi.fn().mockResolvedValue('claude says hi');
+    const gemini = vi.fn().mockResolvedValue('gemini says hi');
+    app.aiClients = { claude, gemini };
+    app.setAiApiKey('sk-claude', 'claude');
+    app.setAiApiKey('AIza', 'gemini');
+
+    app.setAiProvider('claude');
+    await app.submitAiPrompt('hello');
+    expect(claude).toHaveBeenCalled();
+    expect(gemini).not.toHaveBeenCalled();
+    expect(app.aiResponse).toBe('claude says hi');
+
+    app.setAiProvider('gemini');
+    await app.submitAiPrompt('hello again');
+    expect(gemini).toHaveBeenCalled();
+    expect(app.aiResponse).toBe('gemini says hi');
+  });
+
+  it('model setting is per-provider', () => {
+    const app = mountApp();
+    app.setAiModel('claude-opus-4-7', 'claude');
+    app.setAiModel('gemini-2.5-pro', 'gemini');
+    app.setAiProvider('claude');
+    expect(app.aiModel).toBe('claude-opus-4-7');
+    app.setAiProvider('gemini');
+    expect(app.aiModel).toBe('gemini-2.5-pro');
   });
 });
 
@@ -171,7 +241,7 @@ describe('QuireApp AI share-to-chat', () => {
   it('shares response into chat with an [AI] marker', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClient = vi.fn().mockResolvedValue('the cabin smells like sleep.');
+    app.aiClients = { ...app.aiClients, claude: vi.fn().mockResolvedValue('the cabin smells like sleep.') };
     app.startHosting();
     await flush();
     await app.submitAiPrompt('describe the cabin');
