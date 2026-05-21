@@ -11,24 +11,24 @@ Full M2 retro retained below.
 ## M3a acceptance criteria — progress
 
 **Structural (replacing the M3a ≤900 LOC cap):**
-- [ ] `<session-bar>` region extracts renderSessionBar (216 LOC)
-- [ ] `route-policy.ts` helper extracts navigateToRoute gating
-- [ ] `<ai-panel>` region extracts AI panel cluster (174 LOC)
-- [ ] max-method-LOC ≤ 80
-- [ ] delegation ratio ≥ 75%
-- [ ] quire-app.ts ≤ 2000 LOC
+- [x] `<session-bar>` region extracts renderSessionBar (M3a.3, commit 8f75a19)
+- [x] `route-policy.ts` helper extracts navigateToRoute gating (M3a.4, commit a07cba4)
+- [x] `<ai-panel>` region extracts AI panel cluster (M3a.5, commit dce9e2b)
+- [ ] max-method-LOC ≤ 80 (re-measure at M3a.10)
+- [ ] delegation ratio ≥ 75% (re-measure at M3a.10)
+- [ ] quire-app.ts ≤ 2000 LOC (currently ~2280 after M3a.7 wiring; gate decision)
 
 **Player-side UX (TTRPG-craft HIGH):**
-- [ ] PC-to-peer binding event (`peer-rename` extended with `pcId` OR new `peer-bind-pc`)
-- [ ] `<player-rail>` always-on (mounts in rail slot regardless of route)
-- [ ] Dice Dock 6 stat chips with current modifier
-- [ ] Player Aside roster harm/stress glyph + connection dot + speaker pulse
-- [ ] `<scene-stage>` renders scene-strip frontmatter (location · mood · duration · presentNpcs)
+- [x] PC-to-peer binding event (M3a.2, commit 1f7ede4 — `peer-rename` extended with `pcId`)
+- [x] `<player-rail>` always-on (M3a.6d, commit f4a93a4)
+- [x] Dice Dock 6 stat chips with current modifier (M3a.6a, commit 511ced1)
+- [x] Player Aside roster harm/stress glyph (M3a.6b, commit a049c6b — connection dot + speaker pulse remain follow-ups)
+- [x] `<scene-stage>` renders scene-strip frontmatter (M3a.6c, commit a049c6b)
 
 **DM cockpit (the actual M3a scope from execution-plan.md):**
 - [ ] `<dm-rail>` (scene navigator + active-PC focus card)
 - [ ] `<dm-aside>` (roster-dominant + pinned NPCs + DM aide + AI console)
-- [ ] Per-paragraph reveal with content-hash addressing + gutter pips
+- [x] Per-paragraph reveal with content-hash addressing + gutter pips (M3a.7, commits d32e360 / 2ac700e / 4423ed4 / 50bf471 — critic-driven fixes for hash length + cap + paced-disclosure framing)
 - [ ] DM scratch column in Dock with `'` hotkey
 - [ ] NPC pinning (`npc-pin` / `npc-unpin` materializers)
 - [ ] Thread-debt ladder in active-PC card
@@ -36,13 +36,13 @@ Full M2 retro retained below.
 - [ ] Broadcast button (`broadcast-view` event)
 
 **Process:**
-- [x] STATUS.md cadence rule decision — **DROPPED honestly** (this commit). Per-commit updates added more friction than value at observed pace; the file remains the contract for milestone-boundary + scope-change updates.
-- [x] Honest revision of execution-plan.md time estimates — **DONE** (this commit). Time estimates are no longer load-bearing project artifacts; gates + structural metrics are the quality signal.
-- [ ] First commit migrates player-visible renderers `shared` → `filteredShared` (M3a.1, next).
+- [x] STATUS.md cadence rule decision — DROPPED honestly at M3a.0; this update is at the M3a.7 milestone-internal boundary, not per-commit.
+- [x] Honest revision of execution-plan.md time estimates — DONE at M3a.0.
+- [x] First commit migrates player-visible renderers `shared` → `filteredShared` (M3a.1, commit at branch base).
 
 ## Next planned commit
 
-M3a.1 — P-M3a-filteredShared-migrate: migrate all player-visible reads from `sessionView.shared` to `sessionView.filteredShared` so the DM-only field skeletons (threadDebt, scratchNotes, aiAudit, pinnedNpcs) stay safely stripped from the player view as M3a.8 materializers populate them.
+M3a.8 — DM cockpit affordances: scratch column, NPC pinning, thread-debt ladder, caution rail on `dm/*` paths, broadcast button.  These are independent materializer-only landings — each gates on its own materializer + tiny UI.  No new event-shape design (the kinds were registered in M1 P0-5; v:1 payloads validated).
 
 ---
 
