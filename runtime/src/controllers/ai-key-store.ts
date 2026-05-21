@@ -104,6 +104,18 @@ function isAiProvider(value: unknown): value is AiProvider {
   return value === 'claude' || value === 'gemini';
 }
 
+/**
+ * Debounce window for storage writes triggered by per-keystroke
+ * input handlers (setApiKey + setSystemPrompt).  In-memory state
+ * updates synchronously (preserves input responsiveness); the
+ * localStorage write coalesces to one flush ~300 ms after the
+ * user stops typing.  Trade-off: a tab killed mid-typing loses up
+ * to 300 ms of unsaved characters, which is acceptable for a
+ * configuration field but unsafe for, say, session events
+ * (those route through the synchronous session-controller path).
+ */
+const STORAGE_FLUSH_DEBOUNCE_MS = 300;
+
 export class AiKeyStore implements ReactiveController {
   provider: AiProvider = 'claude';
   apiKeys: Record<AiProvider, string> = { claude: '', gemini: '' };
@@ -112,6 +124,9 @@ export class AiKeyStore implements ReactiveController {
     gemini: AI_DEFAULTS.gemini.model
   };
   systemPrompt: string = AI_DEFAULT_SYSTEM;
+
+  // Per-key debounce timers for storage flushes; see flushPending().
+  private pendingFlushes = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly host: ReactiveControllerHost) {
     host.addController(this);
@@ -123,7 +138,52 @@ export class AiKeyStore implements ReactiveController {
   }
 
   hostDisconnected(): void {
-    /* nothing to clean up; storage is persistent */
+    // Flush any pending storage writes synchronously on unmount so a
+    // user typing then closing the tab doesn't lose their key.
+    this.flushPending();
+  }
+
+  /**
+   * Force any debounced storage writes to commit immediately.
+   * Public so callers can ensure persistence at known checkpoints
+   * (e.g. before initiating an AI prompt that depends on the key)
+   * and so tests can assert post-write state without sleeping.
+   */
+  flushPending(): void {
+    for (const [, timer] of this.pendingFlushes) clearTimeout(timer);
+    for (const [key, value] of this.pendingValues) {
+      if (value === null) safeRemove(key);
+      else safeSet(key, value);
+    }
+    this.pendingFlushes.clear();
+    this.pendingValues.clear();
+  }
+
+  /**
+   * Per-key map of the most recent pending value to flush.  Kept
+   * separately from pendingFlushes (timers) so a Map.set on the
+   * value side is cheap.
+   */
+  private pendingValues = new Map<string, string | null>();
+
+  /**
+   * Schedule a debounced localStorage write for the given key.
+   * If a flush is already pending for this key, reset the timer
+   * and replace the pending value.
+   */
+  private scheduleFlush(key: string, value: string | null): void {
+    this.pendingValues.set(key, value);
+    const existing = this.pendingFlushes.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.pendingFlushes.delete(key);
+      const pending = this.pendingValues.get(key);
+      this.pendingValues.delete(key);
+      if (pending === undefined) return;
+      if (pending === null) safeRemove(key);
+      else safeSet(key, pending);
+    }, STORAGE_FLUSH_DEBOUNCE_MS);
+    this.pendingFlushes.set(key, timer);
   }
 
   /**
@@ -166,12 +226,14 @@ export class AiKeyStore implements ReactiveController {
 
   setApiKey(key: string, provider: AiProvider = this.provider): void {
     this.apiKeys = { ...this.apiKeys, [provider]: key };
-    if (key) {
-      safeSet(STORAGE_API_KEY(provider), key);
-    } else {
-      safeRemove(STORAGE_API_KEY(provider));
-    }
-    // Clear the pre-split legacy key once a new provider-scoped key exists.
+    // Debounce the localStorage write — per-keystroke flushing
+    // serialized fine but the surrounding Lit re-render cost adds
+    // up.  In-memory state is already updated above, so the input
+    // binding stays responsive.
+    this.scheduleFlush(STORAGE_API_KEY(provider), key || null);
+    // Legacy-key removal is one-shot; do it immediately rather
+    // than scheduling.  (Calling safeRemove on an already-absent
+    // key is free.)
     safeRemove(STORAGE_LEGACY_KEY);
     this.host.requestUpdate();
   }
@@ -184,11 +246,11 @@ export class AiKeyStore implements ReactiveController {
 
   setSystemPrompt(text: string): void {
     this.systemPrompt = text;
-    if (text && text !== AI_DEFAULT_SYSTEM) {
-      safeSet(STORAGE_SYSTEM, text);
-    } else {
-      safeRemove(STORAGE_SYSTEM);
-    }
+    // Debounced storage write — see setApiKey.  Textarea is the
+    // worst case (multi-line typing produces many keystrokes).
+    const persistValue =
+      text && text !== AI_DEFAULT_SYSTEM ? text : null;
+    this.scheduleFlush(STORAGE_SYSTEM, persistValue);
     this.host.requestUpdate();
   }
 

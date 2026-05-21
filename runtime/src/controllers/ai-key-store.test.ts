@@ -142,8 +142,11 @@ describe('AiKeyStore — setters', () => {
     const s = new AiKeyStore(makeHost());
     s.hostConnected();
     s.setApiKey('sk-new');
+    // In-memory state is immediate; persistence is debounced.
     expect(s.apiKeys.claude).toBe('sk-new');
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBe('sk-new');
+    // Legacy-key removal is one-shot, not debounced.
     expect(window.localStorage.getItem('quire.ai.apiKey')).toBeNull();
   });
 
@@ -160,6 +163,7 @@ describe('AiKeyStore — setters', () => {
     const s = new AiKeyStore(makeHost());
     s.hostConnected();
     s.setApiKey('');
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBeNull();
   });
 
@@ -175,12 +179,16 @@ describe('AiKeyStore — setters', () => {
     const s = new AiKeyStore(makeHost());
     s.hostConnected();
     s.setSystemPrompt('custom');
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBe('custom');
     s.setSystemPrompt(AI_DEFAULT_SYSTEM);
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBeNull();
     s.setSystemPrompt('again');
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBe('again');
     s.setSystemPrompt('');
+    s.flushPending();
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBeNull();
   });
 });

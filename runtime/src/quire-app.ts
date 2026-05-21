@@ -1,6 +1,10 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { tokens } from './ui/styles/tokens.css';
 import { quireAppStyles } from './ui/styles/quire-app.css';
+// The new oklch design tokens (src/ui/styles/tokens.css.ts) are
+// NOT consumed by QuireApp at M1 — the legacy quireAppStyles
+// still drive the visual.  M2 region components import the
+// tokens module directly when they need them; importing here
+// would ship ~700 B gz of CSS variables to no consumer.
 import './ui/shell/quire-shell';
 import './ui/shell/quire-topbar';
 import './ui/shell/quire-rail';
@@ -174,7 +178,7 @@ function formatStat(value: number): string {
  */
 @customElement('quire-app')
 export class QuireApp extends LitElement {
-  static styles = [tokens, quireAppStyles];
+  static styles = [quireAppStyles];
 
   /**
    * Current app state — public to satisfy the QuireAppHooks contract
@@ -2068,6 +2072,19 @@ export class QuireApp extends LitElement {
 
   setAiSystemPrompt(text: string): void {
     this.aiKeys.setSystemPrompt(text);
+  }
+
+  /**
+   * Test / shutdown helper: force any debounced AI-key-store
+   * localStorage writes to commit synchronously.  See
+   * AiKeyStore.flushPending — storage writes for setApiKey and
+   * setSystemPrompt are debounced 300 ms to avoid per-keystroke
+   * render+IO churn.  Production calls this via hostDisconnected;
+   * tests call it after a setAiApiKey/setAiSystemPrompt to read
+   * back from localStorage without sleeping.
+   */
+  flushAiKeyStore(): void {
+    this.aiKeys.flushPending();
   }
 
   private applyCampaignAiDefault(

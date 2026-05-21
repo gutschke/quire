@@ -140,6 +140,7 @@ describe('QuireApp AI panel — settings persistence', () => {
   it('persists the API key under the current provider', () => {
     const app = mountApp();
     app.setAiApiKey('sk-persisted');
+    app.flushAiKeyStore();
     expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBe(
       'sk-persisted'
     );
@@ -160,6 +161,7 @@ describe('QuireApp AI panel — settings persistence', () => {
   it('persists a custom system prompt', () => {
     const app = mountApp();
     app.setAiSystemPrompt('Pirate voice, please.');
+    app.flushAiKeyStore();
     expect(window.localStorage.getItem('quire.ai.systemPrompt')).toBe(
       'Pirate voice, please.'
     );
@@ -191,6 +193,7 @@ describe('QuireApp AI panel — provider switching', () => {
     const app = mountApp();
     app.setAiApiKey('sk-claude', 'claude');
     app.setAiApiKey('AIza-gemini', 'gemini');
+    app.flushAiKeyStore();
     expect(window.localStorage.getItem('quire.ai.claude.apiKey')).toBe('sk-claude');
     expect(window.localStorage.getItem('quire.ai.gemini.apiKey')).toBe(
       'AIza-gemini'
