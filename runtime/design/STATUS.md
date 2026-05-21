@@ -1,6 +1,58 @@
 # STATUS
 
-Current milestone: **M2 — Player view region-extracted** — **gate open** (2026-05-21)
+Current milestone: **M3a — DM cockpit (in flight)** — M2 closed 2026-05-21, tagged `milestone-M2`
+
+## Previous milestone — M2 closed `ship-with-followups`
+
+3 reviewers (TTRPG-craft, Web-UX, Adversarial) closed `ship-with-followups`.  No severity-floor block.  Gate produced 13 follow-up P-tasks; 7 are HARD M3a acceptance criteria.  The LOC cap was reframed at gate close after a code-quality expert evaluation: the original ≤900 was a proxy for navigability + vocabulary-separation, replaced for M3a with structural metrics (max-method ≤80, delegation ratio ≥75%, three named extractions, safety-net ≤2000 LOC).  Tag: `milestone-M2`.
+
+Full M2 retro retained below.
+
+## M3a acceptance criteria — progress
+
+**Structural (replacing the M3a ≤900 LOC cap):**
+- [ ] `<session-bar>` region extracts renderSessionBar (216 LOC)
+- [ ] `route-policy.ts` helper extracts navigateToRoute gating
+- [ ] `<ai-panel>` region extracts AI panel cluster (174 LOC)
+- [ ] max-method-LOC ≤ 80
+- [ ] delegation ratio ≥ 75%
+- [ ] quire-app.ts ≤ 2000 LOC
+
+**Player-side UX (TTRPG-craft HIGH):**
+- [ ] PC-to-peer binding event (`peer-rename` extended with `pcId` OR new `peer-bind-pc`)
+- [ ] `<player-rail>` always-on (mounts in rail slot regardless of route)
+- [ ] Dice Dock 6 stat chips with current modifier
+- [ ] Player Aside roster harm/stress glyph + connection dot + speaker pulse
+- [ ] `<scene-stage>` renders scene-strip frontmatter (location · mood · duration · presentNpcs)
+
+**DM cockpit (the actual M3a scope from execution-plan.md):**
+- [ ] `<dm-rail>` (scene navigator + active-PC focus card)
+- [ ] `<dm-aside>` (roster-dominant + pinned NPCs + DM aide + AI console)
+- [ ] Per-paragraph reveal with content-hash addressing + gutter pips
+- [ ] DM scratch column in Dock with `'` hotkey
+- [ ] NPC pinning (`npc-pin` / `npc-unpin` materializers)
+- [ ] Thread-debt ladder in active-PC card
+- [ ] Caution rail on `dm/*` paths
+- [ ] Broadcast button (`broadcast-view` event)
+
+**Process:**
+- [ ] First commit migrates player-visible renderers `shared` → `filteredShared`
+- [ ] STATUS.md cadence rule decision (drop / pre-commit hook / per-commit)
+- [ ] Honest revision of execution-plan.md time estimates
+
+## Next planned commit
+
+Open M3a with P-M3a-filteredShared-migrate (the locked-in first commit), then proceed through the structural extractions ahead of the cockpit work.
+
+---
+
+## M2 closure retrospective (frozen)
+
+### M2 gate result
+
+Gate verdict 2026-05-21: 3/3 reviewers `ship-with-followups`.  No HIGH-severity Engine/Security findings (those reviewers were not at this gate).  Web-UX raised 2 HIGH findings (unstyled CSS, light-DOM load-bearing); both addressed at gate close.  Adversarial raised 3 HIGH findings (LOC ratchet creep, pace, design-spec drift); the first reframed via expert analysis, the latter two acked with persistent plan adjustments.  TTRPG-craft raised 3 HIGH findings (route-driven rail, no PC binding, dice dock); all three queued as M3a HARD acceptance criteria.
+
+### M2 closing state (frozen at tag)
 
 ## M2 commits
 

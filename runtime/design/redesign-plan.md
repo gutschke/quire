@@ -344,12 +344,22 @@ gates.
 
 The M2 gate closed `ship-with-followups` from all three reviewers (TTRPG-craft, Web-UX, Adversarial). No HIGH-severity Engine/Security findings (those reviewers weren't at this gate). HIGH findings from the spawned lenses surfaced two action-required-at-gate-close items (unstyled CSS, STATUS honesty) — addressed inline in the gate-close commit — plus a substantial list of M3a follow-ups.
 
-**M3a acceptance criteria (HARD, ack-required)**:
+**M3a acceptance criteria (HARD, ack-required 2026-05-21)**:
+
+*Structural (replacing the M3a ≤900 LOC cap; see execution-plan.md § M1 acceptance — M3a row)*:
+- **P-M3a-session-bar-region** — `<session-bar>` region extracts `renderSessionBar` (216 LOC currently). Same pattern as the M2 region extractions; lifecycle delegates stay on root. (Code-quality expert + Adversarial HIGH.)
+- **P-M3a-route-policy** — `src/controllers/route-policy.ts` extracts the gating logic from `navigateToRoute`: R3-A pre-session block, non-coord episode/scene gates, NPC DM-only check.  Pure function `decideRoute(route, sessionView) → 'allow' | { kind: 'block', message, details }`. (Code-quality expert HIGH.)
+- **P-M3a-ai-panel-region** — `<ai-panel>` region extracts `renderAiPanel` + `renderAiSettings` + `renderAiPromptForm` (174 LOC together). AI getter/setter cluster on QuireApp can collapse alongside or migrate into the region with AiKeyStore injected directly. (Code-quality expert HIGH.)
+- Structural caps at M3a close: max-method-LOC ≤ 80, delegation ratio ≥ 75%, quire-app.ts ≤ 2000 LOC.
+
+*Player-side UX (from TTRPG-craft review)*:
 - **P-M3a-rail-always-on** — `<player-rail>` mounts in the rail slot whenever there's an active session with a PC binding, regardless of the route. Scene route renders Stage, not Rail. (TTRPG-craft HIGH.)
 - **P-M3a-pc-binding** — Add a PC-to-peer binding (extend `peer-rename` with `pcId`, OR new `peer-bind-pc` event).  Migrate `presence.character` from free-text to PC id reference.  Order BEFORE any UI consumes it. (TTRPG-craft HIGH.)
 - **P-M3a-stat-chips** — Dice Dock renders 6 stat chips with current-modifier display (depends on P-M3a-pc-binding). (TTRPG-craft HIGH.)
 - **P-M3a-scene-strip** — Episode-loader exposes per-scene frontmatter; `<scene-stage>` renders the scene-strip header below the breadcrumb. (TTRPG-craft + Web-UX MEDIUM.)
 - **P-M3a-roster-glyphs** — Player Aside roster shows harm/stress glyph + connection-state dot + current-speaker pulse (depends on P-M3a-pc-binding). (TTRPG-craft MEDIUM.)
+
+*Process*:
 - **P-M3a-filteredShared-migrate** — First M3a commit migrates all player-visible renderers from `sessionView.shared` to `sessionView.filteredShared`. Locked-in M3a gate criterion. (Adversarial MEDIUM.)
 - **P-M3a-status-cadence-decision** — STATUS.md cadence rule is unenforceable in practice at current pace. Decide: drop the rule honestly, add a pre-commit hook, OR commit STATUS as a separate commit between feature commits. (Adversarial MEDIUM.)
 
