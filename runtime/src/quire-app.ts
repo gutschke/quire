@@ -67,7 +67,12 @@ import {
   extractJoinCode as extractJoinCodeHelper,
   parseRevealedPath as parseRevealedPathHelper,
   scenePathFor as scenePathForHelper,
-  buildInviteLink as buildInviteLinkHelper
+  buildInviteLink as buildInviteLinkHelper,
+  doHostSession,
+  doJoinSession,
+  doLeaveSession,
+  doRegenerateCode,
+  doCopyInviteLink
 } from './controllers/session-bootstrap';
 import {
   renderMarkdown,
@@ -1852,30 +1857,28 @@ export class QuireApp extends LitElement {
     return roll;
   }
 
+  // Session lifecycle methods delegate to session-bootstrap helpers
+  // (P0-8b).  The @state input bindings (displayNameDraft,
+  // joinCodeDraft) stay on QuireApp because they're tied to the
+  // render templates; the LOGIC moves to testable helpers.
+
   startHosting(): void {
-    if (!this.session) return;
-    const name = this.displayNameDraft.trim() || undefined;
     // R3-C: embed the campaign reference in the host's peer-join
     // so guests who arrived without ?campaign= in their URL can
     // discover what to load.
-    const campaign = this.getCurrentCampaign()?.base.source;
-    void this.session.host(name, campaign).catch(() => {
-      /* error already surfaced via sessionView */
-    });
+    doHostSession(
+      this.session,
+      this.displayNameDraft,
+      this.getCurrentCampaign()?.base.source
+    );
   }
 
   joinSession(): void {
-    if (!this.session) return;
-    const code = this.joinCodeDraft.trim().toUpperCase();
-    if (!code) return;
-    const name = this.displayNameDraft.trim() || undefined;
-    void this.session.join(code, name).catch(() => {
-      /* surfaced via sessionView */
-    });
+    doJoinSession(this.session, this.joinCodeDraft, this.displayNameDraft);
   }
 
   leaveSession(): void {
-    this.session?.leave();
+    doLeaveSession(this.session);
     this.joinCodeDraft = '';
     this.chatDraft = '';
   }
@@ -1891,22 +1894,27 @@ export class QuireApp extends LitElement {
   }
 
   async regeneratePairingCode(): Promise<void> {
-    if (!this.session) return;
-    const ok = window.confirm(
-      'Issue a new pairing code?  Players currently connected will be ' +
-        'disconnected and need to rejoin with the new code or invite link.'
+    await doRegenerateCode(
+      this.session,
+      this.displayNameDraft,
+      this.getCurrentCampaign()?.base.source,
+      () =>
+        window.confirm(
+          'Issue a new pairing code?  Players currently connected will be ' +
+            'disconnected and need to rejoin with the new code or invite link.'
+        )
     );
-    if (!ok) return;
-    const name = this.displayNameDraft.trim() || undefined;
-    const campaign = this.getCurrentCampaign()?.base.source;
-    await this.session.regenerateCode(name, campaign);
   }
 
   async copyInviteLink(): Promise<void> {
     const link = this.buildInviteLink();
     if (!link) return;
-    try {
-      await navigator.clipboard.writeText(link);
+    const ok = await doCopyInviteLink(
+      link,
+      navigator.clipboard,
+      (msg, def) => window.prompt(msg, def)
+    );
+    if (ok) {
       this.inviteCopied = true;
       // Reset the "Copied!" indicator after a moment so the button
       // becomes actionable again if the DM needs to copy a second
@@ -1914,11 +1922,6 @@ export class QuireApp extends LitElement {
       setTimeout(() => {
         this.inviteCopied = false;
       }, 2000);
-    } catch {
-      // Clipboard API unavailable (e.g. http: in some browsers).
-      // Fall back to selection prompt via prompt() so the DM can
-      // still grab the link.
-      window.prompt('Copy this invite link:', link);
     }
   }
 

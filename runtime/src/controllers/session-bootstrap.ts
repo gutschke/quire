@@ -110,3 +110,119 @@ export function buildInviteLink(
     return null;
   }
 }
+
+// -----------------------------------------------------------------
+// Session lifecycle helpers (P0-8b, M1 gate Adversarial finding).
+//
+// These take bare arguments rather than reading from a host's
+// @state, which makes them testable without instantiating QuireApp
+// and lets M2 region components call them once the input @state
+// fields move into the regions that own the relevant input UI.
+// -----------------------------------------------------------------
+
+/**
+ * Minimal session interface the lifecycle helpers depend on.  Lets
+ * tests inject a fake session without importing SessionController.
+ */
+export interface SessionLike {
+  host(
+    displayName?: string,
+    campaign?: { owner: string; repo: string; ref: string }
+  ): Promise<void>;
+  join(code: string, displayName?: string): Promise<void>;
+  leave(): void;
+  regenerateCode(
+    displayName?: string,
+    campaign?: { owner: string; repo: string; ref: string }
+  ): Promise<{ oldCode: string | null; newCode: string | null }>;
+}
+
+/**
+ * Start hosting a session.  Trim displayName; '' becomes undefined
+ * so the SessionController uses its own default.  Silently no-ops
+ * when session is null (defensive — caller may invoke before mount
+ * completes).  Errors are swallowed at this layer; the SessionView
+ * status reflects them.
+ */
+export function doHostSession(
+  session: SessionLike | null,
+  displayName: string,
+  campaign?: { owner: string; repo: string; ref: string }
+): void {
+  if (!session) return;
+  const name = displayName.trim() || undefined;
+  void session.host(name, campaign).catch(() => {
+    /* surfaced via sessionView */
+  });
+}
+
+/**
+ * Join an existing session by pairing code.  Returns true when the
+ * join was dispatched, false when ignored (no session OR empty
+ * code).  The code is uppercased + trimmed by the caller's own
+ * `extractJoinCode` invocation; this helper doesn't re-normalize.
+ */
+export function doJoinSession(
+  session: SessionLike | null,
+  code: string,
+  displayName: string
+): boolean {
+  if (!session) return false;
+  const trimmedCode = code.trim().toUpperCase();
+  if (!trimmedCode) return false;
+  const name = displayName.trim() || undefined;
+  void session.join(trimmedCode, name).catch(() => {
+    /* surfaced via sessionView */
+  });
+  return true;
+}
+
+/**
+ * Leave the current session.  No-op when session is null.
+ * Returns the SessionLike so the caller can chain UI state resets.
+ */
+export function doLeaveSession(session: SessionLike | null): void {
+  session?.leave();
+}
+
+/**
+ * Regenerate the pairing code.  Calls the `confirm` callback first
+ * (so the host has a chance to back out); resolves with the result
+ * of session.regenerateCode or null when cancelled / no session.
+ * The confirm callback is dependency-injected for testability.
+ */
+export async function doRegenerateCode(
+  session: SessionLike | null,
+  displayName: string,
+  campaign: { owner: string; repo: string; ref: string } | undefined,
+  confirm: () => boolean
+): Promise<{ oldCode: string | null; newCode: string | null } | null> {
+  if (!session) return null;
+  if (!confirm()) return null;
+  const name = displayName.trim() || undefined;
+  return session.regenerateCode(name, campaign);
+}
+
+/**
+ * Copy an invite link to the system clipboard, falling back to
+ * window.prompt() when the Clipboard API is unavailable (some HTTP
+ * contexts, some sandboxes).  Returns true on clipboard success,
+ * false on prompt fallback.  Both `clipboard` and `prompt` are
+ * injected so tests don't need to fake navigator / window.
+ */
+export async function doCopyInviteLink(
+  link: string,
+  clipboard: { writeText(text: string): Promise<void> } | undefined,
+  prompt: (message: string, defaultValue?: string) => string | null
+): Promise<boolean> {
+  if (clipboard) {
+    try {
+      await clipboard.writeText(link);
+      return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  prompt('Copy this invite link:', link);
+  return false;
+}
