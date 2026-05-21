@@ -63,8 +63,16 @@ function fakeEpisode(slug: string): LoadedEpisode {
   };
 }
 
-function fakeScene(path: string): { path: string; html: SanitizedHtml } {
-  return { path, html: '<p>scene body</p>' as SanitizedHtml };
+function fakeScene(path: string): {
+  path: string;
+  html: SanitizedHtml;
+  frontmatter: Record<string, unknown>;
+} {
+  return {
+    path,
+    html: '<p>scene body</p>' as SanitizedHtml,
+    frontmatter: {}
+  };
 }
 
 describe('QuireApp scene-reveal', () => {

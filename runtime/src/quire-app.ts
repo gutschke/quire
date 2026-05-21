@@ -135,7 +135,16 @@ type AppState =
       kind: 'scene';
       campaign: LoadedCampaign;
       episode: LoadedEpisode;
-      scene: { path: string; html: SanitizedHtml };
+      scene: {
+        path: string;
+        html: SanitizedHtml;
+        /**
+         * M3a.6c (P-M3a-scene-strip): parsed YAML frontmatter from
+         * the scene file.  Surfaced in <scene-stage>'s scene-strip
+         * header — location · mood · expectedDuration · presentNpcs.
+         */
+        frontmatter: Record<string, unknown>;
+      };
     }
   | { kind: 'character'; campaign: LoadedCampaign; character: LoadedCharacter }
   | { kind: 'error'; message: string; details?: string };
@@ -540,7 +549,11 @@ export class QuireApp extends LitElement {
         kind: 'scene',
         campaign,
         episode,
-        scene: { path: route.scene, html: sceneDoc.html }
+        scene: {
+          path: route.scene,
+          html: sceneDoc.html,
+          frontmatter: sceneDoc.frontmatter
+        }
       };
     } catch (e) {
       if (isAbortError(e)) return;
@@ -1078,14 +1091,19 @@ export class QuireApp extends LitElement {
 
   /**
    * Render a scene page.  Delegates the scene prose + breadcrumb to
-   * <scene-stage> (M2.4, P1-2); reveal-control still renders inline
-   * in the header via headerExtras; character menus + roll panel
-   * still render here until M2.5+ moves them to their own regions.
+   * <scene-stage> (M2.4, P1-2).  M3a.6c adds the scene-strip
+   * frontmatter pass-through (location · mood · expectedDuration ·
+   * presentNpcs).  reveal-control still renders inline in the
+   * header via headerExtras.
    */
   private renderScene(
     campaign: LoadedCampaign,
     episode: LoadedEpisode,
-    scene: { path: string; html: SanitizedHtml }
+    scene: {
+      path: string;
+      html: SanitizedHtml;
+      frontmatter: Record<string, unknown>;
+    }
   ): TemplateResult {
     const slug = this.slugFor(campaign);
     return html`
@@ -1096,6 +1114,7 @@ export class QuireApp extends LitElement {
         .episodeSlug=${episode.slug}
         .scenePath=${scene.path}
         .sceneHtml=${scene.html}
+        .sceneFrontmatter=${scene.frontmatter}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}

@@ -155,6 +155,7 @@ export class PlayerAside extends LitElement {
     peerId: string;
     name?: string;
     character?: string;
+    pcId?: string;
   }): TemplateResult {
     const v = this.sessionView!;
     const isSelf = peer.peerId === v.peerId;
@@ -162,6 +163,19 @@ export class PlayerAside extends LitElement {
     const canKick = this.localIsCoordinator && !isSelf && !isDm;
     const handRaised = v.filteredShared.raisedHands.has(peer.peerId);
     const name = peer.name ?? '(unnamed)';
+    // M3a.6b: harm/stress glyph via pcEdits lookup.  When the peer
+    // has a pcId binding, surface the current harm + stress counts
+    // as filled-square glyphs next to their name.  Reads pcEdits
+    // (player-visible field) — no character record load required;
+    // the live overlay carries the current values.
+    const pcEdits = peer.pcId
+      ? v.filteredShared.pcEdits[peer.pcId]
+      : undefined;
+    const harm =
+      pcEdits && typeof pcEdits.harm === 'number' ? pcEdits.harm : 0;
+    const stress =
+      pcEdits && typeof pcEdits.stress === 'number' ? pcEdits.stress : 0;
+    const showHarmStress = peer.pcId && (harm > 0 || stress > 0);
     return html`
       <li class="roster-row ${isSelf ? 'roster-row-self' : ''}">
         ${isDm ? html`<span class="roster-dm-tag">DM</span>` : nothing}
@@ -172,6 +186,22 @@ export class PlayerAside extends LitElement {
               title="${name} has their hand raised"
               aria-label="Hand raised"
               >✋</span
+            >`
+          : nothing}
+        ${showHarmStress
+          ? html`<span
+              class="roster-vitals"
+              title="${name}'s harm + stress: ${harm}/${stress}"
+              aria-label="${harm} harm, ${stress} stress"
+              >${harm > 0
+                ? html`<span class="roster-harm"
+                    >♥ ${harm}</span
+                  >`
+                : nothing}${stress > 0
+                ? html`<span class="roster-stress"
+                    >◆ ${stress}</span
+                  >`
+                : nothing}</span
             >`
           : nothing}
         ${peer.character

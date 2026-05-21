@@ -996,6 +996,85 @@ export const quireAppStyles = css`
       font-size: 0.85em;
     }
 
+    /* ---- M3a.6 affordances ---- */
+
+    /* M3a.6b: roster harm/stress vitals + connection dot. */
+    .roster-vitals {
+      display: inline-flex;
+      gap: 0.3em;
+      margin: 0 0.4em;
+      font-size: 0.85em;
+      align-items: baseline;
+    }
+    .roster-harm {
+      color: light-dark(#a01818, #ff6868);
+      font-weight: 600;
+    }
+    .roster-stress {
+      color: light-dark(#5928a0, #b07cd9);
+      font-weight: 600;
+    }
+
+    /* M3a.6c: scene-strip header (location · mood · duration · npcs). */
+    .scene-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4em;
+      margin: 0.4rem 0 0.6rem;
+      padding: 0.35rem 0.6rem;
+      background: light-dark(#f5f5f5, #222);
+      border-left: 3px solid light-dark(#888, #666);
+      border-radius: 4px;
+      font-size: 0.85em;
+      color: light-dark(#444, #aaa);
+      align-items: baseline;
+    }
+    .scene-strip-item {
+      font-variant: small-caps;
+      letter-spacing: 0.02em;
+    }
+    .scene-strip-mood {
+      font-style: italic;
+    }
+    .scene-strip-sep {
+      opacity: 0.5;
+    }
+
+    /* M3a.6a: dice stat chips. */
+    .dice-stat-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35em;
+      margin: 0.35rem 0 0.65rem;
+    }
+    .dice-stat-chip {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.05rem;
+      padding: 0.3rem 0.55rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 6px;
+      background: light-dark(#fafafa, #1f1f1f);
+      color: inherit;
+      cursor: pointer;
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+      min-width: 3.2em;
+    }
+    .dice-stat-chip:hover {
+      background: light-dark(#f0f0f0, #2c2c2c);
+    }
+    .dice-stat-label {
+      font-size: 0.7em;
+      letter-spacing: 0.05em;
+      opacity: 0.7;
+    }
+    .dice-stat-mod {
+      font-size: 1.05em;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
     /* ---- M2.5/M2.8/M2.9 affordances (gate-close minimum styling). ---- */
 
     /* M2.8: ✋ glyph on roster rows for peers with raised hand. */
