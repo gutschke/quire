@@ -168,6 +168,27 @@ export class Peer {
     } satisfies SyncRequestMessage);
   }
 
+  /**
+   * Forward an event we just received via 'share' to every other
+   * connected peer, packaged as a sync-response.  Hub-forwarding
+   * — required in hub topologies (PeerJS) where the originating
+   * guest's broadcast only reached us.  See peer.hub-forward.test.ts
+   * for the F-MAJOR finding that prompted this.
+   */
+  private forwardShareToOthers(originalSender: PeerId, event: QuireEvent): void {
+    const others = this.transport
+      .connectedPeers()
+      .filter((p) => p !== originalSender);
+    if (others.length === 0) return;
+    const msg: SyncResponseMessage = {
+      kind: 'sync-response',
+      events: [event]
+    };
+    for (const other of others) {
+      this.transport.send(other, msg);
+    }
+  }
+
   private handleMessage(from: PeerId, payload: unknown): void {
     if (!isProtocolMessage(payload)) return;
     switch (payload.kind) {
@@ -191,6 +212,19 @@ export class Peer {
         }
         if (this.log.apply(payload.event)) {
           this.notifyStateChange();
+          // Hub-forwarding (F-MAJOR fix discovered in Phase 3
+          // simulation): in a hub topology (PeerJS guests connect
+          // only to the host), the original sender's broadcast
+          // only reaches the host.  Other guests never see the
+          // event unless someone forwards it.  We forward by
+          // emitting a sync-response containing this single
+          // event to every connected peer EXCEPT the sender.
+          // sync-response is exempt from the R2.1 cross-check
+          // because gossip-forwarding inherently re-ships events
+          // authored by others.  Recipients apply via the
+          // sync-response branch below; they don't re-forward,
+          // so the protocol terminates in one hop.
+          this.forwardShareToOthers(from, payload.event);
         }
         break;
       }

@@ -7,3 +7,7 @@ dist/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Simulation persona reports — fresh per run, not version-controlled
+e2e/results/
+results/
