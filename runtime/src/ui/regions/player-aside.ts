@@ -46,6 +46,15 @@ export class PlayerAside extends LitElement {
     name: '',
     character: ''
   };
+  /**
+   * Local runtime's KNOWN_EVENT_KINDS.size — used to compute the
+   * peer-version-mismatch banner (P0-12-followup-banner).  Trigger:
+   * any active peer reports `knownKindsCount < localKindsCount` OR
+   * `knownKindsCount > localKindsCount + 50` (suspiciously many
+   * kinds → possibly hostile).  When triggered, a one-line banner
+   * appears above the roster list flagging the affected peers.
+   */
+  @property({ type: Number }) localKindsCount: number = 0;
   @property({ attribute: false }) onToggleRoster: VoidCallback | null = null;
   @property({ attribute: false }) onBeginRename: VoidCallback | null = null;
   @property({ attribute: false }) onCancelRename: VoidCallback | null = null;
@@ -76,6 +85,7 @@ export class PlayerAside extends LitElement {
             ${this.showRoster ? 'Hide' : 'Show'}
           </button>
         </div>
+        ${this.renderVersionBanner(peers)}
         ${this.showRoster
           ? html`
               <ul class="roster-list">
@@ -85,6 +95,53 @@ export class PlayerAside extends LitElement {
             `
           : nothing}
       </section>
+    `;
+  }
+
+  /**
+   * P0-12-followup-banner: surface a one-line warning when any peer
+   * in the roster reports an event-vocabulary count that's either
+   * lower than ours (they're on an older runtime — may miss new
+   * events) or implausibly higher (possible hostile claim).
+   *
+   * Renders nothing when localKindsCount is 0 (caller didn't pass
+   * the count — defensive default) or when no peer triggers.
+   */
+  private renderVersionBanner(
+    peers: Array<{ peerId: string; name?: string; knownKindsCount?: number }>
+  ): TemplateResult {
+    if (this.localKindsCount <= 0) return html``;
+    const older: string[] = [];
+    const newer: string[] = [];
+    for (const p of peers) {
+      // Skip self (we know our own count) and peers without a count
+      // (legacy pre-P0-12 peer-join events).
+      if (p.peerId === this.sessionView?.peerId) continue;
+      if (typeof p.knownKindsCount !== 'number') continue;
+      if (p.knownKindsCount < this.localKindsCount) {
+        older.push(p.name ?? p.peerId);
+      } else if (p.knownKindsCount > this.localKindsCount + 50) {
+        newer.push(p.name ?? p.peerId);
+      }
+    }
+    if (older.length === 0 && newer.length === 0) return html``;
+    return html`
+      <p class="version-mismatch-banner" role="status">
+        ${older.length > 0
+          ? html`
+              ⚠ Older Quire:
+              <strong>${older.join(', ')}</strong> may not render every
+              event you emit.
+            `
+          : nothing}
+        ${newer.length > 0
+          ? html`
+              ⚠ Unusual version claim:
+              <strong>${newer.join(', ')}</strong> reports more event
+              kinds than this runtime knows about.
+            `
+          : nothing}
+      </p>
     `;
   }
 

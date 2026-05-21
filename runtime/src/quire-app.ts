@@ -185,12 +185,21 @@ export class QuireApp extends LitElement {
   static styles = [quireAppStyles];
 
   /**
-   * Current app state — public to satisfy the QuireAppHooks contract
+   * Current app state.  Private backing @state; public getter
+   * exposes a Readonly<AppState> for the QuireAppHooks contract
    * (e2e tests poll `app.appState.kind` / `app.appState.character`).
-   * Internally still mutated by navigateToRoute and the load
-   * pipeline; do not assign from outside the class.
+   *
+   * P0-11-followup-appState (M1 gate Engine finding): the public
+   * field was writable from outside the class.  The getter is
+   * type-only — TypeScript readers can't assign — and the internal
+   * navigateToRoute / load pipeline mutates `this._appState`
+   * directly.  External callers that try `app.appState = X` now
+   * get a TypeScript error.
    */
-  @state() appState: AppState = { kind: 'idle' };
+  @state() private _appState: AppState = { kind: 'idle' };
+  get appState(): Readonly<AppState> {
+    return this._appState;
+  }
   /**
    * Current AppMode driven by the URL's `?mode=` parameter.  See
    * `src/ui/modes/mode-state.ts`.  M1 just tracks the value; the
@@ -389,7 +398,7 @@ export class QuireApp extends LitElement {
     const { signal } = this.abortController;
 
     if (route.kind === 'home') {
-      this.appState = { kind: 'idle' };
+      this._appState ={ kind: 'idle' };
       return;
     }
 
@@ -397,7 +406,7 @@ export class QuireApp extends LitElement {
       // Reuse already-loaded campaign if the slug matches.
       let campaign = this.getCurrentCampaign();
       if (!campaign || this.currentCampaignSlugMatches(route.slug) === false) {
-        this.appState = {
+        this._appState ={
           kind: 'loading',
           slug: route.slug,
           layer: 'campaign'
@@ -415,7 +424,7 @@ export class QuireApp extends LitElement {
       }
 
       if (route.kind === 'campaign') {
-        this.appState = { kind: 'campaign', campaign };
+        this._appState ={ kind: 'campaign', campaign };
         // Surface the Resume-previous-session prompt when an autosave
         // exists for this campaign.  The prompt is dismissable and
         // only fires when arriving on the campaign view (not on
@@ -442,7 +451,7 @@ export class QuireApp extends LitElement {
             `Requested NPC: ${route.characterId}`
           );
         }
-        this.appState = {
+        this._appState ={
           kind: 'loading',
           slug: route.characterId,
           layer: 'character'
@@ -454,7 +463,7 @@ export class QuireApp extends LitElement {
           { signal }
         );
         if (signal.aborted || !this.isConnected) return;
-        this.appState = { kind: 'character', campaign, character };
+        this._appState ={ kind: 'character', campaign, character };
         return;
       }
 
@@ -499,7 +508,7 @@ export class QuireApp extends LitElement {
       // Episode layer
       let episode = this.getCurrentEpisode();
       if (!episode || episode.slug !== route.episode) {
-        this.appState = {
+        this._appState ={
           kind: 'loading',
           slug: route.episode,
           layer: 'episode'
@@ -511,12 +520,12 @@ export class QuireApp extends LitElement {
       }
 
       if (route.kind === 'episode') {
-        this.appState = { kind: 'episode', campaign, episode };
+        this._appState ={ kind: 'episode', campaign, episode };
         return;
       }
 
       // Scene layer
-      this.appState = {
+      this._appState ={
         kind: 'loading',
         slug: route.scene,
         layer: 'scene'
@@ -545,7 +554,7 @@ export class QuireApp extends LitElement {
       // `> [!DM]` blockquote, or `<!-- dm:start -->...<!-- dm:end -->`
       // HTML comments).  For now they render as-is.
       const sceneDoc = renderMarkdownDocument(sceneText);
-      this.appState = {
+      this._appState ={
         kind: 'scene',
         campaign,
         episode,
@@ -554,13 +563,13 @@ export class QuireApp extends LitElement {
     } catch (e) {
       if (isAbortError(e)) return;
       if (e instanceof CampaignLoadError || e instanceof CharacterLoadError) {
-        this.appState = {
+        this._appState ={
           kind: 'error',
           message: e.message,
           details: e.details
         };
       } else {
-        this.appState = {
+        this._appState ={
           kind: 'error',
           message: 'Unexpected error.',
           details: (e as Error)?.message ?? String(e)
@@ -652,6 +661,7 @@ export class QuireApp extends LitElement {
       <player-aside
         .sessionView=${this.sessionView}
         .localIsCoordinator=${this.isCoordinator()}
+        .localKindsCount=${KNOWN_EVENT_KINDS.size}
         .showRoster=${this.showRoster}
         .renameEditing=${this.renameEditing}
         .renameDraft=${this.renameDraft}

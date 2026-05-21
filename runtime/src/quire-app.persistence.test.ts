@@ -34,8 +34,11 @@ async function flush(): Promise<void> {
 }
 
 // Helper: pretend a campaign is loaded so getCurrentCampaign returns.
+// Uses the private backing field (P0-11-followup-appState made the
+// public `appState` a readonly getter); injection through the
+// backing field is the test-only escape hatch.
 function injectCampaign(app: QuireApp): void {
-  (app as unknown as { appState: unknown }).appState = {
+  (app as unknown as { _appState: unknown })._appState = {
     kind: 'campaign',
     campaign: {
       base: {

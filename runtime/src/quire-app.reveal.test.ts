@@ -81,7 +81,7 @@ describe('QuireApp scene-reveal', () => {
   it('revealCurrentScene is a no-op outside an active session', () => {
     const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
     // Inject a scene state manually (we're not testing route loading here).
-    (app as unknown as { appState: unknown }).appState = {
+    (app as unknown as { _appState: unknown })._appState = {
       kind: 'scene',
       campaign: fakeCampaign(),
       episode: fakeEpisode('001'),
@@ -96,7 +96,7 @@ describe('QuireApp scene-reveal', () => {
     app.startHosting();
     await flush();
     expect(app.isCoordinator()).toBe(true);
-    (app as unknown as { appState: unknown }).appState = {
+    (app as unknown as { _appState: unknown })._appState = {
       kind: 'scene',
       campaign: fakeCampaign(),
       episode: fakeEpisode('001'),
@@ -113,7 +113,7 @@ describe('QuireApp scene-reveal', () => {
     const app = mountApp(inMemoryFactory(network, 'HOST'));
     app.startHosting();
     await flush();
-    (app as unknown as { appState: unknown }).appState = {
+    (app as unknown as { _appState: unknown })._appState = {
       kind: 'scene',
       campaign: fakeCampaign(),
       episode: fakeEpisode('001'),
@@ -160,7 +160,7 @@ describe('QuireApp scene-reveal', () => {
     guest.joinSession();
     await flush();
 
-    (host as unknown as { appState: unknown }).appState = {
+    (host as unknown as { _appState: unknown })._appState = {
       kind: 'scene',
       campaign: fakeCampaign(),
       episode: fakeEpisode('001'),
@@ -179,7 +179,7 @@ describe('QuireApp scene-reveal', () => {
     host.startHosting();
     await flush();
     for (const scene of ['a.md', 'b.md', 'c.md']) {
-      (host as unknown as { appState: unknown }).appState = {
+      (host as unknown as { _appState: unknown })._appState = {
         kind: 'scene',
         campaign: fakeCampaign(),
         episode: fakeEpisode('001'),
