@@ -262,6 +262,73 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
   });
 });
 
+describe('peer-rename — pcId (M3a.2 P-M3a-pc-binding)', () => {
+  it('sets pcId when a valid character id is supplied', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', { pcId: 'jules-aria-halloway' });
+    const state = materialize(log.events());
+    expect(state.peers.alice.pcId).toBe('jules-aria-halloway');
+  });
+
+  it('clears pcId when an empty string is supplied (explicit unbind)', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', { pcId: 'jules' });
+    log.append('peer-rename', { pcId: '' });
+    const state = materialize(log.events());
+    expect(state.peers.alice.pcId).toBeUndefined();
+  });
+
+  it('drops invalid pcId silently without unbinding prior value', () => {
+    // Defense against a legacy peer that omits pcId vs an explicit
+    // clear — drop silently so a malformed payload doesn't wipe
+    // the binding.  Explicit clear requires empty-string.
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', { pcId: 'jules' });
+    log.append('peer-rename', { pcId: '../etc/passwd' });
+    const state = materialize(log.events());
+    expect(state.peers.alice.pcId).toBe('jules');
+  });
+
+  it('does not unbind on a rename that omits pcId entirely', () => {
+    // peer-rename can update just name or just character without
+    // touching pcId.  Verify pcId survives.
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', { pcId: 'jules' });
+    log.append('peer-rename', { name: 'Alicia' });
+    const state = materialize(log.events());
+    expect(state.peers.alice.pcId).toBe('jules');
+    expect(state.peers.alice.name).toBe('Alicia');
+  });
+
+  it('ignores non-string pcId (defensive)', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', { pcId: 42 });
+    log.append('peer-rename', { pcId: null });
+    log.append('peer-rename', { pcId: { id: 'x' } });
+    const state = materialize(log.events());
+    expect(state.peers.alice.pcId).toBeUndefined();
+  });
+
+  it('pcId, name, and character can update in one event', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('peer-rename', {
+      name: 'Alicia',
+      character: 'Jules Aria Halloway',
+      pcId: 'jules'
+    });
+    const state = materialize(log.events());
+    expect(state.peers.alice.name).toBe('Alicia');
+    expect(state.peers.alice.character).toBe('Jules Aria Halloway');
+    expect(state.peers.alice.pcId).toBe('jules');
+  });
+});
+
 describe('peer-join — knownKindsCount (P0-12)', () => {
   it('captures the joining peer’s KNOWN_EVENT_KINDS count', () => {
     const log = new EventLog('alice');

@@ -2361,6 +2361,10 @@ export class QuireApp extends LitElement {
     const r = this.effectiveCharacter(character);
     const editable =
       character.kind === 'pc' && this.sessionView?.status === 'active';
+
+    // M3a.2 P-M3a-pc-binding: derive claim state.
+    const claim = this.deriveClaimState(character);
+
     return html`
       <player-rail
         .character=${character}
@@ -2368,6 +2372,8 @@ export class QuireApp extends LitElement {
         .campaignName=${campaign.base.manifest.name}
         .campaignSlug=${slug}
         .editable=${editable}
+        .claimState=${claim.state}
+        .claimedBy=${claim.claimedBy}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
@@ -2382,9 +2388,68 @@ export class QuireApp extends LitElement {
         ) => this.toggleTrackBox(pcId, field, box, current)}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
+        .onToggleClaim=${() => this.toggleClaimCharacter(character)}
       ></player-rail>
       ${this.renderRollPanel()}
     `;
+  }
+
+  /**
+   * M3a.2 P-M3a-pc-binding: compute the displayed claim state for
+   * the currently-viewed character.  Used by <player-rail> to pick
+   * the right affordance (unclaimed → "Claim"; mine → "Release";
+   * taken → "Take over").
+   */
+  private deriveClaimState(
+    character: LoadedCharacter
+  ): { state: 'unclaimable' | 'unclaimed' | 'mine' | 'taken'; claimedBy: string } {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) {
+      return { state: 'unclaimable', claimedBy: '' };
+    }
+    if (character.kind !== 'pc') {
+      return { state: 'unclaimable', claimedBy: '' };
+    }
+    // Check who (if anyone) has this PC bound.  Filtered view is
+    // safe — peers map is player-visible.
+    let claimant: { peerId: string; name?: string } | null = null;
+    for (const p of Object.values(v.filteredShared.peers)) {
+      if (p.leftAt !== undefined) continue;
+      if (p.pcId === character.id) {
+        claimant = p;
+        break;
+      }
+    }
+    if (!claimant) return { state: 'unclaimed', claimedBy: '' };
+    if (claimant.peerId === v.peerId) {
+      return { state: 'mine', claimedBy: '' };
+    }
+    return {
+      state: 'taken',
+      claimedBy: claimant.name ?? '(unnamed)'
+    };
+  }
+
+  /**
+   * M3a.2: click handler for the claim affordance.  Emits a
+   * peer-rename event with the relevant pcId (clear-string when
+   * releasing, target pc id otherwise).  No window.confirm() for
+   * "take over" — the conflict-resolution UX (warnings, peer
+   * notifications) is M3a.6 polish.
+   */
+  toggleClaimCharacter(character: LoadedCharacter): void {
+    if (!this.session) return;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return;
+    const me = v.filteredShared.peers[v.peerId];
+    const myCurrentPcId = me?.pcId;
+    if (myCurrentPcId === character.id) {
+      // Release.
+      this.session.rename({ pcId: '' });
+    } else {
+      // Claim or take-over.
+      this.session.rename({ pcId: character.id });
+    }
   }
 
   private bumpStat(

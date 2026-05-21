@@ -81,6 +81,32 @@ export class PlayerRail extends LitElement {
   @property({ attribute: false }) onBumpStat: BumpStatCallback | null = null;
   @property({ attribute: false }) onToggleTrackBox: ToggleTrackBoxCallback | null = null;
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
+  /**
+   * M3a.2 (P-M3a-pc-binding): claim affordances.  When a PC is
+   * displayed in an active session, the local player can claim it
+   * as their bound character.  `claimState` describes the current
+   * binding:
+   *   'unclaimable' — no session, or this is an NPC, or local
+   *                   peer can't claim (DM-only scenario).  No
+   *                   button rendered.
+   *   'unclaimed'   — no peer is bound to this PC; local peer can
+   *                   claim it (primary action).
+   *   'mine'        — this PC is the local peer's bound character.
+   *                   Shows "Release" affordance (clears pcId).
+   *   'taken'       — another peer has claimed this PC.  Shows a
+   *                   readout ("Played by <name>") and a "Switch
+   *                   to playing X" button — confirmation TBD in
+   *                   M3a.6 polish (M3a.2 ships the data binding,
+   *                   not the conflict-resolution UX).
+   */
+  @property() claimState: 'unclaimable' | 'unclaimed' | 'mine' | 'taken' =
+    'unclaimable';
+  /** Display name of the peer who claimed this PC (when claimState='taken'). */
+  @property() claimedBy: string = '';
+  /** Fires when the local peer wants to claim / release this PC. */
+  @property({ attribute: false }) onToggleClaim:
+    | (() => void)
+    | null = null;
 
   override render(): TemplateResult {
     const character = this.character;
@@ -103,6 +129,7 @@ export class PlayerRail extends LitElement {
         ${r.pronouns
           ? html`<p class="summary">${r.pronouns}</p>`
           : nothing}
+        ${this.renderClaimAffordance()}
       </header>
       <section class="card">
         <h2>Details</h2>
@@ -210,6 +237,53 @@ export class PlayerRail extends LitElement {
           `
         : nothing}
     `;
+  }
+
+  private renderClaimAffordance(): TemplateResult | typeof nothing {
+    switch (this.claimState) {
+      case 'unclaimable':
+        return nothing;
+      case 'unclaimed':
+        return html`
+          <p class="pc-claim">
+            <button
+              type="button"
+              class="pc-claim-button"
+              @click=${() => this.onToggleClaim?.()}
+            >
+              Claim this character
+            </button>
+          </p>
+        `;
+      case 'mine':
+        return html`
+          <p class="pc-claim pc-claim-mine">
+            <span class="pc-claim-tag">Your character</span>
+            <button
+              type="button"
+              class="pc-claim-button"
+              @click=${() => this.onToggleClaim?.()}
+            >
+              Release
+            </button>
+          </p>
+        `;
+      case 'taken':
+        return html`
+          <p class="pc-claim pc-claim-taken">
+            <span class="pc-claim-tag">
+              Played by ${this.claimedBy || 'another player'}
+            </span>
+            <button
+              type="button"
+              class="pc-claim-button"
+              @click=${() => this.onToggleClaim?.()}
+            >
+              Take over
+            </button>
+          </p>
+        `;
+    }
   }
 
   private renderStatBlock(

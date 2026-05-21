@@ -18,8 +18,23 @@ export interface PeerPresence {
    * themselves.  E.g. "Yui Tanaka" or "Tim (afk)".  Distinct from
    * `name` (which is the display name the peer registered with at
    * join).  Updated via `peer-rename` events.
+   *
+   * As of M3a.2, `pcId` (below) is the canonical PC linkage; this
+   * field is kept for backward compatibility and for non-PC status
+   * strings ("Tim (afk)").  Renderers that want "what character is
+   * this player playing" should prefer `pcId` and fall back to
+   * `character` when absent.
    */
   character?: string;
+  /**
+   * P-M3a-pc-binding: optional id of the PC character record the
+   * peer has claimed.  When set, the renderer can resolve to the
+   * canonical character via the campaign's loaded PCs map and
+   * read stats, harm, stress, foci, etc.  Validated via the same
+   * PC_ID_RE as character-loader's pcId field; PCs only (no NPCs).
+   * Set / cleared via `peer-rename` with a `pcId` payload field.
+   */
+  pcId?: string;
   joinedAt: number;
   leftAt?: number;
   /**
@@ -547,9 +562,14 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     case 'peer-rename': {
       // Self-rename only — the event.peerId IS the author (R2.1
       // already enforces this on the wire).  A peer can update
-      // either their display name, their character, or both.
+      // their display name, their character status string, and/or
+      // their PC binding (M3a.2 P-M3a-pc-binding).
       if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as { name?: unknown; character?: unknown };
+      const p = event.payload as {
+        name?: unknown;
+        character?: unknown;
+        pcId?: unknown;
+      };
       const presence = state.peers[event.peerId];
       if (!presence) break;
       if (typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 80) {
@@ -558,6 +578,19 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       if (typeof p.character === 'string' && p.character.length <= 80) {
         // Empty string explicitly clears the character.
         presence.character = p.character.length === 0 ? undefined : p.character;
+      }
+      // M3a.2: pcId follows the same set/clear semantics.  Empty
+      // string clears.  Non-string / invalid id is ignored (so a
+      // legacy peer that doesn't set pcId doesn't accidentally
+      // unbind a previously-bound one — that's an explicit clear,
+      // not an omission).
+      if (typeof p.pcId === 'string') {
+        if (p.pcId.length === 0) {
+          presence.pcId = undefined;
+        } else if (isCharacterId(p.pcId)) {
+          presence.pcId = p.pcId;
+        }
+        // else: invalid id, silently dropped (defensive).
       }
       break;
     }

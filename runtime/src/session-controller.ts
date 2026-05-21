@@ -206,16 +206,27 @@ export class SessionController {
   }
 
   /**
-   * Update the local peer's display name and/or character string.
-   * Both fields are optional; pass empty string to clear character.
+   * Update the local peer's display name, character string, and/or
+   * PC binding.  All fields optional; pass empty string to clear.
    * Emits a peer-rename event that propagates to all peers.
+   *
+   * M3a.2 (P-M3a-pc-binding): `pcId` carries the canonical PC
+   * character-record id when the local player has claimed one.
+   * Renderers prefer this over the free-text `character` field.
    */
-  rename(opts: { name?: string; character?: string }): void {
+  rename(opts: {
+    name?: string;
+    character?: string;
+    pcId?: string;
+  }): void {
     if (!this.peer) return;
     const payload: Record<string, string> = {};
     if (typeof opts.name === 'string') payload.name = opts.name.trim();
     if (typeof opts.character === 'string') {
       payload.character = opts.character.trim();
+    }
+    if (typeof opts.pcId === 'string') {
+      payload.pcId = opts.pcId.trim();
     }
     if (Object.keys(payload).length === 0) return;
     this.peer.append('peer-rename', payload);
