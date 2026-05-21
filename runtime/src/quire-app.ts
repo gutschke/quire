@@ -16,6 +16,7 @@ import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
 import './ui/regions/dice-dock';
 import './ui/regions/chat-panel';
+import './ui/regions/session-bar';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -1298,11 +1299,16 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * Render the session bar via <session-bar> region (M3a.3).
+   * Trailing reclaim-confirmation + resume-prompt modals render
+   * as siblings since they're separate UI overlays.
+   */
   private renderSessionBar(): TemplateResult {
     const v = this.sessionView;
     if (!v) return html``;
     const brokerCfg = brokerConfigFromUrl();
-    const brokerBadge = brokerCfg?.nonDefault
+    const brokerBadge: TemplateResult | typeof nothing = brokerCfg?.nonDefault
       ? html`<span
           class="broker-badge"
           title="Custom PeerJS broker configured via URL params (peerHost=${brokerCfg.host ??
@@ -1310,211 +1316,36 @@ export class QuireApp extends LitElement {
           >custom broker</span
         >`
       : nothing;
-    if (v.status === 'idle' && v.mode === 'solo') {
-      // UX hint clarifies the two roles for first-time visitors:
-      // DMs host; players paste a code their DM sent.  Without this,
-      // the bar's "Host session OR Join" pair leaves players guessing
-      // whether they should click Host or just wait.
-      const nameMissing = this.displayNameDraft.trim().length === 0;
-      const codeMissing = this.joinCodeDraft.trim().length === 0;
-      const nameHint = nameMissing ? 'Enter your name first' : '';
-      return html`
-        <div class="session-bar session-solo">
-          <p class="session-role-hint">
-            <strong>DM:</strong> click Host to start a session and
-            share the code (or invite link) that appears.
-            <strong>Player:</strong> wait for your DM to send a code
-            or invite link, then paste it below.  A name is required
-            so others know who you are — no GUIDs in chat.
-          </p>
-          <div class="session-bar-row">
-            <input
-              type="text"
-              class="session-name"
-              .value=${this.displayNameDraft}
-              placeholder="Your name (required)"
-              aria-label="Display name"
-              required
-              @input=${(e: Event) => {
-                this.displayNameDraft = (e.target as HTMLInputElement).value;
-              }}
-            />
-            <button
-              ?disabled=${nameMissing}
-              title=${nameHint || 'Start a new session as the DM'}
-              @click=${() => this.startHosting()}
-            >
-              Host session
-            </button>
-            <span class="session-sep">or</span>
-            <input
-              type="text"
-              class="session-code"
-              .value=${this.joinCodeDraft}
-              placeholder="paste code or invite link from your DM"
-              aria-label="Pairing code"
-              maxlength="200"
-              @input=${(e: Event) => {
-                this.joinCodeDraft = QuireApp.extractJoinCode(
-                  (e.target as HTMLInputElement).value
-                );
-              }}
-            />
-            <button
-              ?disabled=${nameMissing || codeMissing}
-              title=${nameMissing
-                ? nameHint
-                : codeMissing
-                  ? 'Paste the code or invite link from your DM'
-                  : 'Join your DM\'s session'}
-              @click=${() => this.joinSession()}
-            >
-              Join
-            </button>
-            ${brokerBadge}
-          </div>
-        </div>
-      `;
-    }
-    if (v.status === 'connecting') {
-      return html`
-        <div class="session-bar session-connecting">
-          <span class="session-label">
-            ${v.mode === 'host' ? 'Starting session…' : 'Joining…'}
-          </span>
-          <button @click=${() => this.leaveSession()}>Cancel</button>
-        </div>
-      `;
-    }
-    if (v.status === 'error') {
-      return html`
-        <div class="session-bar session-error">
-          <span class="session-label">Session error</span>
-          <span class="session-error-msg">${v.error}</span>
-          <button @click=${() => this.leaveSession()}>Dismiss</button>
-        </div>
-      `;
-    }
-    // active
-    // F1 fix: report session membership (shared.peers, the
-    // gossip-propagated count of who joined) instead of direct
-    // WebRTC connections.  In a hub topology a guest's
-    // connectedPeers is always 1 even when 4 people are in the
-    // room — counting from shared.peers reflects what the user
-    // actually cares about.  Show "(N reachable)" only when it
-    // disagrees with the membership count, so the discrepancy is
-    // surfaced when it matters (someone dropped) without cluttering
-    // the bar in the happy path.
-    // M3a.1 — session-bar is player-visible; reads filteredShared.
-    const sessionMembers = Object.values(v.filteredShared.peers).filter(
-      (p) => p.peerId !== v.peerId && p.leftAt === undefined
-    );
-    // Disambiguate DM from other players (per manual-testing
-    // feedback: "1 other player" was confusing when the only
-    // other was the DM).
-    const coordPeerId = v.filteredShared.coordinator;
-    const dmInOthers = sessionMembers.some((p) => p.peerId === coordPeerId);
-    const playerCount = sessionMembers.filter(
-      (p) => p.peerId !== coordPeerId
-    ).length;
-    const connected = v.connectedPeers.length;
-    const labelParts: string[] = [];
-    if (dmInOthers) labelParts.push('DM');
-    if (playerCount === 1) labelParts.push('1 other player');
-    else if (playerCount > 1) labelParts.push(`${playerCount} other players`);
-    const memberCount = sessionMembers.length;
-    const memberLabel =
-      memberCount === 0
-        ? 'no other players yet'
-        : labelParts.length === 1
-          ? labelParts[0] + ' connected'
-          : labelParts.join(' + ');
-    const reachabilityHint =
-      memberCount > 0 && connected < memberCount
-        ? html` <span
-            class="session-peers-warn"
-            title="Some peers are not directly reachable via WebRTC right now.  Events still flow if any peer can forward."
-            >(${connected} direct)</span
-          >`
-        : nothing;
     return html`
-      <div class="session-bar session-active">
-        ${v.mode === 'host'
-          ? html`
-              <span class="session-label">Hosting</span>
-              <span class="session-code-display">
-                code: <code>${v.pairingCode}</code>
-              </span>
-              <button
-                class="session-copy-invite"
-                title="Copy a click-to-join link for players"
-                @click=${() => this.copyInviteLink()}
-              >
-                ${this.inviteCopied ? 'Copied!' : 'Copy invite'}
-              </button>
-              <button
-                class="session-regenerate-code"
-                title="Issue a new code (defensive — use if a code leaks)"
-                @click=${() => this.regeneratePairingCode()}
-              >
-                New code
-              </button>
-            `
-          : html`
-              <span class="session-label">Joined</span>
-              <span class="session-code-display">
-                as
-                <code title="Internal peer id: ${v.peerId}"
-                  >${(v.peerId && this.displayNameFor(v.peerId)) || 'unnamed'}</code
-                >
-              </span>
-            `}
-        <span
-          class="session-peers"
-          title=${sessionMembers
-            .map((p) => p.name ?? p.peerId)
-            .join(', ') || 'no other players in this session yet'}
-        >
-          ${memberLabel}${reachabilityHint}
-        </span>
-        ${brokerBadge}
-        <button
-          @click=${() => this.saveToFile()}
-          title="Download a JSON save of this session"
-        >
-          Save
-        </button>
-        <label class="session-load-label" title="Load a JSON save file into this session">
-          Load
-          <input
-            type="file"
-            accept="application/json,.json"
-            @change=${(e: Event) => {
-              const f = (e.target as HTMLInputElement).files?.[0];
-              if (f) void this.loadFromFile(f);
-              (e.target as HTMLInputElement).value = '';
-            }}
-          />
-        </label>
-        ${this.renderReclaimAffordance()}
-        <button @click=${() => this.leaveSession()}>Leave</button>
-        ${this.saveStatus.kind === 'saved'
-          ? html`<span class="save-status">${this.saveStatus.message}</span>`
-          : nothing}
-        ${this.saveStatus.kind === 'error'
-          ? html`<span class="save-status save-error">${this.saveStatus.message}</span>`
-          : nothing}
-        ${this.loadStatus.kind === 'loaded'
-          ? html`<span class="save-status">${this.loadStatus.message}</span>`
-          : nothing}
-        ${this.loadStatus.kind === 'error'
-          ? html`<span class="save-status save-error">${this.loadStatus.message}</span>`
-          : nothing}
-      </div>
+      <session-bar
+        .sessionView=${v}
+        .displayNameDraft=${this.displayNameDraft}
+        .joinCodeDraft=${this.joinCodeDraft}
+        .inviteCopied=${this.inviteCopied}
+        .saveStatus=${this.saveStatus}
+        .loadStatus=${this.loadStatus}
+        .brokerBadge=${brokerBadge}
+        .reclaimAffordance=${this.renderReclaimAffordance()}
+        .displayNameForPeer=${(pid: string) => this.displayNameFor(pid)}
+        .onDisplayNameChange=${(v: string) => {
+          this.displayNameDraft = v;
+        }}
+        .onJoinCodeChange=${(v: string) => {
+          this.joinCodeDraft = v;
+        }}
+        .onHost=${() => this.startHosting()}
+        .onJoin=${() => this.joinSession()}
+        .onLeave=${() => this.leaveSession()}
+        .onCopyInvite=${() => this.copyInviteLink()}
+        .onRegenerateCode=${() => this.regeneratePairingCode()}
+        .onSave=${() => this.saveToFile()}
+        .onLoad=${(f: File) => this.loadFromFile(f)}
+      ></session-bar>
       ${this.renderReclaimConfirmation()}
       ${this.renderResumePrompt()}
     `;
   }
+
 
   /**
    * The "Reclaim coordinator" button.  Visible to ANY peer in an
