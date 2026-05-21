@@ -12,6 +12,7 @@ import './ui/shell/quire-stage';
 import './ui/shell/quire-aside';
 import './ui/shell/quire-dock';
 import './ui/regions/player-rail';
+import './ui/regions/scene-stage';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -1305,6 +1306,12 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * Render a scene page.  Delegates the scene prose + breadcrumb to
+   * <scene-stage> (M2.4, P1-2); reveal-control still renders inline
+   * in the header via headerExtras; character menus + roll panel
+   * still render here until M2.5+ moves them to their own regions.
+   */
   private renderScene(
     campaign: LoadedCampaign,
     episode: LoadedEpisode,
@@ -1312,39 +1319,19 @@ export class QuireApp extends LitElement {
   ): TemplateResult {
     const slug = this.slugFor(campaign);
     return html`
-      <header>
-        <nav class="breadcrumb">
-          <a
-            href=${routeToSearch({ kind: 'campaign', slug })}
-            @click=${(e: Event) =>
-              this.navigate(e, { kind: 'campaign', slug })}
-            >${campaign.base.manifest.name}</a
-          >
-          →
-          <a
-            href=${routeToSearch({
-              kind: 'episode',
-              slug,
-              episode: episode.slug
-            })}
-            @click=${(e: Event) =>
-              this.navigate(e, {
-                kind: 'episode',
-                slug,
-                episode: episode.slug
-              })}
-            >${episode.manifest.name}</a
-          >
-          →
-        </nav>
-        <h1>${scene.path}</h1>
-        ${this.renderRevealControl(episode.slug, scene.path)}
-      </header>
-      <section class="card">
-        <div class="markdown">${unsafeHTML(scene.html)}</div>
-      </section>
+      <scene-stage
+        .campaignName=${campaign.base.manifest.name}
+        .campaignSlug=${slug}
+        .episodeName=${episode.manifest.name}
+        .episodeSlug=${episode.slug}
+        .scenePath=${scene.path}
+        .sceneHtml=${scene.html}
+        .onNavigate=${(e: Event, route: AppRoute) =>
+          this.navigate(e, route)}
+        .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}
+      ></scene-stage>
       ${this.renderCharacterMenus(
-        this.slugFor(campaign),
+        slug,
         campaign.base.manifest.characters
       )}
       ${this.renderRollPanel()}
