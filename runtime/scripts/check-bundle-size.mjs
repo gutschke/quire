@@ -54,7 +54,11 @@ if (files.length === 0) {
 const chunks = files.map((f) => {
   const filepath = join(DIST_ASSETS, f);
   const raw = readFileSync(filepath);
-  const gz = gzipSync(raw);
+  // Use gzip level 9 to match Vite's reported gzip size (Vite uses
+  // rollup-plugin-gzip's max compression).  Node's default level 6
+  // reports ~1.5 KB looser than the production CDN-served size.
+  // Aligning here so the gate measures what users actually pay.
+  const gz = gzipSync(raw, { level: 9 });
   return {
     filename: f,
     gzipBytes: gz.length,

@@ -35,6 +35,18 @@ export interface SaveDocument {
 
 export const SAVE_SCHEMA_VERSION = '0.1.0';
 
+/**
+ * Cap on the number of events accepted in a single save document.
+ * A 4-hour DM session typically generates <50k events; 100k is a
+ * generous ceiling above any realistic play.  A hostile save with
+ * millions of events would otherwise exhaust memory during the
+ * applyEvents loop; this is the container-level guard alongside
+ * per-event payload caps in core/state.ts.
+ *
+ * Surfaced by the M1 gate's Security review.
+ */
+export const MAX_EVENTS_PER_SAVE = 100_000;
+
 export type ParseResult =
   | { ok: true; doc: SaveDocument }
   | { ok: false; error: string };
@@ -141,6 +153,19 @@ export function parseSaveDocument(input: string): ParseResult {
   // time (Phase 1b) — here we just check the container shape.
   if (!Array.isArray(d.events)) {
     return { ok: false, error: 'Save events is missing or not an array.' };
+  }
+  // DoS guard (M1 gate Security finding): a hostile save with a
+  // multi-million-event log would exhaust memory during apply.
+  // A 4-hour DM session is typically <50k events; 100k is a
+  // generous cap that catches obvious attacks without rejecting
+  // any realistic save.  Per-event payload caps (CHAT_CAP=5000,
+  // NOTE_CAP=10000, PC_FIELD_COUNT_CAP=100) bound the per-event
+  // cost; this caps the count.
+  if (d.events.length > MAX_EVENTS_PER_SAVE) {
+    return {
+      ok: false,
+      error: `Save has too many events (${d.events.length} > ${MAX_EVENTS_PER_SAVE}).  Refusing to apply.`
+    };
   }
 
   const doc: SaveDocument = {

@@ -4,6 +4,7 @@ import {
   stringifySave,
   parseSaveDocument,
   applySaveToLog,
+  MAX_EVENTS_PER_SAVE,
   type SaveDocument
 } from './persistence';
 import { EventLog, type QuireEvent } from './core/event-log';
@@ -161,6 +162,43 @@ describe('parseSaveDocument — error paths', () => {
       })
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('refuses to apply a save with more than MAX_EVENTS_PER_SAVE events (DoS guard)', () => {
+    // Construct a payload with one more than the cap.  We don't need
+    // each event to be valid — parseSaveDocument's container-shape
+    // check catches the count before per-event validation runs.
+    const events = Array.from({ length: MAX_EVENTS_PER_SAVE + 1 }, (_, i) => ({
+      id: `e${i}`,
+      peerId: 'x',
+      seq: i,
+      clock: { x: i },
+      kind: 'chat',
+      payload: { text: 'spam' },
+      ts: i
+    }));
+    const r = parseSaveDocument(
+      JSON.stringify({
+        $schemaVersion: '0.1.0',
+        savedAt: new Date().toISOString(),
+        campaign: CAMPAIGN,
+        savedByPeerId: 'x',
+        events
+      })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/too many events/i);
+  });
+
+  it('accepts a save at exactly MAX_EVENTS_PER_SAVE (boundary)', () => {
+    // The same construct one shorter should pass.  Note: this is
+    // ~6 MB of JSON in this test — keep it small at boundary not way
+    // under, since the test is the only thing exercising the path.
+    const log = fakeLog('x', 10);
+    const doc = serializeSession([...log.events()], CAMPAIGN, 'x');
+    expect(doc.events.length).toBeLessThanOrEqual(MAX_EVENTS_PER_SAVE);
+    const r = parseSaveDocument(stringifySave(doc));
+    expect(r.ok).toBe(true);
   });
 
   it('rejects different major version', () => {

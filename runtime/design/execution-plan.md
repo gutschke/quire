@@ -130,7 +130,7 @@ This pattern is added to the user's `feedback_tdd_and_critic_workflow` memory as
 - [ ] `src/ui/shell/` contains `<quire-shell>`, `<quire-topbar>`, `<quire-rail>`, `<quire-stage>`, `<quire-aside>`, `<quire-dock>` as Lit elements with stable prop interfaces.
 - [ ] `src/ui/styles/tokens.css` with the oklch palette + clamp typography from `ui.md`. Consumed via CSS variables, not duplicated.
 - [ ] `src/ui/modes/mode-state.ts` defines `AppMode` and URL routing. Default `in-session`.
-- [ ] `src/core/state.ts` lists all 17 new event kinds in `KNOWN_EVENT_KINDS`. Each new payload schema carries `v: 1`. Materializers reject unknown payload versions with the H-4 banner. Materializers for the new kinds are NOT required at M1.
+- [ ] `src/core/state.ts` lists all 18 new event kinds in `KNOWN_EVENT_KINDS`. Each new payload schema carries `v: 1`. Materializers reject unknown payload versions with the H-4 banner. Materializers for the new kinds are NOT required at M1.
 - [ ] `filterForViewer(state, viewerPeerId)` exists with unit tests covering all DM-only fields. (`serializeSessionForViewer` moves to M3a where first DM-only event lands.)
 - [ ] H-4 unknown-kind banner: `applySaveToLog` reports unknown kinds; `quire-app` surfaces a one-line banner. Plus version-gating at peer-join: if remote peer's `KNOWN_EVENT_KINDS` set is older than M2, refuse the join with a clear "your DM is running a newer Quire — please update" error.
 - [ ] **CI bundle-size gate active.** Verified by `bundle-gate.test.ts` (regression-protected, not just a one-shot throwaway-branch test).

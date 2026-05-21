@@ -583,6 +583,13 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       // forgery on the wire; here we trust that the event reached
       // us legitimately.  Synthesizes a system chat entry as the
       // audit trail so every peer sees "who took over from whom."
+      //
+      // SECURITY (M1 gate finding): the audit-string interpolates
+      // peerIds.  Today peerIds are opaque random codes (the
+      // pairing-code alphabet) — safe to put in player-visible
+      // chat.  If a future commit makes peerIds human-readable
+      // (e.g. display-name-prefixed), this synthesizes player-
+      // visible PII.  Keep peerIds opaque.
       if (!isPlainObjectPayload(event.payload)) break;
       const p = event.payload as { fromPeerId?: unknown };
       const fromPeerId =
