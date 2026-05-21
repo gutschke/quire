@@ -59,6 +59,12 @@ import {
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
 import {
+  extractJoinCode as extractJoinCodeHelper,
+  parseRevealedPath as parseRevealedPathHelper,
+  scenePathFor as scenePathForHelper,
+  buildInviteLink as buildInviteLinkHelper
+} from './controllers/session-bootstrap';
+import {
   renderMarkdown,
   renderMarkdownDocument,
   type SanitizedHtml
@@ -1865,21 +1871,12 @@ export class QuireApp extends LitElement {
 
   /**
    * Build a click-to-join URL for the current session's pairing code.
-   * Players who click the link land on the campaign with the code
-   * pre-filled (or, ideally, auto-joined).
+   * Returns null when no active session.  Delegates to the pure
+   * helper in session-bootstrap.ts (P0-8).
    */
   buildInviteLink(): string | null {
-    if (this.sessionView?.status !== 'active' || !this.sessionView.pairingCode) {
-      return null;
-    }
-    const url = new URL(window.location.href);
-    url.searchParams.set('join', this.sessionView.pairingCode);
-    // Drop session-control params that don't make sense in an invite.
-    url.searchParams.delete('episode');
-    url.searchParams.delete('scene');
-    url.searchParams.delete('pc');
-    url.searchParams.delete('npc');
-    return url.toString();
+    if (this.sessionView?.status !== 'active') return null;
+    return buildInviteLinkHelper(window.location.href, this.sessionView.pairingCode);
   }
 
   async regeneratePairingCode(): Promise<void> {
@@ -1940,61 +1937,24 @@ export class QuireApp extends LitElement {
     return this.isCoordinator();
   }
 
-  /** Encode a scene's full repo path for the revealedScenes list. */
+  /**
+   * Static delegates to the helpers in src/controllers/session-
+   * bootstrap.ts (P0-8).  Kept on the class so existing tests that
+   * call `QuireApp.extractJoinCode(...)` etc. continue to work; the
+   * QuireAppHooks interface formalizes this surface.
+   */
   private static scenePathFor(episodeSlug: string, scenePath: string): string {
-    return `episodes/${episodeSlug}/${scenePath}`;
+    return scenePathForHelper(episodeSlug, scenePath);
   }
 
-  /**
-   * Accept either a raw pairing code or a full invite URL and return
-   * the bare code (uppercased, capped at 12 chars).  Players who
-   * paste the URL they received in chat shouldn't have to clean it
-   * up themselves — and without this, the maxlength + uppercase on
-   * the input would mangle the URL into useless garbage like
-   * "HTTPS://PLAY" (real bug report from manual testing).
-   *
-   * Special case: a pasted URL that doesn't contain `?join=` is NOT
-   * a valid invite — pasting the DM's address-bar URL with only
-   * `?campaign=&episode=&scene=` was the actual leak path that
-   * produced "HTTPS://PLAY" in the user's clipboard.  We return
-   * empty in that case so the field stays empty + Join stays
-   * disabled, rather than silently mangling the URL into junk.
-   */
   static extractJoinCode(input: string): string {
-    const trimmed = input.trim();
-    if (!trimmed) return '';
-    // Looks like a URL?  Pull ?join=... out of it, or refuse if
-    // there isn't one — don't fall through to literal handling
-    // because that would truncate the URL into garbage.
-    if (/^https?:\/\//i.test(trimmed)) {
-      try {
-        const url = new URL(trimmed);
-        const join = url.searchParams.get('join');
-        return join ? join.toUpperCase().slice(0, 12) : '';
-      } catch {
-        // Malformed URL — empty is safer than a literal cast.
-        return '';
-      }
-    }
-    // Otherwise treat as a literal code.
-    return trimmed.toUpperCase().slice(0, 12);
+    return extractJoinCodeHelper(input);
   }
 
-  /**
-   * Parse a revealedScenes entry back into URL components.  Returns null
-   * if the entry doesn't have the expected `episodes/<ep>/<path>` shape.
-   */
   static parseRevealedPath(
     full: string
   ): { episode: string; scene: string } | null {
-    if (!full.startsWith('episodes/')) return null;
-    const rest = full.slice('episodes/'.length);
-    const slash = rest.indexOf('/');
-    if (slash < 0) return null;
-    const episode = rest.slice(0, slash);
-    const scene = rest.slice(slash + 1);
-    if (!episode || !scene) return null;
-    return { episode, scene };
+    return parseRevealedPathHelper(full);
   }
 
   /**
