@@ -75,7 +75,11 @@ export type AiClient = (req: {
   user: string;
   signal?: AbortSignal;
 }) => Promise<string>;
-import { renderMarkdown, type SanitizedHtml } from './markdown';
+import {
+  renderMarkdown,
+  renderMarkdownDocument,
+  type SanitizedHtml
+} from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
   parseDiceCommand,
@@ -580,6 +584,148 @@ export class QuireApp extends LitElement {
       color: light-dark(#a01010, #ff7070);
     }
 
+    .roster-panel {
+      margin-top: 0.5rem;
+    }
+
+    .roster-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .roster-head h2 {
+      margin: 0;
+    }
+
+    .roster-count {
+      font-weight: normal;
+      color: light-dark(#555, #aaa);
+      margin-left: 0.3rem;
+    }
+
+    .roster-toggle {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+
+    .roster-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.5rem 0 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .roster-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.4rem;
+      border-radius: 4px;
+    }
+
+    .roster-row.roster-row-self {
+      background: light-dark(#f8f4e8, #221c10);
+    }
+
+    .roster-dm-tag {
+      font-size: 0.7em;
+      padding: 0.05rem 0.35rem;
+      background: light-dark(#bb6a3a, #87481c);
+      color: light-dark(#fff, #fdf0d0);
+      border-radius: 3px;
+      letter-spacing: 0.05em;
+    }
+
+    .roster-name {
+      font-weight: 600;
+    }
+
+    .roster-char {
+      color: light-dark(#555, #aaa);
+      font-style: italic;
+    }
+
+    .roster-edit {
+      margin-left: auto;
+      padding: 0.1rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 3px;
+      background: light-dark(#fff, #1a1a1a);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.8em;
+    }
+
+    .roster-kick {
+      margin-left: 0.4rem;
+      padding: 0.1rem 0.5rem;
+      border: 1px solid light-dark(#cc8888, #884444);
+      border-radius: 3px;
+      background: light-dark(#fcf4f4, #221a1a);
+      color: light-dark(#a01010, #ff7070);
+      cursor: pointer;
+      font-size: 0.8em;
+    }
+
+    .rename-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid light-dark(#eee, #2a2a2a);
+    }
+
+    .rename-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.9em;
+    }
+
+    .rename-form input[type='text'] {
+      padding: 0.3rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+    }
+
+    .rename-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+
+    .rename-actions button {
+      padding: 0.25rem 0.75rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .version-badge {
+      margin: 2rem 0 0;
+      padding-top: 0.5rem;
+      text-align: right;
+      font-size: 0.75em;
+      font-family: ui-monospace, monospace;
+      color: light-dark(#555, #aaa);
+      border-top: 1px solid light-dark(#f0f0f0, #2a2a2a);
+      cursor: help;
+    }
+
     .session-role-hint {
       width: 100%;
       margin: 0 0 0.5rem;
@@ -605,6 +751,16 @@ export class QuireApp extends LitElement {
       border: 1px solid light-dark(#9bb09b, #4a6a4a);
       border-radius: 4px;
       background: light-dark(#f4faf4, #1a221a);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+
+    .session-regenerate-code {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#bb9a3a, #876618);
+      border-radius: 4px;
+      background: light-dark(#fdf6e8, #2a2418);
       color: inherit;
       cursor: pointer;
       font-size: 0.85em;
@@ -756,6 +912,15 @@ export class QuireApp extends LitElement {
       color: inherit;
       cursor: pointer;
       font-size: 0.9em;
+    }
+
+    .reveal-undo {
+      margin-left: 0.5rem;
+      padding: 0.25rem 0.6rem !important;
+      border-color: light-dark(#888, #555) !important;
+      background: light-dark(#f4f4f4, #222) !important;
+      color: light-dark(#555, #aaa) !important;
+      font-size: 0.85em !important;
     }
 
     .reveal-badge {
@@ -1012,6 +1177,12 @@ export class QuireApp extends LitElement {
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
   @state() inviteCopied: boolean = false;
+  @state() showRoster: boolean = true;
+  @state() renameDraft: { name: string; character: string } = {
+    name: '',
+    character: ''
+  };
+  @state() renameEditing: boolean = false;
   @state() chatError: string | null = null;
   // Persistence UI state
   @state() saveStatus: { kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string } =
@@ -1057,12 +1228,37 @@ export class QuireApp extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('popstate', this.popstateHandler);
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
     this.session = new SessionController(this.sessionFactory);
     this.unsubscribeSession = this.session.subscribe((v) => {
       this.sessionView = v;
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.
       if (v.status === 'active') this.scheduleAutosave();
+      // Live-bounce a non-coordinator player if they're currently
+      // viewing a scene the DM has just un-revealed.  Without this,
+      // they'd see the now-private content until they navigate away.
+      // Crucial nuance: only bounce when the local peer is
+      // *explicitly* NOT coordinator (someone else is).  During the
+      // brief window after the host calls runHost, shared.coordinator
+      // is undefined until the local coord-claim event materializes
+      // — bouncing in that window would kick the host off their
+      // own scene before their own claim took effect.
+      if (
+        v.status === 'active' &&
+        v.shared.coordinator &&
+        v.shared.coordinator !== v.peerId &&
+        this.appState.kind === 'scene'
+      ) {
+        const full = QuireApp.scenePathFor(
+          this.appState.episode.slug,
+          this.appState.scene.path
+        );
+        if (!v.shared.revealedScenes.includes(full)) {
+          const slug = this.slugFor(this.appState.campaign);
+          this.navigate(new Event('synthetic'), { kind: 'campaign', slug });
+        }
+      }
     });
     // Hydrate AI settings from localStorage if available.  Wrapped in
     // a try because localStorage can throw in some sandboxed contexts.
@@ -1109,9 +1305,35 @@ export class QuireApp extends LitElement {
     }
   }
 
+  /**
+   * Best-effort clean-leave on tab close.  beforeunload fires
+   * synchronously; we append a peer-leave so other peers learn
+   * about the departure even before the host emits its own
+   * peer-disconnect.  The actual session.leave() runs in
+   * disconnectedCallback so the broadcast goes out before the
+   * transport tears down.
+   */
+  private readonly beforeUnloadHandler = (): void => {
+    if (this.session && this.sessionView?.status === 'active') {
+      // Synchronous append; no await on the underlying transport.
+      // PeerJS data-channel send is fire-and-forget so this is
+      // the best we can do for unclean close.
+      try {
+        (
+          this.session as unknown as {
+            peer?: { append: (k: string, p: unknown) => void };
+          }
+        ).peer?.append('peer-leave', {});
+      } catch {
+        /* tearing down anyway */
+      }
+    }
+  };
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this.popstateHandler);
+    window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     this.abortController?.abort();
     this.unsubscribeSession?.();
     this.unsubscribeSession = null;
@@ -1254,11 +1476,23 @@ export class QuireApp extends LitElement {
           `Scene "${route.scene}" not found in episode "${route.episode}".`
         );
       }
+      // Render via the document helper so YAML frontmatter
+      // ("$schemaVersion: 0.1.0" etc.) is stripped from the body
+      // before sanitization.  Without this it renders as literal
+      // text at the top of the scene — a real bug surfaced during
+      // manual testing.  TODO (frontmatter banners): some scene
+      // authors also embed "DM-only" warning blockquotes via
+      // GitHub `> [!CAUTION]` alerts.  Stripping those for
+      // players requires a documented convention with the
+      // campaign author; deferred until we settle on one (e.g.
+      // `> [!DM]` blockquote, or `<!-- dm:start -->...<!-- dm:end -->`
+      // HTML comments).  For now they render as-is.
+      const sceneDoc = renderMarkdownDocument(sceneText);
       this.appState = {
         kind: 'scene',
         campaign,
         episode,
-        scene: { path: route.scene, html: renderMarkdown(sceneText) }
+        scene: { path: route.scene, html: sceneDoc.html }
       };
     } catch (e) {
       if (isAbortError(e)) return;
@@ -1318,7 +1552,185 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
-    return html`${this.renderSessionBar()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}${this.renderAiPanel()}`;
+    return html`${this.renderSessionBar()}${this.renderRosterPanel()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}${this.renderAiPanel()}${this.renderVersionBadge()}`;
+  }
+
+  /**
+   * Roster of who's in the session.  DM and players both see the
+   * full list with display names + character/status strings.
+   * Helps roleplay continuity ("wait, who plays Yui?").  Toggleable
+   * so the bar doesn't dominate the screen when not needed.
+   */
+  private renderRosterPanel(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return html``;
+    const peers = Object.values(v.shared.peers).filter(
+      (p) => p.leftAt === undefined
+    );
+    if (peers.length === 0) return html``;
+    return html`
+      <section class="card roster-panel">
+        <div class="roster-head">
+          <h2>
+            Roster
+            <span class="roster-count">(${peers.length})</span>
+          </h2>
+          <button
+            type="button"
+            class="roster-toggle"
+            @click=${() => {
+              this.showRoster = !this.showRoster;
+            }}
+          >
+            ${this.showRoster ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        ${this.showRoster
+          ? html`
+              <ul class="roster-list">
+                ${peers.map((p) => this.renderRosterRow(p))}
+              </ul>
+              ${this.renderRenameForm()}
+            `
+          : nothing}
+      </section>
+    `;
+  }
+
+  private renderRosterRow(
+    peer: { peerId: string; name?: string; character?: string }
+  ): TemplateResult {
+    const v = this.sessionView!;
+    const isSelf = peer.peerId === v.peerId;
+    const isDm = v.shared.coordinator === peer.peerId;
+    const localIsDm = this.isCoordinator();
+    const canKick = localIsDm && !isSelf && !isDm;
+    const name = peer.name ?? '(unnamed)';
+    return html`
+      <li class="roster-row ${isSelf ? 'roster-row-self' : ''}">
+        ${isDm ? html`<span class="roster-dm-tag">DM</span>` : nothing}
+        <span class="roster-name">${name}</span>
+        ${peer.character
+          ? html`<span class="roster-char">${peer.character}</span>`
+          : nothing}
+        ${isSelf
+          ? html`<button
+              type="button"
+              class="roster-edit"
+              @click=${() => this.beginRename()}
+            >
+              edit
+            </button>`
+          : nothing}
+        ${canKick
+          ? html`<button
+              type="button"
+              class="roster-kick"
+              title="Remove this peer from the roster (use if they've left without disconnecting cleanly)"
+              @click=${() => this.kickPeer(peer.peerId, name)}
+            >
+              remove
+            </button>`
+          : nothing}
+      </li>
+    `;
+  }
+
+  kickPeer(peerId: string, name: string): void {
+    if (!this.session) return;
+    if (!window.confirm(`Remove ${name} from the roster?`)) return;
+    this.session.kickPeer(peerId);
+  }
+
+  private renderRenameForm(): TemplateResult {
+    if (!this.renameEditing) return html``;
+    return html`
+      <form
+        class="rename-form"
+        @submit=${(e: Event) => {
+          e.preventDefault();
+          this.submitRename();
+        }}
+      >
+        <label>
+          <span>Your name</span>
+          <input
+            type="text"
+            .value=${this.renameDraft.name}
+            maxlength="80"
+            @input=${(e: Event) => {
+              this.renameDraft = {
+                ...this.renameDraft,
+                name: (e.target as HTMLInputElement).value
+              };
+            }}
+          />
+        </label>
+        <label>
+          <span>Character / status</span>
+          <input
+            type="text"
+            .value=${this.renameDraft.character}
+            maxlength="80"
+            placeholder="e.g. Yui Tanaka, or Tim (afk)"
+            @input=${(e: Event) => {
+              this.renameDraft = {
+                ...this.renameDraft,
+                character: (e.target as HTMLInputElement).value
+              };
+            }}
+          />
+        </label>
+        <div class="rename-actions">
+          <button
+            type="button"
+            @click=${() => {
+              this.renameEditing = false;
+            }}
+          >
+            Cancel
+          </button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    `;
+  }
+
+  private beginRename(): void {
+    const v = this.sessionView;
+    if (!v?.peerId) return;
+    const self = v.shared.peers[v.peerId];
+    this.renameDraft = {
+      name: self?.name ?? '',
+      character: self?.character ?? ''
+    };
+    this.renameEditing = true;
+  }
+
+  private submitRename(): void {
+    if (!this.session) return;
+    this.session.rename(this.renameDraft);
+    this.renameEditing = false;
+  }
+
+  /**
+   * Small footer badge identifying the build commit + timestamp.
+   * Helps a manual tester confirm Cloudflare has deployed the
+   * latest version before reporting issues against stale builds.
+   * Hovering shows the full ISO timestamp.
+   */
+  private renderVersionBadge(): TemplateResult {
+    const version =
+      typeof __QUIRE_VERSION__ !== 'undefined' ? __QUIRE_VERSION__ : 'dev';
+    const buildTime =
+      typeof __QUIRE_BUILD_TIME__ !== 'undefined'
+        ? __QUIRE_BUILD_TIME__
+        : 'unknown';
+    return html`
+      <p class="version-badge" title=${`Built at ${buildTime}`}>
+        build ${version}
+      </p>
+    `;
   }
 
   private renderAiPanel(): TemplateResult {
@@ -1584,6 +1996,19 @@ export class QuireApp extends LitElement {
   }
 
   private renderIdle(): TemplateResult {
+    // Surface the most likely confused-arrival scenario: the user
+    // opened a partial invite URL that has ?join= but no
+    // ?campaign=, so even after they "Join" the session the campaign
+    // never loads.  Without this hint, they'd see "No campaign
+    // loaded" with a session bar that says "Joined as X" above —
+    // genuinely confusing because they DID just join something.
+    let hasJoinNoCampaign = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      hasJoinNoCampaign = !!params.get('join') && !params.get('campaign');
+    } catch {
+      /* ignore */
+    }
     return html`
       <header>
         <h1>Quire</h1>
@@ -1592,10 +2017,37 @@ export class QuireApp extends LitElement {
           storytelling.
         </p>
       </header>
+      ${hasJoinNoCampaign
+        ? html`
+            <section class="card error">
+              <h2>Invite link is incomplete</h2>
+              <p>
+                This URL has a session code but no campaign.  The DM's
+                invite link should include both — usually it looks like
+                <code>?campaign=…&amp;join=…</code>.  Ask your DM to send
+                the full link from their <strong>Copy invite</strong>
+                button.
+              </p>
+            </section>
+          `
+        : nothing}
+      ${this.sessionView?.status === 'active'
+        ? html`
+            <section class="card">
+              <h2>Connected, but no campaign open</h2>
+              <p>
+                You're in the session, but Quire doesn't know which
+                campaign you're playing.  Open the campaign URL (or
+                ask your DM for the full invite link with
+                <code>?campaign=…</code> in it).
+              </p>
+            </section>
+          `
+        : nothing}
       <section class="card">
         <h2>No campaign loaded</h2>
         <p>
-          Quire loads a campaign from a GitHub repository. Append
+          Quire loads a campaign from a GitHub repository.  Append
           <code>?campaign=&lt;owner&gt;/&lt;repo&gt;</code> to the URL, or
           <code>?campaign=&lt;owner&gt;/&lt;repo&gt;@&lt;ref&gt;</code> to
           pin a branch, tag, or commit.
@@ -1839,7 +2291,20 @@ export class QuireApp extends LitElement {
         : html`<p class="reveal-badge reveal-badge-private">Not yet revealed</p>`;
     }
     if (already) {
-      return html`<p class="reveal-badge reveal-badge-revealed">Already revealed</p>`;
+      return html`
+        <p class="reveal-control">
+          <span class="reveal-badge reveal-badge-revealed"
+            >Already revealed</span
+          >
+          <button
+            class="reveal-undo"
+            title="Undo this reveal — players will be navigated away if currently viewing it"
+            @click=${() => this.unrevealCurrentScene()}
+          >
+            Un-reveal
+          </button>
+        </p>
+      `;
     }
     return html`
       <p class="reveal-control">
@@ -1867,41 +2332,62 @@ export class QuireApp extends LitElement {
       // DMs host; players paste a code their DM sent.  Without this,
       // the bar's "Host session OR Join" pair leaves players guessing
       // whether they should click Host or just wait.
+      const nameMissing = this.displayNameDraft.trim().length === 0;
+      const codeMissing = this.joinCodeDraft.trim().length === 0;
+      const nameHint = nameMissing ? 'Enter your name first' : '';
       return html`
         <div class="session-bar session-solo">
           <p class="session-role-hint">
             <strong>DM:</strong> click Host to start a session and
-            share the code that appears.
+            share the code (or invite link) that appears.
             <strong>Player:</strong> wait for your DM to send a code
-            or invite link, then paste it below.
+            or invite link, then paste it below.  A name is required
+            so others know who you are — no GUIDs in chat.
           </p>
           <div class="session-bar-row">
             <input
               type="text"
               class="session-name"
               .value=${this.displayNameDraft}
-              placeholder="Your name"
+              placeholder="Your name (required)"
               aria-label="Display name"
+              required
               @input=${(e: Event) => {
                 this.displayNameDraft = (e.target as HTMLInputElement).value;
               }}
             />
-            <button @click=${() => this.startHosting()}>Host session</button>
+            <button
+              ?disabled=${nameMissing}
+              title=${nameHint || 'Start a new session as the DM'}
+              @click=${() => this.startHosting()}
+            >
+              Host session
+            </button>
             <span class="session-sep">or</span>
             <input
               type="text"
               class="session-code"
               .value=${this.joinCodeDraft}
-              placeholder="paste code from your DM"
+              placeholder="paste code or invite link from your DM"
               aria-label="Pairing code"
-              maxlength="12"
+              maxlength="200"
               @input=${(e: Event) => {
-                this.joinCodeDraft = (
-                  e.target as HTMLInputElement
-                ).value.toUpperCase();
+                this.joinCodeDraft = QuireApp.extractJoinCode(
+                  (e.target as HTMLInputElement).value
+                );
               }}
             />
-            <button @click=${() => this.joinSession()}>Join</button>
+            <button
+              ?disabled=${nameMissing || codeMissing}
+              title=${nameMissing
+                ? nameHint
+                : codeMissing
+                  ? 'Paste the code or invite link from your DM'
+                  : 'Join your DM\'s session'}
+              @click=${() => this.joinSession()}
+            >
+              Join
+            </button>
             ${brokerBadge}
           </div>
         </div>
@@ -1981,6 +2467,13 @@ export class QuireApp extends LitElement {
                 @click=${() => this.copyInviteLink()}
               >
                 ${this.inviteCopied ? 'Copied!' : 'Copy invite'}
+              </button>
+              <button
+                class="session-regenerate-code"
+                title="Issue a new code (defensive — use if a code leaks)"
+                @click=${() => this.regeneratePairingCode()}
+              >
+                New code
               </button>
             `
           : html`
@@ -2329,6 +2822,17 @@ export class QuireApp extends LitElement {
     return url.toString();
   }
 
+  async regeneratePairingCode(): Promise<void> {
+    if (!this.session) return;
+    const ok = window.confirm(
+      'Issue a new pairing code?  Players currently connected will be ' +
+        'disconnected and need to rejoin with the new code or invite link.'
+    );
+    if (!ok) return;
+    const name = this.displayNameDraft.trim() || undefined;
+    await this.session.regenerateCode(name);
+  }
+
   async copyInviteLink(): Promise<void> {
     const link = this.buildInviteLink();
     if (!link) return;
@@ -2381,6 +2885,31 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Accept either a raw pairing code or a full invite URL and return
+   * the bare code (uppercased, capped at 12 chars).  Players who
+   * paste the URL they received in chat shouldn't have to clean it
+   * up themselves — and without this, the maxlength + uppercase on
+   * the input would mangle the URL into useless garbage like
+   * "HTTPS://PLAY" (real bug report from manual testing).
+   */
+  static extractJoinCode(input: string): string {
+    const trimmed = input.trim();
+    if (!trimmed) return '';
+    // Looks like a URL?  Pull ?join=... out of it.
+    if (/^https?:\/\//i.test(trimmed)) {
+      try {
+        const url = new URL(trimmed);
+        const join = url.searchParams.get('join');
+        if (join) return join.toUpperCase().slice(0, 12);
+      } catch {
+        /* fall through to literal handling */
+      }
+    }
+    // Otherwise treat as a literal code.
+    return trimmed.toUpperCase().slice(0, 12);
+  }
+
+  /**
    * Parse a revealedScenes entry back into URL components.  Returns null
    * if the entry doesn't have the expected `episodes/<ep>/<path>` shape.
    */
@@ -2412,6 +2941,25 @@ export class QuireApp extends LitElement {
     const full = QuireApp.scenePathFor(ep, sp);
     if (this.sessionView!.shared.revealedScenes.includes(full)) return false;
     this.session.append('scene-reveal', { scenePath: full });
+    return true;
+  }
+
+  /**
+   * Coordinator-only: un-reveal the current scene.  Emits a
+   * scene-unreveal event that strikes the scene from
+   * shared.revealedScenes.  Players currently viewing the
+   * un-revealed scene get bounced back to the campaign view on
+   * their next render (B5 gating refuses scene routes that
+   * aren't currently revealed).
+   */
+  unrevealCurrentScene(): boolean {
+    if (!this.session || !this.isCoordinator()) return false;
+    if (this.appState.kind !== 'scene') return false;
+    const ep = this.appState.episode.slug;
+    const sp = this.appState.scene.path;
+    const full = QuireApp.scenePathFor(ep, sp);
+    if (!this.sessionView!.shared.revealedScenes.includes(full)) return false;
+    this.session.append('scene-unreveal', { scenePath: full });
     return true;
   }
 

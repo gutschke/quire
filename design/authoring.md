@@ -177,3 +177,17 @@ See `episodes/000-template/` in Underleaf for a starter skeleton with the conven
 ## When in doubt
 
 Default to "more notes are better than fewer" in DM-only files. Surface scenes can be sparse; DM-only material should be generous. The DM running your campaign for the first time will thank you for every detail you provide; they will hate you for every gap they have to improvise.
+
+---
+
+## Lint-side TODOs (not yet enforced)
+
+These conventions are documented but `quire/cli/src/commands/lint.js` does not yet check them. Adding lint coverage would catch a class of authoring mistakes before they reach players.
+
+- **DM-only banner check**: every file under `dm/` and `design/DM-ONLY/` should open with a GitHub `[!CAUTION]` alert block warning players away. Missing banner → lint warning.
+- **`dm/` file referenced from a player-facing scene**: a scene body that contains a markdown link to a `dm/` file is a content leak — the runtime would render it as a regular link. Lint should flag.
+- **Frontmatter required on scenes**: every file in `episodes/<NNN>/scenes/` should have YAML frontmatter that validates against `schema/v0/scene.schema.json`. The runtime now strips frontmatter on render (so missing frontmatter would render the scene body fine), but missing required fields should be caught at lint time, not at runtime.
+- **NPC promotion check**: a name appearing in `dm/npcs.md` should be flagged if it's also referenced in three or more episode scenes — that's a candidate for promotion to `characters/npcs/<id>.json`.
+- **Player-facing files should never embed DM-only blockquotes**: if/when a campaign convention adopts a "`> [!DM]`" or `<!-- dm:start --> ... <!-- dm:end -->` HTML-comment block as the in-scene DM-only marker, the runtime would strip it from player view but DMs would still see it. Today no such convention is defined; if one is adopted, both the linter and the runtime need to implement it.
+
+These are documented here rather than in the lint code so authoring conventions and lint coverage stay co-located. When the linter grows new checks, the corresponding bullet here can be moved into the main convention sections above.

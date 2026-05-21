@@ -118,6 +118,74 @@ export class SessionController {
     this.notify();
   }
 
+  /**
+   * Coordinator-only: rotate the pairing code.  Defensive measure
+   * for the DM after a code leak (e.g. accidental screen-share).
+   * Implementation: snapshot the current event log + display name,
+   * leave the session, host a new one, replay the prior events
+   * onto the new log so all in-flight session state is preserved.
+   *
+   * Already-connected guests will see a transport disconnect (their
+   * data channel to the old host id is gone) and will need to
+   * rejoin with the new code.  This is the intended UX — a leaked
+   * code means anyone could be listening; the DM trades a moment
+   * of friction for a clean break.
+   */
+  async regenerateCode(displayName?: string): Promise<{
+    oldCode: string | null;
+    newCode: string | null;
+  }> {
+    if (!this.peer || this.mode !== 'host') {
+      return { oldCode: null, newCode: null };
+    }
+    const oldCode = this.pairingCode;
+    const events = this.peer.events().slice();
+    this.leave();
+    await this.host(displayName);
+    if (this.peer) {
+      // Re-apply the prior events into the fresh log so the new
+      // session continues from where we were.  Each apply skips if
+      // duplicate (the new host's peer-join + coordinator-claim are
+      // distinct from the old ones, so no collision).
+      for (const e of events) {
+        this.peer.applyEvent(e);
+      }
+      this.notify();
+    }
+    return { oldCode, newCode: this.pairingCode };
+  }
+
+  /**
+   * Coordinator-only: mark another peer as departed.  Used by the
+   * DM-side roster's "remove" button to clean up stale peers
+   * (a player whose browser tab closed without a clean leave, etc).
+   * No-op when not coordinator or when targeting self.
+   */
+  kickPeer(peerId: string): void {
+    if (!this.peer) return;
+    if (this.peer.state().coordinator !== this.peer.peerId) return;
+    if (peerId === this.peer.peerId) return;
+    this.peer.append('peer-disconnect', { peerId });
+    this.notify();
+  }
+
+  /**
+   * Update the local peer's display name and/or character string.
+   * Both fields are optional; pass empty string to clear character.
+   * Emits a peer-rename event that propagates to all peers.
+   */
+  rename(opts: { name?: string; character?: string }): void {
+    if (!this.peer) return;
+    const payload: Record<string, string> = {};
+    if (typeof opts.name === 'string') payload.name = opts.name.trim();
+    if (typeof opts.character === 'string') {
+      payload.character = opts.character.trim();
+    }
+    if (Object.keys(payload).length === 0) return;
+    this.peer.append('peer-rename', payload);
+    this.notify();
+  }
+
   subscribe(listener: SessionListener): () => void {
     this.listeners.add(listener);
     listener(this.view());
@@ -257,7 +325,23 @@ export class SessionController {
     this.peer = new Peer(transport.peerId, transport);
     this.unsubscribes.push(this.peer.onStateChange(() => this.notify()));
     this.unsubscribes.push(transport.onPeerConnect(() => this.notify()));
-    this.unsubscribes.push(transport.onPeerDisconnect(() => this.notify()));
+    this.unsubscribes.push(
+      transport.onPeerDisconnect((departedPeerId) => {
+        this.notify();
+        // Coordinator-only: emit a peer-disconnect event so all
+        // peers update their roster.  Without this, closing a
+        // tab leaves the peer permanently in the roster.  Other
+        // peers' materializer drops the event (coord-holders
+        // check), so they wait for the coordinator's emission.
+        if (
+          this.peer &&
+          this.peer.state().coordinator === this.peer.peerId &&
+          departedPeerId !== this.peer.peerId
+        ) {
+          this.peer.append('peer-disconnect', { peerId: departedPeerId });
+        }
+      })
+    );
     // Transport errors (peer-unavailable, broker-unreachable, etc.)
     // transition the session into the error state.  Before this hook
     // existed, a guest who joined with a bad code stayed in "active"

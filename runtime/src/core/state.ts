@@ -13,6 +13,13 @@ import type { PeerId, QuireEvent } from './event-log';
 export interface PeerPresence {
   peerId: PeerId;
   name?: string;
+  /**
+   * Optional character / status string the peer authored about
+   * themselves.  E.g. "Yui Tanaka" or "Tim (afk)".  Distinct from
+   * `name` (which is the display name the peer registered with at
+   * join).  Updated via `peer-rename` events.
+   */
+  character?: string;
   joinedAt: number;
   leftAt?: number;
 }
@@ -177,10 +184,13 @@ function isPlainObjectPayload(p: unknown): p is Record<string, unknown> {
 export const KNOWN_EVENT_KINDS = new Set([
   'peer-join',
   'peer-leave',
+  'peer-rename',
+  'peer-disconnect',
   'coordinator-claim',
   'coordinator-yield',
   'coordinator-reclaim',
   'scene-reveal',
+  'scene-unreveal',
   'dice-roll',
   'chat',
   'pc-edit',
@@ -203,10 +213,52 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       if (p) p.leftAt = event.ts;
       break;
     }
+    case 'peer-disconnect': {
+      // Coordinator-only: mark another peer as departed when the
+      // network detects their connection closing.  Distinct from
+      // self-authored 'peer-leave' (which is for clean exits).
+      // Without this, closing a browser tab without leaving
+      // cleanly leaves the peer permanently in the roster.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as { peerId?: unknown };
+      if (typeof p.peerId !== 'string' || p.peerId.length === 0) break;
+      const target = state.peers[p.peerId];
+      if (target && target.leftAt === undefined) {
+        target.leftAt = event.ts;
+      }
+      break;
+    }
+    case 'peer-rename': {
+      // Self-rename only — the event.peerId IS the author (R2.1
+      // already enforces this on the wire).  A peer can update
+      // either their display name, their character, or both.
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as { name?: unknown; character?: unknown };
+      const presence = state.peers[event.peerId];
+      if (!presence) break;
+      if (typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 80) {
+        presence.name = p.name;
+      }
+      if (typeof p.character === 'string' && p.character.length <= 80) {
+        // Empty string explicitly clears the character.
+        presence.character = p.character.length === 0 ? undefined : p.character;
+      }
+      break;
+    }
     case 'coordinator-claim': {
+      // EXPRESSED claim — record the author in coordHolders even if
+      // first-wins gates the actual transition.  This matters across
+      // session boundaries: when a fresh-host loads a save authored
+      // by a prior DM, the prior DM's coord-claim sorts at sum=2
+      // tied with the fresh host's; first-wins on alphabetical
+      // peerId may or may not let the prior DM "win" — but their
+      // scene-reveals must still apply, which requires them to be
+      // in coordHolders.  Authority comes from "ever expressed a
+      // claim", not from "currently winning the claim race."
+      state.coordHolders.add(event.peerId);
       if (!state.coordinator) {
         state.coordinator = event.peerId;
-        state.coordHolders.add(event.peerId);
       }
       break;
     }
@@ -254,6 +306,19 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       if (!state.revealedScenes.includes(p.scenePath)) {
         state.revealedScenes.push(p.scenePath);
       }
+      break;
+    }
+    case 'scene-unreveal': {
+      // DM-revoke for an accidental reveal.  Same authority check
+      // as reveal.  Removes the scene path from revealedScenes;
+      // players who were viewing that scene will be navigated
+      // away by the UI layer on their next render.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<SceneRevealPayload>;
+      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
+      const idx = state.revealedScenes.indexOf(p.scenePath);
+      if (idx >= 0) state.revealedScenes.splice(idx, 1);
       break;
     }
     case 'dice-roll': {
