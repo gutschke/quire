@@ -5,7 +5,8 @@ import {
   renderMarkdownDocument,
   renderMarkdownParagraphs,
   blockHash,
-  normalizeBlock
+  normalizeBlock,
+  CryptoUnavailableError
 } from './markdown';
 
 describe('parseFrontmatter', () => {
@@ -250,6 +251,26 @@ describe('blockHash', () => {
     const a = await blockHash('same text');
     const b = await blockHash('same text');
     expect(a).toBe(b);
+  });
+
+  it('throws CryptoUnavailableError when crypto.subtle is missing', async () => {
+    // Simulate an insecure-context environment where crypto.subtle
+    // is undefined.  vi.stubGlobal restores after the test ends.
+    const original = globalThis.crypto;
+    Object.defineProperty(globalThis, 'crypto', {
+      value: undefined,
+      configurable: true
+    });
+    try {
+      await expect(blockHash('x')).rejects.toBeInstanceOf(
+        CryptoUnavailableError
+      );
+    } finally {
+      Object.defineProperty(globalThis, 'crypto', {
+        value: original,
+        configurable: true
+      });
+    }
   });
 });
 

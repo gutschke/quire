@@ -196,7 +196,18 @@ export class SceneStage extends LitElement {
     const revealedSet = this.revealedBlocks ?? new Set<string>();
     if (blocks.length === 0) return nothing;
     if (this.isCoordinator) {
-      return blocks.map((block) => {
+      // FU-5: lapsed reveals — blockHashes in revealedSet that no
+      // longer match any current block.  After the DM edits the
+      // campaign mid-session, those reveals silently lapse to
+      // hidden (correct behavior — the text changed; the DM should
+      // re-decide).  Surface them as faint pips at the END of the
+      // block list so the DM can see what got dropped without
+      // letting them lurk invisibly.
+      const currentHashes = new Set(blocks.map((b) => b.blockHash));
+      const lapsedHashes = [...revealedSet].filter(
+        (h) => !currentHashes.has(h)
+      );
+      const blockRows = blocks.map((block) => {
         const revealed =
           this.sceneFullyRevealed || revealedSet.has(block.blockHash);
         return html`
@@ -220,6 +231,34 @@ export class SceneStage extends LitElement {
           </div>
         `;
       });
+      if (lapsedHashes.length === 0) return blockRows;
+      return [
+        ...blockRows,
+        html`
+          <div class="scene-block scene-block-dm scene-block-lapsed-strip">
+            <span class="scene-block-lapsed-label"
+              >Lapsed reveals (text changed since reveal):</span
+            >
+            <ul class="scene-block-lapsed-list">
+              ${lapsedHashes.map(
+                (h) => html`
+                  <li>
+                    <button
+                      type="button"
+                      class="scene-block-pip scene-block-pip-lapsed"
+                      title="Drop lapsed reveal for block hash ${h}"
+                      @click=${() => this.onToggleBlock?.(h)}
+                    >
+                      ◐
+                    </button>
+                    <code class="scene-block-lapsed-hash">${h}</code>
+                  </li>
+                `
+              )}
+            </ul>
+          </div>
+        `
+      ];
     }
     // Player view: omit non-revealed blocks from the DOM.
     const visible = this.sceneFullyRevealed

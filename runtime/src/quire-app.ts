@@ -87,6 +87,7 @@ import {
 import {
   renderMarkdown,
   renderMarkdownParagraphs,
+  CryptoUnavailableError,
   type MarkdownBlock
 } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
@@ -699,6 +700,14 @@ export class QuireApp extends LitElement {
           kind: 'error',
           message: e.message,
           details: e.details
+        };
+      } else if (e instanceof CryptoUnavailableError) {
+        // FU-8: insecure context (HTTP / file://) gates Web Crypto.
+        // Surface the actionable fix rather than a generic error.
+        this._appState = {
+          kind: 'error',
+          message: 'Browser security context too weak.',
+          details: e.message
         };
       } else {
         this._appState ={

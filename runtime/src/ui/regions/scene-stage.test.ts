@@ -181,6 +181,49 @@ describe('<scene-stage> per-block reveal rendering', () => {
     expect(stage.querySelector('.dm-caution-card')).toBeNull();
   });
 
+  it('DM view shows a lapsed-pip strip for revealed hashes that no longer match any block', async () => {
+    const stage = mountStage();
+    stage.scenePath = 's.md';
+    stage.sceneBlocks = [block('aaaaaaaaaaaaaaaa', 'current text', 0)];
+    // Two revealed hashes from a prior session: one that still
+    // matches a current block, one that has lapsed.
+    stage.revealedBlocks = new Set(['aaaaaaaaaaaaaaaa', 'deadbeef00000000']);
+    stage.sceneFullyRevealed = false;
+    stage.isCoordinator = true;
+    await stage.updateComplete;
+    expect(stage.querySelector('.scene-block-lapsed-strip')).not.toBeNull();
+    expect(stage.innerHTML).toContain('deadbeef00000000');
+    // The current-block pip is unaffected.
+    const currentPip = stage
+      .querySelectorAll('.scene-block-pip')
+      [0] as HTMLButtonElement;
+    expect(currentPip.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('DM view omits the lapsed strip when no lapsed hashes exist', async () => {
+    const stage = mountStage();
+    stage.scenePath = 's.md';
+    stage.sceneBlocks = [block('aaaaaaaaaaaaaaaa', 'current', 0)];
+    stage.revealedBlocks = new Set(['aaaaaaaaaaaaaaaa']);
+    stage.sceneFullyRevealed = false;
+    stage.isCoordinator = true;
+    await stage.updateComplete;
+    expect(stage.querySelector('.scene-block-lapsed-strip')).toBeNull();
+  });
+
+  it('player view does not show lapsed-pip strip (DM-only affordance)', async () => {
+    const stage = mountStage();
+    stage.scenePath = 's.md';
+    stage.sceneBlocks = [block('aaaaaaaaaaaaaaaa', 'current', 0)];
+    stage.revealedBlocks = new Set(['aaaaaaaaaaaaaaaa', 'deadbeef00000000']);
+    stage.sceneFullyRevealed = false;
+    stage.isCoordinator = false;
+    await stage.updateComplete;
+    expect(stage.querySelector('.scene-block-lapsed-strip')).toBeNull();
+    // Lapsed hash text doesn't leak into player DOM.
+    expect(stage.innerHTML).not.toContain('deadbeef00000000');
+  });
+
   it('frontmatter strip still renders in player view (it is metadata, not body)', async () => {
     const stage = mountStage();
     stage.scenePath = 's.md';

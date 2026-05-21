@@ -1271,6 +1271,44 @@ export const quireAppStyles = css`
       margin-bottom: 0;
     }
 
+    /* FU-5: lapsed-pip strip rendered at the END of the DM's block
+       list when revealedParagraphs contains hashes that no longer
+       match any current block.  Distinct color (half-circle glyph,
+       muted hue) so the DM sees what changed after editing the
+       campaign text mid-session. */
+    .scene-block-lapsed-strip {
+      grid-template-columns: 1fr;
+      padding: 0.5rem 0.7rem;
+      margin-top: 0.5rem;
+      background: light-dark(#f5efe0, #2a2618);
+      border-left: 3px solid light-dark(#b8841a, #856010);
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .scene-block-lapsed-label {
+      color: light-dark(#5a4310, #c0a050);
+      font-variant: small-caps;
+      letter-spacing: 0.04em;
+    }
+    .scene-block-lapsed-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.3rem 0 0;
+    }
+    .scene-block-lapsed-list li {
+      display: flex;
+      align-items: center;
+      gap: 0.4em;
+      padding: 0.1rem 0;
+    }
+    .scene-block-pip-lapsed {
+      color: light-dark(#b8841a, #c0a050) !important;
+    }
+    .scene-block-lapsed-hash {
+      font-family: monospace;
+      color: light-dark(#777, #999);
+    }
+
     /* M3a.6a: dice stat chips. */
     .dice-stat-chips {
       display: flex;

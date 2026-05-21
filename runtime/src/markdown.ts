@@ -283,13 +283,38 @@ export function normalizeBlock(raw: string): string {
 const BLOCK_HASH_HEX_LENGTH = 16;
 
 /**
+ * Specialized error thrown when `crypto.subtle` is unavailable —
+ * usually because Quire is being served from an insecure context
+ * (HTTP, file://) where browsers gate Web Crypto.  The runtime
+ * catches this in navigateToRoute's scene-load path and surfaces
+ * a helpful error banner so the user knows to switch to HTTPS or
+ * localhost instead of seeing a silent failure.
+ */
+export class CryptoUnavailableError extends Error {
+  override readonly name = 'CryptoUnavailableError';
+  constructor() {
+    super(
+      'Per-paragraph reveal requires Web Crypto (crypto.subtle), which the browser disables in insecure contexts.  Serve Quire over HTTPS or open it on localhost.'
+    );
+  }
+}
+
+/**
  * Async sha256 (Web Crypto), first 16 hex chars.  Used for block
  * identity in scene-reveal-paragraph events.  Async so we can use
  * the platform's crypto.subtle without bundling a JS implementation;
  * the only caller (renderMarkdownParagraphs) is itself async via
  * the navigateToRoute scene-load path.
+ *
+ * Throws {@link CryptoUnavailableError} when the platform doesn't
+ * expose crypto.subtle (insecure-context HTTP serving).  Fails
+ * closed — there's no fallback hash because a cross-peer hash
+ * mismatch would silently desync the reveal mask.
  */
 export async function blockHash(raw: string): Promise<string> {
+  if (typeof crypto === 'undefined' || !crypto.subtle?.digest) {
+    throw new CryptoUnavailableError();
+  }
   const normalized = normalizeBlock(raw);
   const bytes = new TextEncoder().encode(normalized);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
