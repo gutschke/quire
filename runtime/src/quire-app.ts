@@ -474,6 +474,12 @@ export class QuireApp extends LitElement {
 
     .session-bar .session-peers {
       color: light-dark(#555, #aaa);
+      cursor: help;
+    }
+
+    .session-peers-warn {
+      color: light-dark(#a04010, #d4885c);
+      font-size: 0.9em;
     }
 
     .session-bar.session-active {
@@ -636,6 +642,12 @@ export class QuireApp extends LitElement {
       color: inherit;
     }
 
+    .chat-error {
+      color: light-dark(#a01010, #ff7070);
+      font-size: 0.85em;
+      margin: 0.4rem 0 0;
+    }
+
     .chat-form button {
       padding: 0.3rem 0.75rem;
       border: 1px solid light-dark(#ccc, #444);
@@ -643,6 +655,36 @@ export class QuireApp extends LitElement {
       background: light-dark(#f4f4f4, #222);
       color: inherit;
       cursor: pointer;
+    }
+
+    .reveal-chips {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      align-items: baseline;
+    }
+
+    .reveal-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.1rem 0.5rem;
+      border: 1px solid light-dark(#d9c89b, #5a4d2a);
+      border-radius: 3px;
+      background: light-dark(#fdf8e7, #2a2418);
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .reveal-chip.reveal-chip-current {
+      background: light-dark(#f4c860, #6a4d2a);
+      border-color: light-dark(#b88c20, #b8983e);
+      cursor: default;
+    }
+
+    .reveal-chip-marker {
+      font-size: 0.85em;
+      margin-left: 0.25rem;
+      color: light-dark(#7a5c10, #d4b256);
     }
 
     .reveal-banner {
@@ -929,6 +971,7 @@ export class QuireApp extends LitElement {
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
+  @state() chatError: string | null = null;
   // Persistence UI state
   @state() saveStatus: { kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string } =
     { kind: 'idle' };
@@ -1360,35 +1403,50 @@ export class QuireApp extends LitElement {
     if (!v || v.status !== 'active') return html``;
     const list = v.shared.revealedScenes;
     if (list.length === 0) return html``;
-    const latest = list[list.length - 1];
-    const parsed = QuireApp.parseRevealedPath(latest);
-    if (!parsed) return html``;
     const campaign = this.getCurrentCampaign();
     if (!campaign) return html``;
     const slug = this.slugFor(campaign);
-    // If we're already viewing the revealed scene, don't repeat ourselves.
-    if (
-      this.appState.kind === 'scene' &&
-      this.appState.episode.slug === parsed.episode &&
-      this.appState.scene.path === parsed.scene
-    ) {
-      return html``;
-    }
-    const route: AppRoute = {
-      kind: 'scene',
-      slug,
-      episode: parsed.episode,
-      scene: parsed.scene
-    };
-    return html`
-      <div class="reveal-banner">
-        <span class="reveal-banner-label">DM revealed:</span>
+    // F4 fix: show ALL revealed scenes as chips, not just the
+    // latest.  Players still reading scene 1 when the DM reveals
+    // scene 2 used to lose the affordance for scene 1 entirely.
+    // Now both stay reachable; the chip for the scene the player
+    // is currently on is highlighted, so it's visually obvious
+    // which one is "current".
+    const currentScene =
+      this.appState.kind === 'scene'
+        ? `episodes/${this.appState.episode.slug}/${this.appState.scene.path}`
+        : null;
+    const chips: TemplateResult[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const full = list[i];
+      const parsed = QuireApp.parseRevealedPath(full);
+      if (!parsed) continue;
+      const route: AppRoute = {
+        kind: 'scene',
+        slug,
+        episode: parsed.episode,
+        scene: parsed.scene
+      };
+      const isCurrent = full === currentScene;
+      chips.push(html`
         <a
+          class="reveal-chip ${isCurrent ? 'reveal-chip-current' : ''}"
           href=${routeToSearch(route)}
           @click=${(e: Event) => this.navigate(e, route)}
-          ><code>${parsed.scene}</code></a
+          title=${`Revealed scene ${i + 1} of ${list.length} (in ${parsed.episode})`}
+          ><code>${parsed.scene}</code>${isCurrent
+            ? html`<span class="reveal-chip-marker"> (here)</span>`
+            : nothing}</a
         >
-        <span class="muted">in ${parsed.episode}</span>
+      `);
+    }
+    if (chips.length === 0) return html``;
+    return html`
+      <div class="reveal-banner">
+        <span class="reveal-banner-label">
+          DM revealed${list.length > 1 ? ` (${list.length})` : ''}:
+        </span>
+        <span class="reveal-chips">${chips}</span>
       </div>
     `;
   }
@@ -1658,6 +1716,10 @@ export class QuireApp extends LitElement {
       <section class="card">
         <div class="markdown">${unsafeHTML(scene.html)}</div>
       </section>
+      ${this.renderCharacterMenus(
+        this.slugFor(campaign),
+        campaign.base.manifest.characters
+      )}
       ${this.renderRollPanel()}
     `;
   }
@@ -1754,7 +1816,34 @@ export class QuireApp extends LitElement {
       `;
     }
     // active
-    const peerCount = v.connectedPeers.length;
+    // F1 fix: report session membership (shared.peers, the
+    // gossip-propagated count of who joined) instead of direct
+    // WebRTC connections.  In a hub topology a guest's
+    // connectedPeers is always 1 even when 4 people are in the
+    // room — counting from shared.peers reflects what the user
+    // actually cares about.  Show "(N reachable)" only when it
+    // disagrees with the membership count, so the discrepancy is
+    // surfaced when it matters (someone dropped) without cluttering
+    // the bar in the happy path.
+    const sessionMembers = Object.values(v.shared.peers).filter(
+      (p) => p.peerId !== v.peerId && p.leftAt === undefined
+    );
+    const memberCount = sessionMembers.length;
+    const connected = v.connectedPeers.length;
+    const memberLabel =
+      memberCount === 0
+        ? 'no other players yet'
+        : memberCount === 1
+          ? '1 other player'
+          : `${memberCount} other players`;
+    const reachabilityHint =
+      memberCount > 0 && connected < memberCount
+        ? html` <span
+            class="session-peers-warn"
+            title="Some peers are not directly reachable via WebRTC right now.  Events still flow if any peer can forward."
+            >(${connected} direct)</span
+          >`
+        : nothing;
     return html`
       <div class="session-bar session-active">
         ${v.mode === 'host'
@@ -1770,12 +1859,13 @@ export class QuireApp extends LitElement {
                 as <code>${v.peerId}</code>
               </span>
             `}
-        <span class="session-peers">
-          ${peerCount === 0
-            ? 'no peers yet'
-            : peerCount === 1
-              ? '1 peer'
-              : `${peerCount} peers`}
+        <span
+          class="session-peers"
+          title=${sessionMembers
+            .map((p) => p.name ?? p.peerId)
+            .join(', ') || 'no other players in this session yet'}
+        >
+          ${memberLabel}${reachabilityHint}
         </span>
         ${brokerBadge}
         <button
@@ -1956,10 +2046,14 @@ export class QuireApp extends LitElement {
             maxlength="500"
             @input=${(e: Event) => {
               this.chatDraft = (e.target as HTMLInputElement).value;
+              this.chatError = null;
             }}
           />
           <button type="submit">Send</button>
         </form>
+        ${this.chatError
+          ? html`<p class="chat-error">${this.chatError}</p>`
+          : nothing}
       </section>
     `;
   }
@@ -2409,6 +2503,22 @@ export class QuireApp extends LitElement {
       if (this.session.applyEvents([e]) > 0) applied++;
     }
     void tempLog; // unused (kept for readability)
+    // Auto-reclaim if needed: when a host loads a save, the
+    // session-1 coordinator-claim may sort earlier (older
+    // clock-sum) than the new host's own claim, depending on
+    // peerId tiebreak.  Without auto-reclaim, the coordinator
+    // would be non-deterministic.  User intent: "the host who
+    // loads is the DM."  Fire a coord-reclaim from the host so
+    // they're unambiguously coordinator; the audit chat captures
+    // the transition transparently.  A non-host (guest) who
+    // loads does NOT auto-reclaim — that's the explicit "I want
+    // to take over" workflow gated by the Reclaim button.
+    if (
+      this.sessionView!.mode === 'host' &&
+      this.sessionView!.shared.coordinator !== this.sessionView!.peerId
+    ) {
+      this.session.reclaimCoordinator();
+    }
     const result: LoadResult = {
       applied,
       duplicates: parsed.doc.events.length - applied,
@@ -2506,15 +2616,23 @@ export class QuireApp extends LitElement {
       if (cmd) {
         this.submitRoll(trimmed);
         this.chatDraft = '';
+        this.chatError = null;
         return true;
       }
       // Unparseable /roll: send as chat so user sees their literal
       // text rather than getting a silent no-op.
     }
-    // Cap at the same length the input HTML attribute enforces.
-    if (trimmed.length > CHAT_MAX_LENGTH) return false;
+    // F2 fix: cap with explicit user-facing feedback instead of a
+    // silent no-op.  The user can see what was over-cap and edit it
+    // back down rather than wondering why their long message
+    // disappeared.
+    if (trimmed.length > CHAT_MAX_LENGTH) {
+      this.chatError = `Message too long (${trimmed.length} characters; max ${CHAT_MAX_LENGTH}).`;
+      return false;
+    }
     this.session.append('chat', { text: trimmed });
     this.chatDraft = '';
+    this.chatError = null;
     return true;
   }
 

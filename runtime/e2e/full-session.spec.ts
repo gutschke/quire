@@ -194,29 +194,50 @@ test.describe('Full session simulation — Episode 1 of test-camp', () => {
         ]
       });
 
-      // Host sees 3 direct connections; guests see only 1 (the host).
-      // F1 below documents this as a UX gap.
-      await expect(activePanel(dm).locator('.session-peers')).toContainText(
-        /3 peers/i,
-        { timeout: 30000 }
-      );
-      for (const guest of [playerA, playerB, sam]) {
-        await expect(
-          activePanel(guest).locator('.session-peers')
-        ).toContainText(/1 peer/i, { timeout: 30000 });
+      // F1 (fixed): peer label now reflects session membership
+      // (shared.peers) instead of direct WebRTC connections.
+      // Every peer should see "3 other players" once everyone has
+      // joined and the peer-join events have propagated.
+      for (const [name, page] of [
+        ['dm', dm],
+        ['playerA', playerA],
+        ['playerB', playerB],
+        ['sam', sam]
+      ] as const) {
+        try {
+          await expect(
+            activePanel(page).locator('.session-peers')
+          ).toContainText(/3 other players/i, { timeout: 30000 });
+        } catch (e) {
+          const sharedPeers = await page.evaluate(() => {
+            const app = document.querySelector('quire-app') as unknown as {
+              sessionView: {
+                peerId: string;
+                shared: { peers: Record<string, unknown> };
+              };
+            };
+            return {
+              self: app.sessionView.peerId,
+              peers: Object.keys(app.sessionView.shared.peers)
+            };
+          });
+          throw new Error(
+            `${name} peer-count failed: ${JSON.stringify(sharedPeers)}: ${(e as Error).message}`
+          );
+        }
       }
       samReport.record({
         beat: 3.5,
         task: 'Sam reads the peer count after joining',
         friction: [
           {
-            severity: 'significant',
+            severity: 'verified-fixed',
             observation:
-              'F1: Sam sees "1 peer" in the session bar but knows from out-of-band chat that 4 people are in the room. The label reflects WebRTC direct connections (hub topology) not session membership. A guest who reads "1 peer" reasonably concludes "I am alone with the DM" which is misleading.',
+              'F1 (post-fix): Sam sees "3 other players" in the session bar matching the actual session membership. Tooltip hover shows the names.',
             filePathHint:
-              'src/quire-app.ts renderSessionBar — connectedPeers count vs shared.peers'
+              'src/quire-app.ts renderSessionBar — fixed to use shared.peers'
           }
-        ]
+        ] as unknown as FrictionEntry[]
       });
 
       // BEAT 4 (adversarial): QA attempts to flood with a 600-char chat.

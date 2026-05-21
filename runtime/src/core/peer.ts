@@ -241,7 +241,23 @@ export class Peer {
       case 'sync-response': {
         let changed = false;
         for (const event of payload.events) {
-          if (this.log.apply(event)) changed = true;
+          if (this.log.apply(event)) {
+            changed = true;
+            // Hub-forwarding (extended F-MAJOR fix): forward
+            // newly-applied events from a sync-response to OTHER
+            // peers too.  Required because peer-join broadcasts
+            // race the PeerJS data-channel handshake: when a new
+            // guest's runJoin appends peer-join immediately after
+            // attachPeer, the data channel to the host may not be
+            // open yet, so the original 'share' is dropped (the
+            // connections map is empty).  The new guest then
+            // catches up via sync-response from the host, but
+            // without re-forwarding the host has no way to push
+            // the new guest's peer-join to other guests — so
+            // every guest's shared.peers stays incomplete.
+            // Dedup at the EventLog id-level prevents loops.
+            this.forwardShareToOthers(from, event);
+          }
         }
         if (changed) this.notifyStateChange();
         break;

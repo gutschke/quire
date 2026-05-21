@@ -198,11 +198,13 @@ export async function expectPeerCount(
   page: Page,
   count: number
 ): Promise<void> {
+  // Post-F1: label is "N other players" sourced from shared.peers
+  // (session membership) instead of direct WebRTC connections.
   const label = count === 0
-    ? /no peers yet/i
+    ? /no other players yet/i
     : count === 1
-      ? /1 peer/i
-      : new RegExp(`${count} peers`, 'i');
+      ? /1 other player/i
+      : new RegExp(`${count} other players`, 'i');
   await expect(activePanel(page).locator('.session-peers')).toContainText(
     label,
     { timeout: 30000 }

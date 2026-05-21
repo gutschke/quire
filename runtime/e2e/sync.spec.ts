@@ -185,17 +185,23 @@ test.describe('Multi-peer sync — scene reveal', () => {
       await expect(revealBtn).toBeVisible({ timeout: 10000 });
       await revealBtn.click();
 
-      // Guest sees the banner above the body.
+      // Guest sees the banner above the body with intro.md chip.
       const banner = guest.locator('.reveal-banner');
       await expect(banner).toBeVisible({ timeout: 10000 });
       await expect(banner).toContainText('intro.md');
       // Click-to-follow navigates the guest to the scene.
-      await banner.locator('a').click();
+      await banner.locator('a').first().click();
       await expect(guest.locator('header h1')).toContainText('scenes/intro.md', {
         timeout: 10000
       });
-      // The banner suppresses itself once you're on the revealed scene.
-      await expect(banner).not.toBeVisible();
+      // F4 change: banner stays visible (so multi-scene reveals
+      // remain navigable), but the current-scene chip is marked
+      // with "(here)" so it's obvious which one you're on.
+      await expect(banner).toBeVisible();
+      await expect(banner.locator('.reveal-chip-current')).toContainText(
+        'intro.md'
+      );
+      await expect(banner.locator('.reveal-chip-current')).toContainText('here');
     } finally {
       await hostCtx.close();
       await guestCtx.close();
