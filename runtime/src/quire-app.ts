@@ -45,10 +45,7 @@ import {
   type LoadResult
 } from './persistence';
 
-const SAVE_STORAGE_PREFIX = 'quire.save.';
-const SAVE_AUTOSAVE_DEBOUNCE_MS = 1500;
-const SAVE_QUOTA_WARN_BYTES = 1_000_000;
-const SAVE_QUOTA_REFUSE_BYTES = 4_000_000;
+// Autosave constants live in the AutosaveController (P0-9).
 
 // AI provider / key / model / system-prompt state lives in
 // src/controllers/ai-key-store.ts (P0-10).  Re-export the public types
@@ -60,6 +57,7 @@ import {
   type AiProvider,
   type AiClient
 } from './controllers/ai-key-store';
+import { AutosaveController } from './controllers/autosave-controller';
 import {
   renderMarkdown,
   renderMarkdownDocument,
@@ -203,8 +201,13 @@ export class QuireApp extends LitElement {
     { kind: 'idle' };
   @state() resumePromptDoc: SaveDocument | null = null;
   @state() reclaimConfirmShown: boolean = false;
-  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-  private autosaveQuotaWarned: boolean = false;
+  /**
+   * Debounced autosave to localStorage encapsulated in the
+   * AutosaveController (P0-9).  Constructor takes a buildDoc
+   * callback so the controller doesn't need direct access to
+   * session/campaign internals.
+   */
+  private autosave = new AutosaveController(this, () => this.buildSaveDocument());
   private campaignDiscoveryInFlight: boolean = false;
   /**
    * AI provider / key / model / system-prompt state is encapsulated
@@ -2319,51 +2322,22 @@ export class QuireApp extends LitElement {
    * sessionView change while in an active session.  Storage key:
    * quire.save.<owner>-<repo>.
    */
+  /**
+   * Schedule a debounced autosave.  Delegates to AutosaveController
+   * (P0-9).  Kept as a private method on QuireApp so the call sites
+   * in the session-subscribe handler don't need to reach through
+   * to the controller.
+   */
   private scheduleAutosave(): void {
-    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
-    this.autosaveTimer = setTimeout(() => {
-      this.autosaveTimer = null;
-      this.performAutosave();
-    }, SAVE_AUTOSAVE_DEBOUNCE_MS);
-  }
-
-  private performAutosave(): void {
-    const doc = this.buildSaveDocument();
-    if (!doc) return;
-    const json = stringifySave(doc);
-    if (json.length > SAVE_QUOTA_REFUSE_BYTES) {
-      // Refuse — the user can still download via Save button.
-      this.autosaveQuotaWarned = true;
-      return;
-    }
-    if (json.length > SAVE_QUOTA_WARN_BYTES && !this.autosaveQuotaWarned) {
-      console.warn(
-        `[quire] autosave is large (${(json.length / 1000).toFixed(0)}KB); consider downloading a manual save.`
-      );
-      this.autosaveQuotaWarned = true;
-    }
-    try {
-      const key = `${SAVE_STORAGE_PREFIX}${doc.campaign.owner}-${doc.campaign.repo}`;
-      window.localStorage?.setItem(key, json);
-    } catch {
-      // QuotaExceededError or unavailable storage; drop silently.
-    }
+    this.autosave.schedule();
   }
 
   /** Look up an autosave for the current campaign and stage it as a Resume prompt. */
   private checkResumePrompt(): void {
-    try {
-      const campaign = this.getCurrentCampaign();
-      if (!campaign) return;
-      const c = campaign.base.source;
-      const key = `${SAVE_STORAGE_PREFIX}${c.owner}-${c.repo}`;
-      const json = window.localStorage?.getItem(key);
-      if (!json) return;
-      const parsed = parseSaveDocument(json);
-      if (parsed.ok) this.resumePromptDoc = parsed.doc;
-    } catch {
-      // ignore
-    }
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return;
+    const resumed = this.autosave.checkResume(campaign.base.source);
+    if (resumed) this.resumePromptDoc = resumed;
   }
 
   dismissResumePrompt(): void {
