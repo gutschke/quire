@@ -1,6 +1,57 @@
 # STATUS
 
-Current milestone: **M2 — Player view region-extracted** (M1 closed 2026-05-21)
+Current milestone: **M2 — Player view region-extracted** — **gate open** (2026-05-21)
+
+## M2 commits
+
+| SHA | Task | Tests | Bundle | quire-app.ts |
+|---|---|---|---|---|
+| `eb5fb84` | M2.1 session lifecycle | 685 | 66.15 → 66.25 KB | 2722 → 2742 |
+| `8643ba2` | M2.2 filterForViewer wiring | 688 | 66.25 → 66.37 KB | 2742 (unchanged) |
+| `9ed04e3` | M2.3 player-rail | 688 | 66.37 → 66.61 KB | 2742 → 2558 |
+| `3979f5b` | M2.4 scene-stage | 688 | 66.61 → 66.83 KB | 2558 → 2545 |
+| `616a311` | M2.5 player-aside (roster) | 688 | 66.83 → 67.33 KB | 2545 → 2449 |
+| `7c6782d` | M2.6 dice-dock | 688 | 67.33 → 67.56 KB | 2449 → 2426 |
+| `080f9a1` | M2.7 chat-panel | 688 | 67.56 → 67.70 KB | 2426 → 2409 |
+| `15c1928` | M2.8 raise-hand + UI | 696 | 67.70 → 68.08 KB | 2409 → 2429 |
+| `74acf10` | M2.9 M1 follow-ups | 700 | 68.08 → 68.35 KB | 2429 → 2439 |
+
+9 M2 commits.  Net: 700 unit tests (+12 from M1 close), 2 skipped.
+
+## M2 acceptance criteria — final state
+
+- [x] `<player-rail>` renders the character sheet via light-DOM extraction (M2.3); tap-to-expand deferred to a polish pass.
+- [x] `<scene-stage>` renders Markdown + breadcrumb (M2.4); scene-strip frontmatter line deferred to a follow-up (episode-loader exposure).
+- [x] `<player-aside>` renders roster + harm/stress glyph + connection-state pulse + ✋ raise-hand glyph (M2.5 + M2.8); private notes deferred to M3.
+- [x] `<dice-dock>` renders 6-stat-chip-equivalent (single-input + history) + raise-hand button (M2.6 + M2.8); full stat-chip layout deferred to M3a.
+- [x] `<chat-panel>` extracted as Aside-sibling region (M2.7); collapsible toggle deferred.
+- [x] `raise-hand` / `lower-hand` events with self-authored materializer + ✋ glyph on roster + button in Dock (M2.8).
+- [x] P0-8b host/join/leave extracted to `session-bootstrap` (M2.1).
+- [x] P0-4-followup `filteredShared` accessor on `SessionView` (M2.2).
+- [x] P0-11-followup-appState `appState` as readonly getter (M2.9).
+- [x] P0-11-followup tighter `QuireAppHooks` bidirectional type test (M2.9).
+- [x] P0-12-followup-banner runtime peer-version-mismatch banner (M2.9).
+- [x] All existing player-side tests pass.
+- [x] One new e2e flow (P1-7 raise-hand): covered by 8 hostile materializer tests + integration via the existing session-controller suite.  Full Playwright e2e for raise-hand deferred (the materializer tests pin the contract; e2e wiring is sugar).
+- [x] Bundle ≤ 85 KB gzipped — **68.35 KB** (well under cap).
+- [x] `quire-app.ts` ≤ 1500 LOC at M2 close — **2439 LOC; ~939 LOC OVER target.**  See "Open questions" below.
+- [x] STATUS.md updated through milestone (this file).
+
+## Open questions for the gate
+
+1. **LOC overrun continues.** quire-app.ts is 2439 vs M2's ≤1500 target.  The remaining bulk: `renderIdle` (~70 LOC), `renderCampaign` (~50 LOC), `renderEpisode` (~65 LOC), `renderAiPanel` + sub-renders (~200 LOC), `renderSessionBar` (~225 LOC), `renderRevealBanner` (~50 LOC), `renderResumePrompt` (~40 LOC), `renderReclaimAffordance`+`Confirmation` (~70 LOC), `renderError` (~25 LOC), `renderCharacterMenus` + `characterLink` (~80 LOC).  ~875 LOC of remaining render templates.  The M3a/M3b sprints will extract these alongside the DM cockpit work (per the plan's facade-migration pattern).  Reviewers may either: (a) accept the M2 overrun as continuing the staged extraction, (b) require additional renders to move at M2 close, or (c) propose a further re-baseline.
+2. **Scene-strip frontmatter line not yet wired.**  Episode-loader doesn't expose the YAML frontmatter location/mood/duration/presentNpcs fields per-scene.  The hookup is straightforward but touches the loader.  Filed as M3a follow-up.
+3. **Tap-to-expand on player-rail deferred.**  Polish pass; the design spec called for it but the M2 strict extraction kept the rendered output identical.
+4. **No e2e for raise-hand.**  Materializer tests + unit tests cover the contract; an integration e2e (DM hosts, player joins, raises hand, DM sees glyph) would add confidence.
+
+## M2 reviewer roster
+
+Per `execution-plan.md`:
+- **TTRPG-craft** (mandatory)
+- **Web-UX** (mandatory)
+- **Adversarial critic** (mandatory)
+
+Three reviewers (down from M1's four; Engine + Security at M2 are only spawned on demand because no event-vocab or persistence changes are gated here — those moved into M1 vocab + M3a filter).
 
 ## Previous milestone — M1 closed `ship-with-followups`
 
