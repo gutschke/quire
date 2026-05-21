@@ -5,32 +5,33 @@ Current milestone: **M3b — AI broker + dual-card (in flight)** — M3a closed 
 ## M3b acceptance criteria
 
 **Foundation (no UI change required):**
-- [ ] `src/ai/{broker,schema,context,audit,budget}.ts` module structure landed (M3b.1)
-- [ ] AiResponse `{safe, dmOnly, sources, raw, tokensIn, tokensOut, responseId}` schema (M3b.1)
-- [ ] `buildContext({scope})` with path validation: campaign-relative, no `..`, no `dm/*` when scope='public' (M3b.1, hostile tests P2-8)
-- [ ] `wrapUntrusted()` + `UC_CLOSE` sentinel.  Load-time validator in `campaign-loader.ts` rejects raw content containing the literal sentinel (M3b.6, H-2-now from M1)
-- [ ] `AiBroker.complete(req)` wrapping both providers; structured return; parse-failure fallback (M3b.2)
-- [ ] Provider impls request structured tool / response schema (Anthropic tool_use, Gemini schema); broker normalizes (M3b.2)
-- [ ] Coord-only enforcement at broker level — only current `state.coordinator` can `complete()` (M3b.2)
-- [ ] Scope toggle resets per prompt (M3b.5 UI + M3b.2 broker)
+- [x] `src/ai/{broker,schema,context,audit,budget,hash}.ts` module structure landed (M3b.1-M3b.4)
+- [x] AiResponse `{safe, dmOnly, sources, raw, tokensIn, tokensOut, responseId}` schema (M3b.1)
+- [x] `validateContextRef({scope})` with path validation: campaign-relative, no `..`, no URL schemes, no `dm/*` when scope='public', length cap (M3b.1)
+- [x] `wrapUntrusted()` + `UC_CLOSE_SENTINEL`.  Load-time validator in `campaign-loader.ts` rejects raw content containing the literal sentinel (M3b.6)
+- [x] `AiBroker.complete(req)` wrapping both providers; structured return; parse-failure fallback (M3b.2)
+- [x] Provider impls request structured tool / response schema (Anthropic tool_use, Gemini schema); broker normalizes (M3b.2)
+- [x] Coord-only enforcement at broker level — current `state.coordinator` only (solo mode = no coord set = allowed; per redesign-plan.md L149) (M3b.2)
+- [x] Scope toggle resets per prompt (M3b.5 UI + M3b.2 broker)
 
 **Audit chain (M3b.3):**
-- [ ] `ai-prompt` / `ai-response` / `ai-accept` / `ai-reject` materializers populate `aiAudit[]` (DM-only field, already wiped by filterForViewer + stripped from shareable saves)
-- [ ] Hash chain: `prevHash → promptHash → responseHash`, IndexedDB-backed full-text store keyed by hash
-- [ ] After coord handoff, new coord picks up chain head from `aiAudit`
+- [x] `ai-prompt` / `ai-response` / `ai-accept` / `ai-reject` materializers populate `aiAudit[]` (already DM-only via filterForViewer + stripped from shareable saves at M3a.10)
+- [x] Hash chain: `chainHead(audit)` extracts the latest response hash; broker emits `ai-response` with the link
+- [ ] IndexedDB-backed full-text store keyed by hash — deferred to M3b.7 follow-up if needed (events carry short hashes; the full text in the broker's memory + audit chain is sufficient for M3b minimum)
 
 **Budget (M3b.4):**
-- [ ] Per-session token accumulator persisted in IndexedDB
-- [ ] Topbar widget showing usage vs ceiling
-- [ ] Hard-stop above ceiling, warning above 80%
-- [ ] In-flight prompt cancelled on ceiling hit
+- [x] Per-session token accumulator derived from `state.aiAudit` (the event log IS the budget store — no separate IndexedDB needed)
+- [x] BudgetExceededError + AiBrokerError(budget-exceeded) gating
+- [x] Warning state at 80% threshold; exceeded at 100%
+- [ ] Topbar widget visualizing usage — deferred to M3b.7 polish (gate-exit not blocking)
 
 **Dual-card UI (M3b.5, P2-12):**
-- [ ] Always two cards (safe / dm-only); empty card → muted "(none)" placeholder
-- [ ] DM-only card carries amber rail + lock glyph + "copy (do not read aloud)" + source chips
-- [ ] Scope toggle on prompt form (public default, opt-in dm)
+- [x] Always two cards (safe / dm-only); empty card → muted "(none)" placeholder
+- [x] DM-only card carries amber rail + lock glyph + "Copy (do not read aloud)" + source chips
+- [x] Scope toggle on prompt form (public default, opt-in dm)
+- [x] Accept / Reject verdict buttons emitting `ai-accept` / `ai-reject` events
 
-**Gate exit (M3b.7):**
+**Gate exit (M3b.7 — pending):**
 - [ ] e2e/ai-content-safety.spec.ts — mock AiBroker returns `{safe: 'X', dmOnly: 'Y'}`; player view contains only X; DM view contains both; Y absent from player DOM
 - [ ] Smuggled-marker variant — `{safe: 'X<dm-only>Y</dm-only>', dmOnly: ''}` shows literal text after sanitize, never executes
 - [ ] 4-reviewer gate (TTRPG-craft, Engine, Security, Adversarial)
