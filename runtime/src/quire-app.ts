@@ -77,7 +77,7 @@ import {
   type SessionView,
   type TransportFactory
 } from './session-controller';
-import { createPeerjsFactory } from './session-peerjs';
+import { createPeerjsFactoryFromUrl } from './session-peerjs';
 
 const ROLL_HISTORY_MAX = 5;
 
@@ -794,8 +794,9 @@ export class QuireApp extends LitElement {
   private aiAbort: AbortController | null = null;
 
   // Tests can replace this before connectedCallback runs to swap in
-  // an in-memory transport factory.
-  sessionFactory: TransportFactory = createPeerjsFactory();
+  // an in-memory transport factory.  Production reads broker config
+  // from URL params; default is the PeerJS cloud broker.
+  sessionFactory: TransportFactory = createPeerjsFactoryFromUrl();
   private session: SessionController | null = null;
   private unsubscribeSession: (() => void) | null = null;
 

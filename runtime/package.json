@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "dompurify": "^3.4.5",
@@ -19,12 +20,13 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.37.2",
+    "@playwright/test": "^1.60.0",
     "@roamhq/wrtc": "^0.10.0",
     "@types/dompurify": "^3.2.0",
     "@types/js-yaml": "^4.0.9",
     "happy-dom": "^20.9.0",
+    "peer": "^1.0.2",
     "peerjs": "^1.5.5",
-    "peerjs-server": "^0.2.9",
     "typescript": "^5.6.3",
     "vite": "^6.0.0",
     "vitest": "^4.1.7",

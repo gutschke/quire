@@ -67,23 +67,43 @@ function waitForOpen(
   });
 }
 
-export function createPeerjsFactory(): TransportFactory {
+/**
+ * Optional broker config.  When omitted, the factory uses PeerJS's
+ * default cloud broker (0.peerjs.com).  Tests and self-hosted
+ * deployments pass an explicit host/port/path to point at their own
+ * peerjs-server.
+ */
+export interface PeerjsBrokerConfig {
+  host?: string;
+  port?: number;
+  path?: string;
+  secure?: boolean;
+  debug?: number;
+}
+
+export function createPeerjsFactory(
+  broker?: PeerjsBrokerConfig
+): TransportFactory {
+  const options = (): Record<string, unknown> => {
+    const o: Record<string, unknown> = { debug: broker?.debug ?? 1 };
+    if (broker?.host !== undefined) o.host = broker.host;
+    if (broker?.port !== undefined) o.port = broker.port;
+    if (broker?.path !== undefined) o.path = broker.path;
+    if (broker?.secure !== undefined) o.secure = broker.secure;
+    return o;
+  };
   return {
     async createHost() {
       const PeerJs = await loadPeerJs();
       const code = generatePairingCode();
-      const peer = new PeerJs.default(code, {
-        debug: 1
-      });
+      const peer = new PeerJs.default(code, options());
       await waitForOpen(peer);
       const transport = new PeerJSTransport({ peer });
       return { transport, pairingCode: code };
     },
     async createGuest(code: string) {
       const PeerJs = await loadPeerJs();
-      const peer = new PeerJs.default(undefined, {
-        debug: 1
-      });
+      const peer = new PeerJs.default(undefined, options());
       await waitForOpen(peer);
       const transport = new PeerJSTransport({
         peer,
@@ -92,4 +112,42 @@ export function createPeerjsFactory(): TransportFactory {
       return { transport };
     }
   };
+}
+
+/**
+ * Read broker overrides from URL params, or fall back to the cloud
+ * default.  Supported params:
+ *
+ *   peerHost   - e.g. 127.0.0.1
+ *   peerPort   - e.g. 9000
+ *   peerPath   - e.g. /
+ *   peerSecure - "1" to force wss
+ *
+ * Used so end-to-end test suites (Playwright) can point the app at
+ * an in-process peerjs-server without rebuilding the bundle, and so
+ * a self-hosting user can point at their own broker without code
+ * changes.
+ */
+export function createPeerjsFactoryFromUrl(): TransportFactory {
+  if (typeof window === 'undefined') return createPeerjsFactory();
+  let params: URLSearchParams;
+  try {
+    params = new URLSearchParams(window.location.search);
+  } catch {
+    return createPeerjsFactory();
+  }
+  const host = params.get('peerHost');
+  const portRaw = params.get('peerPort');
+  const path = params.get('peerPath');
+  const secureRaw = params.get('peerSecure');
+  if (host === null && portRaw === null && path === null && secureRaw === null) {
+    return createPeerjsFactory();
+  }
+  const port = portRaw ? Number(portRaw) : undefined;
+  return createPeerjsFactory({
+    host: host ?? undefined,
+    port: Number.isFinite(port) ? port : undefined,
+    path: path ?? undefined,
+    secure: secureRaw === '1' ? true : secureRaw === '0' ? false : undefined
+  });
 }

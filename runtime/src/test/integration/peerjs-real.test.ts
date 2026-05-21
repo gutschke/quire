@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PeerServer } from 'peerjs-server';
+import { PeerServer } from 'peer';
 
 interface BrokerHandle {
   port: number;
