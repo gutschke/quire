@@ -336,6 +336,199 @@ describe('materialize — scene-reveal-paragraph (P2-2)', () => {
   });
 });
 
+describe('materialize — npc-pin / npc-unpin (M3a.8)', () => {
+  it('coordinator can pin an NPC; order preserved', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', { v: 1, npcId: 'alice-the-bartender' });
+    log.append('npc-pin', { v: 1, npcId: 'bob-the-guard' });
+    expect(materialize(log.events()).pinnedNpcs).toEqual([
+      'alice-the-bartender',
+      'bob-the-guard'
+    ]);
+  });
+
+  it('non-coordinator npc-pin is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('npc-pin', { v: 1, npcId: 'rogue-npc' });
+    alice.apply(ev);
+    expect(materialize(alice.events()).pinnedNpcs).toEqual([]);
+  });
+
+  it('payload without v:1 is rejected', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', {
+      npcId: 'x'
+    } as unknown as { v: 1; npcId: string });
+    expect(materialize(log.events()).pinnedNpcs).toEqual([]);
+  });
+
+  it('malformed npcId is rejected', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', { v: 1, npcId: '.' });
+    log.append('npc-pin', { v: 1, npcId: 'has spaces' });
+    log.append('npc-pin', { v: 1, npcId: '' });
+    expect(materialize(log.events()).pinnedNpcs).toEqual([]);
+  });
+
+  it('re-pinning an already-pinned NPC is idempotent', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', { v: 1, npcId: 'x' });
+    log.append('npc-pin', { v: 1, npcId: 'x' });
+    expect(materialize(log.events()).pinnedNpcs).toEqual(['x']);
+  });
+
+  it('caps at PINNED_NPC_CAP (50)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    for (let i = 0; i < 60; i++) {
+      log.append('npc-pin', { v: 1, npcId: `npc-${i}` });
+    }
+    expect(materialize(log.events()).pinnedNpcs.length).toBe(50);
+  });
+
+  it('npc-unpin removes the id', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', { v: 1, npcId: 'a' });
+    log.append('npc-pin', { v: 1, npcId: 'b' });
+    log.append('npc-unpin', { v: 1, npcId: 'a' });
+    expect(materialize(log.events()).pinnedNpcs).toEqual(['b']);
+  });
+
+  it('npc-unpin on absent id is a no-op', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('npc-pin', { v: 1, npcId: 'a' });
+    log.append('npc-unpin', { v: 1, npcId: 'never-pinned' });
+    expect(materialize(log.events()).pinnedNpcs).toEqual(['a']);
+  });
+});
+
+describe('materialize — thread-debt-set (M3a.8)', () => {
+  it('coordinator can set a PC thread-debt level', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('thread-debt-set', { v: 1, pcId: 'yui', level: 'noticed' });
+    expect(materialize(log.events()).threadDebt).toEqual({ yui: 'noticed' });
+  });
+
+  it('LWW: a later level overwrites an earlier one', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('thread-debt-set', { v: 1, pcId: 'yui', level: 'noticed' });
+    log.append('thread-debt-set', { v: 1, pcId: 'yui', level: 'hunted' });
+    expect(materialize(log.events()).threadDebt).toEqual({ yui: 'hunted' });
+  });
+
+  it('empty string clears the entry', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('thread-debt-set', { v: 1, pcId: 'yui', level: 'noticed' });
+    log.append('thread-debt-set', { v: 1, pcId: 'yui', level: '' });
+    expect(materialize(log.events()).threadDebt).toEqual({});
+  });
+
+  it('rejects an unknown level', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('thread-debt-set', {
+      v: 1,
+      pcId: 'yui',
+      level: 'on-fire' as unknown as 'quiet'
+    });
+    expect(materialize(log.events()).threadDebt).toEqual({});
+  });
+
+  it('non-coordinator thread-debt-set is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('thread-debt-set', {
+      v: 1,
+      pcId: 'yui',
+      level: 'noticed'
+    });
+    alice.apply(ev);
+    expect(materialize(alice.events()).threadDebt).toEqual({});
+  });
+});
+
+describe('materialize — scratch-note (M3a.8)', () => {
+  it('coordinator can append a scratch note', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scratch-note', { v: 1, text: 'remember the locket' });
+    const state = materialize(log.events());
+    expect(state.scratchNotes).toHaveLength(1);
+    expect(state.scratchNotes[0].text).toBe('remember the locket');
+    expect(state.scratchNotes[0].peerId).toBe('alice');
+  });
+
+  it('rejects oversize text (over SCRATCH_NOTE_TEXT_CAP)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    const huge = 'x'.repeat(5001);
+    log.append('scratch-note', { v: 1, text: huge });
+    expect(materialize(log.events()).scratchNotes).toHaveLength(0);
+  });
+
+  it('non-coordinator scratch-note is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('scratch-note', { v: 1, text: 'rogue note' });
+    alice.apply(ev);
+    expect(materialize(alice.events()).scratchNotes).toHaveLength(0);
+  });
+
+  it('accepts an optional scenePath; rejects malformed ones', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scratch-note', { v: 1, text: 'a', scenePath: 'scenes/x.md' });
+    log.append('scratch-note', { v: 1, text: 'b', scenePath: 12 as unknown as string });
+    const state = materialize(log.events());
+    expect(state.scratchNotes).toHaveLength(1);
+    expect(state.scratchNotes[0].scenePath).toBe('scenes/x.md');
+  });
+});
+
+describe('materialize — broadcast-view (M3a.8)', () => {
+  it('coordinator can broadcast a stage path', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('broadcast-view', { v: 1, stagePath: 'scenes/s.md' });
+    const state = materialize(log.events());
+    expect(state.broadcastView?.stagePath).toBe('scenes/s.md');
+  });
+
+  it('LWW by ts: newer broadcast replaces older', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('broadcast-view', { v: 1, stagePath: 'a.md' });
+    log.append('broadcast-view', { v: 1, stagePath: 'b.md' });
+    expect(materialize(log.events()).broadcastView?.stagePath).toBe('b.md');
+  });
+
+  it('non-coordinator broadcast-view is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('broadcast-view', { v: 1, stagePath: 'rogue.md' });
+    alice.apply(ev);
+    expect(materialize(alice.events()).broadcastView).toBeUndefined();
+  });
+});
+
 describe('materialize — dice rolls', () => {
   it('appends rolls in causal order', () => {
     const log = new EventLog('alice');

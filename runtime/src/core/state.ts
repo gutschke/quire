@@ -353,6 +353,51 @@ function isBlockHash(s: unknown): s is string {
  */
 const REVEALED_BLOCKS_PER_SCENE_CAP = 256;
 
+/**
+ * Caps from redesign-plan.md § "New caps to add" — DoS guards for
+ * the M3a cockpit materializers.  These match the spec verbatim;
+ * see security.md for the threat model.
+ */
+const PINNED_NPC_CAP = 50;
+const SCRATCH_NOTE_CAP = 5000;
+const SCRATCH_NOTE_TEXT_CAP = 5000;
+
+interface NpcPinPayload {
+  v: 1;
+  npcId: string;
+}
+
+interface ScratchNotePayload {
+  v: 1;
+  text: string;
+  scenePath?: string;
+}
+
+interface ThreadDebtSetPayload {
+  v: 1;
+  pcId: string;
+  /** Empty string clears the entry; otherwise must be a valid level. */
+  level: ThreadDebtLevel | '';
+}
+
+interface BroadcastViewPayload {
+  v: 1;
+  stagePath: string;
+  tab?: string;
+}
+
+const THREAD_DEBT_LEVELS: ReadonlySet<ThreadDebtLevel> = new Set<ThreadDebtLevel>([
+  'quiet',
+  'noticed',
+  'watched',
+  'pushing-back',
+  'hunted'
+]);
+
+function isThreadDebtLevel(s: unknown): s is ThreadDebtLevel {
+  return typeof s === 'string' && THREAD_DEBT_LEVELS.has(s as ThreadDebtLevel);
+}
+
 interface DiceRollPayload {
   expression: string;
   result: number;
@@ -861,16 +906,96 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       }
       break;
     }
-    case 'thread-debt-set':
-    case 'npc-pin':
-    case 'npc-unpin':
+    case 'npc-pin': {
+      // Coord-only DM affordance — pin an NPC id to the dm-aside
+      // for quick reference.  Order preserved; the list acts like
+      // a manually-curated stack.  Idempotent.  DoS-capped at 50.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<NpcPinPayload>;
+      if (!isCharacterId(p.npcId)) break;
+      if (state.pinnedNpcs.includes(p.npcId)) break;
+      if (state.pinnedNpcs.length >= PINNED_NPC_CAP) break;
+      state.pinnedNpcs.push(p.npcId);
+      break;
+    }
+    case 'npc-unpin': {
+      // DM-revoke of a pin.  Removes by id; absent-id is a no-op.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<NpcPinPayload>;
+      if (!isCharacterId(p.npcId)) break;
+      const idx = state.pinnedNpcs.indexOf(p.npcId);
+      if (idx >= 0) state.pinnedNpcs.splice(idx, 1);
+      break;
+    }
+    case 'thread-debt-set': {
+      // Coord-only.  Sets the per-PC rung; level === '' clears
+      // the entry (LWW semantics — last DM write wins).
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<ThreadDebtSetPayload>;
+      if (!isCharacterId(p.pcId)) break;
+      if (p.level === '') {
+        delete state.threadDebt[p.pcId];
+        break;
+      }
+      if (!isThreadDebtLevel(p.level)) break;
+      state.threadDebt[p.pcId] = p.level;
+      break;
+    }
+    case 'scratch-note': {
+      // Coord-only quick-jot.  Append-only chronological log;
+      // ingested by the post-session living-document AI.  Capped
+      // at SCRATCH_NOTE_CAP entries to bound memory; once full,
+      // silently drops new notes (DM is warned via dm-only UI).
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<ScratchNotePayload>;
+      if (!isBoundedString(p.text, SCRATCH_NOTE_TEXT_CAP)) break;
+      if (
+        p.scenePath !== undefined &&
+        !isBoundedString(p.scenePath, SCENE_PATH_CAP)
+      ) {
+        break;
+      }
+      if (state.scratchNotes.length >= SCRATCH_NOTE_CAP) break;
+      state.scratchNotes.push({
+        peerId: event.peerId,
+        ts: event.ts,
+        text: p.text,
+        scenePath: p.scenePath
+      });
+      break;
+    }
+    case 'broadcast-view': {
+      // Coord-only LWW single slot.  Players' Stage navigates to
+      // {stagePath, tab?} when the field changes.  Older events
+      // are ignored — the materializer keeps the newest by ts.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<BroadcastViewPayload>;
+      if (!isBoundedString(p.stagePath, SCENE_PATH_CAP)) break;
+      if (p.tab !== undefined && !isBoundedString(p.tab, ID_CAP)) break;
+      // LWW with append-order tie-break: equal-ts events from the
+      // same materialization pass replace in log order.  Strict
+      // less-than means an older (lower ts) broadcast loses
+      // unconditionally; same ts → the later append wins because
+      // we never short-circuit when ts equals current.ts.
+      const current = state.broadcastView;
+      if (current && current.ts > event.ts) break;
+      state.broadcastView = {
+        stagePath: p.stagePath,
+        tab: p.tab,
+        ts: event.ts
+      };
+      break;
+    }
     case 'map-blob-add':
     case 'map-blob-move':
     case 'map-blob-remove':
     case 'map-blob-reveal':
     case 'map-blob-unreveal':
-    case 'broadcast-view':
-    case 'scratch-note':
     case 'ai-prompt':
     case 'ai-response':
     case 'ai-accept':
