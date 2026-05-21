@@ -357,7 +357,7 @@ export class QuireApp extends LitElement {
     }
 
     .muted {
-      color: light-dark(#666, #888);
+      color: light-dark(#555, #aaa);
       font-size: 0.9em;
       margin: 0.25rem 0;
     }
@@ -408,7 +408,7 @@ export class QuireApp extends LitElement {
     }
 
     .session-bar .session-sep {
-      color: light-dark(#888, #777);
+      color: light-dark(#555, #aaa);
     }
 
     .session-bar .session-code-display code {
@@ -536,7 +536,7 @@ export class QuireApp extends LitElement {
 
     .reveal-badge-private {
       background: light-dark(#f0f0f0, #222);
-      color: light-dark(#666, #888);
+      color: light-dark(#555, #aaa);
       border: 1px solid light-dark(#ddd, #333);
     }
 
@@ -638,7 +638,7 @@ export class QuireApp extends LitElement {
 
     .ai-panel-head .ai-provider-tag {
       font-size: 0.8em;
-      color: light-dark(#666, #888);
+      color: light-dark(#555, #aaa);
       margin-left: 0.5rem;
     }
 
@@ -654,7 +654,7 @@ export class QuireApp extends LitElement {
     .ai-provider-choice legend {
       font-size: 0.85em;
       padding: 0 0.3rem;
-      color: light-dark(#666, #888);
+      color: light-dark(#555, #aaa);
     }
 
     .ai-provider-radio {

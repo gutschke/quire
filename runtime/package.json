@@ -19,6 +19,7 @@
     "marked": "^18.0.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
     "@cloudflare/vite-plugin": "^1.37.2",
     "@playwright/test": "^1.60.0",
     "@roamhq/wrtc": "^0.10.0",
