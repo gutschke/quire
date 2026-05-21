@@ -56,6 +56,39 @@ purify.addHook('uponSanitizeAttribute', (_node, data) => {
   }
 });
 
+// Defense-in-depth element removal.  Per the campaign-content trust
+// model, we strip phishing surfaces (form / input / button / select /
+// textarea), CSS injection surfaces (style), and layout / focus traps
+// (dialog).  We use addHook with node.remove() rather than the
+// FORBID_TAGS option because DOMPurify's FORBID_TAGS proves
+// unreliable for form-associated elements in some DOM
+// implementations (notably happy-dom — children of a removed <form>
+// can survive a single sanitize pass).  The hook runs once per
+// element so reparented children are caught.
+const FORBID_TAG_NAMES = new Set([
+  'FORM',
+  'INPUT',
+  'BUTTON',
+  'SELECT',
+  'TEXTAREA',
+  'OPTION',
+  'OPTGROUP',
+  'FIELDSET',
+  'LEGEND',
+  'LABEL',
+  'OUTPUT',
+  'METER',
+  'PROGRESS',
+  'STYLE',
+  'DIALOG',
+  'IFRAME'
+]);
+purify.addHook('uponSanitizeElement', (node, data) => {
+  if (FORBID_TAG_NAMES.has(data.tagName.toUpperCase())) {
+    (node as Element).remove();
+  }
+});
+
 // External http(s) links get target=_blank + rel=noopener noreferrer so they
 // open in a new tab without leaking the runtime origin via the Referer header
 // or window.opener.  Protocol-relative `//host/path` URLs are deliberately
@@ -127,11 +160,43 @@ export function parseFrontmatter(text: string): MarkdownDocument {
  * for sanitized output, so the page's CSP can tighten `style-src` to `'self'`
  * (no `unsafe-inline`) without breaking rendered campaign content.
  */
+/**
+ * Attributes removed beyond DOMPurify's defaults.  `style` is the big
+ * one — without it stripped, campaign content can position-fixed an
+ * overlay on top of the entire app, including the AI API-key input.
+ * `formaction` would override a sibling form's action; `autofocus`
+ * can steal keyboard focus from chat / dice inputs.  on* handlers are
+ * stripped by DOMPurify by default; listing them here is belt-and-
+ * suspenders against config drift.
+ *
+ * Tag removal happens via the `uponSanitizeElement` hook above (see
+ * FORBID_TAG_NAMES) — DOMPurify's `FORBID_TAGS` option proved
+ * unreliable for form-associated elements.
+ */
+const FORBID_ATTR = [
+  'style',
+  'formaction',
+  'autofocus',
+  'onclick',
+  'onload',
+  'onerror',
+  'onmouseover',
+  'onfocus',
+  'onblur',
+  'onsubmit',
+  'onchange',
+  'oninput',
+  'onkeydown',
+  'onkeyup',
+  'onkeypress'
+] as const;
+
 export function renderMarkdown(text: string): SanitizedHtml {
   const html = marked.parse(text, { async: false }) as string;
   return purify.sanitize(html, {
     USE_PROFILES: { html: true },
-    ADD_ATTR: ['target', 'rel']
+    ADD_ATTR: ['target', 'rel'],
+    FORBID_ATTR: [...FORBID_ATTR]
   }) as SanitizedHtml;
 }
 

@@ -61,6 +61,7 @@ export class EventLog {
   }
 
   apply(event: QuireEvent): boolean {
+    if (!isValidEvent(event)) return false;
     if (this._events.has(event.id)) return false;
     this._events.set(event.id, event);
     const next = { ...this._clock };
@@ -82,6 +83,63 @@ export class EventLog {
   since(clock: VectorClock): QuireEvent[] {
     return this.events().filter((ev) => (clock[ev.peerId] ?? 0) < ev.seq);
   }
+}
+
+/**
+ * Cap on individual seq / clock-entry values.  A legitimate session
+ * won't approach this (1e9 events would take years of continuous
+ * append at one per millisecond), but it prevents a hostile peer from
+ * sending `clock: { alice: 999_999_999 }` and permanently corrupting
+ * alice's seq numbering.  Combined with the strict id/peerId/seq/
+ * clock[peerId] cross-checks in isValidEvent, this is the EventLog's
+ * defense in depth against vector-clock forgery — the higher-level
+ * authentication (transport sender matches event.peerId) lives in
+ * Peer.handleMessage.
+ */
+const SEQ_CAP = 1_000_000_000;
+
+function isPositiveInteger(n: unknown, max: number): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isInteger(n) &&
+    n > 0 &&
+    n <= max
+  );
+}
+
+function isNonNegativeInteger(n: unknown, max: number): n is number {
+  return (
+    typeof n === 'number' &&
+    Number.isInteger(n) &&
+    n >= 0 &&
+    n <= max
+  );
+}
+
+function isValidEvent(event: unknown): event is QuireEvent {
+  if (!event || typeof event !== 'object') return false;
+  const e = event as Record<string, unknown>;
+  if (typeof e.peerId !== 'string' || e.peerId.length === 0) return false;
+  if (!isPositiveInteger(e.seq, SEQ_CAP)) return false;
+  if (typeof e.id !== 'string' || e.id !== `${e.peerId}:${e.seq}`) return false;
+  if (typeof e.kind !== 'string' || e.kind.length === 0) return false;
+  if (typeof e.ts !== 'number' || !Number.isFinite(e.ts)) return false;
+  if (
+    !e.clock ||
+    typeof e.clock !== 'object' ||
+    Array.isArray(e.clock)
+  ) {
+    return false;
+  }
+  const clock = e.clock as Record<string, unknown>;
+  for (const [pid, v] of Object.entries(clock)) {
+    if (typeof pid !== 'string' || pid.length === 0) return false;
+    if (!isNonNegativeInteger(v, SEQ_CAP)) return false;
+  }
+  // Author's own clock entry must equal their declared seq.  Anything
+  // else implies a malformed or forged event.
+  if (clock[e.peerId as string] !== e.seq) return false;
+  return true;
 }
 
 function causalCompare(a: QuireEvent, b: QuireEvent): number {
