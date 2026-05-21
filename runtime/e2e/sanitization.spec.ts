@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { openCampaign } from './helpers';
+import { openCampaign, hostSession } from './helpers';
 
 const SLUG = 'test-camp';
 
@@ -21,9 +21,16 @@ test.describe('Markdown sanitization (real browser)', () => {
   }) => {
     const ctx = await browser.newContext();
     try {
-      const page = await openCampaign(ctx, SLUG, {
-        episode: '001-test',
-        scene: 'scenes/hostile.md'
+      // Post-R3-A: scene routes require an active session.  Host
+      // first, then navigate to the scene via in-app pushState.
+      const page = await openCampaign(ctx, SLUG);
+      await hostSession(page, 'DM');
+      await page.evaluate(() => {
+        const u = new URL(window.location.href);
+        u.searchParams.set('episode', '001-test');
+        u.searchParams.set('scene', 'scenes/hostile.md');
+        history.pushState({}, '', u.pathname + u.search);
+        window.dispatchEvent(new PopStateEvent('popstate'));
       });
 
       const markdown = page.locator('.markdown');

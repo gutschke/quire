@@ -46,6 +46,86 @@ async function joinAsPlayer(
   return page;
 }
 
+test.describe('R3-A — pre-session URL arrivals do not leak scene content', () => {
+  test('opening a scene URL without a session bounces to error view', async ({
+    browser
+  }) => {
+    // The exact scenario the user reported: DM shares their address-bar
+    // URL `?campaign=X&episode=Y&scene=Z` in a group chat.  A player
+    // clicks it in an incognito window.  Previously they saw the
+    // rendered scene immediately.  Now they're bounced to an error
+    // view explaining they need to join the session first.
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage();
+      await mockFixtureCampaign(page, SLUG);
+      await page.goto(
+        campaignUrl(SLUG, {
+          episode: '001-test',
+          scene: 'scenes/intro.md'
+        })
+      );
+      await expect(page.locator('.card.error')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('.card.error')).toContainText(
+        /only visible inside an active session/i
+      );
+      // The scene markdown content must NOT have rendered.  The
+      // body has no .markdown element at all (we're on the error
+      // view, not the scene view).  Asserting via innerHTML on the
+      // visible content avoids a locator-not-found wait.
+      const visibleText = await page.locator('body').innerText();
+      expect(visibleText).not.toContain('Intro scene');
+      expect(visibleText).not.toContain('a slow drip');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('opening an episode URL without a session is blocked too', async ({
+    browser
+  }) => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage();
+      await mockFixtureCampaign(page, SLUG);
+      await page.goto(
+        campaignUrl(SLUG, { episode: '001-test' })
+      );
+      await expect(page.locator('.card.error')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('.card.error')).toContainText(
+        /only visible inside an active session/i
+      );
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('DM solo-prep: can navigate to scene after clicking Host', async ({
+    browser
+  }) => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await openCampaignPage(ctx);
+      await hostSession(page, 'DM');
+      // In-app navigation via pushState preserves the session.
+      await page.evaluate(() => {
+        const u = new URL(window.location.href);
+        u.searchParams.set('episode', '001-test');
+        u.searchParams.set('scene', 'scenes/intro.md');
+        history.pushState({}, '', u.pathname + u.search);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+      await expect(page.locator('header h1')).toContainText(
+        'scenes/intro.md',
+        { timeout: 10000 }
+      );
+      await expect(page.locator('.markdown')).toContainText('Intro scene');
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
 test.describe('DM-screen guard for scenes/episodes (B5)', () => {
   test('solo: episode + scene lists visible (no session, no DM secret)', async ({
     browser

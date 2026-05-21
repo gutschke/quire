@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { generatePairingCode } from './session-peerjs';
 
 describe('generatePairingCode', () => {
-  it('returns a string of the requested length (default 8)', () => {
-    expect(generatePairingCode().length).toBe(8);
+  it('returns a string of the requested length (default 6 — see DEFAULT_PAIRING_CODE_LENGTH)', () => {
+    expect(generatePairingCode().length).toBe(6);
     expect(generatePairingCode(12).length).toBe(12);
   });
 
@@ -18,7 +18,7 @@ describe('generatePairingCode', () => {
   it('produces varied codes (entropy sanity check)', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 50; i++) seen.add(generatePairingCode());
-    // 50 draws from 31^8 should essentially never collide.
+    // 50 draws from 31^6 = ~840M should essentially never collide.
     expect(seen.size).toBe(50);
   });
 });

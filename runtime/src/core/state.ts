@@ -45,8 +45,22 @@ export interface Note {
   private?: boolean;
 }
 
+export interface CampaignRef {
+  owner: string;
+  repo: string;
+  ref: string;
+}
+
 export interface SessionState {
   peers: Record<PeerId, PeerPresence>;
+  /**
+   * Campaign the session is anchored to.  Embedded in the host's
+   * peer-join event so that guests who land on play.quire.games
+   * without `?campaign=` URL params still learn what to load.
+   * First-write-wins: set by the earliest peer-join that includes
+   * a campaign reference; later ones don't override.
+   */
+  campaign?: CampaignRef;
   coordinator?: PeerId;
   /**
    * Every peer who has ever held coordinator at any point in the
@@ -200,12 +214,38 @@ export const KNOWN_EVENT_KINDS = new Set([
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   switch (event.kind) {
     case 'peer-join': {
-      const p = event.payload as PeerJoinPayload | undefined;
+      const p = event.payload as
+        | (PeerJoinPayload & {
+            campaign?: { owner?: unknown; repo?: unknown; ref?: unknown };
+          })
+        | undefined;
       state.peers[event.peerId] = {
         peerId: event.peerId,
         name: p?.name,
         joinedAt: event.ts
       };
+      // R3-C: a host's peer-join may embed the campaign reference
+      // so guests who joined via a bare URL (play.quire.games +
+      // code, no `?campaign=`) can discover what to load.  First-
+      // write-wins: only the earliest peer-join with a campaign
+      // sets it; later joiners can't override.
+      if (
+        !state.campaign &&
+        p?.campaign &&
+        typeof p.campaign === 'object' &&
+        typeof p.campaign.owner === 'string' &&
+        typeof p.campaign.repo === 'string' &&
+        typeof p.campaign.ref === 'string' &&
+        p.campaign.owner.length > 0 &&
+        p.campaign.repo.length > 0 &&
+        p.campaign.ref.length > 0
+      ) {
+        state.campaign = {
+          owner: p.campaign.owner,
+          repo: p.campaign.repo,
+          ref: p.campaign.ref
+        };
+      }
       break;
     }
     case 'peer-leave': {

@@ -38,18 +38,22 @@ describe('QuireApp.extractJoinCode', () => {
     ).toBe('HELLO');
   });
 
-  it('falls back to literal handling for a URL without ?join=', () => {
-    // Edge case: user pasted a URL that doesn't have a join code at
-    // all.  We shouldn't try to be clever; treat the trimmed text as
-    // a literal code so the join attempt fails with a clear "no such
-    // peer" error rather than producing an empty code field.
-    expect(QuireApp.extractJoinCode('https://example.com/no-join-param')).toBe(
-      'HTTPS://EXAM'
-    );
+  it('refuses URL paste that has no ?join= param (real leak path)', () => {
+    // The user pasted the DM's address-bar URL (campaign + scene
+    // params only) into the join input.  Before this fix, the
+    // fallback turned it into "HTTPS://EXAM"-style junk that then
+    // landed in the clipboard on the next Ctrl+C.  Now: empty.
+    expect(QuireApp.extractJoinCode('https://example.com/no-join-param')).toBe('');
+    expect(
+      QuireApp.extractJoinCode(
+        'https://play.quire.games/?campaign=gutschke/underleaf&episode=001'
+      )
+    ).toBe('');
   });
 
-  it('handles malformed URLs gracefully (no exception)', () => {
+  it('handles malformed URLs gracefully (no exception, returns empty)', () => {
     expect(() => QuireApp.extractJoinCode('https://[malformed]')).not.toThrow();
+    expect(QuireApp.extractJoinCode('https://[malformed]')).toBe('');
   });
 
   it('trims surrounding whitespace before processing', () => {

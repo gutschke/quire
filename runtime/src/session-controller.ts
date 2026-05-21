@@ -131,7 +131,10 @@ export class SessionController {
    * code means anyone could be listening; the DM trades a moment
    * of friction for a clean break.
    */
-  async regenerateCode(displayName?: string): Promise<{
+  async regenerateCode(
+    displayName?: string,
+    campaign?: { owner: string; repo: string; ref: string }
+  ): Promise<{
     oldCode: string | null;
     newCode: string | null;
   }> {
@@ -141,7 +144,7 @@ export class SessionController {
     const oldCode = this.pairingCode;
     const events = this.peer.events().slice();
     this.leave();
-    await this.host(displayName);
+    await this.host(displayName, campaign);
     if (this.peer) {
       // Re-apply the prior events into the fresh log so the new
       // session continues from where we were.  Each apply skips if
@@ -192,10 +195,13 @@ export class SessionController {
     return () => this.listeners.delete(listener);
   }
 
-  host(displayName?: string): Promise<void> {
+  host(
+    displayName?: string,
+    campaign?: { owner: string; repo: string; ref: string }
+  ): Promise<void> {
     if (this.inFlight) return this.inFlight;
     if (this.status === 'active' && this.mode === 'host') return Promise.resolve();
-    this.inFlight = this.runHost(displayName).finally(() => {
+    this.inFlight = this.runHost(displayName, campaign).finally(() => {
       this.inFlight = null;
     });
     return this.inFlight;
@@ -224,7 +230,10 @@ export class SessionController {
     this.notify();
   }
 
-  private async runHost(displayName?: string): Promise<void> {
+  private async runHost(
+    displayName?: string,
+    campaign?: { owner: string; repo: string; ref: string }
+  ): Promise<void> {
     const gen = ++this.generation;
     this.cleanup();
     this.mode = 'host';
@@ -251,11 +260,15 @@ export class SessionController {
     this.pairingCode = handle.pairingCode;
     this.peerId = handle.transport.peerId;
     this.status = 'active';
-    // Host announces itself and claims coordinator.  Guests join later;
-    // they catch up via Peer's constructor-time sync-request pull-loop
-    // (see core/peer.ts constructor) — there's no need to push events
-    // here.
-    this.peer!.append('peer-join', { name: displayName });
+    // Host announces itself, embeds the campaign reference so
+    // guests can self-discover, and claims coordinator.  Guests join
+    // later; they catch up via Peer's constructor-time sync-request
+    // pull-loop (see core/peer.ts constructor) — there's no need to
+    // push events here.
+    const peerJoinPayload: Record<string, unknown> = {};
+    if (displayName) peerJoinPayload.name = displayName;
+    if (campaign) peerJoinPayload.campaign = campaign;
+    this.peer!.append('peer-join', peerJoinPayload);
     this.peer!.append('coordinator-claim', {});
     this.notify();
   }

@@ -6,14 +6,39 @@
  * UI presence on campaign + character views.
  */
 
-import { test, expect, type BrowserContext } from '@playwright/test';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import {
   openCampaign,
   mockFixtureCampaign,
   appUrl,
+  hostSession,
   rollInput,
   rollHistory
 } from './helpers';
+
+/**
+ * Post-R3-A: scene/episode routes require an active session (DM
+ * solo-prep also counts via Host).  Open campaign, host, then
+ * navigate in-app via pushState (preserves session — page.goto
+ * would tear it down).
+ */
+async function openSceneAsDm(
+  ctx: BrowserContext,
+  slug: string,
+  extra: Record<string, string>
+): Promise<Page> {
+  const page = await openCampaign(ctx, slug);
+  await hostSession(page, 'DM');
+  await page.evaluate((extraParams: Record<string, string>) => {
+    const u = new URL(window.location.href);
+    for (const [k, v] of Object.entries(extraParams)) {
+      u.searchParams.set(k, v);
+    }
+    window.history.pushState({}, '', u.pathname + u.search);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, extra);
+  return page;
+}
 
 const SLUG = 'test-camp';
 
@@ -91,7 +116,7 @@ test.describe('Routing — episode + scene views', () => {
   test('deep link into episode shows scene list', async ({ browser }) => {
     const ctx = await browser.newContext();
     try {
-      const page = await openCampaign(ctx, SLUG, { episode: '001-test' });
+      const page = await openSceneAsDm(ctx, SLUG, { episode: '001-test' });
       await expect(page.locator('header h1')).toContainText('Episode 001');
       await expect(page.getByRole('link', { name: 'scenes/intro.md' })).toBeVisible();
       await expect(page.getByRole('link', { name: 'scenes/outro.md' })).toBeVisible();
@@ -103,7 +128,7 @@ test.describe('Routing — episode + scene views', () => {
   test('scene view renders markdown without unsafe HTML', async ({ browser }) => {
     const ctx = await browser.newContext();
     try {
-      const page = await openCampaign(ctx, SLUG, {
+      const page = await openSceneAsDm(ctx, SLUG, {
         episode: '001-test',
         scene: 'scenes/intro.md'
       });
@@ -131,7 +156,7 @@ test.describe('Routing — episode + scene views', () => {
     // roll.  Pin its presence on the scene view.
     const ctx = await browser.newContext();
     try {
-      const page = await openCampaign(ctx, SLUG, {
+      const page = await openSceneAsDm(ctx, SLUG, {
         episode: '001-test',
         scene: 'scenes/intro.md'
       });
@@ -148,6 +173,10 @@ test.describe('Routing — episode + scene views', () => {
     const ctx = await browser.newContext();
     try {
       const page = await openCampaign(ctx, SLUG);
+      // Post-R3-A: must be in an active session to drill into
+      // episode/scene.  Host first (which also makes the DM
+      // coordinator → sees the full episode menu).
+      await hostSession(page, 'DM');
       await page.getByRole('link', { name: '001-test' }).click();
       await expect(page.locator('header h1')).toContainText('Episode 001');
       await page.getByRole('link', { name: 'scenes/intro.md' }).click();
@@ -167,6 +196,7 @@ test.describe('Routing — episode + scene views', () => {
     const ctx = await browser.newContext();
     try {
       const page = await openCampaign(ctx, SLUG);
+      await hostSession(page, 'DM');
       await page.getByRole('link', { name: '001-test' }).click();
       await expect(page.locator('header h1')).toContainText('Episode 001');
       await page.goBack();

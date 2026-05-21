@@ -21,7 +21,20 @@ import type { TransportFactory } from './session-controller';
 
 const PAIRING_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
-export function generatePairingCode(length = 8): string {
+/**
+ * Default pairing-code length.  6 chars from a 31-char alphabet =
+ * ~29.7 bits of entropy (~840M combinations) — well above any
+ * realistic guess-attack against a TTRPG session.  At 1 join
+ * attempt/second (PeerJS broker rate-limits), brute-force takes ~27
+ * years on average; in the 4-hour window of a real session, the
+ * attack surface is ~14,400 attempts vs ~840M combinations.  6
+ * chars is also short enough to read aloud over voice without
+ * embarrassment.  The defensive regenerate-code button gives the
+ * DM a one-tap response if a code does leak (e.g. screen-share).
+ */
+const DEFAULT_PAIRING_CODE_LENGTH = 6;
+
+export function generatePairingCode(length = DEFAULT_PAIRING_CODE_LENGTH): string {
   let s = '';
   for (let i = 0; i < length; i++) {
     s += PAIRING_ALPHABET[Math.floor(Math.random() * PAIRING_ALPHABET.length)];

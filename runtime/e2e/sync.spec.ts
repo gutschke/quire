@@ -169,14 +169,19 @@ test.describe('Multi-peer sync — scene reveal', () => {
     const hostCtx = await browser.newContext();
     const guestCtx = await browser.newContext();
     try {
-      // Host opens a scene; guest stays on the campaign view.
-      const host = await openCampaignPeer(hostCtx, {
-        episode: '001-test',
-        scene: 'scenes/intro.md'
-      });
+      // Post-R3-A: scene routes need an active session.  Host
+      // first, then in-app navigate to the scene.
+      const host = await openCampaignPeer(hostCtx);
       const guest = await openCampaignPeer(guestCtx);
       const code = await hostSession(host, 'DM');
       await joinSession(guest, code, 'Player');
+      await host.evaluate(() => {
+        const u = new URL(window.location.href);
+        u.searchParams.set('episode', '001-test');
+        u.searchParams.set('scene', 'scenes/intro.md');
+        history.pushState({}, '', u.pathname + u.search);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
 
       // Host clicks "Reveal to players".
       const revealBtn = host.locator(

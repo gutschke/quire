@@ -1193,6 +1193,7 @@ export class QuireApp extends LitElement {
   @state() reclaimConfirmShown: boolean = false;
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   private autosaveQuotaWarned: boolean = false;
+  private campaignDiscoveryInFlight: boolean = false;
   @state() aiProvider: AiProvider = 'claude';
   @state() aiApiKeys: Record<AiProvider, string> = { claude: '', gemini: '' };
   @state() aiModels: Record<AiProvider, string> = {
@@ -1235,6 +1236,27 @@ export class QuireApp extends LitElement {
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.
       if (v.status === 'active') this.scheduleAutosave();
+      // R3-C: guest discovered the campaign via the host's
+      // peer-join.  If we're idle (no campaign in the URL), trigger
+      // a load + navigate to the campaign view.  Skip if we're
+      // already on / loading the right campaign, or if there's no
+      // shared campaign yet.
+      if (
+        v.status === 'active' &&
+        v.shared.campaign &&
+        this.appState.kind === 'idle' &&
+        !this.campaignDiscoveryInFlight
+      ) {
+        this.campaignDiscoveryInFlight = true;
+        const c = v.shared.campaign;
+        const slug = c.ref === 'main' ? `${c.owner}/${c.repo}` : `${c.owner}/${c.repo}@${c.ref}`;
+        const url = new URL(window.location.href);
+        url.searchParams.set('campaign', slug);
+        history.replaceState({}, '', url.pathname + url.search);
+        void this.navigateToRoute({ kind: 'campaign', slug }).finally(() => {
+          this.campaignDiscoveryInFlight = false;
+        });
+      }
       // Live-bounce a non-coordinator player if they're currently
       // viewing a scene the DM has just un-revealed.  Without this,
       // they'd see the now-private content until they navigate away.
@@ -1417,12 +1439,28 @@ export class QuireApp extends LitElement {
         return;
       }
 
-      // B5 fix: gate episode + scene access for non-coordinator
-      // players.  They navigate via the reveal banner, not by
-      // browsing the manifest.  Episode-level browsing is DM-only;
-      // scene-level browsing is restricted to revealed scenes.
+      // R3-A: scene/episode routes are session-only.  Pre-session
+      // arrivals (someone clicked a URL the DM shared in chat) used
+      // to auto-render the scene, leaking story content to a
+      // not-yet-joined player.  Now we require an active session.
+      //
+      // - Pre-session: scene/episode routes are blocked; arrival
+      //   lands on the campaign view with a clear "join first"
+      //   message.  Solo browsing of scenes is gone — acceptable
+      //   trade for the leak fix.  A DM doing solo prep clicks
+      //   Host to become coordinator before navigating to scenes.
+      // - Active session, coordinator: full access.
+      // - Active session, non-coordinator: episode list refused;
+      //   scene access limited to revealed scenes (B5 gating).
+      const inActiveSession = this.sessionView?.status === 'active';
+      if (!inActiveSession && (route.kind === 'episode' || route.kind === 'scene')) {
+        throw new CampaignLoadError(
+          'Scenes and episodes are only visible inside an active session.  Click "Host session" if you are the DM, or paste a code from your DM to join.',
+          `Requested route: ${route.kind === 'scene' ? `${route.episode}/${route.scene}` : route.episode}`
+        );
+      }
       const isNonCoordPlayer =
-        this.sessionView?.status === 'active' && !this.isCoordinator();
+        inActiveSession && !this.isCoordinator();
       if (isNonCoordPlayer && route.kind === 'episode') {
         throw new CampaignLoadError(
           'Episode lists are only visible to the DM.  Wait for the DM to reveal a scene.',
@@ -2780,11 +2818,13 @@ export class QuireApp extends LitElement {
   startHosting(): void {
     if (!this.session) return;
     const name = this.displayNameDraft.trim() || undefined;
-    void this.session
-      .host(name)
-      .catch(() => {
-        /* error already surfaced via sessionView */
-      });
+    // R3-C: embed the campaign reference in the host's peer-join
+    // so guests who arrived without ?campaign= in their URL can
+    // discover what to load.
+    const campaign = this.getCurrentCampaign()?.base.source;
+    void this.session.host(name, campaign).catch(() => {
+      /* error already surfaced via sessionView */
+    });
   }
 
   joinSession(): void {
@@ -2830,7 +2870,8 @@ export class QuireApp extends LitElement {
     );
     if (!ok) return;
     const name = this.displayNameDraft.trim() || undefined;
-    await this.session.regenerateCode(name);
+    const campaign = this.getCurrentCampaign()?.base.source;
+    await this.session.regenerateCode(name, campaign);
   }
 
   async copyInviteLink(): Promise<void> {
@@ -2891,18 +2932,28 @@ export class QuireApp extends LitElement {
    * up themselves — and without this, the maxlength + uppercase on
    * the input would mangle the URL into useless garbage like
    * "HTTPS://PLAY" (real bug report from manual testing).
+   *
+   * Special case: a pasted URL that doesn't contain `?join=` is NOT
+   * a valid invite — pasting the DM's address-bar URL with only
+   * `?campaign=&episode=&scene=` was the actual leak path that
+   * produced "HTTPS://PLAY" in the user's clipboard.  We return
+   * empty in that case so the field stays empty + Join stays
+   * disabled, rather than silently mangling the URL into junk.
    */
   static extractJoinCode(input: string): string {
     const trimmed = input.trim();
     if (!trimmed) return '';
-    // Looks like a URL?  Pull ?join=... out of it.
+    // Looks like a URL?  Pull ?join=... out of it, or refuse if
+    // there isn't one — don't fall through to literal handling
+    // because that would truncate the URL into garbage.
     if (/^https?:\/\//i.test(trimmed)) {
       try {
         const url = new URL(trimmed);
         const join = url.searchParams.get('join');
-        if (join) return join.toUpperCase().slice(0, 12);
+        return join ? join.toUpperCase().slice(0, 12) : '';
       } catch {
-        /* fall through to literal handling */
+        // Malformed URL — empty is safer than a literal cast.
+        return '';
       }
     }
     // Otherwise treat as a literal code.
