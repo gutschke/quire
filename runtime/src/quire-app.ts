@@ -309,28 +309,115 @@ export class QuireApp extends LitElement {
 
   private abortController?: AbortController;
   /**
-   * M3a.8 P2-3: ` ' ` hotkey focuses the DM scratch input.  Hotkey
-   * runs only when the local peer is the DM and the focus is not
-   * already in a text input (so the quote character itself can be
-   * typed normally inside any text field).
+   * DM keyboard map (FU-1 from M3a.10 gate).  Quiet at the table:
+   *
+   *   '           — focus DM scratch input
+   *   j / k       — walk to next / previous scene-block pip
+   *   Cmd+Enter   — reveal the next unrevealed block (paced reveal)
+   *   b           — broadcast current view to players
+   *
+   * Plain Space on a focused pip toggles it (native button behavior).
+   * All hotkeys are coord-only and skip when focus is in a text
+   * input / textarea / select / contenteditable region so typed
+   * characters land normally.
    */
   private readonly hotkeyHandler = (e: KeyboardEvent): void => {
-    if (e.key !== "'") return;
     if (!this.isCoordinator()) return;
-    const target = e.target as Element | null;
-    const tag = target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    // Skip when typing in any contenteditable region (markdown
-    // editors, future Stage edit-in-place affordances, etc.) so
-    // the literal quote character lands as the user expects.
-    if (target?.closest?.('[contenteditable=""], [contenteditable="true"]')) {
+    if (this.hotkeyTargetIsEditable(e.target)) return;
+    if (e.key === "'") {
+      e.preventDefault();
+      this.focusDmScratch();
       return;
     }
-    const scratch = this.querySelector<HTMLElement>('dm-scratch');
-    if (!scratch) return;
-    e.preventDefault();
-    (scratch as unknown as { focusInput: () => void }).focusInput();
+    if (e.key === 'j' || e.key === 'J') {
+      e.preventDefault();
+      this.walkScenePip(+1);
+      return;
+    }
+    if (e.key === 'k' || e.key === 'K') {
+      e.preventDefault();
+      this.walkScenePip(-1);
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      this.revealNextBlock();
+      return;
+    }
+    if (e.key === 'b' || e.key === 'B') {
+      // Don't fight Cmd+B / Ctrl+B (bold / browser shortcuts).
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      this.broadcastCurrentView();
+      return;
+    }
   };
+
+  private hotkeyTargetIsEditable(target: EventTarget | null): boolean {
+    const el = target as Element | null;
+    const tag = el?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (
+      el?.closest?.('[contenteditable=""], [contenteditable="true"]')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private focusDmScratch(): void {
+    const scratch = this.renderRoot.querySelector<HTMLElement>('dm-scratch');
+    if (!scratch) return;
+    (scratch as unknown as { focusInput: () => void }).focusInput();
+  }
+
+  /**
+   * j/k navigation: focus the next or previous scene-block pip in
+   * the current Stage.  Wraps around at the edges so the DM can
+   * cycle continuously without lifting hands from the keyboard.
+   *
+   * Queries via `renderRoot` (= shadow root for QuireApp) because
+   * the regions live inside the component's shadow tree; a plain
+   * `this.querySelectorAll` searches only the light-DOM children.
+   */
+  private walkScenePip(delta: 1 | -1): void {
+    const pips = Array.from(
+      this.renderRoot.querySelectorAll<HTMLButtonElement>('.scene-block-pip')
+    );
+    if (pips.length === 0) return;
+    // `document.activeElement` returns the shadow host when focus is
+    // inside the shadow tree; use `this.shadowRoot.activeElement` for
+    // the actual focused descendant.
+    const active =
+      (this.shadowRoot?.activeElement as HTMLElement | null) ??
+      (document.activeElement as HTMLElement | null);
+    const currentIdx = active ? pips.indexOf(active as HTMLButtonElement) : -1;
+    const nextIdx =
+      currentIdx < 0
+        ? delta > 0
+          ? 0
+          : pips.length - 1
+        : (currentIdx + delta + pips.length) % pips.length;
+    pips[nextIdx].focus();
+  }
+
+  /**
+   * Cmd+Enter: reveal the first unrevealed block in source order.
+   * Idempotent — when every block is revealed, this is a no-op.
+   * The DM's focus moves to the pip that was just revealed so a
+   * subsequent Cmd+Enter walks straight to the next one.
+   */
+  private revealNextBlock(): void {
+    const pips = Array.from(
+      this.renderRoot.querySelectorAll<HTMLButtonElement>('.scene-block-pip')
+    );
+    const next = pips.find(
+      (p) => p.getAttribute('aria-pressed') !== 'true'
+    );
+    if (!next) return;
+    next.focus();
+    next.click();
+  }
 
   private readonly popstateHandler = (): void => {
     // Re-parse both route and mode on history navigation so the URL

@@ -126,4 +126,81 @@ test.describe('M3a per-paragraph reveal — player DOM omission', () => {
       await guestCtx.close();
     }
   });
+
+  test('DM keyboard map: j/k walks pips; Cmd+Enter reveals next; b broadcasts', async ({
+    browser
+  }) => {
+    const hostCtx = await browser.newContext();
+    const guestCtx = await browser.newContext();
+    try {
+      const host = await openCampaignPeer(hostCtx);
+      const guest = await openCampaignPeer(guestCtx);
+      const code = await hostSession(host, 'DM');
+      await joinSession(guest, code, 'Player');
+      await navigateToIntro(host);
+
+      // Whole-scene reveal so guest can navigate (R3-A).
+      await host
+        .locator('.reveal-control button:has-text("Reveal to players")')
+        .click();
+      await navigateToIntro(guest);
+      await expect(host.locator('.scene-block-pip').first()).toBeVisible({
+        timeout: 10000
+      });
+
+      // Bring host into focus so window-level keydown handler fires.
+      await host.bringToFront();
+      await host.evaluate(() => document.body.focus());
+
+      // j focuses first pip via the DM keyboard map.
+      await host.keyboard.press('j');
+      await expect(host.locator('.scene-block-pip').first()).toBeFocused();
+
+      // j again focuses second pip.
+      await host.keyboard.press('j');
+      await expect(host.locator('.scene-block-pip').nth(1)).toBeFocused();
+
+      // k goes back to first.
+      await host.keyboard.press('k');
+      await expect(host.locator('.scene-block-pip').first()).toBeFocused();
+
+      // Cmd+Enter reveals the first unrevealed block.
+      const modifier =
+        process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter';
+      await host.keyboard.press(modifier);
+      await expect
+        .poll(
+          async () => guest.locator('quire-stage').innerHTML(),
+          { timeout: 10000 }
+        )
+        .toContain('Intro scene');
+
+      // Cmd+Enter again moves to + reveals the next.
+      await host.keyboard.press(modifier);
+      await expect
+        .poll(
+          async () => guest.locator('quire-stage').innerHTML(),
+          { timeout: 10000 }
+        )
+        .toContain('A small room');
+
+      // b broadcasts.  Player's broadcastView field updates.
+      await host.keyboard.press('b');
+      await expect
+        .poll(
+          async () =>
+            guest.evaluate(() => {
+              const el = document.querySelector('quire-app') as unknown as {
+                sessionView?: { shared?: { broadcastView?: { stagePath?: string } } };
+              };
+              return el?.sessionView?.shared?.broadcastView?.stagePath ?? '';
+            }),
+          { timeout: 10000 }
+        )
+        .toContain('intro.md');
+    } finally {
+      await hostCtx.close();
+      await guestCtx.close();
+    }
+  });
 });
