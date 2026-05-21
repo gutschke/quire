@@ -1,0 +1,47 @@
+name: ci
+
+# Runs on every push to main and every PR.  Three gates:
+#
+#   1. typecheck + unit tests (vitest)
+#   2. production build (vite)
+#   3. bundle-size gate (P0-7 — runtime/scripts/check-bundle-size.mjs)
+#
+# E2E (Playwright) is intentionally NOT in this workflow.  The e2e
+# suite spins up a real broker + WebRTC and has known flakes; run it
+# locally via `npm run test:e2e` before merging.  CI focuses on the
+# fast, deterministic gates.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  runtime:
+    name: runtime (unit + build + bundle gate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: runtime/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Bundle-size gate (P0-7)
+        run: npm run check-bundle
