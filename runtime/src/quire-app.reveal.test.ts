@@ -304,6 +304,47 @@ describe('QuireApp scene-reveal', () => {
     expect(host.sessionView!.shared.broadcastView).toBeUndefined();
   });
 
+  it('DM toggleNpcPin emits npc-pin / npc-unpin (P2-4)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    expect(app.toggleNpcPin('alice')).toBe(true);
+    await flush();
+    expect(app.sessionView!.shared.pinnedNpcs).toEqual(['alice']);
+    expect(app.toggleNpcPin('alice')).toBe(true);
+    await flush();
+    expect(app.sessionView!.shared.pinnedNpcs).toEqual([]);
+  });
+
+  it('non-coordinator toggleNpcPin is a no-op (P2-4)', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    expect(guest.toggleNpcPin('alice')).toBe(false);
+    await flush();
+    expect(host.sessionView!.shared.pinnedNpcs).toEqual([]);
+  });
+
+  it('DM setThreadDebt emits thread-debt-set with the level (P2-5)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    expect(app.setThreadDebt('yui', 'noticed')).toBe(true);
+    await flush();
+    expect(app.sessionView!.shared.threadDebt).toEqual({ yui: 'noticed' });
+    // Empty level clears the entry.
+    app.setThreadDebt('yui', '');
+    await flush();
+    expect(app.sessionView!.shared.threadDebt).toEqual({});
+  });
+
   it('multiple reveals accumulate in order', async () => {
     const network = new InMemoryNetwork();
     const host = mountApp(inMemoryFactory(network, 'HOST'));

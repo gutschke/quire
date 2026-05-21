@@ -67,7 +67,7 @@ import {
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
 import { decideRoute } from './controllers/route-policy';
-import { KNOWN_EVENT_KINDS } from './core/state';
+import { KNOWN_EVENT_KINDS, type ThreadDebtLevel } from './core/state';
 import {
   extractJoinCode as extractJoinCodeHelper,
   parseRevealedPath as parseRevealedPathHelper,
@@ -2343,6 +2343,7 @@ export class QuireApp extends LitElement {
     const claim = this.deriveClaimState(character);
 
     return html`
+      ${this.renderDmCharacterAffordances(character)}
       <player-rail
         .character=${character}
         .effective=${r}
@@ -2369,6 +2370,95 @@ export class QuireApp extends LitElement {
       ></player-rail>
       ${this.renderRollPanel()}
     `;
+  }
+
+  /**
+   * M3a.8 (P2-4 + P2-5): DM-only affordances on the character
+   * page — pin/unpin (NPC only) and thread-debt-set (PC only).
+   * Renders nothing for non-DM viewers.  M3a.9's `<dm-aside>` will
+   * move the pinned-NPC list out of this in-page strip; the
+   * action buttons themselves stay where the DM lives in the
+   * page they're inspecting.
+   */
+  private renderDmCharacterAffordances(
+    character: LoadedCharacter
+  ): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    if (character.kind === 'npc') {
+      const pinned =
+        this.sessionView?.status === 'active' &&
+        this.sessionView.shared.pinnedNpcs.includes(character.id);
+      return html`
+        <section class="card dm-affordances">
+          <button
+            type="button"
+            class="dm-pin-btn"
+            @click=${() => this.toggleNpcPin(character.id)}
+          >
+            ${pinned ? '📌 Unpin from DM aside' : '📌 Pin to DM aside'}
+          </button>
+        </section>
+      `;
+    }
+    // character.kind === 'pc' → thread-debt selector.
+    const v = this.sessionView;
+    const current =
+      v?.status === 'active' ? v.shared.threadDebt[character.id] ?? '' : '';
+    const levels: Array<{ key: '' | ThreadDebtLevel; label: string }> = [
+      { key: '', label: '— none —' },
+      { key: 'quiet', label: 'quiet' },
+      { key: 'noticed', label: 'noticed' },
+      { key: 'watched', label: 'watched' },
+      { key: 'pushing-back', label: 'pushing back' },
+      { key: 'hunted', label: 'hunted' }
+    ];
+    return html`
+      <section class="card dm-affordances">
+        <label class="dm-thread-debt">
+          <span>Thread debt:</span>
+          <select
+            @change=${(e: Event) =>
+              this.setThreadDebt(
+                character.id,
+                (e.target as HTMLSelectElement).value as ThreadDebtLevel | ''
+              )}
+          >
+            ${levels.map(
+              (l) => html`
+                <option value=${l.key} ?selected=${l.key === current}>
+                  ${l.label}
+                </option>
+              `
+            )}
+          </select>
+        </label>
+      </section>
+    `;
+  }
+
+  /**
+   * M3a.8 P2-4: emit npc-pin or npc-unpin based on current state.
+   * Coord-only; no-op outside an active session.
+   */
+  toggleNpcPin(npcId: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const pinned = v.shared.pinnedNpcs.includes(npcId);
+    this.session.append(pinned ? 'npc-unpin' : 'npc-pin', { v: 1, npcId });
+    return true;
+  }
+
+  /**
+   * M3a.8 P2-5: emit thread-debt-set for a PC.  Empty-string level
+   * clears the entry.  Coord-only.
+   */
+  setThreadDebt(pcId: string, level: ThreadDebtLevel | ''): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    this.session.append('thread-debt-set', { v: 1, pcId, level });
+    return true;
   }
 
   /**

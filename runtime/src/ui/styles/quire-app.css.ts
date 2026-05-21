@@ -1040,6 +1040,33 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.8 P2-4/P2-5: DM-only affordances on the character page —
+       NPC pin button or PC thread-debt selector.  Sits as a small
+       card above the player-rail. */
+    .dm-affordances {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.4rem 0.7rem;
+      background: light-dark(#fffbe6, #2a2618);
+      border-left: 3px solid light-dark(#d4a017, #a07820);
+    }
+    .dm-pin-btn {
+      padding: 0.35rem 0.7rem;
+      background: light-dark(#fff, #1f1f1f);
+      border: 1px solid light-dark(#bbb, #555);
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .dm-thread-debt {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .dm-thread-debt select {
+      padding: 0.2rem 0.4rem;
+    }
+
     /* M3a.8 P2-11: broadcast button (DM-only, in scene header). */
     .scene-broadcast-btn {
       display: inline-block;
