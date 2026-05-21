@@ -41,6 +41,26 @@ export interface Note {
 export interface SessionState {
   peers: Record<PeerId, PeerPresence>;
   coordinator?: PeerId;
+  /**
+   * Every peer who has ever held coordinator at any point in the
+   * event log (successful coord-claim OR coord-reclaim).  Used by
+   * scene-reveal's authority check: a reveal is accepted if the
+   * author was coord at SOME point, not just the current moment.
+   *
+   * This is important for multi-session continuity: when a new
+   * host loads a save authored by a prior DM, the prior DM's
+   * scene-reveal events should still apply even though the current
+   * coordinator is the new host.  Without this, alphabetical
+   * peerId tiebreak on coord-claim sorting determined whether
+   * loaded reveals survived — non-deterministic.
+   *
+   * Trade-off: a peer who was briefly coord can keep authoring
+   * reveals even after handoff (until kicked from session).  In a
+   * TTRPG context this is acceptable — past-coord-authority
+   * abuse is socially visible and the audit-trail chat captures
+   * the original handoff.
+   */
+  coordHolders: Set<PeerId>;
   revealedScenes: string[];
   diceRolls: DiceRoll[];
   chat: ChatMessage[];
@@ -51,6 +71,7 @@ export interface SessionState {
 export function emptyState(): SessionState {
   return {
     peers: {},
+    coordHolders: new Set(),
     revealedScenes: [],
     diceRolls: [],
     chat: [],
@@ -183,11 +204,16 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       break;
     }
     case 'coordinator-claim': {
-      if (!state.coordinator) state.coordinator = event.peerId;
+      if (!state.coordinator) {
+        state.coordinator = event.peerId;
+        state.coordHolders.add(event.peerId);
+      }
       break;
     }
     case 'coordinator-yield': {
       if (state.coordinator === event.peerId) state.coordinator = undefined;
+      // coordHolders intentionally NOT cleared — historical
+      // authority is preserved for reveal-acceptance.
       break;
     }
     case 'coordinator-reclaim': {
@@ -204,6 +230,7 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
           ? p.fromPeerId
           : state.coordinator;
       state.coordinator = event.peerId;
+      state.coordHolders.add(event.peerId);
       const auditText = fromPeerId
         ? `[system] ${event.peerId} took over as coordinator from ${fromPeerId}`
         : `[system] ${event.peerId} took over as coordinator`;
@@ -215,7 +242,12 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       break;
     }
     case 'scene-reveal': {
-      if (state.coordinator !== event.peerId) break;
+      // Authority check: the author must have been coordinator at
+      // SOME point in the event log, not necessarily now.  Without
+      // this, loaded reveals from a prior session would be dropped
+      // when the new host's coord-claim won the alphabetical
+      // peerId tiebreak.  See coordHolders comment in SessionState.
+      if (!state.coordHolders.has(event.peerId)) break;
       if (!isPlainObjectPayload(event.payload)) break;
       const p = event.payload as Partial<SceneRevealPayload>;
       if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
