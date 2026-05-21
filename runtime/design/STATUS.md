@@ -67,26 +67,34 @@ Threat-model framing locked at the gate (see [[project_quire_threat_model]]):
 - Do NOT try to defend against malicious team members — they have GitHub access anyway.  Capture as audit-trail follow-up.
 - Players STORING DM events on their device's autosave is wanted (multi-device resilience).  Filtering is at the SHARE surface (user file download), not the storage surface.
 
-## Follow-ups carried to M3a polish / M3b
+## M3a polish — landed after milestone-M3a tag
 
-**HIGH (table ergonomics):**
-- FU-1: Keyboard map for the DM (J/K/Space/Cmd-Enter/B for paced reveal + broadcast).  Per-paragraph workflow is mouse-only today.
-- FU-2: Audit trail when a peer is reading DM-only state they shouldn't be (e.g., past-coord materialized stale data, suspicious patterns).  Social-deterrent per the threat model.
+Post-gate followup work, all on `main`:
 
-**MEDIUM (UX placement):**
-- FU-3: Relocate `renderDmCharacterAffordances` (pin button, thread-debt selector) from the character page into the cockpit regions per ui.md.  Closes the M3a.9 follow-up.
-- FU-4: Active-PC focus card in `<dm-rail>` (currently scene-navigator only).
+- [x] FU-1: DM keyboard map — j/k walk pips, Cmd+Enter reveals next, b broadcasts, ' focuses scratch.  Hotkeys skip text inputs + contenteditable; second e2e test verifies the workflow.  Commit 202eedf.
+- [x] FU-3: Thread-debt selector relocated from the PC character page into `<dm-aside>` as inline rows for bound-PC peers.  DM no longer needs to navigate per change.  Commit 41717eb.
+- [x] FU-5: Lapsed-pip strip in the DM Stage when revealed block hashes no longer match any current block (editorial-edit cue).  Commit 22af352.
+- [x] FU-6: SCRATCH_NOTE_TEXT_CAP = 5000 documented in redesign-plan.md.  Commit ae16b93.
+- [x] FU-7: `loadFromString` split (83 → ≤55 LOC across 4 helpers).  Closes the Engine max-method MISS.  Commit ae16b93.
+- [x] FU-8: `crypto.subtle` feature-detect with typed `CryptoUnavailableError` + actionable error banner.  Commit 22af352.
+- [x] FU-9: Case-insensitive `dm/` path match for caution rail.  Commit ae16b93.
+- [x] E2e stabilization — 6 tests broken by dm-rail link duplication + gutter-pip button count + AiKeyStore debounce race.  Commit 3dfef88.
 
-**LOW (hygiene):**
-- FU-5: Lapsed-pip rendering when a `scene-reveal-paragraph` blockHash no longer matches any current block (DM-side cue after editorial edits).
-- FU-6: Document SCRATCH_NOTE_TEXT_CAP = 5000 in security.md or shrink to a defensible number.
-- FU-7: Split `loadFromString` to ≤80 LOC (max-method gate fix).
-- FU-8: `crypto.subtle.digest` feature-detection + insecure-context banner.
-- FU-9: Case-insensitive `dm/` path detection for caution rail.
+## Follow-ups still open (M3b territory)
+
+**HIGH:**
+- FU-2: Audit trail when a peer is reading DM-only state they shouldn't be.  Needs a separate event kind + retention design; better tackled with the M3b AI-audit work where the storage/UI patterns already need to land.
+
+**MEDIUM:**
+- FU-4: Active-PC focus card in `<dm-rail>` (currently scene-navigator only).  Requires a "focused PC" concept that doesn't exist yet — design choice on whether it's auto-derived (last roll/edit) or DM-explicit.
+
+**Engine residue:**
+- quire-app.ts at 2875 LOC vs 2000 soft cap.  `broadcastCurrentView` + `followBroadcast` + `routeForAppState` (~90 LOC) are the next-cheapest extraction into a broadcast-controller — deferred as the M3b region work will reshuffle naturally.
+- delegation ratio: still ~56%.  `renderIdle`, `renderEpisode`, `renderRevealBanner` are the remaining inline-renderer chunks; each is small enough that extraction is more bookkeeping than benefit at this point.
 
 ## Next planned commit
 
-Tag `milestone-M3a` once all M3a.10 unblock work is in (the commits referenced above).  After tagging, decide between M3a polish (drain the followups) and M3b (AI broker + dual-card) per the user's pacing preference.
+`milestone-M3a` was tagged after the unblock commits; the polish followups landed on `main` above.  Next milestone: **M3b — AI broker + dual-card** (P2-6, P2-7, P2-8, P2-9, P2-12 per execution-plan.md).  Outcome: structured `{safe, dmOnly, sources}` returns from both providers, dual-card render, audit chain (closes FU-2 in passing), scope reset, coord-only enforcement.
 
 ---
 
