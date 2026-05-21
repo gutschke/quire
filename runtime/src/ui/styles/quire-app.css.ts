@@ -1227,6 +1227,43 @@ export const quireAppStyles = css`
       margin: 0;
     }
 
+    /* M3b gate fix: inline budget meter in panel header + verdict
+       feedback footer + budget-exceeded banner above prompt form. */
+    .ai-budget {
+      font-size: 0.8em;
+      font-variant: tabular-nums;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+    }
+    .ai-budget-ok {
+      color: light-dark(#666, #aaa);
+      background: light-dark(#f2f2f2, #2a2a2a);
+    }
+    .ai-budget-warning {
+      color: light-dark(#5a4310, #ffd479);
+      background: light-dark(#fff7e0, #3a2f10);
+    }
+    .ai-budget-exceeded {
+      color: light-dark(#7a1010, #ff8080);
+      background: light-dark(#ffe6e6, #3a1818);
+      font-weight: 600;
+    }
+    .ai-budget-banner {
+      padding: 0.4rem 0.7rem;
+      margin: 0.3rem 0;
+      background: light-dark(#ffe6e6, #3a1818);
+      border-left: 3px solid light-dark(#aa3030, #ff6060);
+      color: light-dark(#7a1010, #ff9090);
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    .ai-card-verdict-done {
+      padding: 0.2rem 0;
+    }
+    .ai-card-verdict-done .muted {
+      font-style: italic;
+    }
+
     /* M3a.8 P2-3: DM scratch column (Dock region). */
     .dm-scratch textarea {
       width: 100%;

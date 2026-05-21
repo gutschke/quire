@@ -84,6 +84,12 @@ export function isSourceRef(value: unknown): value is SourceRef {
  * the degraded response.
  */
 export function parseFailureResponse(rawText: string): AiResponse {
+  // responseId synthesized from a content-hash-ish fingerprint so the
+  // DM can still hit Accept / Reject on a degraded response (the UI
+  // verdict buttons gate on responseId being truthy).  Not
+  // cryptographically meaningful — just unique enough that two
+  // parse failures in the same session land as distinct rows.
+  const fingerprint = `parse-fail-${rawText.length}-${rawText.slice(0, 8).replace(/[^A-Za-z0-9]/g, '')}`;
   return {
     safe: '',
     dmOnly:
@@ -92,6 +98,6 @@ export function parseFailureResponse(rawText: string): AiResponse {
     raw: rawText,
     tokensIn: 0,
     tokensOut: 0,
-    responseId: ''
+    responseId: fingerprint
   };
 }

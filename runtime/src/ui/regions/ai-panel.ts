@@ -76,6 +76,27 @@ export class AiPanel extends LitElement {
    */
   @property({ attribute: false }) response: DualCardResponse | null = null;
   /**
+   * M3b gate fix: id of the most recent responseId the DM has
+   * accepted or rejected, so we can surface visible feedback on
+   * the verdict buttons rather than silently emitting events.
+   * Set by QuireApp via the on*Response callbacks.
+   */
+  @property() verdictResponseId: string = '';
+  @property() verdictKind: '' | 'accept' | 'reject' = '';
+  /**
+   * M3b gate fix: token-budget meter inline in the panel header.
+   * Replaces the missing topbar widget for v1.  Shows the running
+   * total over the configured ceiling + a warning state at 80%
+   * and exceeded state at 100%.  Hidden when no exchanges have
+   * happened yet (total === 0).
+   */
+  @property({ attribute: false }) budget: {
+    total: number;
+    ceiling: number;
+    warning: boolean;
+    exceeded: boolean;
+  } | null = null;
+  /**
    * M3b.5: scope toggle for the next prompt.  Resets to 'public'
    * after submit per the design (redesign-plan.md L147).
    */
@@ -127,6 +148,7 @@ export class AiPanel extends LitElement {
               ${AI_DEFAULTS[this.provider].label}
             </span>
           </h2>
+          ${this.renderBudgetMeter()}
           ${hasKey
             ? html`<button
                 type="button"
@@ -200,25 +222,44 @@ export class AiPanel extends LitElement {
         </section>
         ${r.sources.length > 0 ? this.renderSourceChips(r.sources) : nothing}
         ${r.responseId
-          ? html`<div class="ai-card-verdict">
-              <button
-                type="button"
-                class="ai-card-accept"
-                @click=${() => this.onAcceptResponse?.(r.responseId)}
-              >
-                Accept
-              </button>
-              <button
-                type="button"
-                class="ai-card-reject"
-                @click=${() => this.onRejectResponse?.(r.responseId)}
-              >
-                Reject
-              </button>
-            </div>`
+          ? this.renderVerdict(r.responseId)
           : nothing}
       </div>
     `;
+  }
+
+  /**
+   * M3b gate fix: when the DM has clicked Accept/Reject on this
+   * response, the buttons are replaced with a muted confirmation
+   * footer.  Silent button-click feels broken at the table; visible
+   * feedback closes the loop.
+   */
+  private renderVerdict(responseId: string): TemplateResult {
+    const verdicted =
+      this.verdictResponseId === responseId && this.verdictKind !== '';
+    if (verdicted) {
+      return html`<div class="ai-card-verdict ai-card-verdict-done">
+        <span class="muted"
+          >${this.verdictKind === 'accept' ? '✓ Accepted' : '✗ Rejected'}</span
+        >
+      </div>`;
+    }
+    return html`<div class="ai-card-verdict">
+      <button
+        type="button"
+        class="ai-card-accept"
+        @click=${() => this.onAcceptResponse?.(responseId)}
+      >
+        Accept
+      </button>
+      <button
+        type="button"
+        class="ai-card-reject"
+        @click=${() => this.onRejectResponse?.(responseId)}
+      >
+        Reject
+      </button>
+    </div>`;
   }
 
   private renderSourceChips(sources: SourceRef[]): TemplateResult {
@@ -235,6 +276,25 @@ export class AiPanel extends LitElement {
         )}
       </ul>
     `;
+  }
+
+  private renderBudgetMeter(): TemplateResult | typeof nothing {
+    const b = this.budget;
+    if (!b || b.total === 0) return nothing;
+    const stateClass = b.exceeded
+      ? 'ai-budget-exceeded'
+      : b.warning
+        ? 'ai-budget-warning'
+        : 'ai-budget-ok';
+    const pct = Math.round((b.total / b.ceiling) * 100);
+    return html`<span
+      class="ai-budget ${stateClass}"
+      title=${b.exceeded
+        ? `Token budget reached for this session (${b.total} / ${b.ceiling}).  The Ask button is disabled.`
+        : `${b.total} / ${b.ceiling} tokens used (${pct}%)`}
+    >
+      ${b.total.toLocaleString()} / ${b.ceiling.toLocaleString()} (${pct}%)
+    </span>`;
   }
 
   private renderSettings(): TemplateResult {
@@ -329,7 +389,14 @@ export class AiPanel extends LitElement {
   }
 
   private renderPromptForm(): TemplateResult {
+    const budgetExceeded = !!this.budget?.exceeded;
     return html`
+      ${budgetExceeded
+        ? html`<p class="ai-budget-banner" role="status">
+            Token budget reached for this session.  Increase the
+            ceiling in settings to keep prompting.
+          </p>`
+        : nothing}
       <form
         class="ai-form"
         @submit=${(e: Event) => {
@@ -367,7 +434,9 @@ export class AiPanel extends LitElement {
             ? html`<button type="button" @click=${() => this.onCancel?.()}>
                 Cancel
               </button>`
-            : html`<button type="submit">Ask</button>`}
+            : html`<button type="submit" ?disabled=${budgetExceeded}>
+                Ask
+              </button>`}
         </div>
       </form>
     `;

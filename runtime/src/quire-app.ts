@@ -60,7 +60,7 @@ import {
   responseHashFor,
   chainHead
 } from './ai/audit';
-import { DEFAULT_BUDGET_CEILING } from './ai/budget';
+import { DEFAULT_BUDGET_CEILING, computeUsage } from './ai/budget';
 import type { DualCardResponse } from './ui/regions/ai-panel';
 import {
   serializeSession,
@@ -312,6 +312,14 @@ export class QuireApp extends LitElement {
   @state() aiResponseStructured: AiResponse | null = null;
   /** M3b.5: scope for the NEXT prompt.  Resets to 'public' on submit. */
   @state() aiScope: ContextScope = 'public';
+  /**
+   * M3b gate fix: track the most recent verdict the DM cast so the
+   * ai-panel can render visible feedback ("✓ Accepted" / "✗ Rejected")
+   * instead of leaving the buttons hot after click (silent-success
+   * was reading as broken-button at the table).
+   */
+  @state() aiVerdictResponseId: string = '';
+  @state() aiVerdictKind: '' | 'accept' | 'reject' = '';
   @state() aiLoading: boolean = false;
   @state() aiError: string | null = null;
   @state() aiShowSettings: boolean = false;
@@ -1124,6 +1132,9 @@ export class QuireApp extends LitElement {
         }}
         .onAcceptResponse=${(id: string) => this.acceptAiResponse(id)}
         .onRejectResponse=${(id: string) => this.rejectAiResponse(id)}
+        .verdictResponseId=${this.aiVerdictResponseId}
+        .verdictKind=${this.aiVerdictKind}
+        .budget=${this.aiBudgetSummary()}
       ></ai-panel>
     `;
   }
@@ -2343,20 +2354,6 @@ export class QuireApp extends LitElement {
     this.aiScope = 'public';
     const broker = this.brokerForProvider(this.aiProvider);
     try {
-      // Emit ai-prompt event with the chain head (in-session only —
-      // solo has no audit chain to record into).  The hash is
-      // computed up-front so it lands in the event log even if the
-      // provider request errors out.
-      if (inSession) {
-        const ph = await promptHashFor(user, this.aiModel, []);
-        session.append('ai-prompt', {
-          v: 1,
-          promptHash: ph.short,
-          model: this.aiModel,
-          tokenIn: 0,
-          contextRefs: []
-        });
-      }
       const result = await broker.complete({
         prompt: user,
         scope,
@@ -2365,11 +2362,22 @@ export class QuireApp extends LitElement {
         signal: ac.signal
       });
       if (ac.signal.aborted) return null;
-      // Hash the raw response + emit ai-response with the chain link.
+      // Emit the prompt + response pair AFTER the broker call so
+      // both events carry the real token counts from the provider
+      // (the budget meter sums both halves; an early emit with
+      // hard-coded tokensIn=0 silently undercounted by typically
+      // 50-90% on context-heavy prompts).
       if (inSession) {
-        const audit = this.sessionView?.shared.aiAudit ?? [];
+        const ph = await promptHashFor(user, this.aiModel, []);
         const rh = await responseHashFor(result.raw);
-        const prev = chainHead(audit);
+        const prev = chainHead(this.sessionView?.shared.aiAudit ?? []);
+        session.append('ai-prompt', {
+          v: 1,
+          promptHash: ph.short,
+          model: this.aiModel,
+          tokenIn: result.tokensIn,
+          contextRefs: []
+        });
         session.append('ai-response', {
           v: 1,
           responseId: result.responseId || rh.short,
@@ -2378,14 +2386,10 @@ export class QuireApp extends LitElement {
           prevHash: prev
         });
       }
-      // Patch the prompt event's tokensIn after-the-fact would be
-      // ideal but events are immutable; for accuracy on the next
-      // budget check we emit a second ai-prompt with the real
-      // tokensIn count when it differs.  v1 minimum: emit the
-      // initial 0 and rely on tokensOut accuracy for the budget
-      // meter (provider tokenIn is also available; we'll surface
-      // it via a follow-up patch when budgets get tight).
       this.aiResponseStructured = result;
+      // Clear any prior verdict so the new response's buttons are hot.
+      this.aiVerdictResponseId = '';
+      this.aiVerdictKind = '';
       // Maintain legacy `aiResponse` (string) for the "Share to
       // chat" affordance and any test still referencing it.  Use
       // the safe half — never dmOnly — since shareToChat sends
@@ -2410,6 +2414,28 @@ export class QuireApp extends LitElement {
       if (this.aiAbort === ac) this.aiAbort = null;
       this.aiLoading = false;
     }
+  }
+
+  /**
+   * M3b gate fix: token-budget summary for the AI panel meter.
+   * Returns null in solo or when no audit history exists so the
+   * meter stays hidden until the DM actually starts using it.
+   */
+  private aiBudgetSummary(): {
+    total: number;
+    ceiling: number;
+    warning: boolean;
+    exceeded: boolean;
+  } | null {
+    const audit = this.sessionView?.shared.aiAudit;
+    if (!audit || audit.length === 0) return null;
+    const u = computeUsage(audit, this.aiBudgetCeiling);
+    return {
+      total: u.total,
+      ceiling: u.ceiling,
+      warning: u.warning,
+      exceeded: u.exceeded
+    };
   }
 
   /**
@@ -2444,6 +2470,12 @@ export class QuireApp extends LitElement {
     responseId: string,
     category?: string
   ): boolean {
+    // Visual feedback flips regardless of session — the DM in solo
+    // also wants to see their button click registered.  In session
+    // the event also lands in the audit log for post-session
+    // analysis.
+    this.aiVerdictResponseId = responseId;
+    this.aiVerdictKind = kind === 'ai-accept' ? 'accept' : 'reject';
     if (!this.session) return false;
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
