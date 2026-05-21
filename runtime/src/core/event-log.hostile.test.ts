@@ -127,6 +127,64 @@ describe('EventLog.apply — shape validation', () => {
   });
 });
 
+describe('EventLog.apply — prototype-pollution defense', () => {
+  // Builtin Object property names that, if used as a peerId or a
+  // clock-entry key, would either pollute the prototype chain or
+  // shadow built-in methods, corrupting downstream Object.keys /
+  // Object.entries / Object iteration.
+  const POISONOUS_KEYS = [
+    '__proto__',
+    'constructor',
+    'prototype',
+    'toString',
+    'hasOwnProperty',
+    'valueOf',
+    'isPrototypeOf'
+  ];
+
+  for (const bad of POISONOUS_KEYS) {
+    it(`rejects "${bad}" as peerId`, () => {
+      const log = new EventLog('bob');
+      expect(
+        log.apply(
+          legitEvent({
+            id: `${bad}:1`,
+            peerId: bad,
+            seq: 1,
+            clock: { [bad]: 1 }
+          })
+        )
+      ).toBe(false);
+    });
+
+    it(`rejects "${bad}" as a clock-entry key`, () => {
+      const log = new EventLog('bob');
+      expect(
+        log.apply(
+          legitEvent({ clock: { alice: 1, [bad]: 0 } })
+        )
+      ).toBe(false);
+    });
+  }
+});
+
+describe('EventLog.apply — length caps', () => {
+  it('rejects peerId longer than the cap', () => {
+    const log = new EventLog('bob');
+    const huge = 'x'.repeat(257);
+    expect(
+      log.apply(
+        legitEvent({ id: `${huge}:1`, peerId: huge, clock: { [huge]: 1 } })
+      )
+    ).toBe(false);
+  });
+
+  it('rejects kind longer than the cap', () => {
+    const log = new EventLog('bob');
+    expect(log.apply(legitEvent({ kind: 'x'.repeat(257) }))).toBe(false);
+  });
+});
+
 describe('EventLog.apply — vector clock forgery resistance', () => {
   it('caps absolute clock-entry damage via the seq cap', () => {
     // The full impersonation defense (transport sender == event.peerId)

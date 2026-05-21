@@ -97,6 +97,35 @@ export class EventLog {
  * Peer.handleMessage.
  */
 const SEQ_CAP = 1_000_000_000;
+const ID_CAP = 256;
+
+/**
+ * Builtin Object property names that would either pollute the
+ * prototype chain (`__proto__`) or shadow built-in methods when used
+ * as a peerId / clock-entry key.  The local clock is a plain object
+ * and downstream code calls Object.entries / Object.keys on it; a
+ * peerId of "constructor" would silently corrupt iteration.
+ */
+const POISONOUS_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'hasOwnProperty',
+  'valueOf',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString'
+]);
+
+function isSafeId(s: unknown): s is string {
+  return (
+    typeof s === 'string' &&
+    s.length > 0 &&
+    s.length <= ID_CAP &&
+    !POISONOUS_KEYS.has(s)
+  );
+}
 
 function isPositiveInteger(n: unknown, max: number): n is number {
   return (
@@ -119,10 +148,13 @@ function isNonNegativeInteger(n: unknown, max: number): n is number {
 function isValidEvent(event: unknown): event is QuireEvent {
   if (!event || typeof event !== 'object') return false;
   const e = event as Record<string, unknown>;
-  if (typeof e.peerId !== 'string' || e.peerId.length === 0) return false;
+  if (!isSafeId(e.peerId)) return false;
   if (!isPositiveInteger(e.seq, SEQ_CAP)) return false;
   if (typeof e.id !== 'string' || e.id !== `${e.peerId}:${e.seq}`) return false;
-  if (typeof e.kind !== 'string' || e.kind.length === 0) return false;
+  if (e.id.length > ID_CAP + 12) return false; // peerId (256) + ':' + seq (10 digits)
+  if (typeof e.kind !== 'string' || e.kind.length === 0 || e.kind.length > ID_CAP) {
+    return false;
+  }
   if (typeof e.ts !== 'number' || !Number.isFinite(e.ts)) return false;
   if (
     !e.clock ||
@@ -131,10 +163,13 @@ function isValidEvent(event: unknown): event is QuireEvent {
   ) {
     return false;
   }
+  // Use own-enumerable keys to avoid catching inherited properties from
+  // a polluted prototype (defense in depth — should never happen given
+  // we reject events authored by poisonous peerIds, but cheap).
   const clock = e.clock as Record<string, unknown>;
-  for (const [pid, v] of Object.entries(clock)) {
-    if (typeof pid !== 'string' || pid.length === 0) return false;
-    if (!isNonNegativeInteger(v, SEQ_CAP)) return false;
+  for (const pid of Object.keys(clock)) {
+    if (!isSafeId(pid)) return false;
+    if (!isNonNegativeInteger(clock[pid], SEQ_CAP)) return false;
   }
   // Author's own clock entry must equal their declared seq.  Anything
   // else implies a malformed or forged event.

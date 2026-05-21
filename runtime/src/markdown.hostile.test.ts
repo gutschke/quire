@@ -85,6 +85,40 @@ describe('renderMarkdown — forbidden attributes', () => {
   });
 });
 
+describe('renderMarkdown — picture / source / details beacons', () => {
+  it('strips <picture> and <source srcset> (tracking-pixel bypass for <img>)', () => {
+    const out = html(
+      '<picture><source srcset="https://tracker.example/beacon.png"><img src="https://tracker.example/img.png"></picture>'
+    );
+    expect(out).not.toMatch(/<picture/i);
+    expect(out).not.toMatch(/<source/i);
+    // Even if the <img> survives, srcset on any element must be stripped.
+    expect(out).not.toMatch(/srcset\s*=/i);
+  });
+
+  it('strips srcset attribute even on a surviving <img>', () => {
+    const out = html('<img src="x.png" srcset="https://tracker.example/2x.png 2x">');
+    expect(out).not.toMatch(/srcset\s*=/i);
+    expect(out).not.toContain('tracker.example');
+  });
+
+  it('strips ping and download attributes on <a>', () => {
+    const out = html(
+      '<a href="https://x.com" ping="https://tracker.example/track" download="x.zip">link</a>'
+    );
+    expect(out).not.toMatch(/ping\s*=/i);
+    expect(out).not.toMatch(/download\s*=/i);
+  });
+
+  it('strips <details>, <summary>, <marquee>, <menu>, <bgsound>', () => {
+    expect(html('<details><summary>x</summary>y</details>')).not.toMatch(/<details/i);
+    expect(html('<details><summary>x</summary>y</details>')).not.toMatch(/<summary/i);
+    expect(html('<marquee>x</marquee>')).not.toMatch(/<marquee/i);
+    expect(html('<menu>x</menu>')).not.toMatch(/<menu/i);
+    expect(html('<bgsound src="x">')).not.toMatch(/<bgsound/i);
+  });
+});
+
 describe('renderMarkdown — full phishing-form scenario', () => {
   it('renders nothing usable from a multi-element phishing snippet', () => {
     const phishing = `

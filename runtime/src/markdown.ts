@@ -66,6 +66,7 @@ purify.addHook('uponSanitizeAttribute', (_node, data) => {
 // can survive a single sanitize pass).  The hook runs once per
 // element so reparented children are caught.
 const FORBID_TAG_NAMES = new Set([
+  // Phishing surfaces (form-control widgets render as ordinary UI).
   'FORM',
   'INPUT',
   'BUTTON',
@@ -79,9 +80,22 @@ const FORBID_TAG_NAMES = new Set([
   'OUTPUT',
   'METER',
   'PROGRESS',
+  // CSS injection + iframe smuggling + focus traps.
   'STYLE',
   'DIALOG',
-  'IFRAME'
+  'IFRAME',
+  // Image-beacon bypasses for <img>: <picture> + <source srcset>
+  // load arbitrary remote URLs even when img-src is constrained.
+  'PICTURE',
+  'SOURCE',
+  // Layout-disclosure / griefing widgets — not strictly needed and
+  // give a campaign author a way to hide hostile content behind a
+  // "click to expand" affordance.
+  'DETAILS',
+  'SUMMARY',
+  'MARQUEE',
+  'BGSOUND',
+  'MENU'
 ]);
 purify.addHook('uponSanitizeElement', (node, data) => {
   if (FORBID_TAG_NAMES.has(data.tagName.toUpperCase())) {
@@ -174,9 +188,16 @@ export function parseFrontmatter(text: string): MarkdownDocument {
  * unreliable for form-associated elements.
  */
 const FORBID_ATTR = [
+  // Layout / phishing.
   'style',
   'formaction',
   'autofocus',
+  // Image-beacon bypasses on surviving <img>/<a>.
+  'srcset',
+  'ping',
+  'download',
+  // Event handlers — DOMPurify defaults strip these, but belt-and-
+  // suspenders against config drift.
   'onclick',
   'onload',
   'onerror',
