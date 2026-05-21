@@ -219,28 +219,73 @@ describe('SessionController — error paths', () => {
   });
 });
 
-describe('SessionController — transport error after leave', () => {
-  it('drops late onError fired after leave() instead of re-entering error state', async () => {
-    const net = new TestNetwork();
-    const ctl = new SessionController(net.factory('host', 'H1'));
+describe('SessionController — transport error lifecycle', () => {
+  it('transport onError after leave() is dropped (no error-state re-entry)', async () => {
+    // Drive the InMemoryTransport's onError hook directly via the
+    // test-only _fireError so we can synthesize a late error after
+    // the controller has unsubscribed.  Without the unsubscribe
+    // call in cleanup(), the controller would transition to 'error'
+    // even though the user has already left.
+    const network = new InMemoryNetwork();
+    const transport = new InMemoryTransport('LATE-HOST', network);
+    const factory: TransportFactory = {
+      createHost: async () => ({ transport, pairingCode: 'LATE-HOST' }),
+      createGuest: async () => {
+        throw new Error('unused');
+      }
+    };
+    const ctl = new SessionController(factory);
     await ctl.host('DM');
     expect(ctl.view().status).toBe('active');
-    // Capture the transport's error handlers via a sneaky probe: leave
-    // the session, then synthesize an onError after the unsubscribe.
-    // The transport is in-memory which never fires onError on its own,
-    // so we drive it manually below by retaining a reference before
-    // leave().  After leave() the controller should not re-react.
-    const before = ctl.view();
     ctl.leave();
-    const after = ctl.view();
-    // No transitions can land after leave because the unsubscribes
-    // were called as part of cleanup.  Simulate "if the transport
-    // were to fire a late event" by sending notify-equivalents:
-    // since the listener is gone, the controller stays solo/idle.
-    expect(after.status).toBe('idle');
-    expect(after.mode).toBe('solo');
-    expect(after.error).toBeNull();
-    expect(before.status).toBe('active');
+    // Fire AFTER leave().  The session-controller's onError handler
+    // is gone; the transport's _fireError no-ops because the
+    // transport itself was closed by cleanup().
+    transport._fireError({ code: 'peer-unavailable', message: 'late' });
+    expect(ctl.view().status).toBe('idle');
+    expect(ctl.view().error).toBeNull();
+  });
+
+  it('transport onError mid-session triggers cleanup + error state', async () => {
+    const network = new InMemoryNetwork();
+    const transport = new InMemoryTransport('FAIL-HOST', network);
+    const factory: TransportFactory = {
+      createHost: async () => ({ transport, pairingCode: 'FAIL-HOST' }),
+      createGuest: async () => {
+        throw new Error('unused');
+      }
+    };
+    const ctl = new SessionController(factory);
+    await ctl.host('DM');
+    expect(ctl.view().status).toBe('active');
+    transport._fireError({
+      code: 'peer-unavailable',
+      message: 'connection lost'
+    });
+    expect(ctl.view().status).toBe('error');
+    expect(ctl.view().error).toBe('connection lost');
+    expect(ctl.view().mode).toBe('solo');
+  });
+
+  it('connection-failed (non-fatal) does NOT tear down the session', async () => {
+    const network = new InMemoryNetwork();
+    const transport = new InMemoryTransport('OK-HOST', network);
+    const factory: TransportFactory = {
+      createHost: async () => ({ transport, pairingCode: 'OK-HOST' }),
+      createGuest: async () => {
+        throw new Error('unused');
+      }
+    };
+    const ctl = new SessionController(factory);
+    await ctl.host('DM');
+    transport._fireError({
+      code: 'connection-failed',
+      peerId: 'transient',
+      message: 'one peer dropped'
+    });
+    // Session stays active; not every per-connection failure is
+    // session-fatal.
+    expect(ctl.view().status).toBe('active');
   });
 });
 

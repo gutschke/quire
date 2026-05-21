@@ -231,14 +231,22 @@ export class SessionController {
         // connection-failed for one peer of many shouldn't tear the
         // whole session down.
         if (
-          err.code === 'peer-unavailable' ||
-          err.code === 'broker-unreachable'
+          err.code !== 'peer-unavailable' &&
+          err.code !== 'broker-unreachable'
         ) {
-          this.error = err.message;
-          this.status = 'error';
-          this.mode = 'solo';
-          this.notify();
+          return;
         }
+        // Fully clean up (drops listeners, closes the dead transport
+        // / peer) BEFORE setting the error state — leaving the dying
+        // transport attached would let late events from it perturb
+        // the view further, and would leak the WebRTC connection.
+        const message = err.message;
+        this.generation++;
+        this.cleanup();
+        this.error = message;
+        this.status = 'error';
+        this.mode = 'solo';
+        this.notify();
       })
     );
   }

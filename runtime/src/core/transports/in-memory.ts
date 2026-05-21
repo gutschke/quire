@@ -195,4 +195,14 @@ export class InMemoryTransport implements Transport {
     if (!this.connectedSet.delete(peerId)) return;
     for (const h of this.disconnectHandlers) h(peerId);
   }
+
+  /**
+   * @internal Test-only hook to drive the error path.  Production
+   * code never invokes this; the PeerJS transport synthesizes
+   * TransportErrors from peer.on('error') translations.
+   */
+  _fireError(err: import('../transport').TransportError): void {
+    if (this.closed) return;
+    for (const h of this.errorHandlers) h(err);
+  }
 }
