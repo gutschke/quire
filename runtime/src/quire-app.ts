@@ -175,7 +175,13 @@ function formatStat(value: number): string {
 export class QuireApp extends LitElement {
   static styles = [tokens, quireAppStyles];
 
-  @state() private appState: AppState = { kind: 'idle' };
+  /**
+   * Current app state — public to satisfy the QuireAppHooks contract
+   * (e2e tests poll `app.appState.kind` / `app.appState.character`).
+   * Internally still mutated by navigateToRoute and the load
+   * pipeline; do not assign from outside the class.
+   */
+  @state() appState: AppState = { kind: 'idle' };
   /**
    * Current AppMode driven by the URL's `?mode=` parameter.  See
    * `src/ui/modes/mode-state.ts`.  M1 just tracks the value; the
