@@ -580,6 +580,46 @@ export class QuireApp extends LitElement {
       color: light-dark(#a01010, #ff7070);
     }
 
+    .session-role-hint {
+      width: 100%;
+      margin: 0 0 0.5rem;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.85em;
+      color: light-dark(#555, #aaa);
+      background: light-dark(#fdfaf2, #1a1812);
+      border-left: 3px solid light-dark(#bb9a3a, #876618);
+      border-radius: 3px;
+      line-height: 1.4;
+    }
+
+    .session-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      width: 100%;
+    }
+
+    .session-copy-invite {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#9bb09b, #4a6a4a);
+      border-radius: 4px;
+      background: light-dark(#f4faf4, #1a221a);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+
+    .ai-key-hint {
+      margin: 0.3rem 0 0;
+      font-size: 0.8em;
+      line-height: 1.4;
+    }
+
+    .ai-key-hint a {
+      color: light-dark(#0050a0, #6bb6ff);
+    }
+
     .broker-badge {
       display: inline-block;
       padding: 0.1rem 0.4rem;
@@ -971,6 +1011,7 @@ export class QuireApp extends LitElement {
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
+  @state() inviteCopied: boolean = false;
   @state() chatError: string | null = null;
   // Persistence UI state
   @state() saveStatus: { kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string } =
@@ -1052,6 +1093,20 @@ export class QuireApp extends LitElement {
       /* ignore */
     }
     void this.navigateToRoute(parseRoute(window.location.search));
+    // Invite-link handling: if the URL carries ?join=<code>, pre-fill
+    // the join input so the player just needs to enter their name +
+    // click Join.  We do NOT auto-fire join() — players should
+    // declare themselves with a name first.  The DM gets the same
+    // affordance via "Copy invite" on the active-session bar.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const joinCode = params.get('join');
+      if (joinCode) {
+        this.joinCodeDraft = joinCode.toUpperCase();
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   override disconnectedCallback(): void {
@@ -1138,6 +1193,28 @@ export class QuireApp extends LitElement {
         if (signal.aborted || !this.isConnected) return;
         this.appState = { kind: 'character', campaign, character };
         return;
+      }
+
+      // B5 fix: gate episode + scene access for non-coordinator
+      // players.  They navigate via the reveal banner, not by
+      // browsing the manifest.  Episode-level browsing is DM-only;
+      // scene-level browsing is restricted to revealed scenes.
+      const isNonCoordPlayer =
+        this.sessionView?.status === 'active' && !this.isCoordinator();
+      if (isNonCoordPlayer && route.kind === 'episode') {
+        throw new CampaignLoadError(
+          'Episode lists are only visible to the DM.  Wait for the DM to reveal a scene.',
+          `Requested episode: ${route.episode}`
+        );
+      }
+      if (isNonCoordPlayer && route.kind === 'scene') {
+        const fullPath = QuireApp.scenePathFor(route.episode, route.scene);
+        if (!this.sessionView!.shared.revealedScenes.includes(fullPath)) {
+          throw new CampaignLoadError(
+            'That scene has not been revealed by the DM yet.',
+            `Requested scene: ${route.episode}/${route.scene}`
+          );
+        }
       }
 
       // Episode layer
@@ -1254,15 +1331,17 @@ export class QuireApp extends LitElement {
             DM aide
             <span class="ai-provider-tag">${AI_DEFAULTS[this.aiProvider].label}</span>
           </h2>
-          <button
-            type="button"
-            class="ai-settings-toggle"
-            @click=${() => {
-              this.aiShowSettings = !this.aiShowSettings;
-            }}
-          >
-            ${this.aiShowSettings ? 'Hide settings' : 'Settings'}
-          </button>
+          ${hasKey
+            ? html`<button
+                type="button"
+                class="ai-settings-toggle"
+                @click=${() => {
+                  this.aiShowSettings = !this.aiShowSettings;
+                }}
+              >
+                ${this.aiShowSettings ? 'Hide settings' : 'Settings'}
+              </button>`
+            : nothing}
         </div>
         ${this.aiShowSettings || !hasKey
           ? this.renderAiSettings()
@@ -1303,6 +1382,26 @@ export class QuireApp extends LitElement {
       provider === 'claude'
         ? 'api.anthropic.com'
         : 'generativelanguage.googleapis.com';
+    const keyHint =
+      provider === 'claude'
+        ? html`Get an API key at
+            <a
+              href="https://console.anthropic.com/settings/keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              >console.anthropic.com</a
+            >
+            (paid; usage-based).  Free tier requires a credit card on
+            file.`
+        : html`Get an API key at
+            <a
+              href="https://aistudio.google.com/app/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              >aistudio.google.com</a
+            >
+            (generous free tier; no credit card needed).  This is the
+            AI Studio key, NOT a Google One AI Premium subscription.`;
     return html`
       <div class="ai-settings">
         <fieldset class="ai-provider-choice">
@@ -1331,6 +1430,7 @@ export class QuireApp extends LitElement {
             @input=${(e: Event) =>
               this.setAiApiKey((e.target as HTMLInputElement).value)}
           />
+          <p class="ai-key-hint muted">${keyHint}</p>
         </label>
         <label>
           <span>Model</span>
@@ -1570,7 +1670,7 @@ export class QuireApp extends LitElement {
             `
           : nothing}
       </section>
-      ${m.episodes?.length
+      ${m.episodes?.length && this.shouldShowDmContent()
         ? html`
             <section class="card">
               <h2>Episodes</h2>
@@ -1763,36 +1863,47 @@ export class QuireApp extends LitElement {
         >`
       : nothing;
     if (v.status === 'idle' && v.mode === 'solo') {
+      // UX hint clarifies the two roles for first-time visitors:
+      // DMs host; players paste a code their DM sent.  Without this,
+      // the bar's "Host session OR Join" pair leaves players guessing
+      // whether they should click Host or just wait.
       return html`
         <div class="session-bar session-solo">
-          <span class="session-label">Solo</span>
-          <input
-            type="text"
-            class="session-name"
-            .value=${this.displayNameDraft}
-            placeholder="Your name"
-            aria-label="Display name"
-            @input=${(e: Event) => {
-              this.displayNameDraft = (e.target as HTMLInputElement).value;
-            }}
-          />
-          <button @click=${() => this.startHosting()}>Host session</button>
-          <span class="session-sep">or</span>
-          <input
-            type="text"
-            class="session-code"
-            .value=${this.joinCodeDraft}
-            placeholder="ABCD2345"
-            aria-label="Pairing code"
-            maxlength="12"
-            @input=${(e: Event) => {
-              this.joinCodeDraft = (
-                e.target as HTMLInputElement
-              ).value.toUpperCase();
-            }}
-          />
-          <button @click=${() => this.joinSession()}>Join</button>
-          ${brokerBadge}
+          <p class="session-role-hint">
+            <strong>DM:</strong> click Host to start a session and
+            share the code that appears.
+            <strong>Player:</strong> wait for your DM to send a code
+            or invite link, then paste it below.
+          </p>
+          <div class="session-bar-row">
+            <input
+              type="text"
+              class="session-name"
+              .value=${this.displayNameDraft}
+              placeholder="Your name"
+              aria-label="Display name"
+              @input=${(e: Event) => {
+                this.displayNameDraft = (e.target as HTMLInputElement).value;
+              }}
+            />
+            <button @click=${() => this.startHosting()}>Host session</button>
+            <span class="session-sep">or</span>
+            <input
+              type="text"
+              class="session-code"
+              .value=${this.joinCodeDraft}
+              placeholder="paste code from your DM"
+              aria-label="Pairing code"
+              maxlength="12"
+              @input=${(e: Event) => {
+                this.joinCodeDraft = (
+                  e.target as HTMLInputElement
+                ).value.toUpperCase();
+              }}
+            />
+            <button @click=${() => this.joinSession()}>Join</button>
+            ${brokerBadge}
+          </div>
         </div>
       `;
     }
@@ -1828,14 +1939,26 @@ export class QuireApp extends LitElement {
     const sessionMembers = Object.values(v.shared.peers).filter(
       (p) => p.peerId !== v.peerId && p.leftAt === undefined
     );
-    const memberCount = sessionMembers.length;
+    // Disambiguate DM from other players (per manual-testing
+    // feedback: "1 other player" was confusing when the only
+    // other was the DM).
+    const coordPeerId = v.shared.coordinator;
+    const dmInOthers = sessionMembers.some((p) => p.peerId === coordPeerId);
+    const playerCount = sessionMembers.filter(
+      (p) => p.peerId !== coordPeerId
+    ).length;
     const connected = v.connectedPeers.length;
+    const labelParts: string[] = [];
+    if (dmInOthers) labelParts.push('DM');
+    if (playerCount === 1) labelParts.push('1 other player');
+    else if (playerCount > 1) labelParts.push(`${playerCount} other players`);
+    const memberCount = sessionMembers.length;
     const memberLabel =
       memberCount === 0
         ? 'no other players yet'
-        : memberCount === 1
-          ? '1 other player'
-          : `${memberCount} other players`;
+        : labelParts.length === 1
+          ? labelParts[0] + ' connected'
+          : labelParts.join(' + ');
     const reachabilityHint =
       memberCount > 0 && connected < memberCount
         ? html` <span
@@ -1852,11 +1975,21 @@ export class QuireApp extends LitElement {
               <span class="session-code-display">
                 code: <code>${v.pairingCode}</code>
               </span>
+              <button
+                class="session-copy-invite"
+                title="Copy a click-to-join link for players"
+                @click=${() => this.copyInviteLink()}
+              >
+                ${this.inviteCopied ? 'Copied!' : 'Copy invite'}
+              </button>
             `
           : html`
               <span class="session-label">Joined</span>
               <span class="session-code-display">
-                as <code>${v.peerId}</code>
+                as
+                <code title="Internal peer id: ${v.peerId}"
+                  >${(v.peerId && this.displayNameFor(v.peerId)) || 'unnamed'}</code
+                >
               </span>
             `}
         <span
@@ -2177,11 +2310,69 @@ export class QuireApp extends LitElement {
     this.chatDraft = '';
   }
 
+  /**
+   * Build a click-to-join URL for the current session's pairing code.
+   * Players who click the link land on the campaign with the code
+   * pre-filled (or, ideally, auto-joined).
+   */
+  buildInviteLink(): string | null {
+    if (this.sessionView?.status !== 'active' || !this.sessionView.pairingCode) {
+      return null;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('join', this.sessionView.pairingCode);
+    // Drop session-control params that don't make sense in an invite.
+    url.searchParams.delete('episode');
+    url.searchParams.delete('scene');
+    url.searchParams.delete('pc');
+    url.searchParams.delete('npc');
+    return url.toString();
+  }
+
+  async copyInviteLink(): Promise<void> {
+    const link = this.buildInviteLink();
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      this.inviteCopied = true;
+      // Reset the "Copied!" indicator after a moment so the button
+      // becomes actionable again if the DM needs to copy a second
+      // time (e.g. after a player joined late).
+      setTimeout(() => {
+        this.inviteCopied = false;
+      }, 2000);
+    } catch {
+      // Clipboard API unavailable (e.g. http: in some browsers).
+      // Fall back to selection prompt via prompt() so the DM can
+      // still grab the link.
+      window.prompt('Copy this invite link:', link);
+    }
+  }
+
   /** True if the local peer is the coordinator in an active session. */
   isCoordinator(): boolean {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return false;
     return v.shared.coordinator === v.peerId;
+  }
+
+  /**
+   * Whether to show DM-only structural content (episode list, scene
+   * list, episode hooks, episode summary, etc).  True in solo mode
+   * (no DM secret to keep) and when local peer is coordinator.
+   * False for non-coord players in an active session — they should
+   * see only the campaign metadata, character menus (PCs), and
+   * whatever the DM has explicitly revealed via the reveal banner.
+   *
+   * This is the B5 fix: the original UI exposed the full scene
+   * list to every peer, letting players read ahead.  Now players
+   * navigate only via reveals.
+   */
+  shouldShowDmContent(): boolean {
+    const v = this.sessionView;
+    if (!v) return true; // before mount
+    if (v.status !== 'active') return true; // solo
+    return this.isCoordinator();
   }
 
   /** Encode a scene's full repo path for the revealedScenes list. */

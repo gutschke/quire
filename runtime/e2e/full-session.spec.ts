@@ -196,8 +196,11 @@ test.describe('Full session simulation — Episode 1 of test-camp', () => {
 
       // F1 (fixed): peer label now reflects session membership
       // (shared.peers) instead of direct WebRTC connections.
-      // Every peer should see "3 other players" once everyone has
-      // joined and the peer-join events have propagated.
+      // Post-disambiguation: each peer sees a label that
+      // mentions either 3 others (for the DM, since all 3
+      // others are players to them) OR "DM + 2 other players"
+      // (for each guest, since one of the 3 others is the DM).
+      // Generic regex matches both phrasings.
       for (const [name, page] of [
         ['dm', dm],
         ['playerA', playerA],
@@ -207,7 +210,9 @@ test.describe('Full session simulation — Episode 1 of test-camp', () => {
         try {
           await expect(
             activePanel(page).locator('.session-peers')
-          ).toContainText(/3 other players/i, { timeout: 30000 });
+          ).toContainText(/(3 other players|DM \+ 2 other players)/i, {
+            timeout: 30000
+          });
         } catch (e) {
           const sharedPeers = await page.evaluate(() => {
             const app = document.querySelector('quire-app') as unknown as {

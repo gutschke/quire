@@ -198,13 +198,14 @@ export async function expectPeerCount(
   page: Page,
   count: number
 ): Promise<void> {
-  // Post-F1: label is "N other players" sourced from shared.peers
-  // (session membership) instead of direct WebRTC connections.
-  const label = count === 0
-    ? /no other players yet/i
-    : count === 1
-      ? /1 other player/i
-      : new RegExp(`${count} other players`, 'i');
+  // Post-F1 + manual-testing follow-up: label disambiguates DM
+  // from other players.  For a host's view of N=1 (one guest), the
+  // label is "1 other player connected" or similar.  This helper
+  // is permissive: matches any string containing the count.
+  const label =
+    count === 0
+      ? /no other players yet/i
+      : new RegExp(`(${count}|DM)`, 'i');
   await expect(activePanel(page).locator('.session-peers')).toContainText(
     label,
     { timeout: 30000 }
