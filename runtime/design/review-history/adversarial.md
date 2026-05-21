@@ -53,3 +53,39 @@ Format: one entry per finding, newest at the bottom.
 
 - **Event-kind count drift (17 vs 18) in execution-plan.md.**
   - Resolution: **acked**. Fixed in commit `5ac0815`.
+
+## M2 — 2026-05-21
+
+- **Ratchet creep, second iteration.** LOC cap was raised twice (≤800 → ≤1200 at M1; tiered to ≤2750/≤1500/≤900 at M1 gate). M2 missed ≤1500 by 939 LOC.
+  - Resolution: **acked (Adversarial recommendation accepted)**. The cap is NOT being raised again at M2. STATUS records the criterion as missed (`[ ]`). User is given the decision at M2 gate close: hold the cap (recommended), do a follow-up extraction batch, or accept a third re-baseline.
+
+- **Pace, second iteration.** M2 wrapped in ~30 minutes wall-clock vs 2-3-week estimate. Same yellow flag as M1.
+  - Resolution: **acked (plan)**. STATUS records the cadence delta; redesign-plan.md adds P-M3a-pace-acknowledge for an honest time-estimate revision at M3a entry.
+
+- **Four design-spec deviations carried into M3a; only 2 surfaced.** Scene-strip frontmatter (in STATUS); tap-to-expand (in STATUS); chat-as-sibling (only in M2.7 commit body, not STATUS); dice 6-chip layout (only in M2.6 commit body, not STATUS).
+  - Resolution: **acked**. STATUS now has "Design-spec deviations carried into M3a" subsection enumerating all four.
+
+- **STATUS.md cadence regressed.** 1 of 9 M2 commits touched STATUS (vs M1's 2 of 13).
+  - Resolution: **deferred: P-M3a-status-cadence-decision**. M3a entry: drop the rule honestly, add a pre-commit hook, or commit STATUS as a separate commit between feature commits.
+
+- **filteredShared zero consumers.** Same finding as TTRPG-craft.
+  - Resolution: **deferred: P-M3a-filteredShared-migrate** (cross-listed). M3a HARD acceptance criterion (FIRST commit).
+
+- **Unstyled version-mismatch banner.** Security-relevant affordance ships visibly broken.
+  - Resolution: **acked**. CSS added at gate close (cross-listed with web-ux HIGH).
+
+- **M2.9 batched 3 follow-ups in one commit.** Revert risk; M2.9 unwinds 3 unrelated items.
+  - Resolution: **acked (process note)**. Future commits should split independent follow-ups.
+
+- **DM raise-hand glyph render path** unreachable from UI but data flow exists. Same finding as TTRPG-craft.
+  - Resolution: **deferred: P1-7-followup-hand-dm-decision** (cross-listed).
+
+- **Region prop interfaces are snowflakes.** Same finding as web-ux.
+  - Resolution: **deferred: P1-regions-harmonize** (cross-listed).
+
+- **No e2e for raise-hand.** Cross-cutting "round-trip e2e per milestone" rule violated.
+  - Resolution: **deferred: P0-12-followup-e2e**.
+
+- **quire-app.ts wrapper growing.** renderRollPanel adds 3 computed props for the dice region. Not yet violating facade pattern but trending.
+  - Resolution: **acked (watch in M3a)**. Move into a dice-dock controller when M3a adds the full stat-chip layout.
+

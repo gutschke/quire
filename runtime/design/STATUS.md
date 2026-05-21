@@ -33,16 +33,32 @@ Current milestone: **M2 — Player view region-extracted** — **gate open** (20
 - [x] P0-12-followup-banner runtime peer-version-mismatch banner (M2.9).
 - [x] All existing player-side tests pass.
 - [x] One new e2e flow (P1-7 raise-hand): covered by 8 hostile materializer tests + integration via the existing session-controller suite.  Full Playwright e2e for raise-hand deferred (the materializer tests pin the contract; e2e wiring is sugar).
-- [x] Bundle ≤ 85 KB gzipped — **68.35 KB** (well under cap).
-- [x] `quire-app.ts` ≤ 1500 LOC at M2 close — **2439 LOC; ~939 LOC OVER target.**  See "Open questions" below.
+- [x] Bundle ≤ 85 KB gzipped — **68.90 KB** (well under cap; gate-close CSS additions for the new affordances bumped from 68.35).
+- [ ] `quire-app.ts` ≤ 1500 LOC at M2 close — **2439 LOC; 939 LOC OVER target.**  Per Adversarial M2 finding, the cap is NOT being raised again — ratchet creep declined.  See "Open questions" below for the user-ack decision.
 - [x] STATUS.md updated through milestone (this file).
+
+## Design-spec deviations carried into M3a
+
+The M2 strict-extraction discipline preserved rendered output but did not reach the design spec's vision in four places.  All four were called out by gate reviewers (TTRPG-craft + Adversarial); none were proactively flagged in the M2.x commit messages beyond the M2.7 chat-panel note.  Logged here so M3a's reviewers see the full carryover:
+
+1. **Scene-strip frontmatter** — `<scene-stage>` does not render the `name · location · mood · expectedDuration · presentNpcs` line below the breadcrumb.  Requires `episode-loader` to expose per-scene frontmatter.  Promoted to an M3a acceptance criterion.
+2. **Chat as Aside-sibling vs Aside-child** — `<chat-panel>` renders as a sibling region inside the Aside slot, not as a collapsible section inside `<player-aside>` per ui.md line 152.  Provisional split; M3a may collapse them OR formalize the sibling choice (decision pending).
+3. **Player Rail tap-to-expand** — `<player-rail>` does not yet implement the Rail-grows-on-portrait-tap interaction.  Deferred.
+4. **Dice Dock single-input vs 6 stat chips** — TTRPG-craft flagged this as HIGH (a new player can't compose 2d6+stat without a stat chip).  M3a must address.
+
+## Pace cadence — honest record
+
+M2 wrapped in ~30 minutes of wall-clock work (first commit 11:38 → STATUS pre-gate 12:10).  9 commits.  The execution-plan estimated M2 at 2-3 weeks.  M1 took ~3 hours.  The Adversarial M1 reviewer flagged the M1 pace and asked the question "if M2 also wraps fast with similar gaps, the planner is over-stating milestone difficulty" — M2 confirmed that.  An honest revision of the execution-plan's time estimates is due at M3a entry.
 
 ## Open questions for the gate
 
-1. **LOC overrun continues.** quire-app.ts is 2439 vs M2's ≤1500 target.  The remaining bulk: `renderIdle` (~70 LOC), `renderCampaign` (~50 LOC), `renderEpisode` (~65 LOC), `renderAiPanel` + sub-renders (~200 LOC), `renderSessionBar` (~225 LOC), `renderRevealBanner` (~50 LOC), `renderResumePrompt` (~40 LOC), `renderReclaimAffordance`+`Confirmation` (~70 LOC), `renderError` (~25 LOC), `renderCharacterMenus` + `characterLink` (~80 LOC).  ~875 LOC of remaining render templates.  The M3a/M3b sprints will extract these alongside the DM cockpit work (per the plan's facade-migration pattern).  Reviewers may either: (a) accept the M2 overrun as continuing the staged extraction, (b) require additional renders to move at M2 close, or (c) propose a further re-baseline.
-2. **Scene-strip frontmatter line not yet wired.**  Episode-loader doesn't expose the YAML frontmatter location/mood/duration/presentNpcs fields per-scene.  The hookup is straightforward but touches the loader.  Filed as M3a follow-up.
-3. **Tap-to-expand on player-rail deferred.**  Polish pass; the design spec called for it but the M2 strict extraction kept the rendered output identical.
-4. **No e2e for raise-hand.**  Materializer tests + unit tests cover the contract; an integration e2e (DM hosts, player joins, raises hand, DM sees glyph) would add confidence.
+1. **LOC overrun (USER ACK REQUIRED).**  quire-app.ts is 2439 LOC vs M2's ≤1500 target (939 LOC over).  The Adversarial M2 reviewer explicitly recommended NOT raising the cap again, citing ratchet creep (the cap was already raised from ≤800 to ≤1200 to ≤2750/≤1500/≤900).  Path forward options for the user:
+   - **(A — Adversarial-recommended)**: hold the cap.  Record the criterion as missed (`[ ]`) — done above.  M3a discipline preserves ≤900.  If M3a polish must descope to hit ≤900, use the descope ladder authority (execution-plan.md § "Descope ladder").
+   - **(B)**: ship a follow-up extraction commit at M2 close, landing 4-6 more renderXxx → region commits to approach ≤1500.  Estimated ~1-2 hours.  Drops the cap honestly to ~2000 LOC.
+   - **(C)**: third re-baseline.  Adversarial considers this normalized ratchet creep.
+2. **No e2e for raise-hand** (Adversarial low).  Cross-cutting "round-trip e2e per milestone" rule was technically violated — only materializer + integration tests landed.  Filed as P0-12-followup-e2e for M3a; not blocking.
+3. **Scene-strip frontmatter** (now in deviations above).
+4. **Tap-to-expand on player-rail** (now in deviations above).
 
 ## M2 reviewer roster
 

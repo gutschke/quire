@@ -995,4 +995,56 @@ export const quireAppStyles = css`
       cursor: pointer;
       font-size: 0.85em;
     }
+
+    /* ---- M2.5/M2.8/M2.9 affordances (gate-close minimum styling). ---- */
+
+    /* M2.8: ✋ glyph on roster rows for peers with raised hand. */
+    .roster-hand {
+      display: inline-block;
+      margin: 0 0.4em;
+      padding: 0 0.3em;
+      border-radius: 999px;
+      background: light-dark(#fef3c7, #3a2a04);
+      font-size: 0.95em;
+      line-height: 1.4;
+    }
+
+    /* M2.8: raise-hand button in the dice dock.  Subdued by default;
+       active state (hand raised) flips background to amber so the
+       state is visible at a glance.  Positioned slightly apart from
+       the Roll button via flex gap inherited from .roll-form. */
+    .raise-hand {
+      margin-left: 0.75em;
+      padding: 0.25rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+    .raise-hand:hover {
+      background: light-dark(#f4f4f4, #2c2c2c);
+    }
+    .raise-hand-active {
+      background: light-dark(#fef3c7, #5a3f0a);
+      border-color: light-dark(#d4a818, #c08c10);
+    }
+
+    /* M2.9 (P0-12-followup-banner): peer-version mismatch warning.
+       Sits above the roster list, warm-tinted so it reads as
+       informational rather than alarming.  role=status announces
+       politely; the ⚠ glyph is the secondary signal. */
+    .version-mismatch-banner {
+      margin: 0.5rem 0;
+      padding: 0.4em 0.7em;
+      border-left: 3px solid light-dark(#d4a818, #c08c10);
+      background: light-dark(#fef9e7, #2a2104);
+      color: light-dark(#5a4a08, #f0e4b8);
+      font-size: 0.85em;
+      line-height: 1.4;
+    }
+    .version-mismatch-banner strong {
+      color: inherit;
+    }
 `;

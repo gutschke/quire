@@ -340,6 +340,33 @@ gates.
 - **H-7-bootstrap — Drop `accessibility.md` from `review-history/`.** Per the v0.2 execution plan, accessibility is tracked via the H-7 cross-cutting audit, not per-milestone gates.  The empty per-lens file is bootstrap drift; either delete or replace with a one-line pointer to H-7.  Files: `runtime/design/review-history/accessibility.md`.  Source: Adversarial.
 - **H-process-status-cadence — Restate the "STATUS.md update per significant commit" cadence at M2 kickoff.**  M1 updated STATUS only at start + end (2 commits out of 13).  Source: Adversarial.  No file change needed; the next milestone-opening commit should refresh STATUS and the next gate review will hold the cadence accountable.
 
+### M2 gate — follow-up P-tasks (added 2026-05-21)
+
+The M2 gate closed `ship-with-followups` from all three reviewers (TTRPG-craft, Web-UX, Adversarial). No HIGH-severity Engine/Security findings (those reviewers weren't at this gate). HIGH findings from the spawned lenses surfaced two action-required-at-gate-close items (unstyled CSS, STATUS honesty) — addressed inline in the gate-close commit — plus a substantial list of M3a follow-ups.
+
+**M3a acceptance criteria (HARD, ack-required)**:
+- **P-M3a-rail-always-on** — `<player-rail>` mounts in the rail slot whenever there's an active session with a PC binding, regardless of the route. Scene route renders Stage, not Rail. (TTRPG-craft HIGH.)
+- **P-M3a-pc-binding** — Add a PC-to-peer binding (extend `peer-rename` with `pcId`, OR new `peer-bind-pc` event).  Migrate `presence.character` from free-text to PC id reference.  Order BEFORE any UI consumes it. (TTRPG-craft HIGH.)
+- **P-M3a-stat-chips** — Dice Dock renders 6 stat chips with current-modifier display (depends on P-M3a-pc-binding). (TTRPG-craft HIGH.)
+- **P-M3a-scene-strip** — Episode-loader exposes per-scene frontmatter; `<scene-stage>` renders the scene-strip header below the breadcrumb. (TTRPG-craft + Web-UX MEDIUM.)
+- **P-M3a-roster-glyphs** — Player Aside roster shows harm/stress glyph + connection-state dot + current-speaker pulse (depends on P-M3a-pc-binding). (TTRPG-craft MEDIUM.)
+- **P-M3a-filteredShared-migrate** — First M3a commit migrates all player-visible renderers from `sessionView.shared` to `sessionView.filteredShared`. Locked-in M3a gate criterion. (Adversarial MEDIUM.)
+- **P-M3a-status-cadence-decision** — STATUS.md cadence rule is unenforceable in practice at current pace. Decide: drop the rule honestly, add a pre-commit hook, OR commit STATUS as a separate commit between feature commits. (Adversarial MEDIUM.)
+
+**M3a opening tasks (polish; can land in any M3a commit)**:
+- **P0-12-followup-e2e** — Playwright e2e for raise-hand (DM hosts, player raises hand, DM sees glyph; satisfies cross-cutting "round-trip e2e" rule retroactively). (Adversarial LOW.)
+- **P1-regions-harmonize** — Normalize region prop interfaces (callback names, type exports, TemplateResult-as-prop vs structured events). Land before M3a adds 4 DM-side regions. (Web-UX MEDIUM + Adversarial LOW.)
+- **P1-7-followup-hand-auto-lower** — On `scene-reveal-paragraph` event, auto-emit `lower-hand` for all currently-raised hands (mechanics-fade). (TTRPG-craft MEDIUM.)
+- **P1-7-followup-hand-dm-decision** — Decide whether materializer rejects `raise-hand` from current coordinator (defense-in-depth) or whether the DM glyph render path is intentional. Document. (TTRPG-craft MEDIUM + Adversarial LOW.)
+- **P-M3a-raise-hand-position** — Move raise-hand button OUT of the `<form>` element (current placement risks Enter-key submitting the roll form); position at Dock-right per ui.md. (Web-UX MEDIUM.)
+- **P-M3a-banner-language** — Adjust version-mismatch banner copy to player-fluent language ("older Quire — some scenes/actions may look different to them") instead of engineer-jargon ("may not render every event"). (TTRPG-craft LOW.)
+- **P-M3a-status-update** — Correct STATUS to reflect what shipped vs the 4 design-spec deviations (already applied at gate close).
+- **P-M3a-pace-acknowledge** — Honestly revise the execution-plan's time estimates at M3a entry. M1 (3h) + M2 (30min) are wildly faster than the 2-3 weeks each was budgeted. Either the planner over-stated difficulty or corners are being cut faster than reviews catch. Acknowledge in plan. (Adversarial HIGH.)
+
+**Architectural note added to plan**:
+- **A-1 — Light-DOM region rendering**: M3 token-migration is a per-region all-or-nothing CSS rewrite because legacy CSS keys to bare class selectors. Two plan-of-record options: (a) per-region migration with synchronous selector→token rewrite, (b) ship `tokens.css.ts` as a global stylesheet and keep regions light-DOM. Option (b) is cheaper; option (a) is "right" per traditional Lit practice. **Decide at M3a entry.** (Web-UX HIGH.)
+- **A-2 — Region prop convention**: After P1-regions-harmonize, all callbacks named `on<Verb><Subject>` (e.g. `onSubmitChat` not `onSubmit`; `onRollDraftChange` not `onDraftChange`). All TemplateResult-as-prop usages refactored to structured events (e.g. scene-stage's `headerExtras`). (Web-UX MEDIUM.)
+
 ### Cross-cutting hygiene (do alongside P0/P1)
 
 - **H-1 — Resolve architecture.md "phone-first" / desktop-only conflict.** Done as part of P0-6 (already applied).
