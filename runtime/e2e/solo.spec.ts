@@ -15,6 +15,7 @@ import {
   openApp,
   soloPanel,
   activePanel,
+  errorPanel,
   hostSession,
   aiPanel
 } from './helpers';
@@ -52,37 +53,22 @@ test.describe('Solo session flow', () => {
     }
   });
 
-  test('join with an unknown code does not falsely report a successful join', async ({
+  test('join with an unknown code surfaces a typed error to the user', async ({
     browser
   }) => {
-    // Known UX gap: createGuest only awaits our local peer opening
-    // against the broker; the missing-host check happens via PeerJS's
-    // async "peer-unavailable" error which the transport doesn't yet
-    // surface to the controller.  So the panel briefly shows "active"
-    // with 0 peers rather than an explicit error.  We assert the
-    // observable not-actually-connected outcome so the regression
-    // signal trips in whichever direction we fix this later.
+    // R2.3 fix: PeerJSTransport translates PeerJS's async
+    // "peer-unavailable" event into a TransportError, which
+    // SessionController bubbles into the error panel.  Before the
+    // fix, the panel transitioned to "active" with 0 peers and
+    // stayed there — visually a successful join.
     const ctx = await browser.newContext();
     try {
       const page = await openApp(ctx);
       await soloPanel(page).locator('input.session-name').fill('Player');
       await soloPanel(page).locator('input.session-code').fill('NOSUCHCODE');
       await soloPanel(page).getByRole('button', { name: /^join$/i }).click();
-      // Wait a short window; the panel may flicker to active.
-      await page.waitForTimeout(2000);
-      // Either still in solo (if connect fails fast) or in active with
-      // 0 peers (if the local peer opened but the target connect dropped).
-      const inActiveWithZeroPeers = await activePanel(page)
-        .isVisible()
-        .then(async (vis) => {
-          if (!vis) return false;
-          const peerLabel = await activePanel(page)
-            .locator('.session-peers')
-            .innerText();
-          return /no peers yet/i.test(peerLabel);
-        });
-      const inSolo = await soloPanel(page).isVisible();
-      expect(inActiveWithZeroPeers || inSolo).toBe(true);
+      await expect(errorPanel(page)).toBeVisible({ timeout: 15000 });
+      await expect(errorPanel(page)).toContainText(/peer|unavailable/i);
     } finally {
       await ctx.close();
     }

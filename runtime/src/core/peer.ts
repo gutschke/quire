@@ -144,6 +144,23 @@ export class Peer {
     if (!isProtocolMessage(payload)) return;
     switch (payload.kind) {
       case 'share': {
+        // Impersonation defense: a `share` is a NEW event from its
+        // author, so the transport sender MUST equal the event's
+        // claimed peerId.  Without this, mallory could broadcast a
+        // 'coordinator-claim' or 'scene-reveal' event with
+        // peerId='alice' and shadow-author actions attributed to
+        // alice.  This is the cheapest authenticity check we can do
+        // without cryptographic signatures.
+        //
+        // sync-response (below) is intentionally NOT subject to this
+        // check — gossip forwarding requires peers to ship events
+        // authored by others.  That tradeoff is documented; closing
+        // it would require per-event signatures.
+        if (payload.event && payload.event.peerId !== from) {
+          // Silently drop — no need to alert the attacker by
+          // responding.  Future: log this for monitoring.
+          break;
+        }
         if (this.log.apply(payload.event)) {
           this.notifyStateChange();
         }

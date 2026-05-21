@@ -21,6 +21,8 @@ import type {
   TransportTarget,
   MessageHandler,
   PeerEventHandler,
+  ErrorHandler,
+  TransportError,
   Unsubscribe
 } from '../transport';
 
@@ -64,6 +66,7 @@ export class PeerJSTransport implements Transport {
   private readonly messageHandlers = new Set<MessageHandler>();
   private readonly connectHandlers = new Set<PeerEventHandler>();
   private readonly disconnectHandlers = new Set<PeerEventHandler>();
+  private readonly errorHandlers = new Set<ErrorHandler>();
   private readonly connections = new Map<PeerId, DataConnectionLike>();
   private readonly log: (m: string, err: unknown) => void;
   private closed = false;
@@ -74,7 +77,14 @@ export class PeerJSTransport implements Transport {
       opts.log ?? ((m, err) => console.error(`[PeerJSTransport] ${m}`, err));
 
     opts.peer.on('connection', (conn) => this.attachConnection(conn, conn.peer));
-    opts.peer.on('error', (err) => this.log('peer error', err));
+    opts.peer.on('error', (err) => {
+      // Translate PeerJS's error shape into a typed TransportError so
+      // SessionController can react.  PeerJS errors carry a `type` field
+      // (e.g. 'peer-unavailable', 'network', 'server-error'); we map a
+      // small set of high-signal ones and bucket the rest as 'unknown'.
+      this.log('peer error', err);
+      this.emitError(translatePeerJsError(err));
+    });
     opts.peer.on('disconnected', () => {
       // PeerJS lost the broker connection.  It auto-reconnects by default.
       // While disconnected, in-flight data-channel traffic still works.
@@ -86,6 +96,22 @@ export class PeerJSTransport implements Transport {
     for (const peerId of opts.knownPeers ?? []) {
       this.connectTo(peerId);
     }
+  }
+
+  private emitError(err: TransportError): void {
+    if (this.closed) return;
+    for (const h of this.errorHandlers) {
+      try {
+        h(err);
+      } catch (e) {
+        this.log('error handler threw', e);
+      }
+    }
+  }
+
+  onError(handler: ErrorHandler): Unsubscribe {
+    this.errorHandlers.add(handler);
+    return () => this.errorHandlers.delete(handler);
   }
 
   send(to: TransportTarget, payload: unknown): void {
@@ -140,6 +166,7 @@ export class PeerJSTransport implements Transport {
     this.messageHandlers.clear();
     this.connectHandlers.clear();
     this.disconnectHandlers.clear();
+    this.errorHandlers.clear();
     try {
       this.opts.peer.destroy();
     } catch (err) {
@@ -191,6 +218,46 @@ export class PeerJSTransport implements Transport {
         }
       }
     });
-    conn.on('error', (err) => this.log(`connection ${peerId} error`, err));
+    conn.on('error', (err) => {
+      this.log(`connection ${peerId} error`, err);
+      this.emitError({
+        code: 'connection-failed',
+        peerId,
+        message: (err as Error)?.message ?? String(err)
+      });
+    });
+  }
+}
+
+/**
+ * Map PeerJS's loosely-typed error events into our TransportError
+ * shape.  PeerJS errors carry a `type` field with documented values;
+ * we surface the ones SessionController needs to react to and bucket
+ * the rest as 'unknown'.
+ */
+function translatePeerJsError(err: unknown): TransportError {
+  const e = err as { type?: string; message?: string };
+  const message = e?.message ?? String(err);
+  switch (e?.type) {
+    case 'peer-unavailable': {
+      // PeerJS's message is typically "Could not connect to peer <id>".
+      const m = /peer\s+([A-Za-z0-9._-]+)/i.exec(message);
+      return {
+        code: 'peer-unavailable',
+        peerId: m?.[1],
+        message
+      };
+    }
+    case 'network':
+    case 'server-error':
+    case 'socket-error':
+    case 'socket-closed':
+    case 'unavailable-id':
+    case 'invalid-id':
+    case 'invalid-key':
+    case 'ssl-unavailable':
+      return { code: 'broker-unreachable', message };
+    default:
+      return { code: 'unknown', message };
   }
 }

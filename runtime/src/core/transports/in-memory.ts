@@ -14,6 +14,7 @@ import type {
   TransportTarget,
   MessageHandler,
   PeerEventHandler,
+  ErrorHandler,
   Unsubscribe
 } from '../transport';
 
@@ -125,6 +126,7 @@ export class InMemoryTransport implements Transport {
   private readonly messageHandlers = new Set<MessageHandler>();
   private readonly connectHandlers = new Set<PeerEventHandler>();
   private readonly disconnectHandlers = new Set<PeerEventHandler>();
+  private readonly errorHandlers = new Set<ErrorHandler>();
   private readonly connectedSet = new Set<PeerId>();
   private closed = false;
 
@@ -153,6 +155,11 @@ export class InMemoryTransport implements Transport {
   onPeerDisconnect(handler: PeerEventHandler): Unsubscribe {
     this.disconnectHandlers.add(handler);
     return () => this.disconnectHandlers.delete(handler);
+  }
+
+  onError(handler: ErrorHandler): Unsubscribe {
+    this.errorHandlers.add(handler);
+    return () => this.errorHandlers.delete(handler);
   }
 
   connectedPeers(): readonly PeerId[] {

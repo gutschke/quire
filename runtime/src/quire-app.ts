@@ -77,7 +77,10 @@ import {
   type SessionView,
   type TransportFactory
 } from './session-controller';
-import { createPeerjsFactoryFromUrl } from './session-peerjs';
+import {
+  createPeerjsFactoryFromUrl,
+  brokerConfigFromUrl
+} from './session-peerjs';
 
 const ROLL_HISTORY_MAX = 5;
 
@@ -427,6 +430,17 @@ export class QuireApp extends LitElement {
     .session-bar.session-error {
       border-color: light-dark(#cc8888, #884444);
       background: light-dark(#fcf4f4, #221a1a);
+    }
+
+    .broker-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid light-dark(#bb9a3a, #876618);
+      border-radius: 3px;
+      background: light-dark(#fdf4d0, #2a2410);
+      color: light-dark(#7a5e10, #d4b256);
+      font-size: 0.8em;
+      cursor: help;
     }
 
     .session-bar .session-error-msg {
@@ -1501,6 +1515,15 @@ export class QuireApp extends LitElement {
   private renderSessionBar(): TemplateResult {
     const v = this.sessionView;
     if (!v) return html``;
+    const brokerCfg = brokerConfigFromUrl();
+    const brokerBadge = brokerCfg?.nonDefault
+      ? html`<span
+          class="broker-badge"
+          title="Custom PeerJS broker configured via URL params (peerHost=${brokerCfg.host ??
+          ''}).  Disable by removing the peer* query params."
+          >custom broker</span
+        >`
+      : nothing;
     if (v.status === 'idle' && v.mode === 'solo') {
       return html`
         <div class="session-bar session-solo">
@@ -1531,6 +1554,7 @@ export class QuireApp extends LitElement {
             }}
           />
           <button @click=${() => this.joinSession()}>Join</button>
+          ${brokerBadge}
         </div>
       `;
     }
@@ -1577,6 +1601,7 @@ export class QuireApp extends LitElement {
               ? '1 peer'
               : `${peerCount} peers`}
         </span>
+        ${brokerBadge}
         <button @click=${() => this.leaveSession()}>Leave</button>
       </div>
     `;

@@ -21,6 +21,27 @@ export type TransportTarget = PeerId | 'broadcast';
 export type MessageHandler = (from: PeerId, payload: unknown) => void;
 export type PeerEventHandler = (peerId: PeerId) => void;
 
+/**
+ * Categorized transport errors.  `peer-unavailable` is the most
+ * important: PeerJS emits this when an outbound connect targets an
+ * id the broker doesn't know about (mistyped pairing code, expired
+ * session).  Before this surface existed the controller would
+ * silently stay in "active" with no peers — a worse UX than a
+ * thrown error.
+ */
+export interface TransportError {
+  code:
+    | 'peer-unavailable'
+    | 'broker-unreachable'
+    | 'connection-failed'
+    | 'unknown';
+  /** Target peer id when known (e.g. unavailable peer). */
+  peerId?: PeerId;
+  message: string;
+}
+
+export type ErrorHandler = (err: TransportError) => void;
+
 /** Unsubscribe function returned by on* handlers. */
 export type Unsubscribe = () => void;
 
@@ -30,6 +51,8 @@ export interface Transport {
   onMessage(handler: MessageHandler): Unsubscribe;
   onPeerConnect(handler: PeerEventHandler): Unsubscribe;
   onPeerDisconnect(handler: PeerEventHandler): Unsubscribe;
+  /** Subscribe to async transport errors (peer-unavailable, etc). */
+  onError(handler: ErrorHandler): Unsubscribe;
   connectedPeers(): readonly PeerId[];
   close(): void;
 }

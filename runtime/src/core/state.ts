@@ -96,6 +96,43 @@ interface NotePayload {
   private?: boolean;
 }
 
+// Builtin Object property names that, used as a key in pcEdits or
+// similar plain-object maps, would pollute the prototype chain or
+// shadow built-in methods.  Aligned with EventLog's POISONOUS_KEYS.
+const POISONOUS_KEYS = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+  'toString',
+  'hasOwnProperty',
+  'valueOf',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toLocaleString'
+]);
+
+const ID_CAP = 256;
+const SCENE_PATH_CAP = 2048;
+const CHAT_CAP = 5000;
+const NOTE_CAP = 10000;
+
+function isSafeKey(s: unknown): s is string {
+  return (
+    typeof s === 'string' &&
+    s.length > 0 &&
+    s.length <= ID_CAP &&
+    !POISONOUS_KEYS.has(s)
+  );
+}
+
+function isBoundedString(s: unknown, cap: number): s is string {
+  return typeof s === 'string' && s.length > 0 && s.length <= cap;
+}
+
+function isPlainObjectPayload(p: unknown): p is Record<string, unknown> {
+  return !!p && typeof p === 'object' && !Array.isArray(p);
+}
+
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   switch (event.kind) {
     case 'peer-join': {
@@ -122,14 +159,25 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     }
     case 'scene-reveal': {
       if (state.coordinator !== event.peerId) break;
-      const p = event.payload as SceneRevealPayload;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<SceneRevealPayload>;
+      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
       if (!state.revealedScenes.includes(p.scenePath)) {
         state.revealedScenes.push(p.scenePath);
       }
       break;
     }
     case 'dice-roll': {
-      const p = event.payload as DiceRollPayload;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<DiceRollPayload>;
+      if (!isBoundedString(p.expression, ID_CAP)) break;
+      if (typeof p.result !== 'number' || !Number.isFinite(p.result)) break;
+      if (!Array.isArray(p.dice)) break;
+      // Bound the dice array length and verify entries are numbers.
+      if (p.dice.length > 100) break;
+      if (!p.dice.every((d) => typeof d === 'number' && Number.isFinite(d))) {
+        break;
+      }
       state.diceRolls.push({
         peerId: event.peerId,
         ts: event.ts,
@@ -140,7 +188,9 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       break;
     }
     case 'chat': {
-      const p = event.payload as ChatPayload;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<ChatPayload>;
+      if (!isBoundedString(p.text, CHAT_CAP)) break;
       state.chat.push({
         peerId: event.peerId,
         ts: event.ts,
@@ -149,14 +199,24 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       break;
     }
     case 'pc-edit': {
-      const p = event.payload as PcEditPayload;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<PcEditPayload>;
+      if (!isSafeKey(p.pcId)) break;
+      if (!isSafeKey(p.field)) break;
+      // value is intentionally unrestricted at this layer — the
+      // character-edits helper (applyCharacterEdits) clamps and
+      // type-checks on read so an unknown field is silently
+      // dropped at render time.  Storing the raw value preserves
+      // forward compatibility with future editable fields.
       const pc = state.pcEdits[p.pcId] ?? {};
       pc[p.field] = p.value;
       state.pcEdits[p.pcId] = pc;
       break;
     }
     case 'note': {
-      const p = event.payload as NotePayload;
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as Partial<NotePayload>;
+      if (!isBoundedString(p.text, NOTE_CAP)) break;
       state.notes.push({
         peerId: event.peerId,
         ts: event.ts,

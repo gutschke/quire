@@ -1,0 +1,153 @@
+/**
+ * Materializer payload-validation tests.  The pc-edit case is the
+ * highest-risk because a hostile peer can otherwise:
+ *
+ *   - shadow any real PC by sending pcId='<real-pc-id>' with
+ *     arbitrary field/value (overwrites the live sheet)
+ *   - corrupt iteration via prototype-key pcIds ('__proto__')
+ *   - cause the renderer to crash with non-string pcId/field
+ *
+ * Other event kinds also depend on string-typed payload fields
+ * (chat.text, scene-reveal.scenePath, dice-roll.expression); a
+ * non-string or non-finite value passed through would render as
+ * "[object Object]" / "NaN" or crash array helpers.  These are
+ * pinned here so a future "loosen the type and trust the input"
+ * change is caught.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { materialize } from './state';
+import type { QuireEvent } from './event-log';
+
+function ev(
+  peerId: string,
+  seq: number,
+  kind: string,
+  payload: unknown
+): QuireEvent {
+  return {
+    id: `${peerId}:${seq}`,
+    peerId,
+    seq,
+    clock: { [peerId]: seq },
+    kind,
+    payload,
+    ts: Date.now()
+  };
+}
+
+describe('materialize — pc-edit hostile payloads', () => {
+  it('rejects pc-edit with non-string pcId', () => {
+    const s = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: 42, field: 'harm', value: 1 })
+    ]);
+    expect(s.pcEdits).toEqual({});
+  });
+
+  it('rejects pc-edit with prototype-poisoning pcId', () => {
+    const s = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: '__proto__', field: 'harm', value: 1 })
+    ]);
+    expect(s.pcEdits).toEqual({});
+    // And the prototype is unpolluted.
+    expect(({} as Record<string, unknown>).harm).toBeUndefined();
+  });
+
+  it('rejects pc-edit with empty / over-cap pcId', () => {
+    const s1 = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: '', field: 'harm', value: 1 })
+    ]);
+    expect(s1.pcEdits).toEqual({});
+    const huge = 'x'.repeat(257);
+    const s2 = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: huge, field: 'harm', value: 1 })
+    ]);
+    expect(s2.pcEdits).toEqual({});
+  });
+
+  it('rejects pc-edit with non-string field', () => {
+    const s = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: 'pc1', field: 42, value: 1 })
+    ]);
+    expect(s.pcEdits).toEqual({});
+  });
+
+  it('rejects pc-edit with prototype-poisoning field', () => {
+    const s = materialize([
+      ev('alice', 1, 'pc-edit', {
+        pcId: 'pc1',
+        field: '__proto__',
+        value: { polluted: true }
+      })
+    ]);
+    expect(s.pcEdits).toEqual({});
+  });
+
+  it('accepts legitimate pc-edit', () => {
+    const s = materialize([
+      ev('alice', 1, 'pc-edit', { pcId: 'pc1', field: 'harm', value: 2 })
+    ]);
+    expect(s.pcEdits).toEqual({ pc1: { harm: 2 } });
+  });
+});
+
+describe('materialize — chat hostile payloads', () => {
+  it('drops non-string text', () => {
+    const s = materialize([ev('alice', 1, 'chat', { text: 42 })]);
+    expect(s.chat).toEqual([]);
+  });
+
+  it('drops over-length text', () => {
+    const s = materialize([
+      ev('alice', 1, 'chat', { text: 'x'.repeat(5001) })
+    ]);
+    expect(s.chat).toEqual([]);
+  });
+
+  it('drops missing payload', () => {
+    const s = materialize([ev('alice', 1, 'chat', null)]);
+    expect(s.chat).toEqual([]);
+  });
+});
+
+describe('materialize — scene-reveal hostile payloads', () => {
+  it('drops non-string scenePath', () => {
+    const events = [
+      ev('alice', 1, 'coordinator-claim', {}),
+      ev('alice', 2, 'scene-reveal', { scenePath: 42 })
+    ];
+    const s = materialize(events);
+    expect(s.revealedScenes).toEqual([]);
+  });
+
+  it('drops over-length scenePath', () => {
+    const events = [
+      ev('alice', 1, 'coordinator-claim', {}),
+      ev('alice', 2, 'scene-reveal', { scenePath: 'x'.repeat(2049) })
+    ];
+    const s = materialize(events);
+    expect(s.revealedScenes).toEqual([]);
+  });
+});
+
+describe('materialize — dice-roll hostile payloads', () => {
+  it('drops missing or non-string expression', () => {
+    const s1 = materialize([ev('alice', 1, 'dice-roll', { result: 7, dice: [1, 6] })]);
+    expect(s1.diceRolls).toEqual([]);
+    const s2 = materialize([
+      ev('alice', 1, 'dice-roll', { expression: 42, result: 7, dice: [1, 6] })
+    ]);
+    expect(s2.diceRolls).toEqual([]);
+  });
+
+  it('drops non-array dice', () => {
+    const s = materialize([
+      ev('alice', 1, 'dice-roll', {
+        expression: '2d6',
+        result: 7,
+        dice: 'not an array'
+      })
+    ]);
+    expect(s.diceRolls).toEqual([]);
+  });
+});

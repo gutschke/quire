@@ -220,6 +220,27 @@ export class SessionController {
     this.unsubscribes.push(this.peer.onStateChange(() => this.notify()));
     this.unsubscribes.push(transport.onPeerConnect(() => this.notify()));
     this.unsubscribes.push(transport.onPeerDisconnect(() => this.notify()));
+    // Transport errors (peer-unavailable, broker-unreachable, etc.)
+    // transition the session into the error state.  Before this hook
+    // existed, a guest who joined with a bad code stayed in "active"
+    // with 0 peers forever — visually a successful join with nothing
+    // happening.
+    this.unsubscribes.push(
+      transport.onError((err) => {
+        // Only surface "join failed" categories; an in-flight
+        // connection-failed for one peer of many shouldn't tear the
+        // whole session down.
+        if (
+          err.code === 'peer-unavailable' ||
+          err.code === 'broker-unreachable'
+        ) {
+          this.error = err.message;
+          this.status = 'error';
+          this.mode = 'solo';
+          this.notify();
+        }
+      })
+    );
   }
 
   private notify(): void {

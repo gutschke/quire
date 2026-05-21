@@ -115,39 +115,87 @@ export function createPeerjsFactory(
 }
 
 /**
- * Read broker overrides from URL params, or fall back to the cloud
- * default.  Supported params:
+ * Loopback hostnames + IPs.  Treated as safe for URL-supplied broker
+ * configs because they target the user's own machine; an attacker
+ * pointing the URL at "127.0.0.1" can only reach the user's local
+ * services, which they could attack via any other means.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function isLoopback(host: string): boolean {
+  const h = host.toLowerCase();
+  if (LOOPBACK_HOSTS.has(h)) return true;
+  // 127.x.x.x is the IPv4 loopback range.
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+  return false;
+}
+
+export interface BrokerConfigFromUrl extends PeerjsBrokerConfig {
+  /** True when any peer* URL param is set (used to badge the UI). */
+  nonDefault?: boolean;
+}
+
+/**
+ * Read broker overrides from URL params, or return null when the
+ * params don't specify (or are rejected by) a custom broker.
+ * Supported params:
  *
- *   peerHost   - e.g. 127.0.0.1
- *   peerPort   - e.g. 9000
- *   peerPath   - e.g. /
- *   peerSecure - "1" to force wss
+ *   peerHost              - e.g. 127.0.0.1 (must be loopback unless
+ *                           peerDevAllowAnyHost=1)
+ *   peerPort              - e.g. 9000
+ *   peerPath              - e.g. /
+ *   peerSecure            - "1" to force wss
+ *   peerDevAllowAnyHost   - "1" to allow non-loopback hosts (explicit
+ *                           opt-in for self-hosting against a remote
+ *                           broker)
+ *
+ * Without peerDevAllowAnyHost, a URL pointing at attacker-controlled
+ * host is silently ignored and the cloud default is used instead —
+ * a crafted "?peerHost=attacker.example" link cannot exfiltrate a
+ * user's session by misrouting it.
  *
  * Used so end-to-end test suites (Playwright) can point the app at
  * an in-process peerjs-server without rebuilding the bundle, and so
- * a self-hosting user can point at their own broker without code
- * changes.
+ * a self-hosting user can point at their own broker once they have
+ * explicitly opted in.
  */
-export function createPeerjsFactoryFromUrl(): TransportFactory {
-  if (typeof window === 'undefined') return createPeerjsFactory();
+export function brokerConfigFromUrl(): BrokerConfigFromUrl | null {
+  if (typeof window === 'undefined') return null;
   let params: URLSearchParams;
   try {
     params = new URLSearchParams(window.location.search);
   } catch {
-    return createPeerjsFactory();
+    return null;
   }
   const host = params.get('peerHost');
   const portRaw = params.get('peerPort');
   const path = params.get('peerPath');
   const secureRaw = params.get('peerSecure');
   if (host === null && portRaw === null && path === null && secureRaw === null) {
-    return createPeerjsFactory();
+    return null;
+  }
+  // Host gating.
+  if (host !== null && !isLoopback(host)) {
+    const allowAnyHost = params.get('peerDevAllowAnyHost') === '1';
+    if (!allowAnyHost) {
+      // Silently reject and fall back to the cloud default.  No UI
+      // affordance; the user shouldn't have to debug an attacker's
+      // crafted URL.
+      return null;
+    }
   }
   const port = portRaw ? Number(portRaw) : undefined;
-  return createPeerjsFactory({
+  return {
     host: host ?? undefined,
     port: Number.isFinite(port) ? port : undefined,
     path: path ?? undefined,
-    secure: secureRaw === '1' ? true : secureRaw === '0' ? false : undefined
-  });
+    secure: secureRaw === '1' ? true : secureRaw === '0' ? false : undefined,
+    nonDefault: true
+  };
+}
+
+export function createPeerjsFactoryFromUrl(): TransportFactory {
+  const cfg = brokerConfigFromUrl();
+  if (!cfg) return createPeerjsFactory();
+  return createPeerjsFactory(cfg);
 }
