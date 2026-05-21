@@ -260,6 +260,50 @@ describe('QuireApp scene-reveal', () => {
     expect(guest.sessionView!.shared.revealedParagraphs).toEqual({});
   });
 
+  it('DM broadcastCurrentView emits broadcast-view event (P2-11)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(app.broadcastCurrentView()).toBe(true);
+    await flush();
+    const bv = app.sessionView!.shared.broadcastView!;
+    // stagePath is the route's URL-encoded search string; round-trip
+    // via parseRoute to verify the invariant we actually care about.
+    const route = (await import('./routing')).parseRoute(bv.stagePath);
+    expect(route).toMatchObject({
+      kind: 'scene',
+      episode: '001',
+      scene: 'scenes/intro.md'
+    });
+  });
+
+  it('non-coordinator broadcastCurrentView is a no-op (P2-11)', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    (guest as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(guest.broadcastCurrentView()).toBe(false);
+    await flush();
+    expect(host.sessionView!.shared.broadcastView).toBeUndefined();
+  });
+
   it('multiple reveals accumulate in order', async () => {
     const network = new InMemoryNetwork();
     const host = mountApp(inMemoryFactory(network, 'HOST'));

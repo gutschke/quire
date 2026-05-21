@@ -352,6 +352,12 @@ export class QuireApp extends LitElement {
       // a campaign is loaded, lazy-fetch the PC character so the
       // Rail / Dice / Aside renderers have the data.
       this.refreshBoundCharacter();
+      // M3a.8 P2-11: follow DM broadcasts.  Non-coord viewer
+      // navigates to the broadcast target when its ts advances
+      // past what we've already followed.  Skips the DM (no
+      // self-bounce) and the initial subscribe (lastFollowed
+      // starts at 0; a real broadcast carries a positive ts).
+      this.followBroadcast();
       // Live-bounce a non-coordinator player if they're currently
       // viewing a scene the DM has just un-revealed.  Without this,
       // they'd see the now-private content until they navigate away.
@@ -1204,6 +1210,7 @@ export class QuireApp extends LitElement {
           this.navigate(e, route)}
         .onToggleBlock=${(blockHash: string) =>
           this.toggleBlockReveal(fullScenePath, blockHash)}
+        .onBroadcast=${() => this.broadcastCurrentView()}
         .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}
       ></scene-stage>
       ${this.renderCharacterMenus(
@@ -1562,6 +1569,89 @@ export class QuireApp extends LitElement {
    */
   toggleRaisedHand(): void {
     this.session?.toggleHand();
+  }
+
+  /**
+   * M3a.8 P2-11: track the most recent broadcast we've already
+   * followed.  Initialized to 0 so the first real broadcast
+   * (positive ts) is always honored; subsequent broadcasts only
+   * trigger navigation when strictly newer.  Per-instance state
+   * (not persisted) — a reload resets it so an old broadcast
+   * doesn't ambush the player on rejoin.
+   */
+  private lastFollowedBroadcastTs: number = 0;
+
+  /**
+   * M3a.8 P2-11: emit a broadcast-view event for the local DM's
+   * current route.  No-op when offline / not coordinator.  The
+   * payload's stagePath is the route's search-string so the
+   * receiver can round-trip via parseRoute.
+   */
+  broadcastCurrentView(): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const route = this.routeForAppState();
+    if (!route) return false;
+    this.session.append('broadcast-view', {
+      v: 1,
+      stagePath: routeToSearch(route)
+    });
+    return true;
+  }
+
+  /**
+   * Subscribe-side: navigate to the DM's broadcast target when a
+   * newer broadcast arrives.  Skipped for the DM (who is the
+   * author).  Pure handler — caller-paced via session subscribe.
+   */
+  private followBroadcast(): void {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return;
+    const bv = v.filteredShared.broadcastView;
+    if (!bv) return;
+    if (bv.ts <= this.lastFollowedBroadcastTs) return;
+    this.lastFollowedBroadcastTs = bv.ts;
+    if (this.isCoordinator()) return;
+    const route = parseRoute(bv.stagePath);
+    if (route.kind === 'home') return;
+    void this.navigateToRoute(route);
+  }
+
+  /**
+   * M3a.8 P2-11: derive the AppRoute that corresponds to the
+   * current AppState, for broadcasting purposes.  Returns null
+   * when the local view has no broadcastable route (idle, error,
+   * mid-load).
+   */
+  private routeForAppState(): AppRoute | null {
+    const s = this.appState;
+    switch (s.kind) {
+      case 'campaign':
+        return { kind: 'campaign', slug: this.slugFor(s.campaign) };
+      case 'episode':
+        return {
+          kind: 'episode',
+          slug: this.slugFor(s.campaign),
+          episode: s.episode.slug
+        };
+      case 'scene':
+        return {
+          kind: 'scene',
+          slug: this.slugFor(s.campaign),
+          episode: s.episode.slug,
+          scene: s.scene.path
+        };
+      case 'character':
+        return {
+          kind: 'character',
+          slug: this.slugFor(s.campaign),
+          characterKind: s.character.kind,
+          characterId: s.character.id
+        };
+      default:
+        return null;
+    }
   }
 
   /**

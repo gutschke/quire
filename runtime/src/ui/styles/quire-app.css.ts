@@ -1040,6 +1040,22 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.8 P2-11: broadcast button (DM-only, in scene header). */
+    .scene-broadcast-btn {
+      display: inline-block;
+      margin-left: 0.5rem;
+      padding: 0.3rem 0.7rem;
+      background: light-dark(#e3edf7, #1f3a5a);
+      color: light-dark(#0b3d7f, #79b8f0);
+      border: 1px solid light-dark(#a6c4e3, #2c5a8a);
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+    .scene-broadcast-btn:hover {
+      background: light-dark(#cfe1f2, #2a4a6e);
+    }
+
     /* M3a.8 P2-10: caution rail when the loaded scene path is
        DM-only (starts with dm/ or contains /dm/).  Amber border on
        the card + sticky banner so the DM cannot misread DM-only

@@ -78,6 +78,12 @@ export class SceneStage extends LitElement {
   @property({ attribute: false }) onToggleBlock: ToggleBlockCallback | null =
     null;
   /**
+   * M3a.8 P2-11: emits a broadcast-view event so all players
+   * navigate to this scene.  Coord-only — the button is hidden
+   * when not the DM.  Callback wired by QuireApp.
+   */
+  @property({ attribute: false }) onBroadcast: (() => void) | null = null;
+  /**
    * M3a.6c (P-M3a-scene-strip): parsed YAML frontmatter from the
    * scene file.  Renders the "what am I in" strip below the
    * breadcrumb: location · mood · expectedDuration · presentNpcs
@@ -147,6 +153,16 @@ export class SceneStage extends LitElement {
         <h1>${this.scenePath}</h1>
         ${this.renderSceneStrip()}
         ${this.headerExtras}
+        ${this.isCoordinator && this.onBroadcast
+          ? html`<button
+              type="button"
+              class="scene-broadcast-btn"
+              title="Send all players to this scene"
+              @click=${() => this.onBroadcast?.()}
+            >
+              📡 Broadcast view
+            </button>`
+          : nothing}
       </header>
       <section class="card ${cautionActive ? 'dm-caution-card' : ''}">
         <div class="markdown">${this.renderBlocks()}</div>
