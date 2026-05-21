@@ -14,6 +14,7 @@ import './ui/shell/quire-dock';
 import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
+import './ui/regions/dice-dock';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -1650,13 +1651,20 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * Dice panel delegated to <dice-dock> region (M2.6, P1-4).  This
+   * wrapper computes the merged history (shared event-log rolls when
+   * in a session; local mirror when solo) so the region component
+   * doesn't need access to displayNameFor or the sessionView.
+   *
+   * In an active session, the shared event log is the source of
+   * truth for "who rolled what" — every peer sees every roll with
+   * attribution.  In solo mode the local mirror is the only source.
+   * We render the union to avoid showing duplicates when our own
+   * dice-roll event has both been appended locally AND echoed back
+   * through the materializer.
+   */
   private renderRollPanel(): TemplateResult {
-    // In an active session, the shared event log is the source of
-    // truth for "who rolled what" — every peer sees every roll with
-    // attribution.  In solo mode the local mirror is the only source.
-    // We render the union to avoid showing duplicates when our own
-    // dice-roll event has both been appended locally AND echoed back
-    // through the materializer.
     const inSession = this.sessionView?.status === 'active';
     const shared = inSession ? this.sessionView!.shared.diceRolls : [];
     const entries: Array<{
@@ -1664,8 +1672,7 @@ export class QuireApp extends LitElement {
       label: string;
       tierClass: string;
     }> = inSession
-      ? // Most-recent first, capped to history limit.
-        shared
+      ? shared
           .slice()
           .reverse()
           .slice(0, ROLL_HISTORY_MAX)
@@ -1680,45 +1687,15 @@ export class QuireApp extends LitElement {
           tierClass: r.tier ? `roll-tier-${r.tier}` : ''
         }));
     return html`
-      <section class="card">
-        <h2>Dice</h2>
-        <form
-          class="roll-form"
-          @submit=${(e: Event) => {
-            e.preventDefault();
-            this.submitRoll(this.rollDraft);
-          }}
-        >
-          <label>
-            <span class="roll-label">/roll</span>
-            <input
-              type="text"
-              .value=${this.rollDraft}
-              placeholder="2d6+1"
-              aria-label="Dice expression"
-              @input=${(e: Event) => {
-                this.rollDraft = (e.target as HTMLInputElement).value;
-              }}
-            />
-          </label>
-          <button type="submit">Roll</button>
-        </form>
-        ${this.rollError
-          ? html`<p class="roll-error">${this.rollError}</p>`
-          : nothing}
-        ${entries.length
-          ? html`
-              <ul class="roll-history">
-                ${entries.map(
-                  (e) =>
-                    html`<li>
-                      <code class="${e.tierClass}">${e.label}</code>
-                    </li>`
-                )}
-              </ul>
-            `
-          : html`<p class="muted">No rolls yet.</p>`}
-      </section>
+      <dice-dock
+        .rollDraft=${this.rollDraft}
+        .rollError=${this.rollError}
+        .entries=${entries}
+        .onRollDraftChange=${(v: string) => {
+          this.rollDraft = v;
+        }}
+        .onSubmitRoll=${(v: string) => this.submitRoll(v)}
+      ></dice-dock>
     `;
   }
 
