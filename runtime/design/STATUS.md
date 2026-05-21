@@ -31,13 +31,48 @@ Current milestone: **M3b — AI broker + dual-card (in flight)** — M3a closed 
 - [x] Scope toggle on prompt form (public default, opt-in dm)
 - [x] Accept / Reject verdict buttons emitting `ai-accept` / `ai-reject` events
 
-**Gate exit (M3b.7 — pending):**
-- [ ] e2e/ai-content-safety.spec.ts — mock AiBroker returns `{safe: 'X', dmOnly: 'Y'}`; player view contains only X; DM view contains both; Y absent from player DOM
-- [ ] Smuggled-marker variant — `{safe: 'X<dm-only>Y</dm-only>', dmOnly: ''}` shows literal text after sanitize, never executes
-- [ ] 4-reviewer gate (TTRPG-craft, Engine, Security, Adversarial)
+**Gate exit (M3b.7):**
+- [x] e2e/ai-content-safety.spec.ts — landed at commit 8851170; mock AiBroker returns `{safe, dmOnly}`; player view contains neither, DM view shows both as dual cards
+- [x] Smuggled-marker variant covered in the same e2e file — shows literal text after sanitize, no live `<dm-only>` element
+- [x] 4-reviewer gate ran 2026-05-21 — Adversarial invoked severity-floor BLOCK; remaining 3 ship-with-followups
+- [x] Unblock work landed (commits 7080704 + 8851170): tokenIn accounting, verdict feedback, budget meter, parseFailureResponse responseId, loadCampaign UC_CLOSE symmetry, legacy AI module dead-code removal
 - [ ] Tag `playtest-1` on green pass
 
+## M3b.7 gate verdict + unblock
+
+4-reviewer gate verdict 2026-05-21:
+
+| Reviewer | Verdict | Severity-floor |
+|---|---|---|
+| TTRPG-craft | ship-with-followups | no |
+| Engine | ship-with-followups | no |
+| Security | ship-with-followups | no |
+| **Adversarial** | **block** | yes |
+
+Adversarial-cited blockers (all addressed):
+- `e2e/ai-content-safety.spec.ts` missing → landed commit 8851170 (2 tests, both pass).
+- `tokenIn: 0` hardcoded in ai-prompt event → ai-prompt + ai-response now emit AFTER broker.complete returns with real tokensIn / tokensOut.  Budget meter no longer half-blind.
+- Topbar budget widget missing → inline budget meter in `<ai-panel>` header (X / Y (Z%)), warning at 80%, exceeded at 100% with Ask button disable + red banner.
+- parseFailureResponse responseId='' hid verdict buttons → synthesized fingerprint id so even degraded responses get Accept / Reject.
+- Convergent TTRPG-craft finding (silent Accept / Reject) → visible "✓ Accepted" / "✗ Rejected" footer replaces the buttons after click.
+
+Security-cited follow-up:
+- S-2 (loadCampaign UC_CLOSE check) → landed commit 8851170.
+- S-1 (wrapUntrusted unused until contextRefs land) → track for the contextRefs implementation PR; primitive is correct, just unconnected today.
+
+Engine-cited follow-ups (deferred to M3b polish):
+- Extract `AiBrokerController` to shrink `submitAiPrompt` under 80 LOC.
+- Collapse `aiResponse: string` mirror into `aiResponseStructured?.safe`.
+- Port fetch-layer integration tests from legacy `src/ai/{anthropic,gemini}.test.ts` to the new providers.
+
+TTRPG-craft follow-ups (deferred to M3b polish):
+- Scope-toggle armed state should pick up amber treatment when `scope === 'dm'`.
+- Faint green wash on `.ai-card-safe` background for visual symmetry with the amber DM card.
+- Hide verdict buttons in solo mode.
+
 ## Previous milestone — M3a closed `ship-with-followups` (after security unblock)
+
+(See M3a gate retro below for the comparable security-unblock pattern.)
 
 ## Previous milestone (deeper) — M2 closed `ship-with-followups`
 
