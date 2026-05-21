@@ -12,8 +12,16 @@ import {
   loadCharacter,
   CharacterLoadError,
   type LoadedCharacter,
-  type CharacterKind
+  type CharacterKind,
+  type CharacterRecord
 } from './character-loader';
+import {
+  applyCharacterEdits,
+  HARM_MAX,
+  STRESS_MAX,
+  STAT_MIN,
+  STAT_MAX
+} from './character-edits';
 import { renderMarkdown, type SanitizedHtml } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
@@ -489,6 +497,86 @@ export class QuireApp extends LitElement {
       background: light-dark(#f0f0f0, #222);
       color: light-dark(#666, #888);
       border: 1px solid light-dark(#ddd, #333);
+    }
+
+    dl.stat-grid {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 0.25rem 0.75rem;
+      margin: 0.5rem 0;
+    }
+
+    dl.stat-grid dt {
+      font-weight: 600;
+      align-self: center;
+    }
+
+    dl.stat-grid dd {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stat-bumpers {
+      display: inline-flex;
+      gap: 0.2rem;
+    }
+
+    .stat-bumpers button {
+      width: 1.5rem;
+      height: 1.5rem;
+      padding: 0;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.9em;
+      line-height: 1;
+    }
+
+    .stat-bumpers button:disabled {
+      cursor: not-allowed;
+      opacity: 0.4;
+    }
+
+    .track-boxes {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+    }
+
+    .track-box {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.4rem;
+      height: 1.4rem;
+      padding: 0;
+      border: 1px solid light-dark(#aaa, #555);
+      border-radius: 3px;
+      background: light-dark(#fff, #1a1a1a);
+      color: inherit;
+      font-family: ui-monospace, monospace;
+      font-size: 0.9em;
+      cursor: pointer;
+    }
+
+    .track-box.track-box-filled {
+      background: light-dark(#444, #ddd);
+      color: light-dark(#fff, #111);
+      border-color: light-dark(#222, #aaa);
+    }
+
+    button.track-box:hover {
+      outline: 1px solid light-dark(#0050a0, #6bb6ff);
+    }
+
+    .track-count {
+      margin-left: 0.4rem;
+      color: light-dark(#555, #aaa);
+      font-size: 0.85em;
     }
   `;
 
@@ -1287,6 +1375,33 @@ export class QuireApp extends LitElement {
     return true;
   }
 
+  /**
+   * Coordinator-or-self pc-edit append.  Returns false in solo or when
+   * called for an NPC (NPCs are DM-only and not session-edited).  For
+   * v1 anyone in the session can edit any PC — the materializer is LWW
+   * per (pcId, field) so concurrent edits resolve cleanly even if two
+   * players touch the same stat at the same time.
+   */
+  submitPcEdit(pcId: string, field: string, value: unknown): boolean {
+    if (!this.session || this.sessionView?.status !== 'active') return false;
+    this.session.append('pc-edit', { pcId, field, value });
+    return true;
+  }
+
+  /**
+   * The effective character record for rendering: base + any session-
+   * shared edits (LWW per field).  Outside an active session, the base
+   * record is returned unmodified.
+   */
+  effectiveCharacter(character: LoadedCharacter): CharacterRecord {
+    if (!this.sessionView) return character.record;
+    const overrides =
+      character.kind === 'pc'
+        ? this.sessionView.shared.pcEdits[character.id]
+        : undefined;
+    return applyCharacterEdits(character.record, overrides);
+  }
+
   submitChat(text: string): boolean {
     if (!this.session || this.sessionView?.status !== 'active') return false;
     const trimmed = text.trim();
@@ -1374,8 +1489,10 @@ export class QuireApp extends LitElement {
     character: LoadedCharacter
   ): TemplateResult {
     const slug = this.slugFor(campaign);
-    const r = character.record;
+    const r = this.effectiveCharacter(character);
     const kindLabel = character.kind === 'pc' ? 'PC' : 'NPC';
+    const editable =
+      character.kind === 'pc' && this.sessionView?.status === 'active';
     return html`
       <header>
         <nav class="breadcrumb">
@@ -1402,14 +1519,37 @@ export class QuireApp extends LitElement {
           ${r.alignment
             ? html`<dt>Alignment</dt><dd>${r.alignment}</dd>`
             : nothing}
-          ${typeof r.harm === 'number'
-            ? html`<dt>Harm</dt><dd>${r.harm}/4</dd>`
+          ${typeof r.harm === 'number' || editable
+            ? html`
+                <dt>Harm</dt>
+                <dd>${this.renderTrackBoxes(
+                  'harm',
+                  r.harm ?? 0,
+                  HARM_MAX,
+                  character.id,
+                  editable
+                )}</dd>
+              `
             : nothing}
-          ${typeof r.stress === 'number'
-            ? html`<dt>Stress</dt><dd>${r.stress}/4</dd>`
+          ${typeof r.stress === 'number' || editable
+            ? html`
+                <dt>Stress</dt>
+                <dd>${this.renderTrackBoxes(
+                  'stress',
+                  r.stress ?? 0,
+                  STRESS_MAX,
+                  character.id,
+                  editable
+                )}</dd>
+              `
             : nothing}
         </dl>
-        ${r.stats ? this.renderStatBlock(r.stats) : nothing}
+        ${r.stats || editable
+          ? this.renderStatBlock(
+              r.stats ?? {},
+              editable ? character.id : null
+            )
+          : nothing}
         ${r.skills?.length
           ? html`
               <h3>Skills</h3>
@@ -1478,33 +1618,119 @@ export class QuireApp extends LitElement {
     `;
   }
 
-  private renderStatBlock(stats: {
-    str?: number;
-    dex?: number;
-    con?: number;
-    int?: number;
-    wis?: number;
-    cha?: number;
-  }): TemplateResult {
-    const rows: Array<[string, number | undefined]> = [
-      ['STR', stats.str],
-      ['DEX', stats.dex],
-      ['CON', stats.con],
-      ['INT', stats.int],
-      ['WIS', stats.wis],
-      ['CHA', stats.cha]
+  private renderStatBlock(
+    stats: {
+      str?: number;
+      dex?: number;
+      con?: number;
+      int?: number;
+      wis?: number;
+      cha?: number;
+    },
+    editablePcId: string | null
+  ): TemplateResult {
+    const rows: Array<[string, keyof typeof stats, number | undefined]> = [
+      ['STR', 'str', stats.str],
+      ['DEX', 'dex', stats.dex],
+      ['CON', 'con', stats.con],
+      ['INT', 'int', stats.int],
+      ['WIS', 'wis', stats.wis],
+      ['CHA', 'cha', stats.cha]
     ];
     return html`
       <h3>Stats</h3>
-      <dl>
+      <dl class="stat-grid">
         ${rows.map(
-          ([label, val]) => html`
+          ([label, key, val]) => html`
             <dt>${label}</dt>
-            <dd>${typeof val === 'number' ? formatStat(val) : '—'}</dd>
+            <dd>
+              ${typeof val === 'number' ? formatStat(val) : '—'}
+              ${editablePcId
+                ? html`
+                    <span class="stat-bumpers">
+                      <button
+                        type="button"
+                        aria-label="Decrease ${label}"
+                        ?disabled=${typeof val === 'number' && val <= STAT_MIN}
+                        @click=${() =>
+                          this.bumpStat(editablePcId, key, val ?? 0, -1)}
+                      >
+                        −
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Increase ${label}"
+                        ?disabled=${typeof val === 'number' && val >= STAT_MAX}
+                        @click=${() =>
+                          this.bumpStat(editablePcId, key, val ?? 0, +1)}
+                      >
+                        +
+                      </button>
+                    </span>
+                  `
+                : nothing}
+            </dd>
           `
         )}
       </dl>
     `;
+  }
+
+  private renderTrackBoxes(
+    field: 'harm' | 'stress',
+    current: number,
+    max: number,
+    pcId: string,
+    editable: boolean
+  ): TemplateResult {
+    const boxes: TemplateResult[] = [];
+    for (let i = 1; i <= max; i++) {
+      const filled = i <= current;
+      boxes.push(
+        editable
+          ? html`<button
+              type="button"
+              class="track-box ${filled ? 'track-box-filled' : ''}"
+              aria-label="${field} box ${i}, ${filled ? 'filled' : 'empty'}"
+              @click=${() => this.toggleTrackBox(pcId, field, i, current)}
+            >
+              ${filled ? '■' : '□'}
+            </button>`
+          : html`<span
+              class="track-box ${filled ? 'track-box-filled' : ''}"
+              aria-label="${field} box ${i}, ${filled ? 'filled' : 'empty'}"
+            >
+              ${filled ? '■' : '□'}
+            </span>`
+      );
+    }
+    return html`<span class="track-boxes">${boxes} <span class="track-count">${current}/${max}</span></span>`;
+  }
+
+  private bumpStat(
+    pcId: string,
+    key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+    current: number,
+    delta: number
+  ): void {
+    const next = Math.min(STAT_MAX, Math.max(STAT_MIN, current + delta));
+    if (next === current) return;
+    this.submitPcEdit(pcId, `stats.${key}`, next);
+  }
+
+  private toggleTrackBox(
+    pcId: string,
+    field: 'harm' | 'stress',
+    box: number,
+    current: number
+  ): void {
+    // Clicking a filled box sets the track to box-1 (uncheck this and
+    // everything past it); clicking an empty box sets it to box (fill
+    // up to here).  This is the classic Powered-by-the-Apocalypse
+    // track-edit UX.
+    const next = box <= current ? box - 1 : box;
+    if (next === current) return;
+    this.submitPcEdit(pcId, field, next);
   }
 
   private renderError(message: string, details?: string): TemplateResult {
