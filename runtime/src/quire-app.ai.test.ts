@@ -88,14 +88,61 @@ describe('QuireApp AI panel — submit flow', () => {
     expect(app.aiError).toMatch(/empty/i);
   });
 
+  // M3b.5: AI submit now goes through AiBroker → aiProviders.
+  // Helper to stub a structured provider with the given safe text.
+  function stubClaudeReturning(
+    app: ReturnType<typeof mountApp>,
+    safe: string,
+    extras: { dmOnly?: string; tokensIn?: number; tokensOut?: number } = {}
+  ): void {
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockResolvedValue({
+          raw: JSON.stringify({
+            safe,
+            dmOnly: extras.dmOnly ?? '',
+            sources: []
+          }),
+          tokensIn: extras.tokensIn ?? 0,
+          tokensOut: extras.tokensOut ?? 0,
+          responseId: 'test-resp'
+        }),
+        parse: (raw: string) => {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        }
+      }
+    };
+  }
+
+  function stubClaudeThrowing(
+    app: ReturnType<typeof mountApp>,
+    err: Error
+  ): void {
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockRejectedValue(err),
+        parse: () => null
+      }
+    };
+  }
+
   it('happy path: stores response, clears draft and loading', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClients = { ...app.aiClients, claude: vi.fn().mockResolvedValue('a quiet description.') };
+    stubClaudeReturning(app, 'a quiet description.');
     app.aiPromptDraft = 'describe the cabin';
     const result = await app.submitAiPrompt(app.aiPromptDraft);
     expect(result).toBe('a quiet description.');
     expect(app.aiResponse).toBe('a quiet description.');
+    expect(app.aiResponseStructured?.safe).toBe('a quiet description.');
     expect(app.aiLoading).toBe(false);
     expect(app.aiError).toBeNull();
     expect(app.aiPromptDraft).toBe('');
@@ -104,7 +151,7 @@ describe('QuireApp AI panel — submit flow', () => {
   it('error path: stores error message and clears loading', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClients = { ...app.aiClients, claude: vi.fn().mockRejectedValue(new Error('boom')) };
+    stubClaudeThrowing(app, new Error('boom'));
     const result = await app.submitAiPrompt('hi');
     expect(result).toBeNull();
     expect(app.aiResponse).toBeNull();
@@ -116,10 +163,28 @@ describe('QuireApp AI panel — submit flow', () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
     let release: () => void = () => {};
-    const pending = new Promise<string>((res) => {
-      release = () => res('late response');
+    const pending = new Promise<{
+      raw: string;
+      tokensIn: number;
+      tokensOut: number;
+      responseId: string;
+    }>((res) => {
+      release = () =>
+        res({
+          raw: JSON.stringify({ safe: 'late', dmOnly: '', sources: [] }),
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'late'
+        });
     });
-    app.aiClients = { ...app.aiClients, claude: vi.fn().mockReturnValue(pending) };
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockReturnValue(pending),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
     const p = app.submitAiPrompt('hi');
     expect(app.aiLoading).toBe(true);
     app.cancelAiPrompt();
@@ -129,6 +194,15 @@ describe('QuireApp AI panel — submit flow', () => {
     expect(result).toBeNull();
     expect(app.aiResponse).toBeNull();
     expect(app.aiLoading).toBe(false);
+  });
+
+  it('scope toggle resets to public after submit (M3b.5)', async () => {
+    const app = mountApp();
+    app.setAiApiKey('sk-test');
+    stubClaudeReturning(app, 'ok');
+    app.aiScope = 'dm';
+    await app.submitAiPrompt('hi');
+    expect(app.aiScope).toBe('public');
   });
 });
 
@@ -200,23 +274,33 @@ describe('QuireApp AI panel — provider switching', () => {
     );
   });
 
-  it('submitAiPrompt picks the client matching aiProvider', async () => {
+  it('submitAiPrompt picks the provider matching aiProvider', async () => {
     const app = mountApp();
-    const claude = vi.fn().mockResolvedValue('claude says hi');
-    const gemini = vi.fn().mockResolvedValue('gemini says hi');
-    app.aiClients = { claude, gemini };
+    const stub = (safe: string) => ({
+      id: 'claude' as const,
+      call: vi.fn().mockResolvedValue({
+        raw: JSON.stringify({ safe, dmOnly: '', sources: [] }),
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: 'r'
+      }),
+      parse: (raw: string) => JSON.parse(raw)
+    });
+    const claudeStub = stub('claude says hi');
+    const geminiStub = { ...stub('gemini says hi'), id: 'gemini' as const };
+    app.aiProviders = { claude: claudeStub, gemini: geminiStub };
     app.setAiApiKey('sk-claude', 'claude');
     app.setAiApiKey('AIza', 'gemini');
 
     app.setAiProvider('claude');
     await app.submitAiPrompt('hello');
-    expect(claude).toHaveBeenCalled();
-    expect(gemini).not.toHaveBeenCalled();
+    expect(claudeStub.call).toHaveBeenCalled();
+    expect(geminiStub.call).not.toHaveBeenCalled();
     expect(app.aiResponse).toBe('claude says hi');
 
     app.setAiProvider('gemini');
     await app.submitAiPrompt('hello again');
-    expect(gemini).toHaveBeenCalled();
+    expect(geminiStub.call).toHaveBeenCalled();
     expect(app.aiResponse).toBe('gemini says hi');
   });
 
@@ -244,7 +328,23 @@ describe('QuireApp AI share-to-chat', () => {
   it('shares response into chat with an [AI] marker', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
-    app.aiClients = { ...app.aiClients, claude: vi.fn().mockResolvedValue('the cabin smells like sleep.') };
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockResolvedValue({
+          raw: JSON.stringify({
+            safe: 'the cabin smells like sleep.',
+            dmOnly: '',
+            sources: []
+          }),
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r'
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
     app.startHosting();
     await flush();
     await app.submitAiPrompt('describe the cabin');

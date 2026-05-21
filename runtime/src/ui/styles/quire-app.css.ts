@@ -1136,6 +1136,97 @@ export const quireAppStyles = css`
       color: light-dark(#0b3d7f, #79b8f0);
     }
 
+    /* M3b.5 P2-12: dual-card AI response.  Two stacked cards
+       (safe + DM-only); the DM-only card carries amber border +
+       lock badge + "do not read aloud" copy button.  Layout
+       deliberately separates them with a gap so the DM can read
+       one card without scanning the other. */
+    .ai-dual-card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .ai-card {
+      border-radius: 5px;
+      padding: 0.5rem 0.7rem;
+      background: light-dark(#fafafa, #1c1c1c);
+      border: 1px solid light-dark(#ddd, #444);
+    }
+    .ai-card-safe {
+      border-left: 3px solid light-dark(#0a7a3a, #5ac985);
+    }
+    .ai-card-dm {
+      border-left: 3px solid light-dark(#d4a017, #a07820);
+      background: light-dark(#fffbe6, #2a2618);
+    }
+    .ai-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.3rem;
+    }
+    .ai-card-badge {
+      font-size: 0.75em;
+      font-variant: small-caps;
+      letter-spacing: 0.05em;
+      padding: 0.1rem 0.5rem;
+      border-radius: 3px;
+    }
+    .ai-card-badge-safe {
+      color: light-dark(#0a7a3a, #5ac985);
+      background: light-dark(#e6f7ec, #1a3a25);
+    }
+    .ai-card-badge-dm {
+      color: light-dark(#5a4310, #ffd479);
+      background: light-dark(#fff7e0, #3a2f10);
+      font-weight: 600;
+    }
+    .ai-card-action {
+      margin-top: 0.4rem;
+      font-size: 0.85em;
+      padding: 0.3rem 0.7rem;
+    }
+    .ai-card-action-copy {
+      background: light-dark(#fff, #2a2618);
+      border: 1px solid light-dark(#b8841a, #856010);
+    }
+    .ai-card-sources {
+      list-style: none;
+      padding: 0;
+      margin: 0.4rem 0 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4em;
+      font-size: 0.85em;
+    }
+    .ai-card-source code {
+      background: light-dark(#eef, #1a2a3a);
+      padding: 0.05rem 0.4rem;
+      border-radius: 2px;
+    }
+    .ai-card-verdict {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.4rem;
+    }
+    .ai-card-accept,
+    .ai-card-reject {
+      font-size: 0.85em;
+      padding: 0.25rem 0.7rem;
+    }
+    .ai-scope-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.4em;
+      margin: 0.4rem 0;
+      font-size: 0.9em;
+      color: light-dark(#666, #aaa);
+    }
+    .ai-scope-toggle input[type='checkbox'] {
+      margin: 0;
+    }
+
     /* M3a.8 P2-3: DM scratch column (Dock region). */
     .dm-scratch textarea {
       width: 100%;

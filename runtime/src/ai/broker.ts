@@ -114,7 +114,12 @@ export class AiBroker {
   async complete(req: AiCompleteRequest): Promise<AiResponse> {
     const coord = this.host.getCoordinator();
     const me = this.host.getLocalPeerId();
-    if (!coord || !me || coord !== me) {
+    // When a coordinator is set, only they may fire — strict single-
+    // appender to the audit chain (per redesign-plan.md L149).  When
+    // NO coordinator is set (solo mode), the local peer is the
+    // de-facto coordinator and is allowed; the audit chain is still
+    // a chain, just with one author.
+    if (coord !== undefined && coord !== me) {
       throw new AiBrokerError(
         'AI broker calls are restricted to the current DM (coordinator).',
         'not-coordinator'

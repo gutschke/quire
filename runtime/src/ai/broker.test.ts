@@ -76,11 +76,11 @@ describe('AiBroker.complete — guards', () => {
     });
   });
 
-  it('throws not-coordinator when no coord is set (offline)', async () => {
+  it('allows submission in solo mode (no coordinator set)', async () => {
     const broker = makeBroker(happyProvider, { coord: undefined });
     await expect(
       broker.complete({ prompt: 'hi', scope: 'public', model: 'sonnet' })
-    ).rejects.toMatchObject({ code: 'not-coordinator' });
+    ).resolves.toMatchObject({ safe: 'Hello' });
   });
 
   it('throws no-api-key when getApiKey returns empty', async () => {

@@ -31,6 +31,21 @@ import { customElement, property } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { AI_DEFAULTS, type AiProvider } from '../../controllers/ai-key-store';
 import type { SanitizedHtml } from '../../markdown';
+import type { ContextScope } from '../../ai/context';
+import type { SourceRef } from '../../ai/schema';
+
+/**
+ * Pre-rendered dual-card payload — QuireApp runs the provider's
+ * AiResponse through the markdown sanitizer (renderMarkdown) and
+ * hands the safe-HTML pair plus source chips down here.  The
+ * region itself does not see the raw model text.
+ */
+export interface DualCardResponse {
+  safeHtml: SanitizedHtml;
+  dmOnlyHtml: SanitizedHtml;
+  sources: SourceRef[];
+  responseId: string;
+}
 
 @customElement('ai-panel')
 export class AiPanel extends LitElement {
@@ -54,8 +69,17 @@ export class AiPanel extends LitElement {
   @property() promptDraft: string = '';
   @property({ type: Boolean }) loading: boolean = false;
   @property() error: string | null = null;
-  /** Pre-sanitized HTML from the most recent AI response. */
-  @property({ attribute: false }) responseHtml: SanitizedHtml | null = null;
+  /**
+   * M3b.5 (P2-12): pre-rendered dual-card response.  When set, the
+   * panel replaces the legacy single .ai-response block with two
+   * cards (safe + DM-only).  null while no response is in flight.
+   */
+  @property({ attribute: false }) response: DualCardResponse | null = null;
+  /**
+   * M3b.5: scope toggle for the next prompt.  Resets to 'public'
+   * after submit per the design (redesign-plan.md L147).
+   */
+  @property() scope: ContextScope = 'public';
   @property({ type: Boolean }) inSession: boolean = false;
 
   @property({ attribute: false }) onSetProvider:
@@ -81,6 +105,15 @@ export class AiPanel extends LitElement {
     | null = null;
   @property({ attribute: false }) onCancel: (() => void) | null = null;
   @property({ attribute: false }) onShareToChat: (() => void) | null = null;
+  @property({ attribute: false }) onSetScope:
+    | ((s: ContextScope) => void)
+    | null = null;
+  @property({ attribute: false }) onAcceptResponse:
+    | ((responseId: string) => void)
+    | null = null;
+  @property({ attribute: false }) onRejectResponse:
+    | ((responseId: string) => void)
+    | null = null;
 
   override render(): TemplateResult {
     if (!this.visible) return html``;
@@ -109,26 +142,98 @@ export class AiPanel extends LitElement {
         ${this.error
           ? html`<p class="ai-error">${this.error}</p>`
           : nothing}
-        ${this.responseHtml
-          ? html`
-              <div class="ai-response">
-                <div class="markdown">
-                  ${unsafeHTML(this.responseHtml)}
-                </div>
-                ${this.inSession
-                  ? html`
-                      <button
-                        type="button"
-                        @click=${() => this.onShareToChat?.()}
-                      >
-                        Share to chat
-                      </button>
-                    `
-                  : nothing}
-              </div>
-            `
-          : nothing}
+        ${this.response ? this.renderDualCard(this.response) : nothing}
       </section>
+    `;
+  }
+
+  /**
+   * M3b.5 (P2-12): render the dual-card response — safe (read aloud
+   * OK) above, DM-only (do not read aloud) below with an amber rail.
+   * Both cards always render even when one half is empty; an empty
+   * card shows a muted "(none)" placeholder so the DM sees the
+   * structure regardless of which side carried content.
+   */
+  private renderDualCard(r: DualCardResponse): TemplateResult {
+    return html`
+      <div class="ai-dual-card">
+        <section class="ai-card ai-card-safe" aria-label="Safe to read aloud">
+          <header class="ai-card-head">
+            <span class="ai-card-badge ai-card-badge-safe">read aloud</span>
+          </header>
+          <div class="ai-card-body markdown">
+            ${r.safeHtml
+              ? unsafeHTML(r.safeHtml)
+              : html`<p class="muted">(none)</p>`}
+          </div>
+          ${this.inSession && r.safeHtml
+            ? html`<button
+                type="button"
+                class="ai-card-action"
+                @click=${() => this.onShareToChat?.()}
+              >
+                Share to chat
+              </button>`
+            : nothing}
+        </section>
+        <section class="ai-card ai-card-dm" aria-label="DM only — do not read aloud">
+          <header class="ai-card-head">
+            <span class="ai-card-badge ai-card-badge-dm"
+              >🔒 DM only — do not read aloud</span
+            >
+          </header>
+          <div class="ai-card-body markdown">
+            ${r.dmOnlyHtml
+              ? unsafeHTML(r.dmOnlyHtml)
+              : html`<p class="muted">(none)</p>`}
+          </div>
+          ${r.dmOnlyHtml
+            ? html`<button
+                type="button"
+                class="ai-card-action ai-card-action-copy"
+                title="Copy DM-only text (do not read aloud)"
+                @click=${(e: Event) => copyDmOnly(e, r.dmOnlyHtml)}
+              >
+                Copy (do not read aloud)
+              </button>`
+            : nothing}
+        </section>
+        ${r.sources.length > 0 ? this.renderSourceChips(r.sources) : nothing}
+        ${r.responseId
+          ? html`<div class="ai-card-verdict">
+              <button
+                type="button"
+                class="ai-card-accept"
+                @click=${() => this.onAcceptResponse?.(r.responseId)}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                class="ai-card-reject"
+                @click=${() => this.onRejectResponse?.(r.responseId)}
+              >
+                Reject
+              </button>
+            </div>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private renderSourceChips(sources: SourceRef[]): TemplateResult {
+    return html`
+      <ul class="ai-card-sources">
+        ${sources.map(
+          (s) => html`
+            <li class="ai-card-source">
+              <code>${s.label}</code>${s.path
+                ? html`<span class="muted"> · ${s.path}</span>`
+                : nothing}
+            </li>
+          `
+        )}
+      </ul>
     `;
   }
 
@@ -241,6 +346,22 @@ export class AiPanel extends LitElement {
           @input=${(e: Event) =>
             this.onPromptDraftChange?.((e.target as HTMLTextAreaElement).value)}
         ></textarea>
+        <label class="ai-scope-toggle" title=${
+          this.scope === 'dm'
+            ? 'Including DM-only files in the prompt (resets after submit)'
+            : 'Public scope — DM-only files excluded from the prompt'
+        }>
+          <input
+            type="checkbox"
+            ?checked=${this.scope === 'dm'}
+            ?disabled=${this.loading}
+            @change=${(e: Event) =>
+              this.onSetScope?.(
+                (e.target as HTMLInputElement).checked ? 'dm' : 'public'
+              )}
+          />
+          <span>Include DM notes (resets after submit)</span>
+        </label>
         <div class="ai-form-actions">
           ${this.loading
             ? html`<button type="button" @click=${() => this.onCancel?.()}>
@@ -251,6 +372,39 @@ export class AiPanel extends LitElement {
       </form>
     `;
   }
+}
+
+/**
+ * Plain-text copy helper for the "do not read aloud" action.  The
+ * dmOnlyHtml prop is pre-sanitized; strip tags for the clipboard
+ * so the DM gets plain prose (the visible card already shows the
+ * rich version).  Fallback: select+copy via the DOM if the
+ * Clipboard API isn't available.
+ */
+function copyDmOnly(e: Event, html: string): void {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const text = tmp.textContent ?? '';
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text);
+    return;
+  }
+  // Fallback: range-select + execCommand('copy').
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+  } catch {
+    // ignore — user can manually copy from the visible card
+  } finally {
+    ta.remove();
+  }
+  // Acknowledge the event so click handlers don't double-fire.
+  e.preventDefault();
 }
 
 declare global {

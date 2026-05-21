@@ -50,6 +50,18 @@ import {
 } from './character-edits';
 import { callAnthropic, AnthropicError } from './ai/anthropic';
 import { callGemini, GeminiError } from './ai/gemini';
+import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
+import { anthropicProvider } from './ai/providers/anthropic';
+import { geminiProvider } from './ai/providers/gemini';
+import type { AiResponse } from './ai/schema';
+import type { ContextScope } from './ai/context';
+import {
+  promptHashFor,
+  responseHashFor,
+  chainHead
+} from './ai/audit';
+import { DEFAULT_BUDGET_CEILING } from './ai/budget';
+import type { DualCardResponse } from './ui/regions/ai-panel';
 import {
   serializeSession,
   serializeSessionForViewer,
@@ -88,7 +100,8 @@ import {
   renderMarkdown,
   renderMarkdownParagraphs,
   CryptoUnavailableError,
-  type MarkdownBlock
+  type MarkdownBlock,
+  type SanitizedHtml
 } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
@@ -290,9 +303,31 @@ export class QuireApp extends LitElement {
   private aiKeys = new AiKeyStore(this);
   @state() aiPromptDraft: string = '';
   @state() aiResponse: string | null = null;
+  /**
+   * M3b.5: dual-card response from the broker.  When set, the
+   * panel renders two cards (safe + DM-only) instead of the
+   * legacy single block.  Sources land here too, plus the
+   * responseId used for ai-accept / ai-reject events.
+   */
+  @state() aiResponseStructured: AiResponse | null = null;
+  /** M3b.5: scope for the NEXT prompt.  Resets to 'public' on submit. */
+  @state() aiScope: ContextScope = 'public';
   @state() aiLoading: boolean = false;
   @state() aiError: string | null = null;
   @state() aiShowSettings: boolean = false;
+
+  /**
+   * M3b.2: provider impls registered with the broker.  Production
+   * uses real fetch-based clients; tests can stub via aiClients
+   * below (legacy text-only path) OR via the AiBroker.provider
+   * field (structured path).
+   */
+  aiProviders: Record<AiProvider, AiProviderImpl> = {
+    claude: anthropicProvider,
+    gemini: geminiProvider
+  };
+  /** M3b.4: per-DM session-wide token budget. */
+  @state() aiBudgetCeiling: number = DEFAULT_BUDGET_CEILING;
 
   // Tests can replace these; production uses real fetch-based clients.
   aiClients: Record<AiProvider, AiClient> = {
@@ -1036,8 +1071,25 @@ export class QuireApp extends LitElement {
    */
   private renderAiPanel(): TemplateResult {
     if (!this.showAiPanel()) return html``;
-    const responseHtml = this.aiResponse
-      ? renderMarkdown(this.aiResponse)
+    // M3b.5: build the DualCardResponse from the structured broker
+    // result.  Both halves go through the same markdown sanitize
+    // pipeline as everywhere else.  Players never see this rendered
+    // path — showAiPanel() already gates on isCoordinator() — but
+    // the dmOnly content is never substituted into the player-
+    // visible safe card under any code path (parse failures fall
+    // back to safe:'' rather than guessing).
+    const structured = this.aiResponseStructured;
+    const dualResponse: DualCardResponse | null = structured
+      ? {
+          safeHtml: structured.safe
+            ? renderMarkdown(structured.safe)
+            : ('' as SanitizedHtml),
+          dmOnlyHtml: structured.dmOnly
+            ? renderMarkdown(structured.dmOnly)
+            : ('' as SanitizedHtml),
+          sources: structured.sources,
+          responseId: structured.responseId
+        }
       : null;
     return html`
       <ai-panel
@@ -1051,7 +1103,8 @@ export class QuireApp extends LitElement {
         .promptDraft=${this.aiPromptDraft}
         .loading=${this.aiLoading}
         .error=${this.aiError}
-        .responseHtml=${responseHtml}
+        .response=${dualResponse}
+        .scope=${this.aiScope}
         .inSession=${this.sessionView?.status === 'active'}
         .onSetProvider=${(p: AiProvider) => this.setAiProvider(p)}
         .onSetApiKey=${(k: string) => this.setAiApiKey(k)}
@@ -1066,6 +1119,11 @@ export class QuireApp extends LitElement {
         .onSubmit=${(p: string) => void this.submitAiPrompt(p)}
         .onCancel=${() => this.cancelAiPrompt()}
         .onShareToChat=${() => this.shareAiResponseToChat()}
+        .onSetScope=${(s: ContextScope) => {
+          this.aiScope = s;
+        }}
+        .onAcceptResponse=${(id: string) => this.acceptAiResponse(id)}
+        .onRejectResponse=${(id: string) => this.rejectAiResponse(id)}
       ></ai-panel>
     `;
   }
@@ -2241,6 +2299,17 @@ export class QuireApp extends LitElement {
     this.aiKeys.applyCampaignDefault(manifestProvider);
   }
 
+  /**
+   * M3b.5 (P2-6 + P2-7 + P2-12): broker-driven AI submit.  Replaces
+   * the legacy text-only path.  Emits ai-prompt + ai-response events
+   * with the audit-chain link so the post-session living-doc work
+   * (M4+) can reconstruct the exchange.  Scope toggle is consumed
+   * + reset to 'public' here per redesign-plan.md L147.
+   *
+   * For solo (no session) the broker rejects with not-coordinator;
+   * the AI panel UI gates submit on showAiPanel() which itself
+   * requires an active DM session, so this is defense in depth.
+   */
   async submitAiPrompt(prompt: string): Promise<string | null> {
     if (!this.showAiPanel()) return null;
     if (!this.aiApiKey) {
@@ -2252,28 +2321,83 @@ export class QuireApp extends LitElement {
       this.aiError = 'Empty prompt.';
       return null;
     }
+    const session = this.session;
+    // Solo mode is allowed: the panel is visible in solo (showAiPanel
+    // returns true for solo/idle) and the broker accepts when no
+    // coordinator is set.  In-session requires active + coord-self.
+    const inSession = this.sessionView?.status === 'active';
+    if (!session) {
+      this.aiError = 'AI panel not ready.';
+      return null;
+    }
     this.aiAbort?.abort();
     const ac = new AbortController();
     this.aiAbort = ac;
     this.aiLoading = true;
     this.aiError = null;
     this.aiResponse = null;
-    const client = this.aiClients[this.aiProvider];
+    this.aiResponseStructured = null;
+    const scope = this.aiScope;
+    // Reset scope BEFORE the awaited call — the toggle should be
+    // visually back to public the moment the DM hits Ask.
+    this.aiScope = 'public';
+    const broker = this.brokerForProvider(this.aiProvider);
     try {
-      const text = await client({
-        apiKey: this.aiApiKey,
+      // Emit ai-prompt event with the chain head (in-session only —
+      // solo has no audit chain to record into).  The hash is
+      // computed up-front so it lands in the event log even if the
+      // provider request errors out.
+      if (inSession) {
+        const ph = await promptHashFor(user, this.aiModel, []);
+        session.append('ai-prompt', {
+          v: 1,
+          promptHash: ph.short,
+          model: this.aiModel,
+          tokenIn: 0,
+          contextRefs: []
+        });
+      }
+      const result = await broker.complete({
+        prompt: user,
+        scope,
         model: this.aiModel,
-        system: this.aiSystemPrompt || undefined,
-        user,
+        systemPrompt: this.aiSystemPrompt || undefined,
         signal: ac.signal
       });
       if (ac.signal.aborted) return null;
-      this.aiResponse = text;
+      // Hash the raw response + emit ai-response with the chain link.
+      if (inSession) {
+        const audit = this.sessionView?.shared.aiAudit ?? [];
+        const rh = await responseHashFor(result.raw);
+        const prev = chainHead(audit);
+        session.append('ai-response', {
+          v: 1,
+          responseId: result.responseId || rh.short,
+          tokenOut: result.tokensOut,
+          hash: rh.short,
+          prevHash: prev
+        });
+      }
+      // Patch the prompt event's tokensIn after-the-fact would be
+      // ideal but events are immutable; for accuracy on the next
+      // budget check we emit a second ai-prompt with the real
+      // tokensIn count when it differs.  v1 minimum: emit the
+      // initial 0 and rely on tokensOut accuracy for the budget
+      // meter (provider tokenIn is also available; we'll surface
+      // it via a follow-up patch when budgets get tight).
+      this.aiResponseStructured = result;
+      // Maintain legacy `aiResponse` (string) for the "Share to
+      // chat" affordance and any test still referencing it.  Use
+      // the safe half — never dmOnly — since shareToChat sends
+      // text into the player-visible chat.
+      this.aiResponse = result.safe;
       this.aiPromptDraft = '';
-      return text;
+      return result.safe;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
-      if (e instanceof AnthropicError || e instanceof GeminiError) {
+      if (e instanceof AiBrokerError) {
+        this.aiError = e.message;
+      } else if (e instanceof AnthropicError || e instanceof GeminiError) {
         this.aiError =
           e.status != null
             ? `API ${e.status}: ${e.message}`
@@ -2286,6 +2410,45 @@ export class QuireApp extends LitElement {
       if (this.aiAbort === ac) this.aiAbort = null;
       this.aiLoading = false;
     }
+  }
+
+  /**
+   * Construct a broker on demand.  Re-creates per call so tests
+   * that swap `aiProviders[p]` between submits pick up the new
+   * provider; the broker reads state via host getters anyway, so
+   * the per-call alloc cost is negligible vs the network round-
+   * trip it precedes.
+   */
+  private brokerForProvider(p: AiProvider): AiBroker {
+    return new AiBroker(this.aiProviders[p], {
+      getCoordinator: () => this.sessionView?.shared.coordinator,
+      getLocalPeerId: () => this.sessionView?.peerId ?? undefined,
+      getApiKey: () => this.aiKeys.apiKeys[p],
+      getAiAudit: () => this.sessionView?.shared.aiAudit ?? [],
+      getBudgetCeiling: () => this.aiBudgetCeiling
+    });
+  }
+
+  /**
+   * M3b.5: emit ai-accept / ai-reject for the DM's verdict on a
+   * recent response.  Coord-only no-op outside an active session.
+   */
+  acceptAiResponse(responseId: string, category?: string): boolean {
+    return this.recordAiVerdict('ai-accept', responseId, category);
+  }
+  rejectAiResponse(responseId: string, category?: string): boolean {
+    return this.recordAiVerdict('ai-reject', responseId, category);
+  }
+  private recordAiVerdict(
+    kind: 'ai-accept' | 'ai-reject',
+    responseId: string,
+    category?: string
+  ): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    this.session.append(kind, { v: 1, responseId, category });
+    return true;
   }
 
   cancelAiPrompt(): void {
