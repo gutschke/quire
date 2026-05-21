@@ -51,6 +51,53 @@ describe('SessionController — solo', () => {
     expect(() => ctl.append('chat', { text: 'hi' })).not.toThrow();
     expect(ctl.view().shared.chat).toEqual([]);
   });
+
+  it('exposes filteredShared identical to shared in solo (no peer)', () => {
+    // No peerId yet, so filterForViewer is bypassed (returns shared
+    // unchanged); both fields should reference an empty state.
+    const ctl = new SessionController(new TestNetwork().factory('host'));
+    const v = ctl.view();
+    expect(v.filteredShared).toBe(v.shared);
+  });
+});
+
+describe('SessionController — filteredShared (P0-4-followup)', () => {
+  it('returns identity (same reference) when local peer is a coord-holder', async () => {
+    // Host joins; local peer becomes coord-holder; filter returns
+    // shared unchanged without allocation.
+    const net = new TestNetwork();
+    const ctl = new SessionController(net.factory('host'));
+    await ctl.host('DM');
+    const v = ctl.view();
+    expect(v.shared.coordHolders.has(v.peerId!)).toBe(true);
+    expect(v.filteredShared).toBe(v.shared);
+  });
+
+  it('strips DM-only fields when local peer is not a coord-holder', async () => {
+    // Synthesize a guest's view by spinning up two controllers in
+    // an in-memory network: host claims coord first; guest joins
+    // and sees only the public bits via filteredShared.
+    const net = new TestNetwork();
+    const host = new SessionController(net.factory('host'));
+    await host.host('DM');
+    const guest = new SessionController(net.factory('guest'));
+    await guest.join('host', 'Player');
+    // Wait for sync to propagate.
+    await Promise.resolve();
+    await Promise.resolve();
+    const v = guest.view();
+    // Guest is NOT in coordHolders.
+    expect(v.shared.coordHolders.has(v.peerId!)).toBe(false);
+    // filteredShared should be a different object with DM-only fields wiped.
+    expect(v.filteredShared).not.toBe(v.shared);
+    expect(v.filteredShared.threadDebt).toEqual({});
+    expect(v.filteredShared.pinnedNpcs).toEqual([]);
+    expect(v.filteredShared.scratchNotes).toEqual([]);
+    expect(v.filteredShared.aiAudit).toEqual([]);
+    // Player-visible fields are preserved.
+    expect(v.filteredShared.coordinator).toBe(v.shared.coordinator);
+    expect(v.filteredShared.chat).toEqual(v.shared.chat);
+  });
 });
 
 describe('SessionController — host', () => {

@@ -18,7 +18,7 @@ import { Peer } from './core/peer';
 import type { QuireEvent } from './core/event-log';
 import type { Transport, Unsubscribe } from './core/transport';
 import type { SessionState as SharedState } from './core/state';
-import { emptyState, KNOWN_EVENT_KINDS } from './core/state';
+import { emptyState, filterForViewer, KNOWN_EVENT_KINDS } from './core/state';
 
 export type SessionMode = 'solo' | 'host' | 'guest';
 export type SessionStatus = 'idle' | 'connecting' | 'active' | 'error';
@@ -29,7 +29,29 @@ export interface SessionView {
   peerId: string | null;
   pairingCode: string | null;
   connectedPeers: string[];
+  /**
+   * Full, unfiltered shared state.  Reading this in a renderer is a
+   * code smell unless the renderer is a DM-only surface; player-
+   * visible renderers should read `filteredShared` instead so they
+   * cannot accidentally leak DM-only fields (threadDebt,
+   * scratchNotes, aiAudit, etc.) that ship in M3a+.
+   *
+   * Persistence / save-export / event-replay code paths legitimately
+   * need the raw state and should keep using `shared`.
+   */
   shared: SharedState;
+  /**
+   * Same as `shared` but with DM-only fields stripped when the local
+   * peer (peerId) is NOT in coordHolders.  When the local peer is a
+   * coord-holder (DM or past-coord), this is identical to `shared`.
+   *
+   * P0-4-followup (M1 gate Engine finding): adding this accessor so
+   * M2 region components have a safe default.  Renderers that
+   * migrate to use it cannot leak DM-only state.  Migration target:
+   * by M3a, all player-visible renderers SHOULD use filteredShared
+   * exclusively; `shared` becomes the DM-side read path.
+   */
+  filteredShared: SharedState;
   error: string | null;
 }
 
@@ -68,6 +90,16 @@ export class SessionController {
   constructor(private readonly factory: TransportFactory) {}
 
   view(): SessionView {
+    const shared = this.peer ? this.peer.state() : emptyState();
+    // filteredShared applies the M3a+ DM-only render gate.  When the
+    // local peer is null (no session) or is a coord-holder, the
+    // filter passes the state through unchanged (no allocation in
+    // the coord-holder hot path).  See filterForViewer for the
+    // visibility rules.
+    const filteredShared =
+      this.peerId === null
+        ? shared
+        : filterForViewer(shared, this.peerId);
     return {
       mode: this.mode,
       status: this.status,
@@ -76,7 +108,8 @@ export class SessionController {
       connectedPeers: this.transport
         ? Array.from(this.transport.connectedPeers())
         : [],
-      shared: this.peer ? this.peer.state() : emptyState(),
+      shared,
+      filteredShared,
       error: this.error
     };
   }
