@@ -22,6 +22,24 @@ import {
   STAT_MIN,
   STAT_MAX
 } from './character-edits';
+import { callAnthropic, AnthropicError } from './ai/anthropic';
+
+const AI_KEY_STORAGE = 'quire.ai.apiKey';
+const AI_SYSTEM_STORAGE = 'quire.ai.systemPrompt';
+const AI_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+const AI_DEFAULT_SYSTEM = `You are a quiet TTRPG-aide voice for a DM running a session of Quire.
+Respond in 1–3 short paragraphs, in-fiction when describing scenes or NPC
+beats. Avoid meta-commentary, headers, lists, and "as the DM" framing.
+The DM will paraphrase your text in their own voice; keep it tight,
+sensory, and easy to read aloud.`;
+
+export type AiClient = (req: {
+  apiKey: string;
+  model: string;
+  system?: string;
+  user: string;
+  signal?: AbortSignal;
+}) => Promise<string>;
 import { renderMarkdown, type SanitizedHtml } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
@@ -578,6 +596,113 @@ export class QuireApp extends LitElement {
       color: light-dark(#555, #aaa);
       font-size: 0.85em;
     }
+
+    .ai-panel {
+      border-color: light-dark(#c8b8d8, #4a3a5a);
+      background: light-dark(#fbf8fd, #1f1a25);
+    }
+
+    .ai-panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .ai-panel-head h2 {
+      margin: 0;
+    }
+
+    .ai-settings-toggle {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+
+    .ai-settings {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .ai-settings label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.9em;
+    }
+
+    .ai-settings input,
+    .ai-settings textarea {
+      padding: 0.3rem 0.5rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+      font-family: ui-monospace, monospace;
+    }
+
+    .ai-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .ai-form textarea {
+      padding: 0.4rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#fff, #111);
+      color: inherit;
+      font-family: inherit;
+      resize: vertical;
+    }
+
+    .ai-form-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
+
+    .ai-form button {
+      padding: 0.3rem 0.85rem;
+      border: 1px solid light-dark(#9978b8, #6a4d8a);
+      border-radius: 4px;
+      background: light-dark(#ede4f6, #2a2030);
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .ai-error {
+      color: light-dark(#a01010, #ff7070);
+      font-size: 0.9em;
+      margin: 0.5rem 0 0;
+    }
+
+    .ai-response {
+      margin-top: 0.75rem;
+      padding: 0.5rem 0.75rem;
+      background: light-dark(#fff, #15101a);
+      border: 1px solid light-dark(#e0d5ec, #3a2e4a);
+      border-radius: 4px;
+    }
+
+    .ai-response > button {
+      margin-top: 0.5rem;
+      padding: 0.25rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.85em;
+    }
   `;
 
   @state() private appState: AppState = { kind: 'idle' };
@@ -588,6 +713,18 @@ export class QuireApp extends LitElement {
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
+  @state() aiApiKey: string = '';
+  @state() aiSystemPrompt: string = AI_DEFAULT_SYSTEM;
+  @state() aiPromptDraft: string = '';
+  @state() aiResponse: string | null = null;
+  @state() aiLoading: boolean = false;
+  @state() aiError: string | null = null;
+  @state() aiShowSettings: boolean = false;
+
+  // Tests can replace this; production uses Anthropic via fetch.
+  aiClient: AiClient = callAnthropic;
+  aiModel: string = AI_DEFAULT_MODEL;
+  private aiAbort: AbortController | null = null;
 
   // Tests can replace this before connectedCallback runs to swap in
   // an in-memory transport factory.
@@ -607,6 +744,16 @@ export class QuireApp extends LitElement {
     this.unsubscribeSession = this.session.subscribe((v) => {
       this.sessionView = v;
     });
+    // Hydrate AI settings from localStorage if available.  Wrapped in
+    // a try because localStorage can throw in some sandboxed contexts.
+    try {
+      const k = window.localStorage?.getItem(AI_KEY_STORAGE);
+      if (k) this.aiApiKey = k;
+      const s = window.localStorage?.getItem(AI_SYSTEM_STORAGE);
+      if (s) this.aiSystemPrompt = s;
+    } catch {
+      /* ignore */
+    }
     void this.navigateToRoute(parseRoute(window.location.search));
   }
 
@@ -775,7 +922,118 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
-    return html`${this.renderSessionBar()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}`;
+    return html`${this.renderSessionBar()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}${this.renderAiPanel()}`;
+  }
+
+  private renderAiPanel(): TemplateResult {
+    if (!this.showAiPanel()) return html``;
+    const hasKey = this.aiApiKey.length > 0;
+    return html`
+      <section class="card ai-panel">
+        <div class="ai-panel-head">
+          <h2>DM aide</h2>
+          <button
+            type="button"
+            class="ai-settings-toggle"
+            @click=${() => {
+              this.aiShowSettings = !this.aiShowSettings;
+            }}
+          >
+            ${this.aiShowSettings ? 'Hide settings' : 'Settings'}
+          </button>
+        </div>
+        ${this.aiShowSettings || !hasKey
+          ? this.renderAiSettings()
+          : nothing}
+        ${hasKey ? this.renderAiPromptForm() : nothing}
+        ${this.aiError
+          ? html`<p class="ai-error">${this.aiError}</p>`
+          : nothing}
+        ${this.aiResponse
+          ? html`
+              <div class="ai-response">
+                <div class="markdown">
+                  ${unsafeHTML(renderMarkdown(this.aiResponse))}
+                </div>
+                ${this.sessionView?.status === 'active'
+                  ? html`
+                      <button
+                        type="button"
+                        @click=${() => this.shareAiResponseToChat()}
+                      >
+                        Share to chat
+                      </button>
+                    `
+                  : nothing}
+              </div>
+            `
+          : nothing}
+      </section>
+    `;
+  }
+
+  private renderAiSettings(): TemplateResult {
+    return html`
+      <div class="ai-settings">
+        <label>
+          <span>Anthropic API key</span>
+          <input
+            type="password"
+            .value=${this.aiApiKey}
+            placeholder="sk-ant-…"
+            autocomplete="off"
+            @input=${(e: Event) =>
+              this.setAiApiKey((e.target as HTMLInputElement).value)}
+          />
+        </label>
+        <label>
+          <span>System prompt</span>
+          <textarea
+            rows="4"
+            .value=${this.aiSystemPrompt}
+            @input=${(e: Event) =>
+              this.setAiSystemPrompt((e.target as HTMLTextAreaElement).value)}
+          ></textarea>
+        </label>
+        <p class="muted">
+          Stored only in this browser's localStorage. Sent directly to
+          api.anthropic.com using your key.
+        </p>
+      </div>
+    `;
+  }
+
+  private renderAiPromptForm(): TemplateResult {
+    return html`
+      <form
+        class="ai-form"
+        @submit=${(e: Event) => {
+          e.preventDefault();
+          void this.submitAiPrompt(this.aiPromptDraft);
+        }}
+      >
+        <textarea
+          rows="3"
+          .value=${this.aiPromptDraft}
+          placeholder="Describe Yui's reaction. Or: NPC voice for the gate agent. Or: three sensory beats from the cabin."
+          aria-label="AI prompt"
+          ?disabled=${this.aiLoading}
+          @input=${(e: Event) => {
+            this.aiPromptDraft = (e.target as HTMLTextAreaElement).value;
+          }}
+        ></textarea>
+        <div class="ai-form-actions">
+          ${this.aiLoading
+            ? html`<button
+                type="button"
+                @click=${() => this.cancelAiPrompt()}
+              >
+                Cancel
+              </button>`
+            : html`<button type="submit">Ask</button>`}
+        </div>
+      </form>
+    `;
   }
 
   private renderRevealBanner(): TemplateResult {
@@ -1400,6 +1658,102 @@ export class QuireApp extends LitElement {
         ? this.sessionView.shared.pcEdits[character.id]
         : undefined;
     return applyCharacterEdits(character.record, overrides);
+  }
+
+  /**
+   * Whether the AI panel should render: solo (so DMs can prep) OR
+   * active session as coordinator (DM during play).  Hidden from
+   * non-coordinator guests entirely.
+   */
+  showAiPanel(): boolean {
+    if (!this.sessionView) return false;
+    if (this.sessionView.mode === 'solo' && this.sessionView.status === 'idle')
+      return true;
+    if (this.sessionView.status === 'active' && this.isCoordinator()) return true;
+    return false;
+  }
+
+  setAiApiKey(key: string): void {
+    this.aiApiKey = key;
+    try {
+      if (key) {
+        window.localStorage?.setItem(AI_KEY_STORAGE, key);
+      } else {
+        window.localStorage?.removeItem(AI_KEY_STORAGE);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  setAiSystemPrompt(text: string): void {
+    this.aiSystemPrompt = text;
+    try {
+      if (text && text !== AI_DEFAULT_SYSTEM) {
+        window.localStorage?.setItem(AI_SYSTEM_STORAGE, text);
+      } else {
+        window.localStorage?.removeItem(AI_SYSTEM_STORAGE);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async submitAiPrompt(prompt: string): Promise<string | null> {
+    if (!this.showAiPanel()) return null;
+    if (!this.aiApiKey) {
+      this.aiError = 'Set an API key first.';
+      return null;
+    }
+    const user = prompt.trim();
+    if (!user) {
+      this.aiError = 'Empty prompt.';
+      return null;
+    }
+    this.aiAbort?.abort();
+    const ac = new AbortController();
+    this.aiAbort = ac;
+    this.aiLoading = true;
+    this.aiError = null;
+    this.aiResponse = null;
+    try {
+      const text = await this.aiClient({
+        apiKey: this.aiApiKey,
+        model: this.aiModel,
+        system: this.aiSystemPrompt || undefined,
+        user,
+        signal: ac.signal
+      });
+      if (ac.signal.aborted) return null;
+      this.aiResponse = text;
+      this.aiPromptDraft = '';
+      return text;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return null;
+      if (e instanceof AnthropicError) {
+        this.aiError =
+          e.status != null
+            ? `API ${e.status}: ${e.message}`
+            : e.message;
+      } else {
+        this.aiError = (e as Error).message ?? 'AI request failed.';
+      }
+      return null;
+    } finally {
+      if (this.aiAbort === ac) this.aiAbort = null;
+      this.aiLoading = false;
+    }
+  }
+
+  cancelAiPrompt(): void {
+    this.aiAbort?.abort();
+    this.aiAbort = null;
+    this.aiLoading = false;
+  }
+
+  shareAiResponseToChat(): boolean {
+    if (!this.aiResponse) return false;
+    return this.submitChat(`[AI] ${this.aiResponse}`);
   }
 
   submitChat(text: string): boolean {
