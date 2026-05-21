@@ -57,7 +57,12 @@ Format: one entry per finding, newest at the bottom.
 ## M2 — 2026-05-21
 
 - **Ratchet creep, second iteration.** LOC cap was raised twice (≤800 → ≤1200 at M1; tiered to ≤2750/≤1500/≤900 at M1 gate). M2 missed ≤1500 by 939 LOC.
-  - Resolution: **acked (Adversarial recommendation accepted)**. The cap is NOT being raised again at M2. STATUS records the criterion as missed (`[ ]`). User is given the decision at M2 gate close: hold the cap (recommended), do a follow-up extraction batch, or accept a third re-baseline.
+  - Resolution: **partial ack + reframe** (user pushback led to code-quality expert evaluation 2026-05-21).
+    - Adversarial's process diagnosis was right: the LOC target moved when convenient.
+    - Adversarial's design implication (chase the number) was wrong: LOC was a proxy for navigability + vocabulary-separation, not the goal.
+    - At 2439 LOC, the file is a coordinator with three identifiable fat spots (renderSessionBar 216 LOC, navigateToRoute policy logic 80 LOC, AI panel cluster 174 LOC). It is NOT a god-object.
+    - M3a's ≤900 LOC cap was unphysical for a Lit root with legitimate dispatch+lifecycle+input-handler responsibilities. Replaced with structural criteria: max-method-LOC ≤80, delegation ratio ≥75%, three named extractions (`<session-bar>`, `route-policy.ts`, `<ai-panel>`), safety-net ≤2000 LOC. These force the same work the LOC cap was incentivizing, but with the failure mode aligned to "the code is bad" rather than "the number is bad."
+    - See `runtime/design/review-history/` and the agentId in the Adversarial M2 review transcript for the full expert rationale.
 
 - **Pace, second iteration.** M2 wrapped in ~30 minutes wall-clock vs 2-3-week estimate. Same yellow flag as M1.
   - Resolution: **acked (plan)**. STATUS records the cadence delta; redesign-plan.md adds P-M3a-pace-acknowledge for an honest time-estimate revision at M3a entry.

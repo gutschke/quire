@@ -50,15 +50,14 @@ The M2 strict-extraction discipline preserved rendered output but did not reach 
 
 M2 wrapped in ~30 minutes of wall-clock work (first commit 11:38 → STATUS pre-gate 12:10).  9 commits.  The execution-plan estimated M2 at 2-3 weeks.  M1 took ~3 hours.  The Adversarial M1 reviewer flagged the M1 pace and asked the question "if M2 also wraps fast with similar gaps, the planner is over-stating milestone difficulty" — M2 confirmed that.  An honest revision of the execution-plan's time estimates is due at M3a entry.
 
-## Open questions for the gate
+## Gate close — resolutions
 
-1. **LOC overrun (USER ACK REQUIRED).**  quire-app.ts is 2439 LOC vs M2's ≤1500 target (939 LOC over).  The Adversarial M2 reviewer explicitly recommended NOT raising the cap again, citing ratchet creep (the cap was already raised from ≤800 to ≤1200 to ≤2750/≤1500/≤900).  Path forward options for the user:
-   - **(A — Adversarial-recommended)**: hold the cap.  Record the criterion as missed (`[ ]`) — done above.  M3a discipline preserves ≤900.  If M3a polish must descope to hit ≤900, use the descope ladder authority (execution-plan.md § "Descope ladder").
-   - **(B)**: ship a follow-up extraction commit at M2 close, landing 4-6 more renderXxx → region commits to approach ≤1500.  Estimated ~1-2 hours.  Drops the cap honestly to ~2000 LOC.
-   - **(C)**: third re-baseline.  Adversarial considers this normalized ratchet creep.
-2. **No e2e for raise-hand** (Adversarial low).  Cross-cutting "round-trip e2e per milestone" rule was technically violated — only materializer + integration tests landed.  Filed as P0-12-followup-e2e for M3a; not blocking.
-3. **Scene-strip frontmatter** (now in deviations above).
-4. **Tap-to-expand on player-rail** (now in deviations above).
+1. **LOC cap question (resolved 2026-05-21).** User pushback led to a code-quality expert evaluation that reframed the question: LOC was a proxy for navigability + vocabulary-separation, not the goal itself. Decisions:
+   - M2 LOC criterion stays MISSED (`[ ]`) honestly. Ratchet creep declined.
+   - M3a's ≤900 LOC cap REPLACED with structural criteria: max-method-LOC ≤80, delegation ratio ≥75%, three named extractions (`<session-bar>` region, `route-policy.ts` helper, `<ai-panel>` region), safety-net ≤2000 LOC. See `execution-plan.md` § M1 acceptance — M3a row, and `redesign-plan.md` § M3a HARD acceptance criteria.
+2. **No e2e for raise-hand** (Adversarial low). Cross-cutting "round-trip e2e per milestone" rule was technically violated — only materializer + integration tests landed. Filed as P0-12-followup-e2e for M3a; not blocking.
+3. **Scene-strip frontmatter** (in deviations above; promoted to M3a HARD criterion).
+4. **Tap-to-expand on player-rail** (in deviations above; M3a polish).
 
 ## M2 reviewer roster
 

@@ -122,7 +122,19 @@ This pattern is added to the user's `feedback_tdd_and_critic_workflow` memory as
 
 **Acceptance criteria:**
 
-- [ ] `src/quire-app.ts` is ≤ **2750 LOC at M1 close**, ≤ **1500 at M2 close**, ≤ **900 at M3a close**. Tiered re-baseline (user ack 2026-05-21) replacing the original ≤1200-at-M1 target; the original cap miscalibrated by not budgeting the `renderXxx` templates that the facade-migration pattern defers to M2 region work. The tiers tie reduction to specific milestones so reviewers can check progress, not just an absolute end-state.
+- [ ] `src/quire-app.ts` is ≤ **2750 LOC at M1 close**, ≤ **1500 at M2 close**, then **STRUCTURAL CRITERIA at M3a close** (replacing the LOC-only cap — see "M3a acceptance" below).  Tiered re-baseline (user ack 2026-05-21) revised again at M2-gate (user ack 2026-05-21) after a code-quality expert evaluation concluded the LOC target was measuring the wrong property: a coordinator with legitimate dispatch+lifecycle+input-handler responsibilities cannot honestly hit ≤900, but it CAN hit named structural caps.
+
+  M3a structural acceptance criteria (replaces ≤900 LOC):
+  - `quire-app.ts` ≤ **2000 LOC** (safety-net ceiling, not the load-bearing metric)
+  - Longest method body in `quire-app.ts` ≤ **80 LOC**
+  - At least **12 of 16** `renderXxx` / `render` / region-shaped methods are pure delegations (compute props + instantiate region element + wire callbacks)
+  - `<session-bar>` region exists (extracts `renderSessionBar`, currently 216 LOC)
+  - `route-policy.ts` helper exists (extracts the gating logic from `navigateToRoute`)
+  - `<ai-panel>` region exists (extracts `renderAiPanel` + `renderAiSettings` + `renderAiPromptForm`)
+
+  Rationale: LOC was a proxy for "navigability under change" and "vocabularies don't co-mingle in one file."  At 2439 LOC the file already passes the latter for 5 of the 6 vocabularies it touches — the remaining offender is `renderSessionBar` (216 LOC, mixes solo/connecting/error/active states) plus the AI panel cluster (174 LOC) plus the route-gating policy embedded in `navigateToRoute` (~80 LOC of the 185).  After three named extractions, all five expert metrics pass.  Chasing ≤900 LOC would require extracting things that don't deserve their own file and inverting the cost/benefit on the next contributor.
+
+  See `runtime/design/review-history/adversarial.md` (M2 entry) for the full code-quality expert's rationale.
 - [ ] `src/controllers/session-bootstrap.ts` extracted — encapsulates campaign loading, session lifecycle (host/join/leave), R3-A pre-session route gating, R3-C campaign discovery.
 - [ ] `src/controllers/autosave-controller.ts` extracted — debounced autosave with quota warning.
 - [ ] `src/controllers/ai-key-store.ts` extracted — provider selection, key management, legacy migration.
