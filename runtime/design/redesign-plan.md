@@ -54,13 +54,18 @@ Hostile-input tests must verify that `scratch-note` events never appear in a pla
 
 ```
 REVEALED_BLOCKS_PER_SCENE_CAP = 256   /* hashes per scene, well above any realistic length */
-BLOCK_HASH_LENGTH             = 12    /* hex chars; ~48 bits, more than enough vs. collision */
+BLOCK_HASH_LENGTH             = 16    /* hex chars; 64 bits — collision probability 1-in-130B
+                                          at 256K hashes (256 blocks × 1000 scenes) */
 MAP_BLOB_COUNT_CAP            = 500   /* per scene */
 PINNED_NPC_CAP                = 50
 SCRATCH_NOTE_CAP              = 5000
 ```
 
 **Per-case validator convention.** With ~17 new event kinds added to the `applyEventToState` switch in `src/core/state.ts`, each case gains a payload validator. Convention: define one top-of-file helper per kind (`isScratchNotePayload`, `isMapBlobAddPayload`, `isThreadDebtSetPayload`, ...) following the existing `isPlainObjectPayload` / `isBoundedString` / `isSafeKey` style. Each validator is independently testable from `state.hostile.test.ts`. Do NOT inline payload validation in the switch cases; the resulting drift across 17 cases becomes unreviewable.
+
+**Payload versioning.** Every new event payload carries an explicit `v: 1` field. Materializers check `v` and reject unknown versions, surfacing them via the H-4 unknown-kind banner. This buys freedom to revise payload shapes through M3a/M3b without breaking saves — a critical-path concern because the content-hash addressing for `scene-reveal-paragraph` was itself a late change driven by adversarial critique.
+
+**Block-hash compute pipeline.** `getBlockHashes(scenePath, source): Promise<string[]>` lives in `src/markdown/block-hashes.ts` with a `WeakMap<source, hash[]>` cache. Hashes are computed ONCE per scene load via `crypto.subtle.digest('SHA-256', ...)`, then fed synchronously to `renderMarkdownParagraphs`. Render is sync; hashing is async at load time only. This avoids the per-frame async-in-render problem that a naive in-renderer hash would cause.
 
 ## SessionState shape after additions
 
@@ -142,6 +147,16 @@ Validation lives in `src/ai/context.ts` and is independently testable from `ai/c
 
 **Untrusted content wrapping**: every campaign-sourced string passed in `contextRefs` is wrapped in `<untrusted_content source="...">…</untrusted_content>`, with literal `</untrusted_content>` strings replaced by `<!--UC_CLOSE-->` sentinels. A **load-time validator** in `campaign-loader.ts` rejects raw campaign content that contains the literal sentinel `<!--UC_CLOSE-->`. Hostile-input tests: literal sentinel in body, frontmatter values, YAML keys, code fences, HTML comments inside Markdown.
 
+**Differentiated retry strategy by call site.**
+- `complete()` — latency-sensitive (DM is waiting on the typing cursor). On parse failure: return degraded `{safe:'', dmOnly:'(AI response was not in the expected format; raw text saved to audit log)', sources:[]}` immediately.
+- `proposeChanges()` — batch operation (DM is reviewing a diff). On parse failure: retry up to 2× with a clarification prompt appended ("Your previous response did not validate against the schema. Please return ONLY a JSON array of DiffProposal objects."), then degrade if still failing.
+
+**Provider quirks the broker must handle.**
+- **Anthropic tool use** can include a leading `text` block before the `tool_use` block (Claude often narrates its tool choice). Broker iterates `content[]` and picks the first `tool_use` block, treating absent `tool_use` as parse failure.
+- **Gemini structured output** does NOT support `oneOf`/`anyOf` for response root. `DiffProposal`'s `category` union is worked around via a single object with all category fields optional, validated client-side.
+- **Both providers** occasionally violate their schemas under load. Tests at the `fetch` mock layer (not the SDK mock) cover malformed JSON, wrong shape, mixed text/tool_use blocks, and truncated responses.
+- **Runtime fallback** for text-only response despite forced tool choice: broker attempts a second-pass regex extraction for `safe:` and `dmOnly:` blocks before synthesizing the parse-error response.
+
 **Audit chain**: every prompt/response is hashed and chained against the previous (`{prevHash, promptHash, responseHash, ts, tokens}`). Chain head goes to events.jsonl via `ai-prompt`/`ai-response`. Full text lives in IndexedDB on the DM's machine, keyed by hash. After coord handoff, the new coordinator picks up the chain head from `aiAudit` (the latest event's `responseHash` becomes the new `prevHash`) and appends from there.
 
 **Budget**: `tokensIn + tokensOut` accumulated per session, persisted in IndexedDB keyed by session id, displayed in Topbar widget. Hard-stop above ceiling; warning above 80%. UI treatment when ceiling hit: AI prompt input disables; banner above input reads "Token budget reached for this session." Pending in-flight prompt is cancelled. The ceiling is configurable per-DM in Settings.
@@ -196,12 +211,16 @@ src/
 
 Shared services (`SessionController`, `AiBroker`, `CampaignLoader`, `WorkingCopy`) are provided via Lit context (`@lit/context`) — avoid prop-drilling.
 
-**Migration path** (do not rewrite all at once):
+**Migration path — facade-migration pattern** (do not rewrite all at once):
 
-1. Extract CSS to `src/ui/styles/tokens.css` and consume via `static styles`. Reclaims ~700 LOC of quire-app.ts immediately.
-2. Introduce the grid shell at the top of `render()`. Map current `renderXxx` methods into temporary region slots.
-3. One region at a time, extract to a region component. Existing `quire-app.*.test.ts` continue to pass because the root element still mediates events.
-4. Introduce `AppMode` once two modes exist.
+1. **Extract CSS.** Move all `static styles` content from `quire-app.ts` to `src/ui/styles/tokens.css` and per-region `static styles` strings. Tests untouched. Reclaims ~700 LOC.
+2. **Shell wrappers as slots.** Introduce `<quire-shell>` + region elements as Lit wrappers that `<slot>` the existing `renderXxx` output. The shell does no rendering of its own; `quire-app.render()` is unchanged. Tests untouched.
+3. **One region per commit (handlers stay on root).** For each region: keep the handler method on `QuireApp` exported via `@lit/context`. The region's template lives in the new component; the region dispatches `CustomEvent`s that `QuireApp` listens for and routes to the original method. Public methods on `QuireApp` are untouched — `quire-app.*.test.ts` continue to work because the test surface is the public methods on the root.
+4. **Handler migration (M2/M3a phase).** Once all regions are extracted as templates, refactor each region's internals to own its state. Tests need updates here.
+
+**E2E harness shim.** ~11 e2e files cast `document.querySelector('quire-app')` to private-method types (`multi-session.spec.ts`, `full-session.spec.ts`, `sync.spec.ts`, `soak.spec.ts`, etc.). P0-11 captures the surface as `QuireAppHooks` in `src/types/hooks.ts`; `quire-app` keeps the facade through M3a. After M3a, hooks may migrate per region.
+
+**Multi-region interaction tests** (`quire-app.chat.test.ts`, `.reveal.test.ts`, `.pc-edit.test.ts`) walk shadow-DOM textContent. After extraction the tree is `<quire-app><quire-shell><player-aside>…</player-aside></quire-shell></quire-app>` with two shadow boundaries. Add a `walkShadow(el): string` helper to the test setup and update test bodies once. This IS a forced edit to test code at extraction time — be honest about it in commit messages.
 
 ## Bundle budget
 
@@ -233,11 +252,17 @@ Task IDs (P0-1, P0-2, ...) are referenced by plan docs and commit messages.
 
 - **P0-1 — Grid-shell + theme tokens.** Extract CSS to `src/ui/styles/tokens.css` (oklch palette, clamp typography). Introduce `<quire-shell>` with five named slots. Initially fills slots with existing `renderXxx` outputs. **Files**: `src/quire-app.ts`, new `src/ui/shell/`, new `src/ui/styles/tokens.css`. **Blocks**: P1-*, P2-*.
 - **P0-2 — Mode state machine.** `AppMode = 'pre-session'|'in-session'|'post-session'|'authoring'|'solo-browse'` as a property on `QuireApp`; routing → mode mapping. **Files**: `src/routing.ts`, `src/quire-app.ts`, new `src/ui/modes/mode-state.ts`. **Blocks**: P3-*, P4-*.
-- **P0-3 — Region component decomposition.** Extract `<quire-rail>`, `<quire-stage>`, `<quire-aside>`, `<quire-dock>`, `<quire-topbar>` as stub Lit elements that accept a `view: SessionView` prop and forward events. **Files**: `src/ui/shell/*`. **Blocks**: P1-*, P2-*.
+- **P0-3 — Region component decomposition.** Extract `<quire-rail>`, `<quire-stage>`, `<quire-aside>`, `<quire-dock>`, `<quire-topbar>` as stub Lit elements that accept a `view: SessionView` prop and forward events. Region templates render initially via the facade-migration pattern (handlers stay on `QuireApp`, regions dispatch events). **Files**: `src/ui/shell/*`. **Blocks**: P1-*, P2-*.
 - **P0-4 — `filterForViewer` helper.** Centralize DM-only render gating. **Files**: `src/core/state.ts`. **Blocks**: P2-2, P2-3, P2-4, P2-5, P5-5.
-- **P0-5 — New event kinds registered.** Add all new kinds to `KNOWN_EVENT_KINDS` (no materializers yet) so concurrent feature work doesn't drift and forward-compat is preserved. **Files**: `src/core/state.ts`. **Blocks**: P1-7, P2-2, P2-3, P2-4, P2-5, P2-7, P2-11, P5-3.
+- **P0-5 — New event kinds registered with `v: 1` versioning.** Add all 17 new kinds to `KNOWN_EVENT_KINDS` (no materializers yet) so concurrent feature work doesn't drift and forward-compat is preserved. Every new payload schema carries explicit `v: 1`; materializers reject unknown `v`. **Files**: `src/core/state.ts`. **Blocks**: P1-7, P2-2, P2-3, P2-4, P2-5, P2-7, P2-11, P5-3.
 - **P0-6 — Hygiene: architecture.md UI shape + phone-first update.** Replace stale framing. **Files**: `quire/design/architecture.md`.
-- **P0-7 — CI bundle-size regression gate.** Add `vite build --report` to CI; fail when gzipped main chunk exceeds 110 KB or the authoring lazy chunk exceeds 150 KB. **Files**: CI workflow, `vite.config.ts` (size-limit plugin or equivalent). **Blocks**: none, but P4-3 verifies CodeMirror 6 fits the lazy budget.
+- **P0-7 — CI bundle-size regression gate.** Add `vite build --report` to CI; fail when gzipped main chunk exceeds 110 KB or the authoring lazy chunk exceeds 150 KB. Add `bundle-gate.test.ts` so the gate is regression-protected (not just a manual one-shot). **Files**: CI workflow, `vite.config.ts` (size-limit plugin or equivalent). **Blocks**: none, but P4-3 verifies CodeMirror 6 fits the lazy budget.
+- **P0-8 — Extract `session-bootstrap.ts`.** Encapsulate campaign loading, session host/join/leave lifecycle, R3-A pre-session route gating, R3-C campaign discovery. **Files**: new `src/controllers/session-bootstrap.ts`; extraction from `src/quire-app.ts`. **Blocks**: M1 LOC target.
+- **P0-9 — Extract `autosave-controller.ts`.** Debounced autosave with quota warning. **Files**: new `src/controllers/autosave-controller.ts`; extraction from `src/quire-app.ts`. **Blocks**: M1 LOC target.
+- **P0-10 — Extract `ai-key-store.ts`.** Provider selection, key management, legacy migration. **Files**: new `src/controllers/ai-key-store.ts`; extraction from `src/quire-app.ts`. **Blocks**: M1 LOC target.
+- **P0-11 — `QuireAppHooks` interface for e2e harness.** Capture the surface that ~11 e2e files cast `document.querySelector('quire-app')` to. Stable through M3a; can fragment per region after that. **Files**: new `src/types/hooks.ts`; e2e harness updates. **Blocks**: M1 acceptance ("all existing tests still pass").
+- **P0-12 — Peer version-gating at join.** Refuse joins from peers whose runtime announces an older `KNOWN_EVENT_KINDS` than M2's baseline. Clear "your DM is running a newer Quire — please update" error. Plus the H-4 unknown-kind banner for in-session events. **Files**: `src/session-controller.ts`, `src/quire-app.ts`. **Blocks**: prevents silent state divergence in mixed-version sessions.
+- **P0-13 — `WorkingCopy` IndexedDB store** (promoted from P4-1). Foundational primitive needed by M3a (scratch export filter relies on event-stripping; export targets a writable surface) and M4 (per-category git commits). Read/write/list/revert/commit API. Lazy-init OK. **Files**: new `src/sync/working-copy.ts`. **Blocks**: M3a `serializeSessionForViewer` export path, M4 commit path.
 
 ### P1 — Critical in-session ergonomics
 
@@ -275,7 +300,7 @@ Task IDs (P0-1, P0-2, ...) are referenced by plan docs and commit messages.
 
 ### P4 — Authoring mode
 
-- **P4-1 — WorkingCopy IndexedDB store.** Read-through delegation in `campaign-loader.ts` when path is dirty. **Files**: `src/sync/working-copy.ts`, `src/campaign-loader.ts`. **Depends on**: P0-2.
+- **P4-1 — WorkingCopy read-through delegation** (the bulk of P4-1 moved to P0-13). Read-through wiring in `campaign-loader.ts` when path is dirty. **Files**: `src/campaign-loader.ts`. **Depends on**: P0-13.
 - **P4-2 — Manual export sync backend.** Tarball download of dirty files. **Files**: `src/sync/manual-export.ts`. **Depends on**: P4-1.
 - **P4-3 — CodeMirror 6 lazy integration.** Editor + markdown + yaml language modes. **Files**: `src/ui/regions/authoring-stage.ts`, `vite.config.ts` (chunk). **Depends on**: P0-2.
 - **P4-4 — Frontmatter form (schema-driven).** YAML keys as typed inputs from `schema/v0/*.schema.json`; bidirectional with editor. **Files**: `src/ui/authoring/frontmatter-form.ts`. **Depends on**: P4-3.
@@ -318,15 +343,25 @@ Task IDs (P0-1, P0-2, ...) are referenced by plan docs and commit messages.
 
 ## Recommended ordering
 
-The plan is not strictly sequential — many P1/P2 tasks parallel-safe once P0 lands. Suggested critical path with **realistic estimates for a senior solo developer**:
+The plan is not strictly sequential — many P1/P2 tasks parallel-safe once P0 lands. Mapped to the milestone structure in [`execution-plan.md`](execution-plan.md):
 
-1. **Foundation sprint (2-3 weeks)**: P0-1 → P0-3 → P0-5 → P0-4 → P0-2 → P0-6 → P0-7. Outcome: shell exists, region scaffolds present, event vocabulary frozen with content-hash paragraph identifiers, mode state defined, stale arch doc updated, CI bundle-size gate live. The grid shell is not hard, but extracting from a 3792-LOC god-object while keeping tests green takes longer than the architectural diagram suggests.
-2. **In-session ergonomics sprint (2-3 weeks)**: P1-1 through P1-7. Outcome: new shell is usable for in-person play with the existing feature set.
-3. **DM cockpit sprint (4-5 weeks)**: P2-1 through P2-12 in two parallel tracks — (a) per-paragraph + scratch + ladder + pinning (P2-1, P2-2, P2-3, P2-4, P2-5, P2-10, P2-11), (b) AI broker + structured returns (P2-6, P2-7, P2-8, P2-9, P2-12). The broker work alone is closer to a week per provider once structured-tool quirks surface (Claude tool-use shape; Gemini response-schema flakiness on unions).
-4. **Living-document sprint (4-5 weeks)**: P3-1 through P3-6. P3-3 ("AI given files + digest; returns proposals") is open-ended LLM-shaping work — budget ~3 weeks for that one task. The rest of P3 is roughly a week each.
-5. **Authoring + Maps in parallel (2-3 weeks)**: P4-* and P5-*.
+1. **M1 — Foundation (3-4 weeks)**: P0-1 through P0-13. Outcome: shell exists, region scaffolds present, event vocabulary frozen with `v: 1` versioned payloads and content-hash paragraph identifiers, mode state defined, peer-version-gating in place, WorkingCopy primitive shipped, three controllers extracted (`session-bootstrap`, `autosave-controller`, `ai-key-store`), CI bundle-size gate regression-protected, stale arch docs updated.
+2. **M2 — Player view (2-3 weeks)**: P1-1 through P1-7 (excluding P1-5 DM Rail). Outcome: players use new region components for the full session; scene rendering via existing `renderMarkdown` (no per-paragraph yet).
+3. **M3a — DM cockpit, no AI (3-4 weeks)**: P1-5, P2-1 (incl. `getBlockHashes` async cache), P2-2 (incl. player-DOM omission), P2-3 (incl. `serializeSessionForViewer`), P2-4, P2-5, P2-10, P2-11. Outcome: gutter pips, scratch column, NPC pinning, thread-debt ladder, caution rail, broadcast. **v1 ships at end of M3a.** Tag `playtest-1`; run real session.
+4. **M3b — AI broker + dual-card (3-4 weeks)**: P2-6, P2-7, P2-8, P2-9, P2-12. Outcome: structured `{safe, dmOnly, sources}` returns from both providers, dual-card render, audit chain, scope reset, coord-only enforcement.
+5. **M4 — Living-document MVP (5-7 weeks)**: P3-1 through P3-6. P3-3 alone is ~3 weeks; the rest plumbs around it. NPC-update category only; other 4 categories deferred.
+6. **M5 — Authoring (3-4 weeks)**: P4-2 through P4-7 (P4-1 WorkingCopy already in M1).
+7. **M6 — Maps MVP (2 weeks)**: P5-1 through P5-5.
 
-**Realistic v1 total: 14-19 weeks (3.5-4.5 months)** for a senior solo developer. A v1-feature-complete release lands after sprint 3 (~9-11 weeks in). Authoring and Maps can ship as v1.1 / v1.2 increments without blocking.
+**Honest estimates** (revised from v0.1's overconfident 14-19 weeks):
+
+- **v1 (M1+M2+M3a)**: **8-11 weeks** (~2-3 months).
+- **v1.1 (M3b+M4)**: **8-11 weeks** beyond v1.
+- **v1.2 (M5+M6)**: **5-6 weeks** beyond v1.1.
+- **Total to feature-parity with the design spec**: **20-27 weeks** (5-7 months).
+- Add ~2.5 weeks across the whole project for **review-gate overhead** (multi-agent reviews + remediation), not previously budgeted.
+
+The original "14-19 weeks v1" framing was wrong because (a) v1 was overscoped to include the riskiest AI broker + living-doc work, and (b) gate overhead was unaccounted. The split puts the high-uncertainty work in v1.1, keeping the v1 release date defensible.
 
 ## Test strategy notes
 
