@@ -232,3 +232,105 @@ export function renderMarkdownDocument(text: string): RenderedDocument {
   const doc = parseFrontmatter(text);
   return { ...doc, html: renderMarkdown(doc.body) };
 }
+
+/**
+ * One addressable block in a scene file.  Each block corresponds to
+ * a top-level markdown construct: a paragraph, heading, list,
+ * blockquote, fenced code block, or table.  The `blockHash` is the
+ * first 12 hex chars of sha256(normalizeBlock(raw)) — content-
+ * addressed so DM-side reveals survive editorial reordering and
+ * unrelated edits, and lapse cleanly when the block's text changes.
+ */
+export interface MarkdownBlock {
+  /** Stable 12-hex-char content hash; identifier in reveal events. */
+  blockHash: string;
+  /** Sanitized HTML for this block alone. */
+  html: SanitizedHtml;
+  /** Original markdown source for this block, verbatim. */
+  raw: string;
+  /** Zero-based index in scene order.  UI hint only — not authoritative. */
+  index: number;
+}
+
+export interface ParagraphsDocument {
+  frontmatter: Record<string, unknown>;
+  blocks: MarkdownBlock[];
+}
+
+/**
+ * Normalize a block's raw markdown for hashing: trim edges and
+ * collapse internal whitespace runs (incl. line breaks, tabs) to a
+ * single space.  Two blocks with the same text content but different
+ * whitespace formatting hash identically — important so trivial
+ * editorial reflow doesn't lapse reveals.
+ */
+export function normalizeBlock(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Async sha256 (Web Crypto), first 12 hex chars.  Used for block
+ * identity in scene-reveal-paragraph events.  Async so we can use
+ * the platform's crypto.subtle without bundling a JS implementation;
+ * the only caller (renderMarkdownParagraphs) is itself async via
+ * the navigateToRoute scene-load path.
+ */
+export async function blockHash(raw: string): Promise<string> {
+  const normalized = normalizeBlock(raw);
+  const bytes = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const view = new Uint8Array(digest);
+  let hex = '';
+  // We need only the first 6 bytes (12 hex chars).
+  for (let i = 0; i < 6; i++) {
+    hex += view[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
+
+/**
+ * P2-1: split a scene markdown source into addressable blocks.
+ * Each top-level marked token of a content type (heading, paragraph,
+ * list, blockquote, code, table) becomes one block.  `hr` and
+ * `space` tokens are dropped — they're visual chrome, not
+ * revealable content.
+ *
+ * The output preserves source order; each block carries its own
+ * sanitized HTML so the caller can render or filter blocks
+ * independently (DM gutter pip clicks toggle individual blocks;
+ * the player-side renderer omits non-revealed blocks from the DOM
+ * entirely, per the security boundary in design/security.md).
+ *
+ * Async because block-hash computation goes through the platform
+ * sha256 (Web Crypto).
+ */
+export async function renderMarkdownParagraphs(
+  text: string
+): Promise<ParagraphsDocument> {
+  const doc = parseFrontmatter(text);
+  const tokens = marked.lexer(doc.body) as Array<{
+    type: string;
+    raw: string;
+  }>;
+  const blockKinds = new Set([
+    'heading',
+    'paragraph',
+    'list',
+    'blockquote',
+    'code',
+    'table'
+  ]);
+  const contentTokens = tokens.filter((t) => blockKinds.has(t.type));
+  const blocks = await Promise.all(
+    contentTokens.map(async (t, index) => {
+      const hash = await blockHash(t.raw);
+      return {
+        blockHash: hash,
+        html: renderMarkdown(t.raw),
+        raw: t.raw,
+        index
+      };
+    })
+  );
+  return { frontmatter: doc.frontmatter, blocks };
+}
