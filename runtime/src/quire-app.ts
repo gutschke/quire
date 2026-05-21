@@ -7,6 +7,11 @@ import './ui/shell/quire-rail';
 import './ui/shell/quire-stage';
 import './ui/shell/quire-aside';
 import './ui/shell/quire-dock';
+import {
+  parseMode,
+  DEFAULT_APP_MODE,
+  type AppMode
+} from './ui/modes/mode-state';
 import { customElement, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import {
@@ -195,6 +200,15 @@ export class QuireApp extends LitElement {
   static styles = [tokens, quireAppStyles];
 
   @state() private appState: AppState = { kind: 'idle' };
+  /**
+   * Current AppMode driven by the URL's `?mode=` parameter.  See
+   * `src/ui/modes/mode-state.ts`.  M1 just tracks the value; the
+   * regions don't yet branch on it.  Region branching lands per
+   * mode in M2 (in-session player), M3a/M3b (in-session DM), M4
+   * (post-session), M5 (authoring).  Solo-browse remains implicit
+   * (no live session) — see ui.md's "AppMode persistence" section.
+   */
+  @state() appMode: AppMode = DEFAULT_APP_MODE;
   @state() rolls: DiceRoll[] = [];
   @state() rollDraft: string = '';
   @state() rollError: string | null = null;
@@ -249,11 +263,20 @@ export class QuireApp extends LitElement {
 
   private abortController?: AbortController;
   private readonly popstateHandler = (): void => {
+    // Re-parse both route and mode on history navigation so the URL
+    // is the source of truth across reloads + back/forward.  Mode is
+    // observed but not yet acted upon at M1 — region content doesn't
+    // branch on it until M2+.  The state update still triggers a
+    // re-render so DevTools / test harnesses can observe the value.
+    this.appMode = parseMode(window.location.search);
     void this.navigateToRoute(parseRoute(window.location.search));
   };
 
   override connectedCallback(): void {
     super.connectedCallback();
+    // Seed appMode from URL on first mount; popstate keeps it in sync
+    // thereafter.  M1 — observed but not yet acted upon.
+    this.appMode = parseMode(window.location.search);
     window.addEventListener('popstate', this.popstateHandler);
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
     this.session = new SessionController(this.sessionFactory);
