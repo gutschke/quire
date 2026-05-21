@@ -1040,6 +1040,27 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.8 P2-10: caution rail when the loaded scene path is
+       DM-only (starts with dm/ or contains /dm/).  Amber border on
+       the card + sticky banner so the DM cannot misread DM-only
+       prose at the table.  Visual is intentionally heavy — the
+       "do not read aloud" contract is load-bearing. */
+    .dm-caution-banner {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: light-dark(#fff7e0, #3a2f10);
+      border: 1px solid light-dark(#d4a017, #a07820);
+      border-left-width: 4px;
+      padding: 0.45rem 0.7rem;
+      margin: 0 0 0.4rem;
+      color: light-dark(#5a4310, #ffd479);
+      border-radius: 4px;
+    }
+    .dm-caution-card {
+      border-left: 4px solid light-dark(#d4a017, #a07820);
+    }
+
     /* M3a.7 P2-2: per-block scene rendering + DM gutter pips.
        Players see only revealed blocks (DOM-omitted; this is paced
        disclosure, not confidentiality — see scene-stage.ts).  The

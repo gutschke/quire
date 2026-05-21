@@ -129,6 +129,42 @@ describe('<scene-stage> per-block reveal rendering', () => {
     expect(receivedHash).toBe('00000000000000ff');
   });
 
+  it('renders the dm-caution banner for dm/ scene paths (P2-10)', async () => {
+    const stage = mountStage();
+    stage.scenePath = 'dm/secret-truths.md';
+    stage.sceneBlocks = [block('0000000000000001', 'spoiler', 0)];
+    stage.revealedBlocks = new Set();
+    stage.sceneFullyRevealed = true;
+    stage.isCoordinator = true;
+    await stage.updateComplete;
+    expect(stage.innerHTML).toContain('[!CAUTION]');
+    expect(stage.querySelector('.dm-caution-banner')).not.toBeNull();
+    expect(stage.querySelector('.dm-caution-card')).not.toBeNull();
+  });
+
+  it('renders the dm-caution banner for nested /dm/ segments', async () => {
+    const stage = mountStage();
+    stage.scenePath = 'scenes/dm/aftermath.md';
+    stage.sceneBlocks = [block('0000000000000001', 'spoiler', 0)];
+    stage.revealedBlocks = new Set(['0000000000000001']);
+    stage.sceneFullyRevealed = false;
+    stage.isCoordinator = true;
+    await stage.updateComplete;
+    expect(stage.querySelector('.dm-caution-banner')).not.toBeNull();
+  });
+
+  it('does NOT render the caution banner for ordinary scene paths', async () => {
+    const stage = mountStage();
+    stage.scenePath = 'scenes/intro.md';
+    stage.sceneBlocks = [block('0000000000000001', 'body', 0)];
+    stage.revealedBlocks = new Set(['0000000000000001']);
+    stage.sceneFullyRevealed = false;
+    stage.isCoordinator = true;
+    await stage.updateComplete;
+    expect(stage.querySelector('.dm-caution-banner')).toBeNull();
+    expect(stage.querySelector('.dm-caution-card')).toBeNull();
+  });
+
   it('frontmatter strip still renders in player view (it is metadata, not body)', async () => {
     const stage = mountStage();
     stage.scenePath = 's.md';

@@ -94,8 +94,28 @@ export class SceneStage extends LitElement {
    */
   @property({ attribute: false }) headerExtras: TemplateResult | typeof nothing = nothing;
 
+  /**
+   * P2-10 (M3a.8): a scene path that starts with `dm/` or contains
+   * a `/dm/` segment is DM-only content (the convention used by
+   * the campaign repo per design/security.md).  The Stage renders
+   * a persistent amber rail + sticky [!CAUTION] banner whenever
+   * the loaded scene path matches, so the DM can't accidentally
+   * read-aloud DM-only prose at the table.
+   */
+  private isDmOnlyPath(): boolean {
+    const p = this.scenePath;
+    return p.startsWith('dm/') || p.includes('/dm/');
+  }
+
   override render(): TemplateResult {
+    const cautionActive = this.isDmOnlyPath();
     return html`
+      ${cautionActive
+        ? html`<aside class="dm-caution-banner" role="note">
+            <strong>[!CAUTION]</strong> This is a DM-only file. Do not
+            read aloud at the table.
+          </aside>`
+        : nothing}
       <header>
         <nav class="breadcrumb">
           <a
@@ -128,7 +148,7 @@ export class SceneStage extends LitElement {
         ${this.renderSceneStrip()}
         ${this.headerExtras}
       </header>
-      <section class="card">
+      <section class="card ${cautionActive ? 'dm-caution-card' : ''}">
         <div class="markdown">${this.renderBlocks()}</div>
       </section>
     `;
