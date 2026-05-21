@@ -15,6 +15,7 @@ import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
 import './ui/regions/dice-dock';
+import './ui/regions/chat-panel';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -1601,53 +1602,35 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * Chat panel delegated to <chat-panel> region (M2.7, P1-6).
+   * Pre-formats entries (peerId → displayName) so the region
+   * component stays data-only.  submitChat / chatDraft / chatError
+   * state stays on QuireApp; callbacks bridge the input UI back
+   * into the @state.
+   */
   private renderChatPanel(): TemplateResult {
     const v = this.sessionView;
-    if (!v || v.status !== 'active') return html``;
-    const messages = v.shared.chat;
+    const active = v?.status === 'active';
+    const entries = active
+      ? v!.shared.chat.map((m, i) => ({
+          key: `${m.ts}-${m.peerId}-${i}`,
+          author: this.displayNameFor(m.peerId),
+          text: m.text
+        }))
+      : [];
     return html`
-      <section class="card chat-panel">
-        <h2>Chat</h2>
-        ${messages.length === 0
-          ? html`<p class="muted">No messages yet. Say hello.</p>`
-          : html`
-              <ul class="chat-list">
-                ${messages.map(
-                  (m) => html`
-                    <li>
-                      <span class="chat-author">
-                        ${this.displayNameFor(m.peerId)}
-                      </span>
-                      <span class="chat-text">${m.text}</span>
-                    </li>
-                  `
-                )}
-              </ul>
-            `}
-        <form
-          class="chat-form"
-          @submit=${(e: Event) => {
-            e.preventDefault();
-            this.submitChat(this.chatDraft);
-          }}
-        >
-          <input
-            type="text"
-            .value=${this.chatDraft}
-            placeholder="Say something…"
-            aria-label="Chat message"
-            maxlength="500"
-            @input=${(e: Event) => {
-              this.chatDraft = (e.target as HTMLInputElement).value;
-              this.chatError = null;
-            }}
-          />
-          <button type="submit">Send</button>
-        </form>
-        ${this.chatError
-          ? html`<p class="chat-error">${this.chatError}</p>`
-          : nothing}
-      </section>
+      <chat-panel
+        .active=${active}
+        .chatDraft=${this.chatDraft}
+        .chatError=${this.chatError}
+        .entries=${entries}
+        .onDraftChange=${(v: string) => {
+          this.chatDraft = v;
+          this.chatError = null;
+        }}
+        .onSubmit=${(v: string) => this.submitChat(v)}
+      ></chat-panel>
     `;
   }
 
