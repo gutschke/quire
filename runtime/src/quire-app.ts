@@ -245,6 +245,13 @@ export class QuireApp extends LitElement {
    * sheet, and the Aside roster can render harm/stress glyphs.
    */
   @state() boundCharacter: LoadedCharacter | null = null;
+  /**
+   * Campaign that {@link boundCharacter} belongs to.  Tracked alongside
+   * the character so the always-on rail (M3a.6d) renders against the
+   * correct campaign even mid-navigation (e.g. when switching
+   * campaigns, before the async refresh completes).
+   */
+  @state() boundCampaign: LoadedCampaign | null = null;
   /** Track which (campaign+pcId) the boundCharacter was loaded for. */
   private boundCharacterFor: string = '';
   // Persistence UI state
@@ -627,14 +634,69 @@ export class QuireApp extends LitElement {
      *   aside  : AI panel + chat panel
      *   dock   : version badge (real Dock content lands in M2)
      */
+    // M3a.6d (P-M3a-rail-always-on): the Rail slot carries the
+    // always-on bound-character sheet (the player's PC, glanceable
+    // from any page).  Roster moves into the Aside slot alongside
+    // chat + AI panel.  When no PC is bound (DM, unbound player,
+    // idle) the Rail slot renders empty — the chrome remains so the
+    // 5-slot layout stays consistent.
     return html`
       <quire-shell>
         <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
-        <quire-rail slot="rail">${this.renderRosterPanel()}</quire-rail>
+        <quire-rail slot="rail">${this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
-        <quire-aside slot="aside">${this.renderAiPanel()}${this.renderChatPanel()}</quire-aside>
+        <quire-aside slot="aside">${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}</quire-aside>
         <quire-dock slot="dock">${this.renderVersionBadge()}</quire-dock>
       </quire-shell>
+    `;
+  }
+
+  /**
+   * M3a.6d (P-M3a-rail-always-on): the always-on rail rendering.
+   * Shows the bound PC's sheet on every page (not just the
+   * character route).  Driven by `boundCharacter` — populated by
+   * `refreshBoundCharacter` whenever the peer's pcId changes.  When
+   * absent (no session, unbound peer, DM), renders nothing.
+   *
+   * The character page (`renderCharacter`) still renders its own
+   * <player-rail> in the Stage for the currently-navigated
+   * character — that may be a different PC (when reading another
+   * player's sheet) or an NPC (DM-only).  The rail-in-slot is
+   * always YOUR sheet; the rail-in-stage is whatever you opened.
+   */
+  private renderBoundCharacterRail(): TemplateResult | typeof nothing {
+    const bound = this.boundCharacter;
+    const campaign = this.boundCampaign;
+    if (!bound || !campaign) return nothing;
+    const slug = this.slugFor(campaign);
+    const r = this.effectiveCharacter(bound);
+    const editable = this.sessionView?.status === 'active';
+    const claim = this.deriveClaimState(bound);
+    return html`
+      <player-rail
+        .character=${bound}
+        .effective=${r}
+        .campaignName=${campaign.base.manifest.name}
+        .campaignSlug=${slug}
+        .editable=${editable}
+        .claimState=${claim.state}
+        .claimedBy=${claim.claimedBy}
+        .onBumpStat=${(
+          pcId: string,
+          key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
+          current: number,
+          delta: number
+        ) => this.bumpStat(pcId, key, current, delta)}
+        .onToggleTrackBox=${(
+          pcId: string,
+          field: 'harm' | 'stress',
+          box: number,
+          current: number
+        ) => this.toggleTrackBox(pcId, field, box, current)}
+        .onNavigate=${(e: Event, route: AppRoute) =>
+          this.navigate(e, route)}
+        .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
+      ></player-rail>
     `;
   }
 
@@ -1475,6 +1537,7 @@ export class QuireApp extends LitElement {
     this.boundCharacterFor = key;
     if (!myPcId || !campaign) {
       this.boundCharacter = null;
+      this.boundCampaign = null;
       return;
     }
     // Fire async load.  Failure clears the cache silently — the
@@ -1486,11 +1549,13 @@ export class QuireApp extends LitElement {
         // the fetch.
         if (this.boundCharacterFor === key) {
           this.boundCharacter = character;
+          this.boundCampaign = campaign;
         }
       })
       .catch(() => {
         if (this.boundCharacterFor === key) {
           this.boundCharacter = null;
+          this.boundCampaign = null;
         }
       });
   }
