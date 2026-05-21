@@ -65,12 +65,24 @@ function fakeEpisode(slug: string): LoadedEpisode {
 
 function fakeScene(path: string): {
   path: string;
-  html: SanitizedHtml;
+  blocks: Array<{
+    blockHash: string;
+    html: SanitizedHtml;
+    raw: string;
+    index: number;
+  }>;
   frontmatter: Record<string, unknown>;
 } {
   return {
     path,
-    html: '<p>scene body</p>' as SanitizedHtml,
+    blocks: [
+      {
+        blockHash: '0123456789ab',
+        html: '<p>scene body</p>' as SanitizedHtml,
+        raw: 'scene body',
+        index: 0
+      }
+    ],
     frontmatter: {}
   };
 }
@@ -179,6 +191,73 @@ describe('QuireApp scene-reveal', () => {
     expect(guest.sessionView!.shared.revealedScenes).toEqual([
       'episodes/001/scenes/intro.md'
     ]);
+  });
+
+  it('coordinator can reveal a block via toggleBlockReveal (P2-2)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    const fullPath = 'episodes/001/scenes/intro.md';
+    expect(app.toggleBlockReveal(fullPath, '0123456789ab')).toBe(true);
+    await flush();
+    expect(
+      app.sessionView!.shared.revealedParagraphs[fullPath]
+    ).toEqual(new Set(['0123456789ab']));
+  });
+
+  it('toggleBlockReveal is symmetric — re-toggle unreveals (P2-2)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    const fullPath = 'episodes/001/scenes/intro.md';
+    app.toggleBlockReveal(fullPath, '0123456789ab');
+    await flush();
+    app.toggleBlockReveal(fullPath, '0123456789ab');
+    await flush();
+    expect(
+      app.sessionView!.shared.revealedParagraphs[fullPath]
+    ).toBeUndefined();
+  });
+
+  it('non-coordinator toggleBlockReveal is a no-op (P2-2)', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    expect(guest.isCoordinator()).toBe(false);
+    (guest as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    expect(
+      guest.toggleBlockReveal(
+        'episodes/001/scenes/intro.md',
+        '0123456789ab'
+      )
+    ).toBe(false);
+    await flush();
+    expect(host.sessionView!.shared.revealedParagraphs).toEqual({});
+    expect(guest.sessionView!.shared.revealedParagraphs).toEqual({});
   });
 
   it('multiple reveals accumulate in order', async () => {

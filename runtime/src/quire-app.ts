@@ -81,8 +81,8 @@ import {
 } from './controllers/session-bootstrap';
 import {
   renderMarkdown,
-  renderMarkdownDocument,
-  type SanitizedHtml
+  renderMarkdownParagraphs,
+  type MarkdownBlock
 } from './markdown';
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
@@ -137,7 +137,13 @@ type AppState =
       episode: LoadedEpisode;
       scene: {
         path: string;
-        html: SanitizedHtml;
+        /**
+         * M3a.7 P2-2: per-block pipeline.  Each block carries a
+         * content-hash + its own sanitized HTML so the renderer can
+         * support per-paragraph reveal (DM gutter pips toggle
+         * individual blocks; players see only the revealed subset).
+         */
+        blocks: MarkdownBlock[];
         /**
          * M3a.6c (P-M3a-scene-strip): parsed YAML frontmatter from
          * the scene file.  Surfaced in <scene-stage>'s scene-strip
@@ -551,14 +557,14 @@ export class QuireApp extends LitElement {
       // campaign author; deferred until we settle on one (e.g.
       // `> [!DM]` blockquote, or `<!-- dm:start -->...<!-- dm:end -->`
       // HTML comments).  For now they render as-is.
-      const sceneDoc = renderMarkdownDocument(sceneText);
+      const sceneDoc = await renderMarkdownParagraphs(sceneText);
       this._appState ={
         kind: 'scene',
         campaign,
         episode,
         scene: {
           path: route.scene,
-          html: sceneDoc.html,
+          blocks: sceneDoc.blocks,
           frontmatter: sceneDoc.frontmatter
         }
       };
@@ -1163,11 +1169,25 @@ export class QuireApp extends LitElement {
     episode: LoadedEpisode,
     scene: {
       path: string;
-      html: SanitizedHtml;
+      blocks: MarkdownBlock[];
       frontmatter: Record<string, unknown>;
     }
   ): TemplateResult {
     const slug = this.slugFor(campaign);
+    // M3a.7 P2-2: derive per-scene reveal mask + coord status.  The
+    // full scene path used as the reveal key is the same one
+    // emitted by revealCurrentScene (episodes/<slug>/<scenePath>).
+    const fullScenePath = `episodes/${episode.slug}/${scene.path}`;
+    const v = this.sessionView;
+    const isCoord = this.isCoordinator();
+    const revealedBlocks =
+      v?.status === 'active'
+        ? v.filteredShared.revealedParagraphs[fullScenePath] ?? new Set<string>()
+        : new Set<string>();
+    const sceneFullyRevealed =
+      v?.status === 'active'
+        ? v.filteredShared.revealedScenes.includes(fullScenePath)
+        : true; // out of session: render everything for offline browsing
     return html`
       <scene-stage
         .campaignName=${campaign.base.manifest.name}
@@ -1175,10 +1195,15 @@ export class QuireApp extends LitElement {
         .episodeName=${episode.manifest.name}
         .episodeSlug=${episode.slug}
         .scenePath=${scene.path}
-        .sceneHtml=${scene.html}
+        .sceneBlocks=${scene.blocks}
+        .revealedBlocks=${revealedBlocks}
+        .sceneFullyRevealed=${sceneFullyRevealed}
+        .isCoordinator=${isCoord}
         .sceneFrontmatter=${scene.frontmatter}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
+        .onToggleBlock=${(blockHash: string) =>
+          this.toggleBlockReveal(fullScenePath, blockHash)}
         .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}
       ></scene-stage>
       ${this.renderCharacterMenus(
@@ -1187,6 +1212,28 @@ export class QuireApp extends LitElement {
       )}
       ${this.renderRollPanel()}
     `;
+  }
+
+  /**
+   * M3a.7 P2-2: emit a scene-reveal-paragraph or
+   * scene-unreveal-paragraph event based on the block's current
+   * reveal state.  No-op when offline / not coordinator — the
+   * materializer would reject the event anyway, but skipping the
+   * round-trip keeps the bus quiet.
+   */
+  toggleBlockReveal(fullScenePath: string, blockHash: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) {
+      return false;
+    }
+    const set = v.shared.revealedParagraphs[fullScenePath];
+    const revealed = set?.has(blockHash) ?? false;
+    this.session.append(
+      revealed ? 'scene-unreveal-paragraph' : 'scene-reveal-paragraph',
+      { v: 1, scenePath: fullScenePath, blockHash }
+    );
+    return true;
   }
 
   private renderRevealControl(

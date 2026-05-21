@@ -1040,6 +1040,56 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.7 P2-2: per-block scene rendering + DM gutter pips.
+       Players see only revealed blocks (DOM-omitted, not CSS-hidden).
+       DM sees every block with a clickable reveal/hide pip in the
+       gutter; non-revealed blocks fade so the DM can scan what the
+       player can currently see. */
+    .scene-block {
+      display: grid;
+      grid-template-columns: 1.5rem 1fr;
+      gap: 0.4rem;
+      align-items: start;
+      margin: 0.2rem 0;
+      padding: 0.1rem 0;
+    }
+    .scene-block-hidden {
+      opacity: 0.5;
+    }
+    .scene-block-pip {
+      grid-column: 1;
+      background: transparent;
+      border: 0;
+      padding: 0.1rem 0.2rem;
+      color: light-dark(#555, #aaa);
+      cursor: pointer;
+      font-size: 1.1em;
+      line-height: 1;
+      border-radius: 3px;
+    }
+    .scene-block-pip:hover {
+      background: light-dark(#eee, #2a2a2a);
+    }
+    .scene-block-pip[aria-pressed='true'] {
+      color: light-dark(#0a7a3a, #5ac985);
+    }
+    .scene-block-body {
+      grid-column: 2;
+      min-width: 0;
+    }
+    .scene-block-body > :first-child {
+      margin-top: 0;
+    }
+    .scene-block-body > :last-child {
+      margin-bottom: 0;
+    }
+    /* Player view: no pip column.  Style is unset so .markdown
+       children flow as before. */
+    .markdown > .scene-block:not(:has(.scene-block-pip)) {
+      display: block;
+      margin: 1em 0;
+    }
+
     /* M3a.6a: dice stat chips. */
     .dice-stat-chips {
       display: flex;

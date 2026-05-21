@@ -26,10 +26,11 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { SanitizedHtml } from '../../markdown';
+import type { MarkdownBlock } from '../../markdown';
 import { routeToSearch, type AppRoute } from '../../routing';
 
 export type NavigateCallback = (e: Event, route: AppRoute) => void;
+export type ToggleBlockCallback = (blockHash: string) => void;
 
 @customElement('scene-stage')
 export class SceneStage extends LitElement {
@@ -43,11 +44,35 @@ export class SceneStage extends LitElement {
   @property() episodeSlug: string = '';
   @property() scenePath: string = '';
   /**
-   * Pre-sanitized scene HTML.  Caller is responsible for running it
-   * through the runtime's sanitize pipeline (this region trusts the
-   * already-sanitized input via Lit's unsafeHTML directive).
+   * Pre-rendered scene blocks (M3a.7 P2-2).  Each block carries its
+   * own sanitized HTML + content-hash identifier.  The renderer
+   * iterates these to support per-block reveal.
    */
-  @property({ attribute: false }) sceneHtml: SanitizedHtml | null = null;
+  @property({ attribute: false }) sceneBlocks: MarkdownBlock[] = [];
+  /**
+   * M3a.7 P2-2: set of revealedParagraphs[scenePath] for the
+   * current scene.  Players see only blocks whose hash is in this
+   * set (unless sceneFullyRevealed is true).  DM sees all blocks
+   * with a gutter pip indicating reveal state.
+   */
+  @property({ attribute: false }) revealedBlocks: Set<string> = new Set();
+  /**
+   * M3a.7 P2-2: true when the whole scene path is in revealedScenes
+   * (legacy whole-scene reveal).  When true, every block is treated
+   * as revealed for player rendering — preserves backward compat
+   * for scenes revealed via the existing scene-reveal event.
+   */
+  @property({ type: Boolean }) sceneFullyRevealed: boolean = false;
+  /**
+   * M3a.7 P2-2: when true, the viewer is the coordinator (DM).
+   * DM sees every block with a gutter pip; players see only the
+   * revealed subset.  Player-side filtering happens at the DOM
+   * level (not CSS) per the security boundary in
+   * design/security.md.
+   */
+  @property({ type: Boolean }) isCoordinator: boolean = false;
+  @property({ attribute: false }) onToggleBlock: ToggleBlockCallback | null =
+    null;
   /**
    * M3a.6c (P-M3a-scene-strip): parsed YAML frontmatter from the
    * scene file.  Renders the "what am I in" strip below the
@@ -100,11 +125,61 @@ export class SceneStage extends LitElement {
         ${this.headerExtras}
       </header>
       <section class="card">
-        <div class="markdown">
-          ${this.sceneHtml ? unsafeHTML(this.sceneHtml) : nothing}
-        </div>
+        <div class="markdown">${this.renderBlocks()}</div>
       </section>
     `;
+  }
+
+  /**
+   * M3a.7 P2-2: per-block rendering.  For the DM (coordinator), all
+   * blocks render with a gutter pip indicating revealed state; the
+   * pip is clickable to toggle reveal.  For players, only blocks
+   * whose hash is in `revealedBlocks` (or every block, if
+   * `sceneFullyRevealed`) are rendered — non-revealed blocks are
+   * OMITTED FROM THE DOM entirely, not CSS-hidden.  This is the
+   * load-bearing security boundary: an inspector-savvy player
+   * must not be able to read unrevealed scene content.
+   */
+  private renderBlocks(): TemplateResult | TemplateResult[] | typeof nothing {
+    // Consumers can pass `undefined` explicitly via Lit property
+    // bindings (bypassing the field initializer), so we coalesce
+    // here.  Same defensive pattern as `sceneFrontmatter`.
+    const blocks = this.sceneBlocks ?? [];
+    const revealedSet = this.revealedBlocks ?? new Set<string>();
+    if (blocks.length === 0) return nothing;
+    if (this.isCoordinator) {
+      return blocks.map((block) => {
+        const revealed =
+          this.sceneFullyRevealed || revealedSet.has(block.blockHash);
+        return html`
+          <div
+            class="scene-block ${revealed
+              ? 'scene-block-revealed'
+              : 'scene-block-hidden'}"
+          >
+            <button
+              type="button"
+              class="scene-block-pip"
+              aria-pressed=${revealed ? 'true' : 'false'}
+              title=${revealed
+                ? `Hide block ${block.index + 1} (currently revealed)`
+                : `Reveal block ${block.index + 1} (currently hidden)`}
+              @click=${() => this.onToggleBlock?.(block.blockHash)}
+            >
+              ${revealed ? '●' : '○'}
+            </button>
+            <div class="scene-block-body">${unsafeHTML(block.html)}</div>
+          </div>
+        `;
+      });
+    }
+    // Player view: omit non-revealed blocks from the DOM.
+    const visible = this.sceneFullyRevealed
+      ? blocks
+      : blocks.filter((b) => revealedSet.has(b.blockHash));
+    return visible.map(
+      (block) => html`<div class="scene-block">${unsafeHTML(block.html)}</div>`
+    );
   }
 
   private renderSceneStrip(): TemplateResult | typeof nothing {
