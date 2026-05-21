@@ -89,6 +89,90 @@ describe('materialize — pc-edit hostile payloads', () => {
     ]);
     expect(s.pcEdits).toEqual({ pc1: { harm: 2 } });
   });
+
+  it('rejects pcId with spaces / slashes / dot-segments', () => {
+    // The state.ts validator now mirrors character-loader.ts's
+    // ID_RE — pcIds that could never be loaded by loadCharacter
+    // should never make it into pcEdits.
+    for (const bad of ['has space', 'has/slash', '../escape', '.', '..']) {
+      const s = materialize([
+        ev('alice', 1, 'pc-edit', { pcId: bad, field: 'harm', value: 1 })
+      ]);
+      expect(s.pcEdits).toEqual({});
+    }
+  });
+
+  it('caps the number of distinct fields per PC (DoS guard)', () => {
+    const events: QuireEvent[] = [];
+    for (let i = 0; i < 200; i++) {
+      events.push(
+        ev('alice', i + 1, 'pc-edit', {
+          pcId: 'pc1',
+          field: `f${i}`,
+          value: i
+        })
+      );
+    }
+    const s = materialize(events);
+    expect(Object.keys(s.pcEdits.pc1).length).toBeLessThanOrEqual(100);
+  });
+
+  it('allows continued updates to an existing field once cap reached', () => {
+    const events: QuireEvent[] = [];
+    for (let i = 0; i < 100; i++) {
+      events.push(
+        ev('alice', i + 1, 'pc-edit', {
+          pcId: 'pc1',
+          field: `f${i}`,
+          value: i
+        })
+      );
+    }
+    // Add a 101st DISTINCT field — should be rejected.
+    events.push(
+      ev('alice', 101, 'pc-edit', {
+        pcId: 'pc1',
+        field: 'too-many',
+        value: 99
+      })
+    );
+    // But an UPDATE to an existing field should still land (LWW).
+    events.push(
+      ev('alice', 102, 'pc-edit', {
+        pcId: 'pc1',
+        field: 'f0',
+        value: 999
+      })
+    );
+    const s = materialize(events);
+    expect(Object.keys(s.pcEdits.pc1).length).toBe(100);
+    expect(s.pcEdits.pc1.f0).toBe(999);
+    expect(s.pcEdits.pc1['too-many']).toBeUndefined();
+  });
+});
+
+describe('materialize — note hostile payloads', () => {
+  it('drops non-boolean private', () => {
+    const events: QuireEvent[] = [
+      ev('alice', 1, 'note', { text: 'a', private: 'yes' as unknown }),
+      ev('alice', 2, 'note', { text: 'b', private: 1 as unknown }),
+      ev('alice', 3, 'note', { text: 'c', private: { malicious: true } as unknown })
+    ];
+    const s = materialize(events);
+    // All notes accepted (text is valid); only the private field
+    // gets coerced to undefined when not strictly boolean.
+    expect(s.notes).toHaveLength(3);
+    for (const n of s.notes) expect(n.private).toBeUndefined();
+  });
+
+  it('preserves a true / false private', () => {
+    const s = materialize([
+      ev('alice', 1, 'note', { text: 'a', private: true }),
+      ev('alice', 2, 'note', { text: 'b', private: false })
+    ]);
+    expect(s.notes[0].private).toBe(true);
+    expect(s.notes[1].private).toBe(false);
+  });
 });
 
 describe('materialize — chat hostile payloads', () => {

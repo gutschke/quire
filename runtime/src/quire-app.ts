@@ -84,6 +84,21 @@ import {
 
 const ROLL_HISTORY_MAX = 5;
 
+/**
+ * Hard cap on chat-event text length, in characters.  Matches the
+ * `maxlength` on the chat <input>.  Applied at submitChat so any
+ * programmatic caller (notably shareAiResponseToChat) cannot flood
+ * the event log with kilobytes of AI output that would replicate
+ * forever to every future joiner via sync-response.
+ *
+ * Keep this in sync with state.ts's CHAT_CAP — the materializer cap
+ * is slightly higher (5000) than the UI cap (here) so that legacy
+ * peers running a slightly older version can still ship messages we
+ * accept.  If the two ever need to diverge meaningfully, document
+ * why.
+ */
+const CHAT_MAX_LENGTH = 500;
+
 interface LoadedCampaign {
   base: LoadedCampaignBase;
   worldOverview: string | null;
@@ -104,6 +119,16 @@ type AppState =
     }
   | { kind: 'character'; campaign: LoadedCampaign; character: LoadedCharacter }
   | { kind: 'error'; message: string; details?: string };
+
+/**
+ * Strip an implicit `@main` ref so `owner/repo` and `owner/repo@main`
+ * compare equal.  Used by currentCampaignSlugMatches to avoid
+ * unnecessary refetches when the URL writes the default ref
+ * explicitly.
+ */
+export function normalizeSlug(slug: string): string {
+  return slug.endsWith('@main') ? slug.slice(0, -'@main'.length) : slug;
+}
 
 function isAbortError(e: unknown): boolean {
   return (e as Error)?.name === 'AbortError';
@@ -1006,12 +1031,12 @@ export class QuireApp extends LitElement {
     const c = this.getCurrentCampaign();
     if (!c) return false;
     const src = c.base.source;
-    // Reconstruct the slug used in the URL.
-    const reconstructed =
-      src.ref === 'main'
-        ? `${src.owner}/${src.repo}`
-        : `${src.owner}/${src.repo}@${src.ref}`;
-    return reconstructed === slug;
+    // Normalize both sides so `owner/repo` and `owner/repo@main` are
+    // treated as the same campaign — otherwise navigating around inside
+    // a campaign opened with the explicit `@main` ref refetches the
+    // whole manifest + world overview on every click.
+    return normalizeSlug(`${src.owner}/${src.repo}@${src.ref}`) ===
+      normalizeSlug(slug);
   }
 
   /** Click handler: pushState the new route, then re-render via navigate. */
@@ -1957,13 +1982,29 @@ export class QuireApp extends LitElement {
 
   shareAiResponseToChat(): boolean {
     if (!this.aiResponse) return false;
-    return this.submitChat(`[AI] ${this.aiResponse}`);
+    // Truncate before delegating to submitChat so an over-long AI
+    // response renders as "[AI] <truncated…>" rather than being
+    // silently dropped or flooding the event log.  The truncated
+    // marker tells the DM to copy/paste the full text manually if
+    // they want all of it.
+    const head = '[AI] ';
+    const room = CHAT_MAX_LENGTH - head.length - 1;
+    const body =
+      this.aiResponse.length > room
+        ? this.aiResponse.slice(0, room - 1) + '…'
+        : this.aiResponse;
+    return this.submitChat(head + body);
   }
 
   submitChat(text: string): boolean {
     if (!this.session || this.sessionView?.status !== 'active') return false;
     const trimmed = text.trim();
     if (!trimmed) return false;
+    // Cap at the same length the input HTML attribute enforces.
+    // Without this, AI responses (or any programmatic submitChat
+    // caller) could flood the event log with multi-KB messages
+    // that replicate to every joiner via sync-response forever.
+    if (trimmed.length > CHAT_MAX_LENGTH) return false;
     this.session.append('chat', { text: trimmed });
     this.chatDraft = '';
     return true;

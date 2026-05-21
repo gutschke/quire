@@ -115,6 +115,13 @@ const ID_CAP = 256;
 const SCENE_PATH_CAP = 2048;
 const CHAT_CAP = 5000;
 const NOTE_CAP = 10000;
+// Per-pc cap on stored edit fields.  Defends against a hostile peer
+// spamming thousands of distinct `field` keys to bloat memory.
+const PC_FIELD_COUNT_CAP = 100;
+// Match the character-loader's ID_RE so a pcId that would never
+// resolve to a real character never enters pcEdits.  Stricter than
+// the prior "safe key" check.
+const PC_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 function isSafeKey(s: unknown): s is string {
   return (
@@ -123,6 +130,12 @@ function isSafeKey(s: unknown): s is string {
     s.length <= ID_CAP &&
     !POISONOUS_KEYS.has(s)
   );
+}
+
+function isCharacterId(s: unknown): s is string {
+  if (!isSafeKey(s)) return false;
+  if (s === '.' || s === '..') return false;
+  return PC_ID_RE.test(s);
 }
 
 function isBoundedString(s: unknown, cap: number): s is string {
@@ -201,7 +214,7 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     case 'pc-edit': {
       if (!isPlainObjectPayload(event.payload)) break;
       const p = event.payload as Partial<PcEditPayload>;
-      if (!isSafeKey(p.pcId)) break;
+      if (!isCharacterId(p.pcId)) break;
       if (!isSafeKey(p.field)) break;
       // value is intentionally unrestricted at this layer — the
       // character-edits helper (applyCharacterEdits) clamps and
@@ -209,6 +222,15 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       // dropped at render time.  Storing the raw value preserves
       // forward compatibility with future editable fields.
       const pc = state.pcEdits[p.pcId] ?? {};
+      // DoS guard: bound the number of distinct fields stored per
+      // PC.  Existing fields are still updatable (LWW) once the cap
+      // is reached; only new keys get rejected.
+      if (
+        !Object.prototype.hasOwnProperty.call(pc, p.field) &&
+        Object.keys(pc).length >= PC_FIELD_COUNT_CAP
+      ) {
+        break;
+      }
       pc[p.field] = p.value;
       state.pcEdits[p.pcId] = pc;
       break;
@@ -217,11 +239,16 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       if (!isPlainObjectPayload(event.payload)) break;
       const p = event.payload as Partial<NotePayload>;
       if (!isBoundedString(p.text, NOTE_CAP)) break;
+      // private must be a boolean if present (defaults to undefined
+      // when omitted, which is fine).  Drops non-boolean values like
+      // objects/strings rather than coercing.
+      const priv =
+        typeof p.private === 'boolean' ? p.private : undefined;
       state.notes.push({
         peerId: event.peerId,
         ts: event.ts,
         text: p.text,
-        private: p.private
+        private: priv
       });
       break;
     }

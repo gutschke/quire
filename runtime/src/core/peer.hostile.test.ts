@@ -98,6 +98,28 @@ describe('Peer — impersonation defense (share messages)', () => {
   });
 });
 
+describe('Peer — share with malformed event payload', () => {
+  it("rejects share with event: null", () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    const bob = makePeer('bob', net);
+    net.deliver('alice', 'bob', { kind: 'share', event: null });
+    expect(bob.state().chat).toEqual([]);
+    alice.close();
+    bob.close();
+  });
+
+  it('rejects share with event: array', () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    const bob = makePeer('bob', net);
+    net.deliver('alice', 'bob', { kind: 'share', event: [] });
+    expect(bob.state().chat).toEqual([]);
+    alice.close();
+    bob.close();
+  });
+});
+
 describe('Peer — sync-response gossip is intentionally NOT origin-checked', () => {
   it('bob can forward alice-authored events to charlie via sync-response', () => {
     const net = new InMemoryNetwork();

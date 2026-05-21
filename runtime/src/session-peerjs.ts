@@ -184,10 +184,16 @@ export function brokerConfigFromUrl(): BrokerConfigFromUrl | null {
       return null;
     }
   }
-  const port = portRaw ? Number(portRaw) : undefined;
+  // Port validation: must be a positive integer in valid range.
+  let port: number | undefined;
+  if (portRaw) {
+    const n = Number(portRaw);
+    if (Number.isInteger(n) && n >= 1 && n <= 65535) port = n;
+    // else: drop silently; PeerJS will use its default.
+  }
   return {
     host: host ?? undefined,
-    port: Number.isFinite(port) ? port : undefined,
+    port,
     path: path ?? undefined,
     secure: secureRaw === '1' ? true : secureRaw === '0' ? false : undefined,
     nonDefault: true

@@ -74,6 +74,28 @@ describe('QuireApp chat surface', () => {
     expect(app.sessionView?.shared.chat).toEqual([]);
   });
 
+  it('rejects messages longer than the cap', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    const tooLong = 'x'.repeat(501);
+    expect(app.submitChat(tooLong)).toBe(false);
+    expect(app.sessionView?.shared.chat).toEqual([]);
+  });
+
+  it('shareAiResponseToChat truncates a too-long AI response with an ellipsis', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { aiResponse: string }).aiResponse = 'a'.repeat(5000);
+    expect(app.shareAiResponseToChat()).toBe(true);
+    const chat = app.sessionView!.shared.chat;
+    expect(chat).toHaveLength(1);
+    expect(chat[0].text.length).toBeLessThanOrEqual(500);
+    expect(chat[0].text.startsWith('[AI] ')).toBe(true);
+    expect(chat[0].text.endsWith('…')).toBe(true);
+  });
+
   it('receives messages from a remote peer', async () => {
     const network = new InMemoryNetwork();
     // App acts as host.

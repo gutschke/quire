@@ -70,6 +70,37 @@ describe('brokerConfigFromUrl', () => {
   });
 });
 
+describe('brokerConfigFromUrl — port validation', () => {
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('drops port out of range (0)', () => {
+    withUrl('peerHost=127.0.0.1&peerPort=0');
+    expect(brokerConfigFromUrl()?.port).toBeUndefined();
+  });
+
+  it('drops port out of range (65536)', () => {
+    withUrl('peerHost=127.0.0.1&peerPort=65536');
+    expect(brokerConfigFromUrl()?.port).toBeUndefined();
+  });
+
+  it('drops port out of range (negative)', () => {
+    withUrl('peerHost=127.0.0.1&peerPort=-1');
+    expect(brokerConfigFromUrl()?.port).toBeUndefined();
+  });
+
+  it('drops non-integer port', () => {
+    withUrl('peerHost=127.0.0.1&peerPort=1.5');
+    expect(brokerConfigFromUrl()?.port).toBeUndefined();
+  });
+
+  it('accepts mixed-case loopback hostnames', () => {
+    withUrl('peerHost=LocalHost&peerPort=9000');
+    expect(brokerConfigFromUrl()?.host).toBe('LocalHost');
+  });
+});
+
 describe('createPeerjsFactoryFromUrl — fallback paths', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/');

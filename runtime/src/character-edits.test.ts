@@ -96,4 +96,23 @@ describe('applyCharacterEdits', () => {
     const r = applyCharacterEdits(base(), { 'stats.wis': 1.4 });
     expect(r.stats?.wis).toBe(1);
   });
+
+  it('ignores null value (treats as wrong type, preserves base)', () => {
+    // Regression pin: null is a JSON-legal value a hostile peer could
+    // send.  Today it's ignored (preserves base) — this test catches
+    // a future change that decides to treat null as "reset".
+    const r = applyCharacterEdits(base(), {
+      'stats.str': null as unknown as number,
+      harm: null as unknown as number
+    });
+    expect(r.stats?.str).toBe(0);
+    expect(r.harm).toBe(0);
+  });
+
+  it('ignores object value silently', () => {
+    const r = applyCharacterEdits(base(), {
+      'stats.str': { malicious: true } as unknown as number
+    });
+    expect(r.stats?.str).toBe(0);
+  });
 });
