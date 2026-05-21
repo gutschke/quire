@@ -28,6 +28,7 @@ The cost: a fork that wants to run its own runtime instead of using ours has to 
 - It does not prevent a DM with a malicious local Chrome extension from leaking their own key.
 - It does not prevent compromise of the DM's local device.
 - It does not prevent a fork of the canonical runtime from replacing the trust model entirely. That's the cost of being open-source.
+- It does not police the **DM's local clipboard**. The DM-only AI response card carries a "Copy (do not read aloud)" affordance; when used, the DM-only material enters the system clipboard. Linux clipboard managers (CopyQ, Klipper, GPaste) keep history; macOS Universal Clipboard syncs to the DM's iPhone; X11 forwarding over SSH propagates clipboards across hosts. Treating the DM's local clipboard as untrusted is out of scope. The affordance exists because DMs need to copy DM-only material into their own notes; the trust assumption is that the DM owns their machine and curates their own clipboard hygiene.
 
 ## AI broker invariants
 
@@ -38,6 +39,10 @@ The broker is the only path out of the bundle to external APIs. It enforces:
 - Untrusted-content wrapping with sentinel-token escaping on every string sourced from campaign data.
 - A per-session token budget with a visible meter and a hard stop.
 - A hash-chained audit log (prompt, response, tokens, cost, accept/reject) that is exportable as verifiable JSON.
+- **Structured tool returns** (`{safe, dmOnly, sources}`); the renderer never trusts free-form blobs. Parse failures degrade to a synthesized response, never an unfenced raw blob.
+- **`contextRefs` path validation**: campaign-relative only, no `..`, no absolute paths. When the request scope is `public`, paths to `dm/*` and `design/DM-ONLY/` are rejected even if otherwise valid (defense in depth against a DM who toggles scope wrong mid-prompt).
+- **Scope reset per prompt**: the DM's "include DM notes" toggle defaults back to `public` after every prompt submit. A one-off DM-only query does not stay armed for the next.
+- **Coordinator-only**: `complete()` rejects calls from peers who are in `coordHolders` historically but are not currently the coordinator. Keeps the hash chain a strict chain (single appender), not a fork-prone DAG.
 
 ## DM-private content
 

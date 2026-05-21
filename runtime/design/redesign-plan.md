@@ -1,0 +1,361 @@
+# Runtime redesign — engineering plan
+
+Status: plan v0.1 (May 2026). Companion to [`../../design/ui.md`](../../design/ui.md), which is the design spec. This doc is the engineering plan: event-kind vocabulary, state additions, component decomposition, bundle budget, and **prioritized task list (P0-P5)**.
+
+## Background
+
+The current `src/quire-app.ts` is a ~3800-line Lit god-object rendering a vertical stack of cards (`renderSessionBar` / `renderRosterPanel` / `renderRevealBanner` / `renderBody` / `renderChatPanel` / `renderAiPanel`). It works but is the wrong shape for the cockpit UI specified in `ui.md`. The redesign introduces a five-region grid shell, new event vocabulary for per-paragraph reveal / map / scratch / thread-debt / broadcast, an `AiBroker` with structured tool returns, and a living-document workflow.
+
+Highest-leverage move: **grid shell + region decomposition (P0)**. Until quire-app.ts stops being a god-object, every new feature accumulates weight on a structure that can't carry it. Everything in P1-P5 is significantly easier once foundation lands.
+
+## Event vocabulary additions
+
+Current `KNOWN_EVENT_KINDS` (see `src/core/state.ts:198-212`): `peer-join`, `peer-leave`, `peer-rename`, `peer-disconnect`, `coordinator-claim`, `coordinator-yield`, `coordinator-reclaim`, `scene-reveal`, `scene-unreveal`, `dice-roll`, `chat`, `pc-edit`, `note`.
+
+New event kinds (add to `KNOWN_EVENT_KINDS` in P0-5 even before materializers ship, so saves from intermediate versions are forward-compatible):
+
+| Kind | Authority | Payload | Materializes | Visible to |
+|---|---|---|---|---|
+| `scene-reveal-paragraph` | coord | `{scenePath, blockHash, paragraphIndex?}` | `revealedParagraphs[scenePath]: Set<blockHash>` | all |
+| `scene-unreveal-paragraph` | coord | `{scenePath, blockHash}` | `revealedParagraphs[scenePath]: Set<blockHash>` | all |
+| `thread-debt-set` | coord | `{pcId, level: 'quiet'|'noticed'|'watched'|'pushing-back'|'hunted'}` | `threadDebt[pcId]` | DM-only (render gate) |
+| `npc-pin` | coord | `{npcId}` | `pinnedNpcs[]` | DM-only |
+| `npc-unpin` | coord | `{npcId}` | `pinnedNpcs[]` | DM-only |
+| `map-blob-add` | coord | `{scenePath, blobId, label, x, y, kind?}` | `mapBlobs[scenePath]` | all |
+| `map-blob-move` | coord | `{scenePath, blobId, x, y}` | `mapBlobs[scenePath]` (LWW per blobId) | all |
+| `map-blob-remove` | coord | `{scenePath, blobId}` | `mapBlobs[scenePath]` | all |
+| `map-blob-reveal` | coord | `{scenePath, blobId}` | `mapBlobReveals[scenePath]` | gates player render |
+| `map-blob-unreveal` | coord | `{scenePath, blobId}` | `mapBlobReveals[scenePath]` | gates player render |
+| `broadcast-view` | coord | `{stagePath, tab?, scrollAnchor?}` | `broadcastView?` (LWW single slot) | all |
+| `raise-hand` | self | `{}` | `raisedHands[peerId]` | all |
+| `lower-hand` | self | `{}` | `raisedHands[peerId]` | all |
+| `scratch-note` | coord | `{text, scenePath?}` | `scratchNotes[]` | **DM-only**, stripped from player save export |
+| `ai-prompt` | coord | `{promptHash, model, contextRefs, tokenIn}` | `aiAudit[]` | DM-only |
+| `ai-response` | coord | `{responseId, tokenOut, hash, prevHash}` | `aiAudit[]` | DM-only |
+| `ai-accept` | coord | `{responseId, category?}` | `aiAudit[]` | DM-only |
+| `ai-reject` | coord | `{responseId, category?}` | `aiAudit[]` | DM-only |
+
+**Block identification — content hash, not position.** `blockHash` is the first 12 hex characters of `sha256(normalize(blockText))`, where `normalize` trims trailing whitespace and collapses internal whitespace runs to a single space. This survives mid-campaign edits: inserting a new paragraph, fixing a typo, or upstream merge does NOT invalidate prior reveals for unchanged blocks. When a block IS edited, its hash changes and prior reveals for that block silently lapse to hidden — which is correct behavior (the text changed; the DM should re-decide). The DM-side gutter renders lapsed pips in a distinct faint color so the DM sees what changed.
+
+`paragraphIndex?` is included as a non-authoritative UI hint for tooltips ("approximately paragraph 3 of scene"). The materializer ignores it.
+
+**Migration semantics for existing `scene-reveal`**: keep as sugar — revealing the whole scene synthesizes a `scene-reveal-paragraph` for every current block hash (or, more cheaply, the materializer keeps a derived `revealedScenes: string[]` that includes any scene with a whole-scene `scene-reveal` event or a non-empty `revealedParagraphs[scenePath]`). Existing player flows that check `revealedScenes.includes(path)` continue to work without code change. Cleanest implementation: materializer maintains both fields; `revealedScenes` is read-only and derived.
+
+**Transient (local-only, DO NOT log)**: PC focus (which PC the DM is "nudging"), Stage tab selection, Aside collapse state, Rail expansion, dice modifier draft. These are local UI state.
+
+**Two complementary filters**, both required:
+
+1. **`filterForViewer(state: SessionState, viewerPeerId): SessionState`** in `src/core/state.ts`. Strips DM-only fields (`scratchNotes`, `aiAudit`, `threadDebt`, `pinnedNpcs`, and the DM-only entries of `mapBlobs` per the reveal mask) when the viewer is not in `coordHolders`. Used by region components for render-side gating. Prevents in-session leaks.
+2. **`serializeSessionForViewer(events, campaign, savedByPeerId, scope: 'dm'|'player')`** in `src/persistence.ts`. Strips entire EVENTS from the save when `scope === 'player'` — specifically, drops `scratch-note`, `ai-prompt`, `ai-response`, `ai-accept`, `ai-reject`, `npc-pin`, `npc-unpin`, `thread-debt-set` events. The player-scope save then materializes to a state with no DM-only content. Without this, a DM who clicks "Save" and shares the JSON file inadvertently exposes their scratch column. The filter is event-level because state is derived; filtering only state would still leave DM-only events in the saved log to be re-materialized on load.
+
+Hostile-input tests must verify that `scratch-note` events never appear in a player-scope export; that the resulting save loads cleanly with `applySaveToLog`; that the player-scope materialized state contains no DM-only fields.
+
+**New caps to add** (DoS guards alongside existing `ID_CAP`/`CHAT_CAP`/etc.):
+
+```
+REVEALED_BLOCKS_PER_SCENE_CAP = 256   /* hashes per scene, well above any realistic length */
+BLOCK_HASH_LENGTH             = 12    /* hex chars; ~48 bits, more than enough vs. collision */
+MAP_BLOB_COUNT_CAP            = 500   /* per scene */
+PINNED_NPC_CAP                = 50
+SCRATCH_NOTE_CAP              = 5000
+```
+
+**Per-case validator convention.** With ~17 new event kinds added to the `applyEventToState` switch in `src/core/state.ts`, each case gains a payload validator. Convention: define one top-of-file helper per kind (`isScratchNotePayload`, `isMapBlobAddPayload`, `isThreadDebtSetPayload`, ...) following the existing `isPlainObjectPayload` / `isBoundedString` / `isSafeKey` style. Each validator is independently testable from `state.hostile.test.ts`. Do NOT inline payload validation in the switch cases; the resulting drift across 17 cases becomes unreviewable.
+
+## SessionState shape after additions
+
+```ts
+interface SessionState {
+  // ... existing fields ...
+  revealedParagraphs: Record<string /*scenePath*/, Set<string /*blockHash*/>>;
+  threadDebt: Record<string /*pcId*/, ThreadDebtLevel>;
+  pinnedNpcs: string[];
+  mapBlobs: Record<string /*scenePath*/, MapBlob[]>;
+  mapBlobReveals: Record<string, Set<string /*blobId*/>>;
+  broadcastView?: { stagePath: string; tab?: StageTab; ts: number };
+  raisedHands: Set<PeerId>;
+  scratchNotes: ScratchNote[];
+  aiAudit: AiAuditEntry[];
+}
+```
+
+`scratchNotes` and `aiAudit` are render-gated DM-only. `threadDebt` and `pinnedNpcs` are shared (co-DM continuity, post-session AI ingestion) and render-gated DM-only.
+
+**Important: state is never serialized; events are.** `src/persistence.ts:42-55` defines the save document as `{$schemaVersion, savedAt, campaign, savedByPeerId, events}`. State is rebuilt from events via `materialize()` on load. New `Set` types in `SessionState` are in-memory-only; nothing extra is needed to serialize them. The persistence concern is **event stripping**, not state stripping (see next section).
+
+## AI broker architecture
+
+Current shape: `src/ai/anthropic.ts` and `src/ai/gemini.ts` are independent text-in/string-out functions (`callAnthropic`, `callGemini`). The new shape:
+
+```
+src/ai/
+  broker.ts          — AiBroker class; the only thing the UI calls
+  providers/
+    anthropic.ts     — provider impl (HTTP shape mostly unchanged)
+    gemini.ts        — provider impl
+    extension.ts     — Chrome-extension-bridged Anthropic (DEFERRED v2)
+  context.ts         — wrapUntrusted(), buildContext()
+  audit.ts           — hash chain, IndexedDB-backed full text
+  budget.ts          — token meter
+  schema.ts          — AiResponse, AiDiffProposal validation
+```
+
+Interface:
+
+```ts
+interface AiCompleteRequest {
+  prompt: string;
+  scope: 'public' | 'dm';     // public default; DM-only opt-in
+  contextRefs?: string[];      // campaign-relative file paths; validated
+  signal?: AbortSignal;
+}
+
+interface AiResponse {
+  safe: string;
+  dmOnly: string;
+  sources: SourceRef[];
+  raw: string;
+  tokensIn: number;
+  tokensOut: number;
+  responseId: string;
+}
+
+class AiBroker {
+  complete(req: AiCompleteRequest): Promise<AiResponse>;
+  proposeChanges(digest: SessionDigest): Promise<DiffProposal[]>;
+}
+```
+
+Provider impls request a structured tool (Claude tools / Gemini response schema) with the `AiResponse` shape. Broker normalizes both; on parse failure synthesizes `{safe: '', dmOnly: '(AI response was not in the expected format; raw text saved to audit log)', sources: []}` rather than throwing.
+
+**`contextRefs` path validation** (security-critical, P2-6 includes this). Every path in `contextRefs` must:
+- Be campaign-relative (no leading `/`).
+- Not contain `..` segments after normalization.
+- Pass the same path validator that `CampaignLoader` uses for fetched files.
+- When `scope === 'public'`, must not start with `dm/` or `design/DM-ONLY/` (the broker enforces this even if the path is otherwise valid — defense in depth against a DM who toggles scope wrong mid-prompt).
+
+Validation lives in `src/ai/context.ts` and is independently testable from `ai/context.hostile.test.ts`. Cases: absolute paths, `../etc/passwd`-style, paths to `dm/*` with public scope, paths to nonexistent files.
+
+**Scope toggle resets per prompt.** The DM's "include DM notes" toggle is consumed by the broker on submit and resets to `public` for the next prompt. This is part of the safety property: a DM who toggled DM-mode for an earlier query in the session does not stay armed.
+
+**AI calls restricted to current coordinator only.** A peer who is in `coordHolders` historically but is NOT currently `state.coordinator` cannot fire `complete()` or `proposeChanges()` — the broker checks `this.session.view().shared.coordinator === this.session.view().peerId` and rejects. This keeps the hash-chained audit a strict chain (single appender), not a fork-prone DAG.
+
+**Untrusted content wrapping**: every campaign-sourced string passed in `contextRefs` is wrapped in `<untrusted_content source="...">…</untrusted_content>`, with literal `</untrusted_content>` strings replaced by `<!--UC_CLOSE-->` sentinels. A **load-time validator** in `campaign-loader.ts` rejects raw campaign content that contains the literal sentinel `<!--UC_CLOSE-->`. Hostile-input tests: literal sentinel in body, frontmatter values, YAML keys, code fences, HTML comments inside Markdown.
+
+**Audit chain**: every prompt/response is hashed and chained against the previous (`{prevHash, promptHash, responseHash, ts, tokens}`). Chain head goes to events.jsonl via `ai-prompt`/`ai-response`. Full text lives in IndexedDB on the DM's machine, keyed by hash. After coord handoff, the new coordinator picks up the chain head from `aiAudit` (the latest event's `responseHash` becomes the new `prevHash`) and appends from there.
+
+**Budget**: `tokensIn + tokensOut` accumulated per session, persisted in IndexedDB keyed by session id, displayed in Topbar widget. Hard-stop above ceiling; warning above 80%. UI treatment when ceiling hit: AI prompt input disables; banner above input reads "Token budget reached for this session." Pending in-flight prompt is cancelled. The ceiling is configurable per-DM in Settings.
+
+## UI shell decomposition
+
+Target file layout:
+
+```
+src/
+  ui/
+    quire-app.ts             — shell. Owns AppMode, sessionView, route,
+                                region slots. Target ~300 LOC.
+    shell/
+      topbar.ts              — <quire-topbar>
+      rail.ts                — <quire-rail>
+      stage.ts               — <quire-stage>
+      aside.ts               — <quire-aside>
+      dock.ts                — <quire-dock>
+    regions/
+      player-rail.ts         — condensed sheet, expand-on-tap
+      dm-rail.ts             — scene nav + active-PC card + DM sheet
+      player-aside.ts        — roster + chat + private notes
+      dm-aside.ts            — roster + pinned NPCs + DM aide + AI console
+      scene-stage.ts         — markdown + reveal pips + scene strip
+      outline-stage.ts       — scene list (DM)
+      npcs-stage.ts          — per-episode dm/npcs.md (DM)
+      map-stage.ts           — image + SVG blob overlay
+      authoring-stage.ts     — markdown editor (lazy chunk)
+      diff-stage.ts          — post-session diff review (lazy chunk)
+    modes/
+      mode-state.ts          — AppMode enum + transitions
+    styles/
+      tokens.css             — oklch palette, clamp() typography
+  controllers/
+    session-controller.ts    (moved from src/)
+  ai/
+    broker.ts                (see above)
+  living/
+    session-digest.ts        — builds AI input
+    diff-format.ts           — DiffProposal schema + JSON Pointer
+    proposals.ts             — proposal flow
+  sync/
+    working-copy.ts          — IndexedDB dirty-files store
+    manual-export.ts         — tarball download backend
+```
+
+`AppMode = 'pre-session' | 'in-session' | 'post-session' | 'authoring' | 'solo-browse'`. The shell selects which region implementation to mount per slot based on `(AppMode, isCoordinator())`. Region components communicate only through:
+
+- A read-only `SessionView` prop (filtered via `filterForViewer`).
+- Events bubbled to the shell, which forwards to `SessionController.append`.
+
+Shared services (`SessionController`, `AiBroker`, `CampaignLoader`, `WorkingCopy`) are provided via Lit context (`@lit/context`) — avoid prop-drilling.
+
+**Migration path** (do not rewrite all at once):
+
+1. Extract CSS to `src/ui/styles/tokens.css` and consume via `static styles`. Reclaims ~700 LOC of quire-app.ts immediately.
+2. Introduce the grid shell at the top of `render()`. Map current `renderXxx` methods into temporary region slots.
+3. One region at a time, extract to a region component. Existing `quire-app.*.test.ts` continue to pass because the root element still mediates events.
+4. Introduce `AppMode` once two modes exist.
+
+## Bundle budget
+
+Current bundle: **~64 KB gzipped.** New costs (gzipped estimates):
+
+| Addition | Cost | Lazy-loadable? |
+|---|---|---|
+| Grid shell + 8-10 region components | +10 KB | no |
+| Map renderer (SVG, no library) | +5 KB | yes (per-scene) |
+| Diff view (text-line diff hand-rolled) | +3 KB | yes (post-session only) |
+| AI broker + audit + budget + schema validation | +8 KB | no |
+| Ajv (authoring lint) | +25 KB | yes |
+| CodeMirror 6 (editor + markdown + yaml + lint) | +100-120 KB | yes |
+| Frontmatter form (schema-driven) | +5 KB | yes |
+
+**Without lazy loading**: ~64 + 30 + 130 = ~225 KB. **With lazy loading** of authoring + diff + map: in-session bundle stays at ~95-100 KB. Authoring chunk (~130 KB) loads only when the user opens authoring mode. Diff chunk loads on "Wrap session." Map chunk loads when entering Map tab.
+
+Vite dynamic imports: `import('./regions/authoring-stage')` returns a promise; shell mounts a "Loading editor…" placeholder.
+
+**CI bundle-size regression test (P0-7)**: a CI step runs `vite build --report` and fails the build if the gzipped main chunk exceeds **110 KB** (12% headroom over the ~98 KB target). The authoring chunk has its own budget of **150 KB**. Without this gate, the in-session bundle silently grows over the project's lifetime.
+
+Verify the CodeMirror 6 budget with a real `vite build` on a CM-included scratch branch before P4-3 lands — if it falls outside the +100-120 KB range, revise this section.
+
+## Prioritized task list
+
+Task IDs (P0-1, P0-2, ...) are referenced by plan docs and commit messages.
+
+### P0 — Foundation (blocks everything)
+
+- **P0-1 — Grid-shell + theme tokens.** Extract CSS to `src/ui/styles/tokens.css` (oklch palette, clamp typography). Introduce `<quire-shell>` with five named slots. Initially fills slots with existing `renderXxx` outputs. **Files**: `src/quire-app.ts`, new `src/ui/shell/`, new `src/ui/styles/tokens.css`. **Blocks**: P1-*, P2-*.
+- **P0-2 — Mode state machine.** `AppMode = 'pre-session'|'in-session'|'post-session'|'authoring'|'solo-browse'` as a property on `QuireApp`; routing → mode mapping. **Files**: `src/routing.ts`, `src/quire-app.ts`, new `src/ui/modes/mode-state.ts`. **Blocks**: P3-*, P4-*.
+- **P0-3 — Region component decomposition.** Extract `<quire-rail>`, `<quire-stage>`, `<quire-aside>`, `<quire-dock>`, `<quire-topbar>` as stub Lit elements that accept a `view: SessionView` prop and forward events. **Files**: `src/ui/shell/*`. **Blocks**: P1-*, P2-*.
+- **P0-4 — `filterForViewer` helper.** Centralize DM-only render gating. **Files**: `src/core/state.ts`. **Blocks**: P2-2, P2-3, P2-4, P2-5, P5-5.
+- **P0-5 — New event kinds registered.** Add all new kinds to `KNOWN_EVENT_KINDS` (no materializers yet) so concurrent feature work doesn't drift and forward-compat is preserved. **Files**: `src/core/state.ts`. **Blocks**: P1-7, P2-2, P2-3, P2-4, P2-5, P2-7, P2-11, P5-3.
+- **P0-6 — Hygiene: architecture.md UI shape + phone-first update.** Replace stale framing. **Files**: `quire/design/architecture.md`.
+- **P0-7 — CI bundle-size regression gate.** Add `vite build --report` to CI; fail when gzipped main chunk exceeds 110 KB or the authoring lazy chunk exceeds 150 KB. **Files**: CI workflow, `vite.config.ts` (size-limit plugin or equivalent). **Blocks**: none, but P4-3 verifies CodeMirror 6 fits the lazy budget.
+
+### P1 — Critical in-session ergonomics
+
+- **P1-1 — Player Rail (condensed PC sheet).** Move current sheet from `renderCharacter` into `<player-rail>`. Tap-to-expand state (Rail grows). **Files**: `src/ui/regions/player-rail.ts`. **Depends on**: P0-1, P0-3.
+- **P1-2 — Scene Stage with scene-strip header.** Wrap current `renderScene` in `<scene-stage>` with a frontmatter-driven header (location, mood, duration, presentNpcs). **Files**: `src/ui/regions/scene-stage.ts`, `src/episode-loader.ts` (expose frontmatter). **Depends on**: P0-1, P0-3.
+- **P1-3 — Roster Aside with harm/stress glyphs + connection dots + current-speaker pulse.** Reuse `renderRosterRow`; derive per-peer harm/stress from `pcEdits`. **Files**: `src/ui/regions/player-aside.ts`. **Depends on**: P0-3.
+- **P1-4 — Dice Dock.** Move `renderRollPanel` into `<quire-dock>` with stat-chip UI (6 buttons + modifier stepper + last-3 pills). Keyboard: `R`, `1-6`, `+`/`-`, `Enter`. **Files**: `src/ui/regions/dice-dock.ts`. **Depends on**: P0-3.
+- **P1-5 — DM Rail (scene navigator + active-PC focus + DM sheet).** **Files**: `src/ui/regions/dm-rail.ts`. **Depends on**: P0-3.
+- **P1-6 — Chat collapse in Aside.** Move `renderChatPanel` into Aside; default collapsed in-person. **Depends on**: P0-3.
+- **P1-7 — Raise-hand event + indicator.** Add `raise-hand`/`lower-hand` materializers; render ✋ in player Dock + DM Aside roster. **Files**: `src/core/state.ts`, `src/session-controller.ts`. **Depends on**: P0-5.
+
+### P2 — DM cockpit additions
+
+- **P2-1 — Per-paragraph reveal: markdown pipeline split.** Add `renderMarkdownParagraphs(text)` that splits source into blocks (paragraphs, lists, blockquotes, code fences, headings, tables) and renders each independently. Leave existing `renderMarkdown` unchanged for other callers. **Files**: `src/markdown.ts`, tests. **Depends on**: P0-1.
+- **P2-2 — `scene-reveal-paragraph` event + state + gutter pips.** Materializer for `revealedParagraphs`; gutter pip UI in scene-stage. CSS hides blocks not in revealed set for players. **Files**: `src/core/state.ts`, `src/ui/regions/scene-stage.ts`. **Depends on**: P0-5, P2-1, P0-4.
+- **P2-3 — DM scratch column in Dock.** `scratch-note` event + materializer + always-visible input. Hotkey `'`. Stripped from player save exports. **Files**: `src/core/state.ts`, `src/ui/regions/dm-dock.ts`, `src/persistence.ts` (export filter). **Depends on**: P0-5, P0-4.
+- **P2-4 — NPC pinning.** `npc-pin`/`npc-unpin` events; pinned-NPC strip in DM Aside; pin survives scene changes. **Files**: `src/core/state.ts`, `src/ui/regions/dm-aside.ts`. **Depends on**: P0-5, P0-4.
+- **P2-5 — Thread-debt ladder.** `thread-debt-set` event + 24 px ladder strip above Stage prose (DM-only). Per-PC rungs, not session-wide. **Files**: `src/core/state.ts`, `src/ui/regions/scene-stage.ts`. **Depends on**: P0-5, P0-4.
+- **P2-6 — AiBroker class + structured `{safe, dmOnly, sources}` return.** Wraps existing Anthropic/Gemini calls; structured tool spec; parse-failure fallback. **Files**: `src/ai/broker.ts`, `src/ai/providers/*`, `src/ai/schema.ts`, `src/ai/context.ts`. Parallel-safe with shell work.
+- **P2-7 — AI audit chain + events.** `ai-prompt`/`ai-response`/`ai-accept`/`ai-reject` events; IndexedDB-backed full-text store. **Files**: `src/ai/audit.ts`, `src/core/state.ts`. **Depends on**: P2-6, P0-5.
+- **P2-8 — Public-only context default + DM-only opt-in toggle.** `buildContext({scope})`. **Files**: `src/ai/context.ts`, AI prompt UI. **Depends on**: P2-6.
+- **P2-9 — Token-budget meter.** Per-session accumulator, Topbar widget, hard-stop ceiling. **Files**: `src/ai/budget.ts`. **Depends on**: P2-6.
+- **P2-10 — Caution rail when DM views `dm/*` files.** Path-based detection in stage; persistent amber left-border + sticky `[!CAUTION]` banner. **Files**: `src/ui/regions/scene-stage.ts`. **Depends on**: P0-1.
+- **P2-11 — Broadcast-view button + event.** `broadcast-view` event; players' Stage listens and navigates. **Files**: `src/core/state.ts`, `src/ui/regions/dm-dock.ts`, `src/quire-app.ts`. **Depends on**: P0-5.
+- **P2-12 — Dual-card AI response renderer.** Always two cards. Empty card shows muted "(none)" placeholder. DM-only card carries amber rail + badge + lock glyph + "copy (do not read aloud)" + source chips. **Files**: `src/ui/regions/dm-aside.ts`. **Depends on**: P2-6.
+
+### P3 — Living-document workflow (THE unique feature)
+
+- **P3-1 — Session-digest builder.** Module that takes events + scratch notes + summary + current campaign files and produces a single prompt-budget-bounded string. Reuses untrusted-content wrapper. **Files**: `src/living/session-digest.ts`. **Depends on**: P2-6.
+- **P3-2 — Diff format + JSON Pointer addressing + provenance.** `DiffProposal` schema; `baseSha` validation to reject if file moved. **Files**: `src/living/diff-format.ts`. **Depends on**: P2-6.
+- **P3-3 — AI proposal flow (NPC-update MVP).** AI given `characters/npcs/*.json` + session digest; returns proposals; per-field accept/reject. **Files**: `src/ai/broker.ts` (extend), `src/living/proposals.ts`. **Depends on**: P3-1, P3-2.
+- **P3-4 — Diff-view region (post-session, lazy chunk).** Two-pane current/proposed, category strip, per-proposal `✓`/`✗`/`✎`, per-category commit buttons. **Files**: `src/ui/regions/diff-stage.ts`. **Depends on**: P0-2, P3-3.
+- **P3-5 — WorkingCopy + per-category commit.** IndexedDB dirty-files store; one git commit per accepted category. **Files**: `src/sync/working-copy.ts`. **Depends on**: P4-2 (manual export) or stub.
+- **P3-6 — Extend categories** beyond NPC-update: scene-retcon, new-thread, dropped-thread, pacing-note. Same pipe. **Depends on**: P3-3.
+
+### P4 — Authoring mode
+
+- **P4-1 — WorkingCopy IndexedDB store.** Read-through delegation in `campaign-loader.ts` when path is dirty. **Files**: `src/sync/working-copy.ts`, `src/campaign-loader.ts`. **Depends on**: P0-2.
+- **P4-2 — Manual export sync backend.** Tarball download of dirty files. **Files**: `src/sync/manual-export.ts`. **Depends on**: P4-1.
+- **P4-3 — CodeMirror 6 lazy integration.** Editor + markdown + yaml language modes. **Files**: `src/ui/regions/authoring-stage.ts`, `vite.config.ts` (chunk). **Depends on**: P0-2.
+- **P4-4 — Frontmatter form (schema-driven).** YAML keys as typed inputs from `schema/v0/*.schema.json`; bidirectional with editor. **Files**: `src/ui/authoring/frontmatter-form.ts`. **Depends on**: P4-3.
+- **P4-5 — AJV lint panel.** Schema validation; errors inline with line numbers. **Files**: `src/ui/authoring/lint-panel.ts`. Same lazy chunk as P4-3.
+- **P4-6 — File-tree component.** Campaign repo tree in Rail position during authoring mode. **Files**: `src/ui/authoring/file-tree.ts`. **Depends on**: P4-1.
+- **P4-7 — Scaffolding (New Campaign / Episode / Scene).** Template files in `runtime/public/templates/`. **Depends on**: P4-1, P4-3.
+
+### P5 — Maps MVP
+
+- **P5-1 — `fetchCampaignBinary` + Blob IndexedDB cache.** Accepts `image/png`, `image/jpeg`, `image/webp` only. Rejects `image/svg+xml` (the SVG embedding contract is not yet locked; see H-5). **Files**: `src/campaign-loader.ts`.
+- **P5-2 — `map:` frontmatter on `LoadedEpisode.scene`.** **Files**: `src/episode-loader.ts`. **Depends on**: P5-1.
+- **P5-3 — Map blob events + materializers.** All seven `map-blob-*` events. **Files**: `src/core/state.ts`. **Depends on**: P0-5.
+- **P5-4 — `<quire-map>` region.** Image rendered via `<img src=blob:...>` ONLY (never `<object>`, `<iframe>`, inline `<svg>`, or CSS `background-image`). SVG overlay for blobs is a sibling `<svg>` element, not the loaded asset. Drag handlers attach to `<g>` elements. **Files**: `src/ui/regions/map-stage.ts`. **Depends on**: P5-1, P5-2, P5-3.
+- **P5-5 — Player blob-reveal gating.** Via `filterForViewer`. **Depends on**: P0-4, P5-4.
+
+### Cross-cutting hygiene (do alongside P0/P1)
+
+- **H-1 — Resolve architecture.md "phone-first" / desktop-only conflict.** Done as part of P0-6 (already applied).
+- **H-2 — Markdown sanitizer `<img>` handling audit.** Map work depends on understanding what survives the sanitize hook. **Files**: `src/markdown.ts`, `src/markdown.hostile.test.ts`.
+- **H-3 — `revealedScenes` ↔ `revealedParagraphs` migration spec.** Resolved: materializer maintains both fields. `revealedScenes` is a derived read-only array containing every scene path that has either a whole-scene `scene-reveal` event OR a non-empty `revealedParagraphs[scenePath]` set. Existing callers that check `revealedScenes.includes(path)` keep working. New callers use `revealedParagraphs[scenePath]` for block-level granularity. Document this in code comments alongside `state.ts:KNOWN_EVENT_KINDS`.
+- **H-4 — Unknown-event-kinds banner.** When `applySaveToLog` encounters event kinds not in the current runtime's `KNOWN_EVENT_KINDS`, surface a one-line banner: "This save contains N event kinds your runtime doesn't recognize; some scene state may be incomplete." Belongs in `persistence.ts`. The materializer already silently ignores unknown kinds (forward-compat is preserved); the banner adds back-compat visibility. **Files**: `src/persistence.ts`.
+- **H-5 — Map asset MIME restriction.** The map fetch path accepts `image/png`, `image/jpeg`, `image/webp` only. SVG is rejected pending an audit of how it renders through the embedding path; see P5 notes. **Files**: `src/campaign-loader.ts` (binary fetch path).
+- **H-6 — Error-state UI for budget ceiling, baseSha mismatch, lapsed paragraph reveals, AI parse failure, sync push failure.** See [`ui.md`'s "Error states"](../../design/ui.md#error-states) section. These are touched across many regions; track that the design constraints land alongside each feature task.
+- **H-7 — Accessibility constraints.** Per [`ui.md`'s "Accessibility"](../../design/ui.md#accessibility) section: WCAG AA contrast on the oklch palette must be verified at implementation time. Live-region ARIA on the Stage updates and dice rolls. `aria-live="polite"` on revealed-paragraph appearance; `aria-live="assertive"` on dice results. Focus management when Rail expands and search palette opens.
+- **H-8 — CLI lint TODOs**: see [`quire/cli/TODO.md`](../../cli/TODO.md) and the "Lint-side TODOs" section of [`quire/design/authoring.md`](../../design/authoring.md). Independent of runtime; mentioned here for cross-project visibility.
+
+### Deferred to v2
+
+- **D-1** Anthropic via Chrome extension (`src/ai/providers/extension.ts`). Architecture.md mandates long-term; v1 uses `anthropic-dangerous-direct-browser-access` (documented residual risk).
+- **D-2** GitHub PAT / device-flow sync backend.
+- **D-3** Google Drive App-folder sync backend.
+- **D-4** Real 3-way merge UI for upstream-moved conflicts (v1 ships detect-and-block).
+- **D-5** Multi-DM concurrent-editing affordances; v1 assumes single DM at a time even though `coordHolders` already supports the history.
+- **D-6** Advanced map providers (`MapProvider` interface beyond static image).
+- **D-7** Streaming AI responses.
+- **D-8** Mid-session `truncate` event for partial rewind; v1 ships whole-session rewind only.
+- **D-9** Service-worker offline-capability hardening for authoring writes.
+- **D-10** Tactical grid combat / live token movement / fog of war.
+- **D-11** Per-paragraph heading-fusion grouping syntax.
+
+## Recommended ordering
+
+The plan is not strictly sequential — many P1/P2 tasks parallel-safe once P0 lands. Suggested critical path with **realistic estimates for a senior solo developer**:
+
+1. **Foundation sprint (2-3 weeks)**: P0-1 → P0-3 → P0-5 → P0-4 → P0-2 → P0-6 → P0-7. Outcome: shell exists, region scaffolds present, event vocabulary frozen with content-hash paragraph identifiers, mode state defined, stale arch doc updated, CI bundle-size gate live. The grid shell is not hard, but extracting from a 3792-LOC god-object while keeping tests green takes longer than the architectural diagram suggests.
+2. **In-session ergonomics sprint (2-3 weeks)**: P1-1 through P1-7. Outcome: new shell is usable for in-person play with the existing feature set.
+3. **DM cockpit sprint (4-5 weeks)**: P2-1 through P2-12 in two parallel tracks — (a) per-paragraph + scratch + ladder + pinning (P2-1, P2-2, P2-3, P2-4, P2-5, P2-10, P2-11), (b) AI broker + structured returns (P2-6, P2-7, P2-8, P2-9, P2-12). The broker work alone is closer to a week per provider once structured-tool quirks surface (Claude tool-use shape; Gemini response-schema flakiness on unions).
+4. **Living-document sprint (4-5 weeks)**: P3-1 through P3-6. P3-3 ("AI given files + digest; returns proposals") is open-ended LLM-shaping work — budget ~3 weeks for that one task. The rest of P3 is roughly a week each.
+5. **Authoring + Maps in parallel (2-3 weeks)**: P4-* and P5-*.
+
+**Realistic v1 total: 14-19 weeks (3.5-4.5 months)** for a senior solo developer. A v1-feature-complete release lands after sprint 3 (~9-11 weeks in). Authoring and Maps can ship as v1.1 / v1.2 increments without blocking.
+
+## Test strategy notes
+
+### General
+
+- Existing unit tests (`src/*.test.ts`) target the current `quire-app.ts` shape. They should mostly survive the region-extraction in P0-3 because events still bubble to the root. Update test setups module-by-module as regions extract.
+- E2E suite (`e2e/*.spec.ts`) is route-driven and should survive the shell refactor as long as URLs and visible affordances retain their names. Where Stage tabs replace direct routes, add `openSceneTab(ctx, tab)` helpers.
+- New event kinds get standard materializer tests (`state.test.ts`) and hostile-input tests (`state.hostile.test.ts` — DoS cap, payload validation, authority bypass attempts).
+- AI broker work needs new mocks of structured tool returns; existing `ai/anthropic.test.ts` and `ai/gemini.test.ts` patterns extend.
+
+### New required test coverage
+
+- **E2E dual-card AI safety** (`e2e/ai-content-safety.spec.ts`): mock AiBroker returns `{safe: 'X', dmOnly: 'Y'}`; player view contains only `X`; DM view contains both; `Y` does not appear anywhere in the player's DOM (not even with `display: none`). Plus the malicious variant: AI returns `{safe: 'X<dm-only>Y</dm-only>', dmOnly: ''}` — verify the player view shows the smuggled marker as literal text after sanitize, never executes it.
+- **E2E per-paragraph reveal** (`e2e/per-paragraph-reveal.spec.ts`): DM reveals block-hash for paragraph 3; player's Stage DOM contains paragraphs 1-3 only; paragraph 4's source text is NOT present in the player's DOM. Render-side hiding via CSS is forbidden — the renderer must omit hidden blocks from the player-pipeline entirely.
+- **`<!--UC_CLOSE-->` sentinel validation** (`campaign-loader.hostile.test.ts`): literal sentinel in body, frontmatter values, YAML keys, code fences, HTML comments. Each case rejects the campaign at load time.
+- **`contextRefs` path validation** (`ai/context.hostile.test.ts`): absolute paths, `../etc/passwd`-style, `dm/*` paths with `scope: 'public'`, paths to nonexistent files. Each rejected by the validator before reaching the provider.
+- **Player save export filtering** (`persistence.hostile.test.ts`): a session with `scratch-note`, `ai-prompt`, `ai-response`, `npc-pin`, `thread-debt-set` events exported with `scope: 'player'` contains none of those event kinds; the resulting save loads with `applySaveToLog`; the materialized player state contains no DM-only fields.
+- **Living-doc hostile proposals** (`living/proposals.hostile.test.ts`): proposals citing non-existent files; proposals with `baseSha` mismatch; proposals with `before` text not matching current file state (out-of-band edit); proposals containing literal `<untrusted_content>` strings. Each rejected by `DiffProposal` validation.
+- **Bundle-size regression**: P0-7 establishes the CI gate. The gate alone is the test.
+- **Block-hash stability** (`markdown.test.ts`): the same source block text produces the same hash across runs; a trailing-whitespace-only diff produces the same hash; an actual text edit produces a different hash.
+- **AI coordinator-only enforcement** (`ai/broker.test.ts`): a peer in `coordHolders` but NOT current coordinator cannot call `complete()`; the broker rejects.
+- **AI scope reset per prompt** (`ai/broker.test.ts`): submitting a prompt with `scope: 'dm'` leaves the next call defaulted to `scope: 'public'`.
+
+## Cross-references
+
+- Design spec: [`../../design/ui.md`](../../design/ui.md)
+- Architecture overview: [`../../design/architecture.md`](../../design/architecture.md)
+- Authoring conventions: [`../../design/authoring.md`](../../design/authoring.md)
+- Rules: [`../../design/rules-reference.md`](../../design/rules-reference.md)
+- Schemas: [`../../design/schemas.md`](../../design/schemas.md)
+- Security: [`../../design/security.md`](../../design/security.md)
+- CLI lint TODOs: [`../../cli/TODO.md`](../../cli/TODO.md)

@@ -88,17 +88,26 @@ The sanitized Markdown renderer is **not** pluggable — it is a trust boundary 
 
 ## UI shape
 
-The default view is a **reference shelf**, not a chat channel: episode outline + active scene + a cmd-K search that finds any record (NPC, monster, item, spell, PC, lore, prior summary) in the loaded campaign. Inline quick-edit on any record by both DM and players, mobile-first. An always-present **AI prompt bar** for the DM accepts natural-language edits and returns a diff preview against the affected records.
+The play app is a **desktop-first cockpit**, not a document. A five-region CSS Grid shell (Topbar / Rail / Stage / Aside / Dock) fills the browser window; no outer scrollbar. The Rail holds the player's character sheet (or, for the DM, a scene navigator above an active-PC card). The Stage is what the table is looking at together — current scene prose by default, with switchable view-modes for outline, NPCs quick-ref, schematic map, and the post-session living-document diff. The Aside holds the roster, pinned NPCs (DM), chat (collapsed by default in-person), and the DM's AI console. The Dock holds dice and DM verbs (reveal next paragraph, broadcast view, scratch column). The DM's view is a strict content superset of the player's; the grid skeleton is shared.
 
-The chat pane is collapsible and opens when peers join digitally, when the table wants a roll log, or when the DM wants slash-command dice. It is not the default.
+Mode is a top-level state machine: **pre-session lobby**, **in-session play**, **post-session** (living-document diff-review), **between-session authoring** (markdown editor + frontmatter form), and **solo browse** (binder, read-only). Mode chip is in the Topbar.
 
-The player sheet on phone is designed first; desktop is a superset.
+The **living-document workflow** is the unique feature: after each session, the AI ingests the events log, the DM's written summary, and scratch notes to propose structured per-category diffs against the campaign files (NPC updates, scene retcons, new/dropped threads, pacing notes). The DM walks the diff with accept/reject/edit controls; one git commit per accepted category. The campaign becomes this party's version, diverged from upstream.
+
+**AI assistance is DM-only** and goes through an `AiBroker` that enforces structured `{safe, dmOnly, sources}` tool returns. Responses always render as two stacked cards (safe-to-read-aloud + DM-only-with-amber-rail); either may be empty with a muted placeholder. The DM never has to *check* a card before reading aloud — visual treatment makes it impossible to confuse. Public-only context is the default; the DM opts into DM-only inclusion explicitly per prompt.
+
+**Desktop-first; mobile is not a v1 target.** Primary platform is a 27" 16:9 monitor with Discord on a second monitor; the layout remains workable down to a 13" laptop at half-width (≤ 1100 px). Solo browse on a phone is acceptable; in-session play on a phone is not.
+
+Full design spec: [`ui.md`](ui.md). Engineering plan with prioritized tasks: [`../runtime/design/redesign-plan.md`](../runtime/design/redesign-plan.md).
 
 ## Out of scope (v1)
 
-- AI map generation beyond coarse grids with named features.
+- AI map generation. v1 ships static-image maps with named draggable blobs (DM places, hide/reveal to players). No procedural generation.
 - Tactical grid combat (theater of the mind only in v1).
-- Live token movement on a battle map.
+- Live token movement on a battle map (blob placement is hand-tweaked by the DM).
 - Voice and video (use Discord or Jitsi alongside).
 - Calendar / scheduling.
+- Mobile in-session play. Solo browse on a phone is acceptable; the in-session cockpit is desktop-only.
 - iOS Progressive-Web-App installation (best-effort).
+- Anthropic via Chrome extension. v1 uses `anthropic-dangerous-direct-browser-access` as documented residual risk; the extension path is targeted for v2.
+- Multi-DM concurrent editing. The `coordHolders` history already supports it, but v1 assumes a single DM at a time.
