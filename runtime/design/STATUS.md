@@ -14,9 +14,9 @@ Full M2 retro retained below.
 - [x] `<session-bar>` region extracts renderSessionBar (M3a.3, commit 8f75a19)
 - [x] `route-policy.ts` helper extracts navigateToRoute gating (M3a.4, commit a07cba4)
 - [x] `<ai-panel>` region extracts AI panel cluster (M3a.5, commit dce9e2b)
-- [ ] max-method-LOC ≤ 80 (re-measure at M3a.10)
-- [ ] delegation ratio ≥ 75% (re-measure at M3a.10)
-- [ ] quire-app.ts ≤ 2000 LOC (currently ~2280 after M3a.7 wiring; gate decision)
+- [~] max-method-LOC ≤ 80 — Engine gate measured 83 (`loadFromString`), MISS by 3.  Trivially fixable; deferred to M3a polish.
+- [~] delegation ratio ≥ 75% — Engine gate measured 56% (9/16 page-level renderers).  `renderDmCharacterAffordances` is the cheapest extraction (~80 LOC); deferred to M3a polish.
+- [~] quire-app.ts ≤ 2000 LOC — actual at M3a close: **2795 LOC** (gate measured 2749 + unblock work).  Soft cap missed; gate accepted as ship-with-followups for engine-quality; CRITICAL blocks were security-side, now resolved.
 
 **Player-side UX (TTRPG-craft HIGH):**
 - [x] PC-to-peer binding event (M3a.2, commit 1f7ede4 — `peer-rename` extended with `pcId`)
@@ -28,26 +28,65 @@ Full M2 retro retained below.
 **DM cockpit (the actual M3a scope from execution-plan.md):**
 - [x] `<dm-rail>` (scene navigator) — M3a.9, commit 731146e.  Active-PC focus card deferred (no active-PC concept; M3a polish / M3b)
 - [x] `<dm-aside>` (pinned NPCs + thread-debt summary) — M3a.9, commit 731146e.  Roster/chat/AI panel remain in the player aside cluster; DM aide is a separate region above them
-- [x] Per-paragraph reveal with content-hash addressing + gutter pips (M3a.7, commits d32e360 / 2ac700e / 4423ed4 / 50bf471 — critic-driven fixes for hash length + cap + paced-disclosure framing)
-- [x] DM scratch column in Dock with `'` hotkey (M3a.8, commit 2c17e28 — `<dm-scratch>` region)
-- [x] NPC pinning (`npc-pin` / `npc-unpin` materializers) (M3a.8, commits 825c1a9 + 2150c22 — pin button on NPC page; pinned-NPC LIST lands with dm-aside in M3a.9)
-- [x] Thread-debt ladder in active-PC card (M3a.8, commit 2150c22 — selector on PC page; relocates to Rail's focus card with M3a.9)
+- [x] Per-paragraph reveal with content-hash addressing + gutter pips (M3a.7 + M3a.10 paced-mode fix, commits d32e360 / 2ac700e / 4423ed4 / 50bf471 / 7e4a52c)
+- [x] DM scratch column in Dock with `'` hotkey (M3a.8, commit 2c17e28)
+- [~] NPC pinning (M3a.8 materializer + pin button; LIST lands in `<dm-aside>` M3a.9; button still on the NPC character page pending M3a polish relocation)
+- [~] Thread-debt ladder (M3a.8 selector on PC page + summary in `<dm-aside>` M3a.9; the inline 5-chip ladder in the Rail's active-PC focus card is M3b)
 - [x] Caution rail on `dm/*` paths (M3a.8, commit f8a69ce)
 - [x] Broadcast button (`broadcast-view` event) (M3a.8, commits a1bc499 + cecf28b — DM scene-stage button + far-future-ts lock-out guard)
+
+**M3a.10 unblock (post-gate security work):**
+- [x] `serializeSessionForViewer` — shareable saves strip DM-only events (M3a.10, commit b844bab).  Player's downloaded JSON can no longer accidentally leak DM scratch / pins / debt / AI audit when shared.  Autosave path keeps the full event log for data resilience (per project_quire_threat_model).
+- [x] `filterForViewer` keys on current coordinator, not historical `coordHolders` (M3a.10, commit d978a6d).  A yielded-coord peer drops back to player-scoped view immediately.
+- [x] `<dm-aside>` / `<dm-scratch>` migrated to `filteredShared` (M3a.10, commit d978a6d).  Defense-in-depth consistency.
+- [x] `e2e/per-paragraph-reveal.spec.ts` — the redesign-plan.md L437 acceptance test (M3a.10, commit 7e4a52c).  Asserts unrevealed-block text is absent from player Stage innerHTML.
+- [x] `persistence.hostile.test.ts` — 9 cases including the literal LEAK SCENARIO grep (M3a.10, commit b844bab).
+- [x] Paced-mode kick-in fix: `sceneFullyRevealed` now flips false when any per-block reveal exists, so per-paragraph reveal actually constrains the player view (M3a.10, commit 7e4a52c).
 
 **Process:**
 - [x] STATUS.md cadence rule decision — DROPPED honestly at M3a.0; this update is at the M3a.7 milestone-internal boundary, not per-commit.
 - [x] Honest revision of execution-plan.md time estimates — DONE at M3a.0.
 - [x] First commit migrates player-visible renderers `shared` → `filteredShared` (M3a.1, commit at branch base).
 
+## M3a.10 gate verdict
+
+4-reviewer gate verdict 2026-05-21:
+
+| Reviewer | Verdict | Severity-floor |
+|---|---|---|
+| TTRPG-craft | ship-with-followups | no |
+| Engine | ship-with-followups | no |
+| Security | **block** | yes |
+| Adversarial | **block** | yes |
+
+Two CRITICAL findings converged on the user-initiated save-export path: `serializeSessionForViewer` was unimplemented (player save leaks DM scratch / pins / debt verbatim on share) and `filterForViewer` keyed on historical `coordHolders` rather than the current coordinator (yielded-coord peer continued seeing DM-only state in the UI).  Both addressed in the M3a.10 unblock work (commits b844bab + d978a6d + 7e4a52c).
+
+Threat-model framing locked at the gate (see [[project_quire_threat_model]]):
+- Defend against ACCIDENTAL DM-only disclosure (civilized player Cmd+S → JSON shared with someone).
+- Defend against malicious outside parties disrupting the game.
+- Do NOT try to defend against malicious team members — they have GitHub access anyway.  Capture as audit-trail follow-up.
+- Players STORING DM events on their device's autosave is wanted (multi-device resilience).  Filtering is at the SHARE surface (user file download), not the storage surface.
+
+## Follow-ups carried to M3a polish / M3b
+
+**HIGH (table ergonomics):**
+- FU-1: Keyboard map for the DM (J/K/Space/Cmd-Enter/B for paced reveal + broadcast).  Per-paragraph workflow is mouse-only today.
+- FU-2: Audit trail when a peer is reading DM-only state they shouldn't be (e.g., past-coord materialized stale data, suspicious patterns).  Social-deterrent per the threat model.
+
+**MEDIUM (UX placement):**
+- FU-3: Relocate `renderDmCharacterAffordances` (pin button, thread-debt selector) from the character page into the cockpit regions per ui.md.  Closes the M3a.9 follow-up.
+- FU-4: Active-PC focus card in `<dm-rail>` (currently scene-navigator only).
+
+**LOW (hygiene):**
+- FU-5: Lapsed-pip rendering when a `scene-reveal-paragraph` blockHash no longer matches any current block (DM-side cue after editorial edits).
+- FU-6: Document SCRATCH_NOTE_TEXT_CAP = 5000 in security.md or shrink to a defensible number.
+- FU-7: Split `loadFromString` to ≤80 LOC (max-method gate fix).
+- FU-8: `crypto.subtle.digest` feature-detection + insecure-context banner.
+- FU-9: Case-insensitive `dm/` path detection for caution rail.
+
 ## Next planned commit
 
-M3a.10 — gate: 4 reviewers (TTRPG-craft, Engine, Security, Adversarial).  Each reviewer evaluates the M3a milestone independently and votes `pass | ship-with-followups | block`; severity-floor authority on critical findings.  Open items for the gate brief:
-
-- quire-app.ts at 2749 LOC vs 2000 soft cap.  Mitigation: 9 regions extracted in M3a (session-bar, ai-panel, route-policy, dm-scratch, dm-aside, dm-rail, player-rail-as-bound, plus pre-existing player-rail/aside/dice-dock/scene-stage/chat).
-- DM character-page affordances (pin button, thread-debt selector) still live in quire-app.renderDmCharacterAffordances pending relocation to the cockpit regions in M3a polish.
-- SCRATCH_NOTE_TEXT_CAP = 5000 chars is invented; document or shrink (decided at gate).
-- Hostile tests for serialized-save scratch-note stripping land in the gate's adversarial pass.
+Tag `milestone-M3a` once all M3a.10 unblock work is in (the commits referenced above).  After tagging, decide between M3a polish (drain the followups) and M3b (AI broker + dual-card) per the user's pacing preference.
 
 ---
 
