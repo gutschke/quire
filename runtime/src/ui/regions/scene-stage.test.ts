@@ -142,6 +142,22 @@ describe('<scene-stage> per-block reveal rendering', () => {
     expect(stage.querySelector('.dm-caution-card')).not.toBeNull();
   });
 
+  it('case-insensitive caution match (DM/, /DM/, /Dm/)', async () => {
+    for (const p of ['DM/secret.md', 'scenes/DM/inner.md', 'foo/Dm/x.md']) {
+      const stage = mountStage();
+      stage.scenePath = p;
+      stage.sceneBlocks = [block('0000000000000001', 'x', 0)];
+      stage.revealedBlocks = new Set();
+      stage.sceneFullyRevealed = true;
+      stage.isCoordinator = true;
+      await stage.updateComplete;
+      expect(
+        stage.querySelector('.dm-caution-banner'),
+        `expected banner for ${p}`
+      ).not.toBeNull();
+    }
+  });
+
   it('renders the dm-caution banner for nested /dm/ segments', async () => {
     const stage = mountStage();
     stage.scenePath = 'scenes/dm/aftermath.md';

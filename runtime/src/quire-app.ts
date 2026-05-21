@@ -2386,55 +2386,13 @@ export class QuireApp extends LitElement {
       };
       return null;
     }
-    // Cross-campaign protection: refuse to load a save for a
-    // different campaign than the one currently open.
-    const currentCampaign = this.getCurrentCampaign();
-    if (currentCampaign) {
-      const c = currentCampaign.base.source;
-      if (
-        c.owner !== parsed.doc.campaign.owner ||
-        c.repo !== parsed.doc.campaign.repo
-      ) {
-        this.loadStatus = {
-          kind: 'error',
-          message: `Save is for ${parsed.doc.campaign.owner}/${parsed.doc.campaign.repo}, current campaign is ${c.owner}/${c.repo}.`
-        };
-        return null;
-      }
+    const campaignMismatch = this.detectCampaignMismatch(parsed.doc.campaign);
+    if (campaignMismatch) {
+      this.loadStatus = { kind: 'error', message: campaignMismatch };
+      return null;
     }
-    let applied = 0;
-    let unknownKinds = 0;
-    for (const e of parsed.doc.events) {
-      if (this.session.applyEvents([e]) > 0) applied++;
-      // H-4 unknown-kind detection: count events whose kind isn't
-      // in the local runtime's KNOWN_EVENT_KINDS vocabulary.  These
-      // events still replicate (EventLog dedups by id) but the
-      // materializer silently drops them — the banner alerts the
-      // user that some scene state may be incomplete because they
-      // are running an older Quire than the save was produced on.
-      if (
-        typeof e.kind !== 'string' ||
-        !KNOWN_EVENT_KINDS.has(e.kind)
-      ) {
-        unknownKinds++;
-      }
-    }
-    // Auto-reclaim if needed: when a host loads a save, the
-    // session-1 coordinator-claim may sort earlier (older
-    // clock-sum) than the new host's own claim, depending on
-    // peerId tiebreak.  Without auto-reclaim, the coordinator
-    // would be non-deterministic.  User intent: "the host who
-    // loads is the DM."  Fire a coord-reclaim from the host so
-    // they're unambiguously coordinator; the audit chat captures
-    // the transition transparently.  A non-host (guest) who
-    // loads does NOT auto-reclaim — that's the explicit "I want
-    // to take over" workflow gated by the Reclaim button.
-    if (
-      this.sessionView!.mode === 'host' &&
-      this.sessionView!.shared.coordinator !== this.sessionView!.peerId
-    ) {
-      this.session.reclaimCoordinator();
-    }
+    const { applied, unknownKinds } = this.applyLoadedEvents(parsed.doc.events);
+    this.autoReclaimAfterLoad();
     const result: LoadResult = {
       applied,
       duplicates: parsed.doc.events.length - applied,
@@ -2442,19 +2400,76 @@ export class QuireApp extends LitElement {
       unknownKinds,
       errors: []
     };
-    // H-4 banner: prepend a one-line warning when the save contained
-    // events from a newer runtime.  The events still replicate
-    // (forward-compat), but the local materializer can't render
-    // them; surface this so the user knows to update.
+    this.loadStatus = {
+      kind: 'loaded',
+      message: this.formatLoadBanner(applied, result.duplicates, unknownKinds)
+    };
+    return result;
+  }
+
+  /**
+   * Cross-campaign protection: refuse to load a save whose campaign
+   * pointer differs from the one currently open.  Returns the
+   * user-facing error message, or null when the load may proceed.
+   */
+  private detectCampaignMismatch(
+    saved: { owner: string; repo: string }
+  ): string | null {
+    const currentCampaign = this.getCurrentCampaign();
+    if (!currentCampaign) return null;
+    const c = currentCampaign.base.source;
+    if (c.owner === saved.owner && c.repo === saved.repo) return null;
+    return `Save is for ${saved.owner}/${saved.repo}, current campaign is ${c.owner}/${c.repo}.`;
+  }
+
+  /**
+   * Replay the saved events into the active session and count both
+   * applied-vs-duplicate and H-4 unknown-kind events.  Unknown-kind
+   * events still replicate (EventLog dedups by id) but the
+   * materializer drops them; the count drives the H-4 banner.
+   */
+  private applyLoadedEvents(
+    events: readonly import('./core/event-log').QuireEvent[]
+  ): { applied: number; unknownKinds: number } {
+    let applied = 0;
+    let unknownKinds = 0;
+    for (const e of events) {
+      if (this.session!.applyEvents([e]) > 0) applied++;
+      if (typeof e.kind !== 'string' || !KNOWN_EVENT_KINDS.has(e.kind)) {
+        unknownKinds++;
+      }
+    }
+    return { applied, unknownKinds };
+  }
+
+  /**
+   * When a host loads a save, fire a coord-reclaim so the loading
+   * host is unambiguously coordinator regardless of the saved
+   * session's claim history.  A guest who loads does NOT auto-
+   * reclaim — that's the explicit Reclaim-button workflow.
+   */
+  private autoReclaimAfterLoad(): void {
+    const v = this.sessionView!;
+    if (v.mode === 'host' && v.shared.coordinator !== v.peerId) {
+      this.session!.reclaimCoordinator();
+    }
+  }
+
+  /**
+   * Compose the user-facing load result message.  Prepends an H-4
+   * unknown-kind warning when the save contained events from a
+   * newer runtime than the local one understands.
+   */
+  private formatLoadBanner(
+    applied: number,
+    duplicates: number,
+    unknownKinds: number
+  ): string {
     const banner =
       unknownKinds > 0
         ? `This save contains ${unknownKinds} event kind${unknownKinds === 1 ? '' : 's'} this runtime doesn't recognize; some scene state may be incomplete (consider updating). `
         : '';
-    this.loadStatus = {
-      kind: 'loaded',
-      message: `${banner}Loaded ${applied} new event${applied === 1 ? '' : 's'} (${result.duplicates} already present).`
-    };
-    return result;
+    return `${banner}Loaded ${applied} new event${applied === 1 ? '' : 's'} (${duplicates} already present).`;
   }
 
   /** File-picker driven load. */

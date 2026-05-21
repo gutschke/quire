@@ -58,7 +58,10 @@ BLOCK_HASH_LENGTH             = 16    /* hex chars; 64 bits — collision probab
                                           at 256K hashes (256 blocks × 1000 scenes) */
 MAP_BLOB_COUNT_CAP            = 500   /* per scene */
 PINNED_NPC_CAP                = 50
-SCRATCH_NOTE_CAP              = 5000
+SCRATCH_NOTE_CAP              = 5000  /* notes per session */
+SCRATCH_NOTE_TEXT_CAP         = 5000  /* chars per note — same ceiling as CHAT_CAP; large enough
+                                          to hold a pasted AI response, small enough to bound a
+                                          25 MB worst-case session (5000 notes × 5000 chars). */
 ```
 
 **Per-case validator convention.** With ~17 new event kinds added to the `applyEventToState` switch in `src/core/state.ts`, each case gains a payload validator. Convention: define one top-of-file helper per kind (`isScratchNotePayload`, `isMapBlobAddPayload`, `isThreadDebtSetPayload`, ...) following the existing `isPlainObjectPayload` / `isBoundedString` / `isSafeKey` style. Each validator is independently testable from `state.hostile.test.ts`. Do NOT inline payload validation in the switch cases; the resulting drift across 17 cases becomes unreviewable.

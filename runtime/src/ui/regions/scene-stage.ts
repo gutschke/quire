@@ -107,9 +107,15 @@ export class SceneStage extends LitElement {
    * a persistent amber rail + sticky [!CAUTION] banner whenever
    * the loaded scene path matches, so the DM can't accidentally
    * read-aloud DM-only prose at the table.
+   *
+   * Case-insensitive (FU-9): campaign authors may capitalize
+   * `DM/`; the rail should still trigger.  This is an authorial-
+   * discipline cue, not a confidentiality boundary — the real
+   * defense for DM content at rest is age-encryption per
+   * security.md.
    */
   private isDmOnlyPath(): boolean {
-    const p = this.scenePath;
+    const p = this.scenePath.toLowerCase();
     return p.startsWith('dm/') || p.includes('/dm/');
   }
 
