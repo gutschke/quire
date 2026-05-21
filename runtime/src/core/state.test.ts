@@ -501,6 +501,172 @@ describe('materialize — scratch-note (M3a.8)', () => {
   });
 });
 
+describe('materialize — ai-prompt / ai-response / ai-accept / ai-reject (M3b.3)', () => {
+  const PROMPT_HASH = 'abc1234567890def';
+  const RESP_HASH = '1234567890abcdef';
+  const RESP_HASH_2 = '9876543210fedcba';
+
+  it('coordinator can append an ai-prompt audit row', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-prompt', {
+      v: 1,
+      promptHash: PROMPT_HASH,
+      model: 'claude-sonnet-4-6',
+      tokenIn: 42,
+      contextRefs: ['episodes/001/scenes/intro.md']
+    });
+    const state = materialize(log.events());
+    expect(state.aiAudit).toHaveLength(1);
+    expect(state.aiAudit[0]).toMatchObject({
+      kind: 'prompt',
+      promptHash: PROMPT_HASH,
+      tokensIn: 42
+    });
+  });
+
+  it('non-coordinator ai-prompt is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('ai-prompt', {
+      v: 1,
+      promptHash: PROMPT_HASH,
+      model: 'm',
+      tokenIn: 1
+    });
+    alice.apply(ev);
+    expect(materialize(alice.events()).aiAudit).toEqual([]);
+  });
+
+  it('rejects an ai-prompt with malformed hash', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-prompt', {
+      v: 1,
+      promptHash: 'g'.repeat(16),
+      model: 'm',
+      tokenIn: 1
+    });
+    expect(materialize(log.events()).aiAudit).toEqual([]);
+  });
+
+  it('rejects an ai-prompt with negative tokenIn', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-prompt', {
+      v: 1,
+      promptHash: PROMPT_HASH,
+      model: 'm',
+      tokenIn: -1
+    });
+    expect(materialize(log.events()).aiAudit).toEqual([]);
+  });
+
+  it('rejects an ai-prompt with too many contextRefs', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-prompt', {
+      v: 1,
+      promptHash: PROMPT_HASH,
+      model: 'm',
+      tokenIn: 1,
+      contextRefs: Array.from({ length: 51 }, (_, i) => `ref-${i}.md`)
+    });
+    expect(materialize(log.events()).aiAudit).toEqual([]);
+  });
+
+  it('appends ai-response with chain link (prevHash → responseHash)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-prompt', {
+      v: 1,
+      promptHash: PROMPT_HASH,
+      model: 'm',
+      tokenIn: 5
+    });
+    log.append('ai-response', {
+      v: 1,
+      responseId: 'r-1',
+      tokenOut: 10,
+      hash: RESP_HASH,
+      prevHash: '' // first response in the chain
+    });
+    log.append('ai-response', {
+      v: 1,
+      responseId: 'r-2',
+      tokenOut: 20,
+      hash: RESP_HASH_2,
+      prevHash: RESP_HASH
+    });
+    const state = materialize(log.events());
+    expect(state.aiAudit).toHaveLength(3);
+    expect(state.aiAudit[1]).toMatchObject({
+      kind: 'response',
+      responseId: 'r-1',
+      responseHash: RESP_HASH,
+      prevHash: '',
+      tokensOut: 10
+    });
+    expect(state.aiAudit[2]).toMatchObject({
+      kind: 'response',
+      responseId: 'r-2',
+      prevHash: RESP_HASH
+    });
+  });
+
+  it('rejects ai-response with invalid prevHash (non-empty + non-hex)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-response', {
+      v: 1,
+      responseId: 'r-1',
+      tokenOut: 5,
+      hash: RESP_HASH,
+      prevHash: 'definitely-not-hex'
+    });
+    expect(materialize(log.events()).aiAudit).toEqual([]);
+  });
+
+  it('records ai-accept / ai-reject verdicts referencing a prior responseId', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('ai-accept', {
+      v: 1,
+      responseId: 'r-1',
+      category: 'narration'
+    });
+    log.append('ai-reject', { v: 1, responseId: 'r-2' });
+    const state = materialize(log.events());
+    expect(state.aiAudit).toHaveLength(2);
+    expect(state.aiAudit[0]).toMatchObject({
+      kind: 'accept',
+      responseId: 'r-1',
+      category: 'narration'
+    });
+    expect(state.aiAudit[1]).toMatchObject({
+      kind: 'reject',
+      responseId: 'r-2',
+      category: undefined
+    });
+  });
+
+  it('caps the audit at AI_AUDIT_CAP (5000)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    for (let i = 0; i < 5005; i++) {
+      log.append('ai-prompt', {
+        v: 1,
+        promptHash: PROMPT_HASH,
+        model: 'm',
+        tokenIn: 1
+      });
+    }
+    expect(materialize(log.events()).aiAudit.length).toBe(5000);
+  });
+});
+
 describe('materialize — broadcast-view (M3a.8)', () => {
   it('coordinator can broadcast a stage path', () => {
     const log = new EventLog('alice');

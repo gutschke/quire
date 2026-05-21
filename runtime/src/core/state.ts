@@ -373,6 +373,48 @@ const PINNED_NPC_CAP = 50;
 const SCRATCH_NOTE_CAP = 5000;
 const SCRATCH_NOTE_TEXT_CAP = 5000;
 
+/**
+ * Per-session cap on aiAudit entries — M3b.3.  Each AI exchange
+ * is 2-4 events (prompt + response + optional accept/reject), so
+ * 5000 entries allows ~1200 prompts before degradation.  Realistic
+ * sessions never approach this; the cap exists to bound a hostile
+ * coordinator from spamming the audit chain to grow shared state
+ * memory unboundedly.
+ */
+const AI_AUDIT_CAP = 5000;
+
+/**
+ * Validate a hash payload field.  AI prompt / response hashes are
+ * sha256-derived first-N hex characters; we accept lengths from 8
+ * to 64 to tolerate provider-side variation while still rejecting
+ * obvious junk like empty strings or non-hex content.
+ */
+function isHexHash(s: unknown): s is string {
+  return typeof s === 'string' && /^[0-9a-f]{8,64}$/.test(s);
+}
+
+interface AiPromptPayload {
+  v: 1;
+  promptHash: string;
+  model: string;
+  contextRefs?: string[];
+  tokenIn: number;
+}
+
+interface AiResponsePayload {
+  v: 1;
+  responseId: string;
+  tokenOut: number;
+  hash: string;
+  prevHash: string;
+}
+
+interface AiVerdictPayload {
+  v: 1;
+  responseId: string;
+  category?: string;
+}
+
 interface NpcPinPayload {
   v: 1;
   npcId: string;
@@ -1011,15 +1053,97 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       };
       break;
     }
+    case 'ai-prompt': {
+      // Coord-only AI broker audit entry — prompt half.  Full
+      // prompt text lives in IndexedDB keyed by promptHash on the
+      // DM's machine; only the chain head + token count replicate
+      // via this event.  Render-gated DM-only + stripped from
+      // shareable saves.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<AiPromptPayload>;
+      if (!isHexHash(p.promptHash)) break;
+      if (!isBoundedString(p.model, ID_CAP)) break;
+      if (typeof p.tokenIn !== 'number' || !Number.isFinite(p.tokenIn)) break;
+      if (p.tokenIn < 0) break;
+      if (p.contextRefs !== undefined) {
+        if (!Array.isArray(p.contextRefs)) break;
+        if (p.contextRefs.length > 50) break;
+        if (
+          !p.contextRefs.every((r) => isBoundedString(r, SCENE_PATH_CAP))
+        ) {
+          break;
+        }
+      }
+      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
+      state.aiAudit.push({
+        peerId: event.peerId,
+        ts: event.ts,
+        kind: 'prompt',
+        promptHash: p.promptHash,
+        tokensIn: p.tokenIn
+      });
+      break;
+    }
+    case 'ai-response': {
+      // Coord-only AI broker audit entry — response half.
+      // Hash-chained against the prior chain head (prevHash); the
+      // materializer doesn't enforce chain continuity (that's the
+      // broker's job at append time) but stores both hashes so a
+      // post-session audit can reconstruct the chain.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<AiResponsePayload>;
+      if (!isBoundedString(p.responseId, ID_CAP)) break;
+      if (typeof p.tokenOut !== 'number' || !Number.isFinite(p.tokenOut)) break;
+      if (p.tokenOut < 0) break;
+      if (!isHexHash(p.hash)) break;
+      // prevHash may be empty (very first response in a session has
+      // no predecessor); accept empty string OR a valid hash.
+      if (p.prevHash !== '' && !isHexHash(p.prevHash)) break;
+      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
+      state.aiAudit.push({
+        peerId: event.peerId,
+        ts: event.ts,
+        kind: 'response',
+        responseId: p.responseId,
+        responseHash: p.hash,
+        prevHash: p.prevHash,
+        tokensOut: p.tokenOut
+      });
+      break;
+    }
+    case 'ai-accept':
+    case 'ai-reject': {
+      // Coord-only DM verdict on an AI response.  The verdict is
+      // a hint for future tuning — it doesn't change the audit
+      // chain's hash continuity.  Category is optional + bounded;
+      // when absent the audit row still lands.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<AiVerdictPayload>;
+      if (!isBoundedString(p.responseId, ID_CAP)) break;
+      if (
+        p.category !== undefined &&
+        !isBoundedString(p.category, ID_CAP)
+      ) {
+        break;
+      }
+      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
+      state.aiAudit.push({
+        peerId: event.peerId,
+        ts: event.ts,
+        kind: event.kind === 'ai-accept' ? 'accept' : 'reject',
+        responseId: p.responseId,
+        category: p.category
+      });
+      break;
+    }
     case 'map-blob-add':
     case 'map-blob-move':
     case 'map-blob-remove':
     case 'map-blob-reveal':
-    case 'map-blob-unreveal':
-    case 'ai-prompt':
-    case 'ai-response':
-    case 'ai-accept':
-    case 'ai-reject': {
+    case 'map-blob-unreveal': {
       // Forward-compat guard: every M1+ payload MUST carry { v: 1 }.
       // Until the per-kind materializer lands in M3a/M3b/M4/M5/M6,
       // we no-op — but the version check still runs, so a payload
