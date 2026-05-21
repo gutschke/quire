@@ -518,6 +518,24 @@ describe('materialize — broadcast-view (M3a.8)', () => {
     expect(materialize(log.events()).broadcastView?.stagePath).toBe('b.md');
   });
 
+  it('clamps event.ts more than a year in the future (lock-out guard)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    // Manually inject a poisoned event with a far-future ts.  This
+    // is what a malicious coord (or replayed compromised save)
+    // could emit to lock the LWW slot.
+    const poisoned = log.events()[0];
+    log.apply({
+      ...poisoned,
+      kind: 'broadcast-view',
+      ts: Number.MAX_SAFE_INTEGER,
+      payload: { v: 1, stagePath: 'rogue.md' }
+    });
+    log.append('broadcast-view', { v: 1, stagePath: 'legit.md' });
+    // The poisoned event was rejected; the legit one landed.
+    expect(materialize(log.events()).broadcastView?.stagePath).toBe('legit.md');
+  });
+
   it('non-coordinator broadcast-view is ignored', () => {
     const alice = new EventLog('alice');
     const bob = new EventLog('bob');

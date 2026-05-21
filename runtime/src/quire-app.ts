@@ -316,6 +316,12 @@ export class QuireApp extends LitElement {
     const target = e.target as Element | null;
     const tag = target?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    // Skip when typing in any contenteditable region (markdown
+    // editors, future Stage edit-in-place affordances, etc.) so
+    // the literal quote character lands as the user expects.
+    if (target?.closest?.('[contenteditable=""], [contenteditable="true"]')) {
+      return;
+    }
     const scratch = this.querySelector<HTMLElement>('dm-scratch');
     if (!scratch) return;
     e.preventDefault();
@@ -1671,11 +1677,34 @@ export class QuireApp extends LitElement {
     const bv = v.filteredShared.broadcastView;
     if (!bv) return;
     if (bv.ts <= this.lastFollowedBroadcastTs) return;
-    this.lastFollowedBroadcastTs = bv.ts;
-    if (this.isCoordinator()) return;
+    if (this.isCoordinator()) {
+      // DM is the broadcast author — no self-bounce.  Still
+      // advance the cursor so future broadcasts dispatch
+      // correctly when the DM changes coord state.
+      this.lastFollowedBroadcastTs = bv.ts;
+      return;
+    }
     const route = parseRoute(bv.stagePath);
-    if (route.kind === 'home') return;
-    void this.navigateToRoute(route);
+    if (route.kind === 'home') {
+      // Malformed stagePath — treat as followed so retry isn't
+      // wedged on the same poisoned event.
+      this.lastFollowedBroadcastTs = bv.ts;
+      return;
+    }
+    // Advance the cursor AFTER navigation resolves so a DM retry
+    // of the SAME ts still re-fires when the previous navigation
+    // failed (the player lands on the error screen and the DM can
+    // re-broadcast without bumping ts).
+    void this.navigateToRoute(route).then(
+      () => {
+        this.lastFollowedBroadcastTs = bv.ts;
+      },
+      () => {
+        // Don't advance on rejection — re-broadcast of the same
+        // ts will retry.  navigateToRoute already handles its own
+        // error display via _appState; no further surface needed.
+      }
+    );
   }
 
   /**
@@ -2445,9 +2474,15 @@ export class QuireApp extends LitElement {
   ): TemplateResult | typeof nothing {
     if (!this.isCoordinator()) return nothing;
     if (character.kind === 'npc') {
+      // DM view reads `shared` (unfiltered) since pinnedNpcs is a
+      // DM-only field stripped from filteredShared anyway — but
+      // canonicalize on filteredShared so the read path stays
+      // consistent with the other regions (defense against a
+      // future bug where this renderer is reused for a non-coord
+      // viewer).
       const pinned =
         this.sessionView?.status === 'active' &&
-        this.sessionView.shared.pinnedNpcs.includes(character.id);
+        this.sessionView.filteredShared.pinnedNpcs.includes(character.id);
       return html`
         <section class="card dm-affordances">
           <button
@@ -2463,7 +2498,9 @@ export class QuireApp extends LitElement {
     // character.kind === 'pc' → thread-debt selector.
     const v = this.sessionView;
     const current =
-      v?.status === 'active' ? v.shared.threadDebt[character.id] ?? '' : '';
+      v?.status === 'active'
+        ? v.filteredShared.threadDebt[character.id] ?? ''
+        : '';
     const levels: Array<{ key: '' | ThreadDebtLevel; label: string }> = [
       { key: '', label: '— none —' },
       { key: 'quiet', label: 'quiet' },
@@ -2504,7 +2541,7 @@ export class QuireApp extends LitElement {
     if (!this.session) return false;
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
-    const pinned = v.shared.pinnedNpcs.includes(npcId);
+    const pinned = v.filteredShared.pinnedNpcs.includes(npcId);
     this.session.append(pinned ? 'npc-unpin' : 'npc-pin', { v: 1, npcId });
     return true;
   }

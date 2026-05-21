@@ -977,6 +977,15 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       const p = event.payload as Partial<BroadcastViewPayload>;
       if (!isBoundedString(p.stagePath, SCENE_PATH_CAP)) break;
       if (p.tab !== undefined && !isBoundedString(p.tab, ID_CAP)) break;
+      // Clamp event.ts to a plausible wall-clock window.  Without
+      // this guard a hostile coord (or a poisoned save file) could
+      // emit ts = Number.MAX_SAFE_INTEGER and permanently lock the
+      // LWW slot — every subsequent legitimate broadcast would
+      // lose the strict-greater comparison forever.  The cap is
+      // generous (a year past materialization start) so honest
+      // clock skew between peers never trips it.
+      const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+      if (event.ts > Date.now() + ONE_YEAR_MS) break;
       // LWW with append-order tie-break: equal-ts events from the
       // same materialization pass replace in log order.  Strict
       // less-than means an older (lower ts) broadcast loses
