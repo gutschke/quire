@@ -1,0 +1,17 @@
+{
+  "$schemaVersion": "0.1.0",
+  "name": "Test PC",
+  "pronouns": "they/them",
+  "stats": {
+    "str": 0,
+    "dex": 1,
+    "con": 0,
+    "int": 2,
+    "wis": 1,
+    "cha": -1
+  },
+  "harm": 0,
+  "stress": 0,
+  "tags": ["fixture", "automated-test"],
+  "backstory": "Born in the test suite. Found purpose verifying things."
+}

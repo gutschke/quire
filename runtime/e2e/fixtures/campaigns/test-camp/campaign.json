@@ -1,0 +1,15 @@
+{
+  "$schemaVersion": "0.1.0",
+  "name": "Test Campaign",
+  "summary": "A tiny fixture campaign for end-to-end tests.",
+  "ip": "Original setting",
+  "ageBand": "13+",
+  "license": "MIT",
+  "ruleset": "quire-v0",
+  "authors": ["e2e-suite"],
+  "episodes": ["001-test"],
+  "characters": {
+    "pcs": ["test-pc"],
+    "npcs": ["test-npc"]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "$schemaVersion": "0.1.0",
+  "name": "Episode 001 — Test",
+  "summary": "Two scenes for routing and reveal tests.",
+  "scenes": ["scenes/intro.md", "scenes/outro.md"]
+}

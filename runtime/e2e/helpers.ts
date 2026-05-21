@@ -5,6 +5,83 @@
  */
 
 import { type Page, type BrowserContext, expect } from '@playwright/test';
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURE_ROOT = path.join(HERE, 'fixtures', 'campaigns');
+
+/**
+ * Register a route handler that serves a fixture campaign in response
+ * to the runtime's GitHub raw-content fetches.  All fetches matching
+ *
+ *   https://raw.githubusercontent.com/test/<slug>/main/<rest>
+ *
+ * are answered from e2e/fixtures/campaigns/<slug>/<rest>.  Missing
+ * files return 404 (matching the real GitHub raw behavior so the
+ * loader's "file not present" path is exercised).
+ */
+export async function mockFixtureCampaign(
+  page: Page,
+  slug: string
+): Promise<void> {
+  const root = path.join(FIXTURE_ROOT, slug);
+  if (!existsSync(root)) {
+    throw new Error(`Fixture not found: ${root}`);
+  }
+  await page.route(
+    `**/raw.githubusercontent.com/test/${slug}/main/**`,
+    async (route) => {
+      const url = new URL(route.request().url());
+      // Path after /test/<slug>/main/
+      const prefix = `/test/${slug}/main/`;
+      const idx = url.pathname.indexOf(prefix);
+      if (idx < 0) return route.fulfill({ status: 404 });
+      const rel = url.pathname.slice(idx + prefix.length);
+      const filePath = path.join(root, rel);
+      if (!filePath.startsWith(root) || !existsSync(filePath)) {
+        return route.fulfill({ status: 404, body: '' });
+      }
+      const ext = path.extname(filePath);
+      const contentType =
+        ext === '.json'
+          ? 'application/json'
+          : ext === '.md'
+            ? 'text/markdown; charset=utf-8'
+            : 'text/plain; charset=utf-8';
+      const body = readFileSync(filePath);
+      return route.fulfill({
+        status: 200,
+        headers: { 'content-type': contentType },
+        body
+      });
+    }
+  );
+}
+
+export function campaignUrl(
+  slug: string,
+  extra: Record<string, string> = {}
+): string {
+  return appUrl({ campaign: `test/${slug}`, ...extra });
+}
+
+export async function openCampaign(
+  context: BrowserContext,
+  slug: string,
+  extra: Record<string, string> = {}
+): Promise<Page> {
+  const page = await context.newPage();
+  page.on('pageerror', (err) => console.log('[browser pageerror]', err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') console.log('[browser console]', msg.text());
+  });
+  await mockFixtureCampaign(page, slug);
+  await page.goto(campaignUrl(slug, extra));
+  await page.locator('.session-bar').first().waitFor({ timeout: 15000 });
+  return page;
+}
 
 export function appUrl(extraParams: Record<string, string> = {}): string {
   const port = process.env.QUIRE_PEER_PORT;
