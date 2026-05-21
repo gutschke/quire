@@ -1,8 +1,44 @@
 # STATUS
 
-Current milestone: **M3a — DM cockpit (in flight)** — M2 closed 2026-05-21, tagged `milestone-M2`
+Current milestone: **M3b — AI broker + dual-card (in flight)** — M3a closed 2026-05-21, tagged `milestone-M3a`
 
-## Previous milestone — M2 closed `ship-with-followups`
+## M3b acceptance criteria
+
+**Foundation (no UI change required):**
+- [ ] `src/ai/{broker,schema,context,audit,budget}.ts` module structure landed (M3b.1)
+- [ ] AiResponse `{safe, dmOnly, sources, raw, tokensIn, tokensOut, responseId}` schema (M3b.1)
+- [ ] `buildContext({scope})` with path validation: campaign-relative, no `..`, no `dm/*` when scope='public' (M3b.1, hostile tests P2-8)
+- [ ] `wrapUntrusted()` + `UC_CLOSE` sentinel.  Load-time validator in `campaign-loader.ts` rejects raw content containing the literal sentinel (M3b.6, H-2-now from M1)
+- [ ] `AiBroker.complete(req)` wrapping both providers; structured return; parse-failure fallback (M3b.2)
+- [ ] Provider impls request structured tool / response schema (Anthropic tool_use, Gemini schema); broker normalizes (M3b.2)
+- [ ] Coord-only enforcement at broker level — only current `state.coordinator` can `complete()` (M3b.2)
+- [ ] Scope toggle resets per prompt (M3b.5 UI + M3b.2 broker)
+
+**Audit chain (M3b.3):**
+- [ ] `ai-prompt` / `ai-response` / `ai-accept` / `ai-reject` materializers populate `aiAudit[]` (DM-only field, already wiped by filterForViewer + stripped from shareable saves)
+- [ ] Hash chain: `prevHash → promptHash → responseHash`, IndexedDB-backed full-text store keyed by hash
+- [ ] After coord handoff, new coord picks up chain head from `aiAudit`
+
+**Budget (M3b.4):**
+- [ ] Per-session token accumulator persisted in IndexedDB
+- [ ] Topbar widget showing usage vs ceiling
+- [ ] Hard-stop above ceiling, warning above 80%
+- [ ] In-flight prompt cancelled on ceiling hit
+
+**Dual-card UI (M3b.5, P2-12):**
+- [ ] Always two cards (safe / dm-only); empty card → muted "(none)" placeholder
+- [ ] DM-only card carries amber rail + lock glyph + "copy (do not read aloud)" + source chips
+- [ ] Scope toggle on prompt form (public default, opt-in dm)
+
+**Gate exit (M3b.7):**
+- [ ] e2e/ai-content-safety.spec.ts — mock AiBroker returns `{safe: 'X', dmOnly: 'Y'}`; player view contains only X; DM view contains both; Y absent from player DOM
+- [ ] Smuggled-marker variant — `{safe: 'X<dm-only>Y</dm-only>', dmOnly: ''}` shows literal text after sanitize, never executes
+- [ ] 4-reviewer gate (TTRPG-craft, Engine, Security, Adversarial)
+- [ ] Tag `playtest-1` on green pass
+
+## Previous milestone — M3a closed `ship-with-followups` (after security unblock)
+
+## Previous milestone (deeper) — M2 closed `ship-with-followups`
 
 3 reviewers (TTRPG-craft, Web-UX, Adversarial) closed `ship-with-followups`.  No severity-floor block.  Gate produced 13 follow-up P-tasks; 7 are HARD M3a acceptance criteria.  The LOC cap was reframed at gate close after a code-quality expert evaluation: the original ≤900 was a proxy for navigability + vocabulary-separation, replaced for M3a with structural metrics (max-method ≤80, delegation ratio ≥75%, three named extractions, safety-net ≤2000 LOC).  Tag: `milestone-M2`.
 
