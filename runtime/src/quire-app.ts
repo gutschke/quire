@@ -752,8 +752,8 @@ export class QuireApp extends LitElement {
     return html`
       <dm-aside
         .campaignSlug=${slug}
-        .pinnedNpcs=${v.shared.pinnedNpcs}
-        .threadDebt=${v.shared.threadDebt}
+        .pinnedNpcs=${v.filteredShared.pinnedNpcs}
+        .threadDebt=${v.filteredShared.threadDebt}
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
@@ -772,7 +772,7 @@ export class QuireApp extends LitElement {
     if (!v || v.status !== 'active') return nothing;
     return html`
       <dm-scratch
-        .entries=${v.shared.scratchNotes}
+        .entries=${v.filteredShared.scratchNotes}
         .onSubmit=${(text: string) => this.appendScratchNote(text)}
       ></dm-scratch>
     `;

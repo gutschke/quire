@@ -283,8 +283,19 @@ export function filterForViewer(
   state: SessionState,
   viewerPeerId: PeerId
 ): SessionState {
-  if (state.coordHolders.has(viewerPeerId)) {
-    return state; // DM (or past coordinator) sees everything
+  // Key on the CURRENT coordinator, not the historical coordHolders
+  // set.  A peer who briefly held coord and yielded should fall back
+  // to a player-scoped view immediately — otherwise the rendered UI
+  // continues to surface DM-only fields long after the role passed.
+  //
+  // The materializer still gates AUTHORSHIP on coordHolders (to
+  // accept legitimate events from a prior coord in a loaded log),
+  // but READS / RENDERS pivot on `state.coordinator` so the visible
+  // surface tracks the live role.  This is the accidental-disclosure
+  // guard for the yielded-coord scenario in
+  // project_quire_threat_model.
+  if (state.coordinator === viewerPeerId) {
+    return state;
   }
   // Filter mapBlobs by the reveal mask, scene-by-scene.
   const filteredMapBlobs: Record<string, MapBlob[]> = {};

@@ -850,7 +850,7 @@ describe('filterForViewer (P0-4)', () => {
     return s;
   }
 
-  it('DM (coord-holder) sees the full state unchanged', () => {
+  it('current DM sees the full state unchanged', () => {
     const s = dmState();
     const filtered = filterForViewer(s, 'dm');
     expect(filtered).toBe(s); // strict identity — no allocation
@@ -859,6 +859,28 @@ describe('filterForViewer (P0-4)', () => {
     expect(filtered.scratchNotes).toHaveLength(1);
     expect(filtered.aiAudit).toHaveLength(1);
     expect(filtered.mapBlobs['scenes/sfo-gate.png']).toHaveLength(3); // all blobs
+  });
+
+  it('yielded-coord peer falls back to player-scoped view (accidental-disclosure guard)', () => {
+    // Threat model: a peer who briefly held coord then yielded
+    // must not continue to render DM-only material in their UI.
+    // The materializer's coordHolders set is still permissive
+    // (their authored events remain authoritative), but the VIEW
+    // filter pivots on the CURRENT coordinator only.
+    const s = dmState();
+    // Add a former-coord history entry — they once held the role.
+    s.coordHolders.add('former-dm');
+    s.peers['former-dm'] = {
+      peerId: 'former-dm',
+      name: 'Former DM',
+      joinedAt: 0
+    };
+    const filtered = filterForViewer(s, 'former-dm');
+    expect(filtered).not.toBe(s); // they get a stripped copy
+    expect(filtered.threadDebt).toEqual({});
+    expect(filtered.pinnedNpcs).toEqual([]);
+    expect(filtered.scratchNotes).toEqual([]);
+    expect(filtered.aiAudit).toEqual([]);
   });
 
   it('non-coord viewer (player) sees DM-only fields wiped', () => {
