@@ -1102,6 +1102,15 @@ export const quireAppStyles = css`
       background: light-dark(#fa9080, #6a1818);
       color: light-dark(#000, #fff);
     }
+    .dm-aside-debt-select {
+      font-size: 0.85em;
+      padding: 0.1rem 0.3rem;
+      max-width: 11ch;
+    }
+    .dm-aside-debt-orphan {
+      opacity: 0.7;
+      font-style: italic;
+    }
     .dm-rail-episodes {
       list-style: none;
       padding: 0;

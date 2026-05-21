@@ -845,12 +845,25 @@ export class QuireApp extends LitElement {
     if (!v || v.status !== 'active') return nothing;
     const campaign = this.getCurrentCampaign();
     const slug = campaign ? this.slugFor(campaign) : '';
+    // FU-3: surface bound-PC peers so the DM can adjust thread-
+    // debt inline from the cockpit.  Pulled from filteredShared
+    // (no DM-only data needed; pcId binding is player-visible).
+    const boundPcs = Object.values(v.filteredShared.peers)
+      .filter((p) => p.leftAt === undefined && typeof p.pcId === 'string')
+      .map((p) => ({
+        pcId: p.pcId as string,
+        name: p.name ?? (p.pcId as string),
+        peerId: p.peerId
+      }));
     return html`
       <dm-aside
         .campaignSlug=${slug}
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
         .threadDebt=${v.filteredShared.threadDebt}
+        .boundPcs=${boundPcs}
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
+        .onSetThreadDebt=${(pcId: string, level: ThreadDebtLevel | '') =>
+          this.setThreadDebt(pcId, level)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
     `;
@@ -2688,73 +2701,29 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * M3a.8 (P2-4 + P2-5): DM-only affordances on the character
-   * page — pin/unpin (NPC only) and thread-debt-set (PC only).
-   * Renders nothing for non-DM viewers.  M3a.9's `<dm-aside>` will
-   * move the pinned-NPC list out of this in-page strip; the
-   * action buttons themselves stay where the DM lives in the
-   * page they're inspecting.
+   * M3a.8 (P2-4): DM-only NPC pin/unpin button on the NPC
+   * character page.  The PC thread-debt selector moved to
+   * `<dm-aside>` at M3a polish FU-3 so the DM can adjust rungs
+   * from the cockpit without page navigation; nothing renders for
+   * PCs here anymore.  Renders nothing for non-DM viewers.
    */
   private renderDmCharacterAffordances(
     character: LoadedCharacter
   ): TemplateResult | typeof nothing {
     if (!this.isCoordinator()) return nothing;
-    if (character.kind === 'npc') {
-      // DM view reads `shared` (unfiltered) since pinnedNpcs is a
-      // DM-only field stripped from filteredShared anyway — but
-      // canonicalize on filteredShared so the read path stays
-      // consistent with the other regions (defense against a
-      // future bug where this renderer is reused for a non-coord
-      // viewer).
-      const pinned =
-        this.sessionView?.status === 'active' &&
-        this.sessionView.filteredShared.pinnedNpcs.includes(character.id);
-      return html`
-        <section class="card dm-affordances">
-          <button
-            type="button"
-            class="dm-pin-btn"
-            @click=${() => this.toggleNpcPin(character.id)}
-          >
-            ${pinned ? '📌 Unpin from DM aside' : '📌 Pin to DM aside'}
-          </button>
-        </section>
-      `;
-    }
-    // character.kind === 'pc' → thread-debt selector.
-    const v = this.sessionView;
-    const current =
-      v?.status === 'active'
-        ? v.filteredShared.threadDebt[character.id] ?? ''
-        : '';
-    const levels: Array<{ key: '' | ThreadDebtLevel; label: string }> = [
-      { key: '', label: '— none —' },
-      { key: 'quiet', label: 'quiet' },
-      { key: 'noticed', label: 'noticed' },
-      { key: 'watched', label: 'watched' },
-      { key: 'pushing-back', label: 'pushing back' },
-      { key: 'hunted', label: 'hunted' }
-    ];
+    if (character.kind !== 'npc') return nothing;
+    const pinned =
+      this.sessionView?.status === 'active' &&
+      this.sessionView.filteredShared.pinnedNpcs.includes(character.id);
     return html`
       <section class="card dm-affordances">
-        <label class="dm-thread-debt">
-          <span>Thread debt:</span>
-          <select
-            @change=${(e: Event) =>
-              this.setThreadDebt(
-                character.id,
-                (e.target as HTMLSelectElement).value as ThreadDebtLevel | ''
-              )}
-          >
-            ${levels.map(
-              (l) => html`
-                <option value=${l.key} ?selected=${l.key === current}>
-                  ${l.label}
-                </option>
-              `
-            )}
-          </select>
-        </label>
+        <button
+          type="button"
+          class="dm-pin-btn"
+          @click=${() => this.toggleNpcPin(character.id)}
+        >
+          ${pinned ? '📌 Unpin from DM aside' : '📌 Pin to DM aside'}
+        </button>
       </section>
     `;
   }
