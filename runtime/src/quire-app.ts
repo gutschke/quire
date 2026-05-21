@@ -50,44 +50,16 @@ const SAVE_AUTOSAVE_DEBOUNCE_MS = 1500;
 const SAVE_QUOTA_WARN_BYTES = 1_000_000;
 const SAVE_QUOTA_REFUSE_BYTES = 4_000_000;
 
-export type AiProvider = 'claude' | 'gemini';
-
-const AI_LEGACY_KEY_STORAGE = 'quire.ai.apiKey'; // pre-provider-split
-const AI_PROVIDER_STORAGE = 'quire.ai.provider';
-const AI_KEY_STORAGE = (p: AiProvider): string => `quire.ai.${p}.apiKey`;
-const AI_MODEL_STORAGE = (p: AiProvider): string => `quire.ai.${p}.model`;
-const AI_SYSTEM_STORAGE = 'quire.ai.systemPrompt';
-
-const AI_DEFAULTS: Record<AiProvider, { model: string; label: string; models: string[] }> = {
-  claude: {
-    label: 'Anthropic (Claude)',
-    model: 'claude-haiku-4-5-20251001',
-    models: [
-      'claude-haiku-4-5-20251001',
-      'claude-sonnet-4-6',
-      'claude-opus-4-7'
-    ]
-  },
-  gemini: {
-    label: 'Google (Gemini)',
-    model: 'gemini-2.5-flash',
-    models: ['gemini-2.5-flash', 'gemini-2.5-pro']
-  }
-};
-
-const AI_DEFAULT_SYSTEM = `You are a quiet TTRPG-aide voice for a DM running a session of Quire.
-Respond in 1–3 short paragraphs, in-fiction when describing scenes or NPC
-beats. Avoid meta-commentary, headers, lists, and "as the DM" framing.
-The DM will paraphrase your text in their own voice; keep it tight,
-sensory, and easy to read aloud.`;
-
-export type AiClient = (req: {
-  apiKey: string;
-  model: string;
-  system?: string;
-  user: string;
-  signal?: AbortSignal;
-}) => Promise<string>;
+// AI provider / key / model / system-prompt state lives in
+// src/controllers/ai-key-store.ts (P0-10).  Re-export the public types
+// for callers that import them from quire-app.
+export type { AiProvider, AiClient } from './controllers/ai-key-store';
+import {
+  AiKeyStore,
+  AI_DEFAULTS,
+  type AiProvider,
+  type AiClient
+} from './controllers/ai-key-store';
 import {
   renderMarkdown,
   renderMarkdownDocument,
@@ -234,13 +206,13 @@ export class QuireApp extends LitElement {
   private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
   private autosaveQuotaWarned: boolean = false;
   private campaignDiscoveryInFlight: boolean = false;
-  @state() aiProvider: AiProvider = 'claude';
-  @state() aiApiKeys: Record<AiProvider, string> = { claude: '', gemini: '' };
-  @state() aiModels: Record<AiProvider, string> = {
-    claude: AI_DEFAULTS.claude.model,
-    gemini: AI_DEFAULTS.gemini.model
-  };
-  @state() aiSystemPrompt: string = AI_DEFAULT_SYSTEM;
+  /**
+   * AI provider / key / model / system-prompt state is encapsulated
+   * in the AiKeyStore reactive controller (P0-10).  QuireApp exposes
+   * thin getters/setters so existing render and test surfaces
+   * (`this.aiProvider`, `setAiApiKey(...)`, etc.) continue to work.
+   */
+  private aiKeys = new AiKeyStore(this);
   @state() aiPromptDraft: string = '';
   @state() aiResponse: string | null = null;
   @state() aiLoading: boolean = false;
@@ -331,34 +303,8 @@ export class QuireApp extends LitElement {
         }
       }
     });
-    // Hydrate AI settings from localStorage if available.  Wrapped in
-    // a try because localStorage can throw in some sandboxed contexts.
-    try {
-      const ls = window.localStorage;
-      if (ls) {
-        const provider = ls.getItem(AI_PROVIDER_STORAGE);
-        if (provider === 'claude' || provider === 'gemini') {
-          this.aiProvider = provider;
-        }
-        const claudeKey = ls.getItem(AI_KEY_STORAGE('claude'));
-        const legacyKey = ls.getItem(AI_LEGACY_KEY_STORAGE);
-        const geminiKey = ls.getItem(AI_KEY_STORAGE('gemini'));
-        this.aiApiKeys = {
-          claude: claudeKey ?? legacyKey ?? '',
-          gemini: geminiKey ?? ''
-        };
-        const claudeModel = ls.getItem(AI_MODEL_STORAGE('claude'));
-        const geminiModel = ls.getItem(AI_MODEL_STORAGE('gemini'));
-        this.aiModels = {
-          claude: claudeModel ?? AI_DEFAULTS.claude.model,
-          gemini: geminiModel ?? AI_DEFAULTS.gemini.model
-        };
-        const s = ls.getItem(AI_SYSTEM_STORAGE);
-        if (s) this.aiSystemPrompt = s;
-      }
-    } catch {
-      /* ignore */
-    }
+    // AI settings hydration happens in AiKeyStore's hostConnected,
+    // wired automatically via addController() in our constructor.
     void this.navigateToRoute(parseRoute(window.location.search));
     // Invite-link handling: if the URL carries ?join=<code>, pre-fill
     // the join input so the player just needs to enter their name +
@@ -2125,78 +2071,39 @@ export class QuireApp extends LitElement {
     return false;
   }
 
+  // ── AI key-store delegations ──
+  // The reactive AiKeyStore controller (P0-10) owns the underlying
+  // state and localStorage I/O; these getters/setters preserve the
+  // pre-extraction QuireApp surface so render code and tests don't
+  // need updates.
+
+  get aiProvider(): AiProvider { return this.aiKeys.provider; }
+  get aiApiKeys(): Record<AiProvider, string> { return this.aiKeys.apiKeys; }
+  get aiModels(): Record<AiProvider, string> { return this.aiKeys.models; }
+  get aiSystemPrompt(): string { return this.aiKeys.systemPrompt; }
+  get aiApiKey(): string { return this.aiKeys.apiKey; }
+  get aiModel(): string { return this.aiKeys.model; }
+
   setAiProvider(provider: AiProvider): void {
-    this.aiProvider = provider;
-    try {
-      window.localStorage?.setItem(AI_PROVIDER_STORAGE, provider);
-    } catch {
-      /* ignore */
-    }
+    this.aiKeys.setProvider(provider);
   }
 
   setAiApiKey(key: string, provider: AiProvider = this.aiProvider): void {
-    this.aiApiKeys = { ...this.aiApiKeys, [provider]: key };
-    try {
-      if (key) {
-        window.localStorage?.setItem(AI_KEY_STORAGE(provider), key);
-      } else {
-        window.localStorage?.removeItem(AI_KEY_STORAGE(provider));
-      }
-      // Clear the pre-split key once a new provider-scoped key exists.
-      window.localStorage?.removeItem(AI_LEGACY_KEY_STORAGE);
-    } catch {
-      /* ignore */
-    }
+    this.aiKeys.setApiKey(key, provider);
   }
 
   setAiModel(model: string, provider: AiProvider = this.aiProvider): void {
-    this.aiModels = { ...this.aiModels, [provider]: model };
-    try {
-      window.localStorage?.setItem(AI_MODEL_STORAGE(provider), model);
-    } catch {
-      /* ignore */
-    }
+    this.aiKeys.setModel(model, provider);
   }
 
   setAiSystemPrompt(text: string): void {
-    this.aiSystemPrompt = text;
-    try {
-      if (text && text !== AI_DEFAULT_SYSTEM) {
-        window.localStorage?.setItem(AI_SYSTEM_STORAGE, text);
-      } else {
-        window.localStorage?.removeItem(AI_SYSTEM_STORAGE);
-      }
-    } catch {
-      /* ignore */
-    }
+    this.aiKeys.setSystemPrompt(text);
   }
 
-  get aiApiKey(): string {
-    return this.aiApiKeys[this.aiProvider];
-  }
-
-  get aiModel(): string {
-    return this.aiModels[this.aiProvider];
-  }
-
-  /**
-   * Apply the campaign's defaultAiProvider hint only if the user has
-   * not explicitly chosen a provider in localStorage.  The manifest
-   * default is a "first-run suggestion", not a hard override — once
-   * the user has touched the radio (or had a prior provider stored),
-   * we respect their choice.
-   */
   private applyCampaignAiDefault(
     manifestProvider: 'claude' | 'gemini' | 'none' | undefined
   ): void {
-    if (!manifestProvider || manifestProvider === 'none') return;
-    try {
-      const explicit = window.localStorage?.getItem(AI_PROVIDER_STORAGE);
-      if (explicit === 'claude' || explicit === 'gemini') return;
-    } catch {
-      /* fall through and apply the default */
-    }
-    if (this.aiProvider !== manifestProvider) this.aiProvider = manifestProvider;
+    this.aiKeys.applyCampaignDefault(manifestProvider);
   }
 
   async submitAiPrompt(prompt: string): Promise<string | null> {
