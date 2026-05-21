@@ -118,8 +118,16 @@ test.describe('Routing — episode + scene views', () => {
     try {
       const page = await openSceneAsDm(ctx, SLUG, { episode: '001-test' });
       await expect(page.locator('header h1')).toContainText('Episode 001');
-      await expect(page.getByRole('link', { name: 'scenes/intro.md' })).toBeVisible();
-      await expect(page.getByRole('link', { name: 'scenes/outro.md' })).toBeVisible();
+      // Scope to the Stage region — the DM Rail's scene navigator
+      // (M3a.9) also surfaces scene links, which would otherwise
+      // make the locator ambiguous in strict mode.
+      const stage = page.locator('quire-stage');
+      await expect(
+        stage.getByRole('link', { name: 'scenes/intro.md' })
+      ).toBeVisible();
+      await expect(
+        stage.getByRole('link', { name: 'scenes/outro.md' })
+      ).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -177,9 +185,18 @@ test.describe('Routing — episode + scene views', () => {
       // episode/scene.  Host first (which also makes the DM
       // coordinator → sees the full episode menu).
       await hostSession(page, 'DM');
-      await page.getByRole('link', { name: '001-test' }).click();
+      // Both the campaign body AND the DM Rail surface the
+      // episode link; scope to the Stage so the click target is
+      // unambiguous (M3a.9 dm-rail strict-mode adjustment).
+      await page
+        .locator('quire-stage')
+        .getByRole('link', { name: '001-test' })
+        .click();
       await expect(page.locator('header h1')).toContainText('Episode 001');
-      await page.getByRole('link', { name: 'scenes/intro.md' }).click();
+      await page
+        .locator('quire-stage')
+        .getByRole('link', { name: 'scenes/intro.md' })
+        .click();
       await expect(page.locator('header h1')).toContainText('scenes/intro.md');
       // URL reflects the route.
       const u = new URL(page.url());
@@ -197,7 +214,10 @@ test.describe('Routing — episode + scene views', () => {
     try {
       const page = await openCampaign(ctx, SLUG);
       await hostSession(page, 'DM');
-      await page.getByRole('link', { name: '001-test' }).click();
+      await page
+        .locator('quire-stage')
+        .getByRole('link', { name: '001-test' })
+        .click();
       await expect(page.locator('header h1')).toContainText('Episode 001');
       await page.goBack();
       await expect(page.locator('header h1')).toContainText('Test Campaign');

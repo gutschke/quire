@@ -98,11 +98,18 @@ test.describe('AI panel — solo visibility + settings persistence', () => {
       const page = await openApp(ctx);
       // Fill the API key field.
       await aiPanel(page).locator('input[type=password]').fill('sk-ant-fake');
-      // Read back from localStorage.
-      const stored = await page.evaluate(() =>
-        window.localStorage.getItem('quire.ai.claude.apiKey')
-      );
-      expect(stored).toBe('sk-ant-fake');
+      // Read back from localStorage.  AiKeyStore debounces the write
+      // by ~300 ms (M1 perf optimization), so poll instead of one-
+      // shot reading right after fill().
+      await expect
+        .poll(
+          async () =>
+            page.evaluate(() =>
+              window.localStorage.getItem('quire.ai.claude.apiKey')
+            ),
+          { timeout: 5000 }
+        )
+        .toBe('sk-ant-fake');
       // Reload and verify hydration.
       await page.reload();
       await page.locator('.session-bar').first().waitFor();

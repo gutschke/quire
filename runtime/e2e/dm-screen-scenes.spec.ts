@@ -147,8 +147,10 @@ test.describe('DM-screen guard for scenes/episodes (B5)', () => {
     try {
       const page = await openCampaignPage(ctx);
       await hostSession(page, 'DM');
+      // The DM Rail also surfaces the episode link (M3a.9); scope
+      // to the Stage so the campaign-body assertion is unambiguous.
       await expect(
-        page.getByRole('link', { name: '001-test' })
+        page.locator('quire-stage').getByRole('link', { name: '001-test' })
       ).toBeVisible({ timeout: 5000 });
     } finally {
       await ctx.close();

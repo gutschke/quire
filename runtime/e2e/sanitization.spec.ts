@@ -36,13 +36,20 @@ test.describe('Markdown sanitization (real browser)', () => {
       const markdown = page.locator('.markdown');
       await expect(markdown).toBeVisible();
 
-      // Forbidden tags must not appear inside the rendered markdown.
-      for (const tag of ['form', 'input', 'button', 'style', 'dialog']) {
+      // Forbidden tags must not appear inside the rendered markdown
+      // CONTENT.  Exclude the DM gutter-pip buttons added by the
+      // per-paragraph reveal renderer (M3a.7) — they are runtime UI
+      // chrome wrapping the content, not authored markdown output.
+      for (const tag of ['form', 'input', 'style', 'dialog']) {
         await expect(
           markdown.locator(tag),
           `tag <${tag}> should be stripped`
         ).toHaveCount(0);
       }
+      await expect(
+        markdown.locator('button:not(.scene-block-pip)'),
+        'tag <button> should be stripped (excluding runtime gutter pips)'
+      ).toHaveCount(0);
 
       // Forbidden attributes must not appear on any descendant.  We
       // serialize the markdown HTML and grep — Playwright's locator
