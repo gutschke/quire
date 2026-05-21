@@ -17,6 +17,8 @@
 import type { AiResponse } from './schema';
 import { isAiResponse, parseFailureResponse } from './schema';
 import { validateContextRef, type ContextScope } from './context';
+import { assertWithinBudget } from './budget';
+import type { AiAuditEntry } from '../core/state';
 
 /**
  * The shape an HTTP-callable provider impl must satisfy.  Returns
@@ -74,6 +76,10 @@ export interface AiBrokerHost {
   getLocalPeerId(): string | undefined;
   /** Returns the API key for the active provider, or empty. */
   getApiKey(): string;
+  /** Returns the current session's aiAudit entries (for budget). */
+  getAiAudit(): readonly AiAuditEntry[];
+  /** Returns the configured per-session token ceiling. */
+  getBudgetCeiling(): number;
 }
 
 export class AiBrokerError extends Error {
@@ -84,6 +90,7 @@ export class AiBrokerError extends Error {
       | 'not-coordinator'
       | 'no-api-key'
       | 'context-ref-invalid'
+      | 'budget-exceeded'
       | 'provider-error'
   ) {
     super(message);
@@ -126,6 +133,17 @@ export class AiBroker {
       if (!v.ok) {
         throw new AiBrokerError(v.error, 'context-ref-invalid');
       }
+    }
+    // Budget gate — checked AFTER coord/key/refs so the most
+    // common rejection messages take precedence.  When already
+    // over the ceiling, no provider request fires.
+    try {
+      assertWithinBudget(this.host.getAiAudit(), this.host.getBudgetCeiling());
+    } catch (e) {
+      throw new AiBrokerError(
+        (e as Error).message,
+        'budget-exceeded'
+      );
     }
     let providerResult: AiProviderCallResult;
     try {

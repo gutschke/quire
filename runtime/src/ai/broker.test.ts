@@ -10,12 +10,16 @@
 import { describe, it, expect } from 'vitest';
 import { AiBroker, type AiProvider } from './broker';
 
+import type { AiAuditEntry } from '../core/state';
+
 function makeBroker(
   provider: AiProvider,
   hostOverrides: Partial<{
     coord: string | undefined;
     me: string | undefined;
     apiKey: string;
+    audit: readonly AiAuditEntry[];
+    ceiling: number;
   }> = {}
 ): AiBroker {
   const host = {
@@ -24,7 +28,9 @@ function makeBroker(
     getLocalPeerId: () =>
       'me' in hostOverrides ? hostOverrides.me : 'alice',
     getApiKey: () =>
-      'apiKey' in hostOverrides ? hostOverrides.apiKey ?? '' : 'sk-fake'
+      'apiKey' in hostOverrides ? hostOverrides.apiKey ?? '' : 'sk-fake',
+    getAiAudit: () => hostOverrides.audit ?? [],
+    getBudgetCeiling: () => hostOverrides.ceiling ?? 1_000_000
   };
   return new AiBroker(provider, host);
 }
@@ -106,6 +112,31 @@ describe('AiBroker.complete — guards', () => {
         contextRefs: ['dm/spoilers.md']
       })
     ).rejects.toMatchObject({ code: 'context-ref-invalid' });
+  });
+});
+
+describe('AiBroker.complete — budget guard', () => {
+  it('throws budget-exceeded when the session ceiling is met', async () => {
+    const broker = makeBroker(happyProvider, {
+      audit: [{ peerId: 'a', ts: 1, kind: 'prompt', tokensIn: 100 }],
+      ceiling: 100
+    });
+    await expect(
+      broker.complete({ prompt: 'hi', scope: 'public', model: 'sonnet' })
+    ).rejects.toMatchObject({
+      name: 'AiBrokerError',
+      code: 'budget-exceeded'
+    });
+  });
+
+  it('proceeds when under the ceiling', async () => {
+    const broker = makeBroker(happyProvider, {
+      audit: [{ peerId: 'a', ts: 1, kind: 'prompt', tokensIn: 50 }],
+      ceiling: 100
+    });
+    await expect(
+      broker.complete({ prompt: 'hi', scope: 'public', model: 'sonnet' })
+    ).resolves.toMatchObject({ safe: 'Hello' });
   });
 });
 
