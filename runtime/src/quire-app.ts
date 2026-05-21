@@ -1305,10 +1305,19 @@ export class QuireApp extends LitElement {
       v?.status === 'active'
         ? v.filteredShared.revealedParagraphs[fullScenePath] ?? new Set<string>()
         : new Set<string>();
+    // sceneFullyRevealed = "show every block to non-DM viewers."
+    // True for offline browsing (no session) AND for whole-scene-
+    // revealed scenes with NO per-block reveals yet (backward compat:
+    // a campaign that only uses scene-reveal continues to render
+    // everything for players).  As soon as the DM clicks a single
+    // per-block pip, paced mode engages and players see only the
+    // pip-revealed subset — this is the load-bearing behavior the
+    // per-paragraph design exists to support.
     const sceneFullyRevealed =
       v?.status === 'active'
-        ? v.filteredShared.revealedScenes.includes(fullScenePath)
-        : true; // out of session: render everything for offline browsing
+        ? revealedBlocks.size === 0 &&
+          v.filteredShared.revealedScenes.includes(fullScenePath)
+        : true;
     return html`
       <scene-stage
         .campaignName=${campaign.base.manifest.name}
