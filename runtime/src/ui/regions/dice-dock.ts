@@ -50,6 +50,19 @@ export class DiceDock extends LitElement {
   @property({ attribute: false }) onSubmitRoll:
     | ((value: string) => void)
     | null = null;
+  /**
+   * M2.8 (P1-7): raise-hand affordance for the local player.  When
+   * `handAvailable` is true (active session, local peer is a player
+   * — not the DM), the dock renders a "Raise hand" / "Lower hand"
+   * toggle.  `handRaised` reflects the local peer's current state.
+   * `onToggleHand` invokes SessionController.toggleHand via the
+   * QuireApp wrapper.
+   */
+  @property({ type: Boolean }) handAvailable: boolean = false;
+  @property({ type: Boolean }) handRaised: boolean = false;
+  @property({ attribute: false }) onToggleHand:
+    | (() => void)
+    | null = null;
 
   override render(): TemplateResult {
     return html`
@@ -76,6 +89,23 @@ export class DiceDock extends LitElement {
             />
           </label>
           <button type="submit">Roll</button>
+          ${this.handAvailable
+            ? html`<button
+                type="button"
+                class="raise-hand ${this.handRaised
+                  ? 'raise-hand-active'
+                  : ''}"
+                aria-label=${this.handRaised
+                  ? 'Lower hand'
+                  : 'Raise hand'}
+                title=${this.handRaised
+                  ? 'Lower hand'
+                  : 'Raise hand'}
+                @click=${() => this.onToggleHand?.()}
+              >
+                ✋ ${this.handRaised ? 'Lower' : 'Raise'}
+              </button>`
+            : nothing}
         </form>
         ${this.rollError
           ? html`<p class="roll-error">${this.rollError}</p>`

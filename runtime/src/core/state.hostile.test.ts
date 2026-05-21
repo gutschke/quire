@@ -277,7 +277,11 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
   // so a future per-kind materializer that gets added cannot forget it
   // without breaking the test.
 
-  const M1_KINDS = [
+  // The 18 kinds registered at M1.  raise-hand / lower-hand
+  // materialize starting M2.8 (they're tested separately below);
+  // the rest remain v:1-validated no-ops until their per-kind
+  // materializer ships in M3a/M3b/M4/M5/M6.
+  const M1_STILL_NOOP_KINDS = [
     'scene-reveal-paragraph',
     'scene-unreveal-paragraph',
     'thread-debt-set',
@@ -289,8 +293,6 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
     'map-blob-reveal',
     'map-blob-unreveal',
     'broadcast-view',
-    'raise-hand',
-    'lower-hand',
     'scratch-note',
     'ai-prompt',
     'ai-response',
@@ -302,7 +304,7 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
     // No state mutation occurs because the no-op stub breaks before
     // any state.* mutation; verify the events also do NOT crash the
     // materializer.
-    for (const kind of M1_KINDS) {
+    for (const kind of M1_STILL_NOOP_KINDS) {
       expect(() =>
         materialize([ev('alice', 1, kind, { /* no v */ pcId: 'x' })])
       ).not.toThrow();
@@ -310,7 +312,7 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
   });
 
   it('M1 kinds with v: 2 (future version) are silently no-oped', () => {
-    for (const kind of M1_KINDS) {
+    for (const kind of M1_STILL_NOOP_KINDS) {
       expect(() =>
         materialize([ev('alice', 1, kind, { v: 2, pcId: 'x' })])
       ).not.toThrow();
@@ -320,13 +322,12 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
   it('M1 kinds with v: 1 are accepted (no-op until materializer ships)', () => {
     // At M1 the case body just breaks — verify no crash and no state
     // leakage from the validated payload.
-    for (const kind of M1_KINDS) {
+    for (const kind of M1_STILL_NOOP_KINDS) {
       const s = materialize([ev('alice', 1, kind, { v: 1, pcId: 'x' })]);
       // None of the M1+ fields should be populated by these stubs.
       expect(s.scratchNotes).toEqual([]);
       expect(s.threadDebt).toEqual({});
       expect(s.pinnedNpcs).toEqual([]);
-      expect(s.raisedHands.size).toBe(0);
       expect(Object.keys(s.revealedParagraphs)).toEqual([]);
     }
   });
@@ -336,7 +337,7 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
     // not poison state.  The stubs no-op, so this is just defense-
     // in-depth that the stub doesn't accidentally call Object.assign
     // on the payload.
-    for (const kind of M1_KINDS) {
+    for (const kind of M1_STILL_NOOP_KINDS) {
       materialize([
         ev('alice', 1, kind, {
           v: 1,
@@ -346,5 +347,83 @@ describe('M1-registered event kinds — v:1 enforcement', () => {
       ]);
     }
     expect((Object.prototype as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+});
+
+describe('raise-hand / lower-hand materializer (M2.8 — P1-7)', () => {
+  it('raise-hand adds the author to state.raisedHands when peer is known', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { v: 1 })
+    ]);
+    expect(s.raisedHands.has('alice')).toBe(true);
+  });
+
+  it('lower-hand removes the author from state.raisedHands', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { v: 1 }),
+      ev('alice', 3, 'lower-hand', { v: 1 })
+    ]);
+    expect(s.raisedHands.has('alice')).toBe(false);
+  });
+
+  it('raise-hand is idempotent (Set dedup)', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { v: 1 }),
+      ev('alice', 3, 'raise-hand', { v: 1 })
+    ]);
+    expect(s.raisedHands.size).toBe(1);
+  });
+
+  it('raise-hand on an unknown peer is silently dropped (no ghost hands)', () => {
+    // peer-join is required first; a raise-hand from a peer that
+    // hasn't announced themselves doesn't materialize.
+    const s = materialize([
+      ev('ghost', 1, 'raise-hand', { v: 1 })
+    ]);
+    expect(s.raisedHands.has('ghost')).toBe(false);
+  });
+
+  it('peer-leave clears the leaving peer\'s raised hand', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { v: 1 }),
+      ev('alice', 3, 'peer-leave', {})
+    ]);
+    expect(s.raisedHands.has('alice')).toBe(false);
+  });
+
+  it('peer-disconnect (coord-emitted) clears the disconnected peer\'s hand', () => {
+    const s = materialize([
+      ev('dm', 1, 'peer-join', { name: 'DM' }),
+      ev('dm', 2, 'coordinator-claim', {}),
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { v: 1 }),
+      ev('dm', 3, 'peer-disconnect', { peerId: 'alice' })
+    ]);
+    expect(s.raisedHands.has('alice')).toBe(false);
+  });
+
+  it('raise-hand rejects missing / wrong v', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('alice', 2, 'raise-hand', { /* no v */ }),
+      ev('alice', 3, 'raise-hand', { v: 2 })
+    ]);
+    expect(s.raisedHands.has('alice')).toBe(false);
+  });
+
+  it('multiple peers raise hands independently', () => {
+    const s = materialize([
+      ev('alice', 1, 'peer-join', { name: 'Alice' }),
+      ev('bob', 1, 'peer-join', { name: 'Bob' }),
+      ev('alice', 2, 'raise-hand', { v: 1 }),
+      ev('bob', 2, 'raise-hand', { v: 1 })
+    ]);
+    expect(s.raisedHands.size).toBe(2);
+    expect(s.raisedHands.has('alice')).toBe(true);
+    expect(s.raisedHands.has('bob')).toBe(true);
   });
 });

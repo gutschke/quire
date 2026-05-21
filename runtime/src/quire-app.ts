@@ -1669,17 +1669,37 @@ export class QuireApp extends LitElement {
           label: formatRoll(r),
           tierClass: r.tier ? `roll-tier-${r.tier}` : ''
         }));
+    // M2.8: raise-hand affordance.  Available to non-DM peers in an
+    // active session (DMs reveal scenes; players raise hands).  DM
+    // peers can still see the raised-hand glyph on the roster.
+    const v = this.sessionView;
+    const handAvailable =
+      v?.status === 'active' && !!v.peerId && !this.isCoordinator();
+    const handRaised =
+      v?.status === 'active' && !!v.peerId && v.shared.raisedHands.has(v.peerId);
     return html`
       <dice-dock
         .rollDraft=${this.rollDraft}
         .rollError=${this.rollError}
         .entries=${entries}
+        .handAvailable=${handAvailable}
+        .handRaised=${handRaised}
         .onRollDraftChange=${(v: string) => {
           this.rollDraft = v;
         }}
         .onSubmitRoll=${(v: string) => this.submitRoll(v)}
+        .onToggleHand=${() => this.toggleRaisedHand()}
       ></dice-dock>
     `;
+  }
+
+  /**
+   * Toggle the local peer's raised-hand state.  Wraps
+   * SessionController.toggleHand so e2e tests + harnesses can
+   * programmatically invoke via `app.toggleRaisedHand()`.
+   */
+  toggleRaisedHand(): void {
+    this.session?.toggleHand();
   }
 
   submitRoll(input: string): DiceRoll | null {

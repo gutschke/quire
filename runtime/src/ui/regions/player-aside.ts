@@ -97,11 +97,20 @@ export class PlayerAside extends LitElement {
     const isSelf = peer.peerId === v.peerId;
     const isDm = v.shared.coordinator === peer.peerId;
     const canKick = this.localIsCoordinator && !isSelf && !isDm;
+    const handRaised = v.shared.raisedHands.has(peer.peerId);
     const name = peer.name ?? '(unnamed)';
     return html`
       <li class="roster-row ${isSelf ? 'roster-row-self' : ''}">
         ${isDm ? html`<span class="roster-dm-tag">DM</span>` : nothing}
         <span class="roster-name">${name}</span>
+        ${handRaised
+          ? html`<span
+              class="roster-hand"
+              title="${name} has their hand raised"
+              aria-label="Hand raised"
+              >✋</span
+            >`
+          : nothing}
         ${peer.character
           ? html`<span class="roster-char">${peer.character}</span>`
           : nothing}

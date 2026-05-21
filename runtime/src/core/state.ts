@@ -519,6 +519,9 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     case 'peer-leave': {
       const p = state.peers[event.peerId];
       if (p) p.leftAt = event.ts;
+      // M2.8: a leaving peer's hand drops automatically — a stale
+      // raised hand after departure would clutter the roster.
+      state.raisedHands.delete(event.peerId);
       break;
     }
     case 'peer-disconnect': {
@@ -535,6 +538,10 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       if (target && target.leftAt === undefined) {
         target.leftAt = event.ts;
       }
+      // M2.8: drop the disconnected peer's raised hand (same
+      // reasoning as peer-leave — a stale hand on a vanished peer
+      // is clutter).
+      state.raisedHands.delete(p.peerId);
       break;
     }
     case 'peer-rename': {
@@ -717,6 +724,25 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     // reject mismatched versions.  Tests in state.hostile.test.ts
     // pin the rejection behavior on synthetic events.
     // -----------------------------------------------------------
+    case 'raise-hand': {
+      // M2.8 (P1-7): the local peer raises their hand.  Self-only
+      // authorship — event.peerId IS the author per R2.1 wire-layer
+      // cross-check.  No DM gate; any peer can raise their own hand.
+      if (!isPayloadV1(event.payload)) break;
+      // Defensive: only track raised hands for known peers (a raise
+      // before peer-join shouldn't materialize).  This naturally
+      // dedupes — Set.add is idempotent.
+      if (state.peers[event.peerId]) {
+        state.raisedHands.add(event.peerId);
+      }
+      break;
+    }
+    case 'lower-hand': {
+      // Self-only lower of own hand.  Mirrors raise-hand.
+      if (!isPayloadV1(event.payload)) break;
+      state.raisedHands.delete(event.peerId);
+      break;
+    }
     case 'scene-reveal-paragraph':
     case 'scene-unreveal-paragraph':
     case 'thread-debt-set':
@@ -728,8 +754,6 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     case 'map-blob-reveal':
     case 'map-blob-unreveal':
     case 'broadcast-view':
-    case 'raise-hand':
-    case 'lower-hand':
     case 'scratch-note':
     case 'ai-prompt':
     case 'ai-response':

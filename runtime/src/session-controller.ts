@@ -263,6 +263,25 @@ export class SessionController {
     this.notify();
   }
 
+  /**
+   * Toggle the local peer's raised-hand state (M2.8, P1-7).  Self-
+   * authored: the event's peerId IS the author, no DM gate.  No-op
+   * when there's no active session.
+   *
+   * Emits `raise-hand` or `lower-hand` based on the current shared
+   * state — calling toggleHand twice should be a round-trip.  The
+   * materializer dedups (raise on an already-raised peer is a Set
+   * add).
+   */
+  toggleHand(): void {
+    if (!this.peer) return;
+    const v = this.view();
+    if (!v.peerId) return;
+    const raised = v.shared.raisedHands.has(v.peerId);
+    this.peer.append(raised ? 'lower-hand' : 'raise-hand', { v: 1 });
+    this.notify();
+  }
+
   private async runHost(
     displayName?: string,
     campaign?: { owner: string; repo: string; ref: string }
