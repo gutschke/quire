@@ -1,6 +1,12 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { tokens } from './ui/styles/tokens.css';
 import { quireAppStyles } from './ui/styles/quire-app.css';
+import './ui/shell/quire-shell';
+import './ui/shell/quire-topbar';
+import './ui/shell/quire-rail';
+import './ui/shell/quire-stage';
+import './ui/shell/quire-aside';
+import './ui/shell/quire-dock';
 import { customElement, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import {
@@ -610,7 +616,29 @@ export class QuireApp extends LitElement {
   }
 
   override render(): TemplateResult {
-    return html`${this.renderSessionBar()}${this.renderRosterPanel()}${this.renderRevealBanner()}${this.renderBody()}${this.renderChatPanel()}${this.renderAiPanel()}${this.renderVersionBadge()}`;
+    /*
+     * Facade-migration step 2: route the existing renderXxx output
+     * through the five-region shell.  Region elements use
+     * `display: contents` (see src/ui/shell/*) so the visual layout
+     * is identical to the prior stack-of-cards.  M2 promotes shell
+     * styling to a real CSS Grid as region content migrates.
+     *
+     * Region mapping (M1 — approximate; firms up in M2):
+     *   topbar : session bar (host/join/leave + status)
+     *   rail   : roster panel
+     *   stage  : reveal banner + body (campaign/episode/scene)
+     *   aside  : AI panel + chat panel
+     *   dock   : version badge (real Dock content lands in M2)
+     */
+    return html`
+      <quire-shell>
+        <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
+        <quire-rail slot="rail">${this.renderRosterPanel()}</quire-rail>
+        <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
+        <quire-aside slot="aside">${this.renderAiPanel()}${this.renderChatPanel()}</quire-aside>
+        <quire-dock slot="dock">${this.renderVersionBadge()}</quire-dock>
+      </quire-shell>
+    `;
   }
 
   /**
