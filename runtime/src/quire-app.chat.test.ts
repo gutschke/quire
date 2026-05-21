@@ -96,6 +96,30 @@ describe('QuireApp chat surface', () => {
     expect(chat[0].text.endsWith('…')).toBe(true);
   });
 
+  it('routes /roll prefix through the dice flow, not chat', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.rngForRoll = () => 0.5;
+    app.startHosting();
+    await flush();
+    const result = app.submitChat('/roll 2d6+1');
+    expect(result).toBe(true);
+    // No chat entry; instead, a dice-roll event in shared state.
+    expect(app.sessionView!.shared.chat).toEqual([]);
+    expect(app.sessionView!.shared.diceRolls).toHaveLength(1);
+    expect(app.sessionView!.shared.diceRolls[0].expression).toBe('2d6+1');
+  });
+
+  it('falls through unparseable /roll to chat (literal, not silent no-op)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    app.submitChat('/roll xyzzy');
+    // User sees their own message rather than a silent failure.
+    const chat = app.sessionView!.shared.chat;
+    expect(chat).toHaveLength(1);
+    expect(chat[0].text).toBe('/roll xyzzy');
+  });
+
   it('receives messages from a remote peer', async () => {
     const network = new InMemoryNetwork();
     // App acts as host.

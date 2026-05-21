@@ -1508,6 +1508,7 @@ export class QuireApp extends LitElement {
       <section class="card">
         <div class="markdown">${unsafeHTML(scene.html)}</div>
       </section>
+      ${this.renderRollPanel()}
     `;
   }
 
@@ -1679,6 +1680,34 @@ export class QuireApp extends LitElement {
   }
 
   private renderRollPanel(): TemplateResult {
+    // In an active session, the shared event log is the source of
+    // truth for "who rolled what" — every peer sees every roll with
+    // attribution.  In solo mode the local mirror is the only source.
+    // We render the union to avoid showing duplicates when our own
+    // dice-roll event has both been appended locally AND echoed back
+    // through the materializer.
+    const inSession = this.sessionView?.status === 'active';
+    const shared = inSession ? this.sessionView!.shared.diceRolls : [];
+    const entries: Array<{
+      key: string;
+      label: string;
+      tierClass: string;
+    }> = inSession
+      ? // Most-recent first, capped to history limit.
+        shared
+          .slice()
+          .reverse()
+          .slice(0, ROLL_HISTORY_MAX)
+          .map((r, i) => ({
+            key: `s${r.ts}-${r.peerId}-${i}`,
+            label: `${this.displayNameFor(r.peerId)}: ${r.expression} = ${r.result} [${r.dice.join(', ')}]`,
+            tierClass: ''
+          }))
+      : this.rolls.map((r, i) => ({
+          key: `l${i}`,
+          label: formatRoll(r),
+          tierClass: r.tier ? `roll-tier-${r.tier}` : ''
+        }));
     return html`
       <section class="card">
         <h2>Dice</h2>
@@ -1706,11 +1735,14 @@ export class QuireApp extends LitElement {
         ${this.rollError
           ? html`<p class="roll-error">${this.rollError}</p>`
           : nothing}
-        ${this.rolls.length
+        ${entries.length
           ? html`
               <ul class="roll-history">
-                ${this.rolls.map(
-                  (r) => html`<li><code>${formatRoll(r)}</code></li>`
+                ${entries.map(
+                  (e) =>
+                    html`<li>
+                      <code class="${e.tierClass}">${e.label}</code>
+                    </li>`
                 )}
               </ul>
             `
@@ -2000,10 +2032,22 @@ export class QuireApp extends LitElement {
     if (!this.session || this.sessionView?.status !== 'active') return false;
     const trimmed = text.trim();
     if (!trimmed) return false;
+    // Slash-command escape hatch: a leading /roll or /r routes through
+    // the dice flow instead of chat.  The roll panel's "/roll" label
+    // implies this affordance exists; this makes it true.  Anything
+    // unparseable falls through to a regular chat message so the user
+    // isn't penalized for typing a literal slash.
+    if (/^\/(roll|r)\b/i.test(trimmed)) {
+      const cmd = parseDiceCommand(trimmed);
+      if (cmd) {
+        this.submitRoll(trimmed);
+        this.chatDraft = '';
+        return true;
+      }
+      // Unparseable /roll: send as chat so user sees their literal
+      // text rather than getting a silent no-op.
+    }
     // Cap at the same length the input HTML attribute enforces.
-    // Without this, AI responses (or any programmatic submitChat
-    // caller) could flood the event log with multi-KB messages
-    // that replicate to every joiner via sync-response forever.
     if (trimmed.length > CHAT_MAX_LENGTH) return false;
     this.session.append('chat', { text: trimmed });
     this.chatDraft = '';

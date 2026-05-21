@@ -39,6 +39,53 @@ describe('QuireApp dice integration', () => {
     expect(app.rolls).toHaveLength(5);
   });
 
+  it('renders shared diceRolls on every peer in an active session', async () => {
+    // B2 regression: previously each peer saw only its own this.rolls;
+    // shared.diceRolls landed in materialize but never in any panel.
+    const { InMemoryNetwork, InMemoryTransport } = await import('./core/transports/in-memory');
+    const network = new InMemoryNetwork();
+    const host = document.createElement('quire-app') as QuireApp;
+    host.sessionFactory = {
+      createHost: async () => ({
+        transport: new InMemoryTransport('HOST', network),
+        pairingCode: 'HOST'
+      }),
+      createGuest: async () => {
+        throw new Error('unused');
+      }
+    };
+    document.body.appendChild(host);
+    host.startHosting();
+
+    const guest = document.createElement('quire-app') as QuireApp;
+    guest.sessionFactory = {
+      createHost: async () => {
+        throw new Error('unused');
+      },
+      createGuest: async () => ({
+        transport: new InMemoryTransport('GUEST', network)
+      })
+    };
+    document.body.appendChild(guest);
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    // wait for join + state sync
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    host.rngForRoll = () => 0.5;
+    host.submitRoll('2d6+1');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // Guest's shared state has the roll (B2: previously rendered
+    // nowhere; now consumed by renderRollPanel).
+    expect(guest.sessionView?.shared.diceRolls).toHaveLength(1);
+    expect(guest.sessionView?.shared.diceRolls[0].expression).toBe('2d6+1');
+    expect(guest.sessionView?.shared.diceRolls[0].peerId).toBe('HOST');
+    // E2E test verifies the render in a real browser; this unit
+    // test pins the data flow (which is what regressed in B2 — the
+    // material was there, just unrendered).
+  });
+
   it('newest roll appears first', () => {
     const app = mountApp();
     let n = 0;

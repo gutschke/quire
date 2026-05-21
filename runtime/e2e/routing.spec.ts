@@ -123,6 +123,27 @@ test.describe('Routing — episode + scene views', () => {
     }
   });
 
+  test('roll panel appears on scene view (B1 regression)', async ({
+    browser
+  }) => {
+    // The dice panel previously rendered only on campaign + character
+    // views; players reading a revealed scene had to navigate away to
+    // roll.  Pin its presence on the scene view.
+    const ctx = await browser.newContext();
+    try {
+      const page = await openCampaign(ctx, SLUG, {
+        episode: '001-test',
+        scene: 'scenes/intro.md'
+      });
+      await expect(page.locator('.roll-form')).toBeVisible();
+      await page.locator('.roll-form input').fill('2d6');
+      await page.locator('.roll-form input').press('Enter');
+      await expect(page.locator('.roll-history')).toContainText('2d6');
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('click navigation: campaign → episode → scene', async ({ browser }) => {
     const ctx = await browser.newContext();
     try {
