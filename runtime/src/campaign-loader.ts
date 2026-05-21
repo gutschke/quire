@@ -227,9 +227,22 @@ export async function loadCampaign(
     );
   }
 
+  // M3b.7 unblock (Security S-2): mirror the UC_CLOSE sentinel
+  // guard from fetchCampaignFile on the manifest.  The manifest
+  // doesn't flow into AI prompts today, but a future "campaign
+  // summary" contextRef must not be the path that bypasses the
+  // wrapper-safety contract.  Inspect the raw response text
+  // before parsing as JSON; reject either way.
+  const rawText = await response.text();
+  if (containsUcCloseSentinel(rawText)) {
+    throw new CampaignLoadError(
+      `Campaign manifest contains a reserved sentinel marker.`,
+      `The marker <!--UC_CLOSE--> is used internally to wrap untrusted content for AI prompts and must not appear in raw campaign files.`
+    );
+  }
   let data: unknown;
   try {
-    data = await response.json();
+    data = JSON.parse(rawText);
   } catch (e) {
     throw new CampaignLoadError(
       'Campaign manifest is not valid JSON.',

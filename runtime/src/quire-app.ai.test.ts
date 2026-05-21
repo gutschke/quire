@@ -196,6 +196,76 @@ describe('QuireApp AI panel — submit flow', () => {
     expect(app.aiLoading).toBe(false);
   });
 
+  it('records ai-prompt + ai-response with REAL tokensIn / tokensOut (M3b.7 unblock)', async () => {
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockResolvedValue({
+          raw: JSON.stringify({ safe: 'hi', dmOnly: '', sources: [] }),
+          tokensIn: 42,
+          tokensOut: 17,
+          responseId: 'r-1'
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
+    await app.submitAiPrompt('hi');
+    await flush();
+    const audit = app.sessionView!.shared.aiAudit;
+    const prompt = audit.find((e) => e.kind === 'prompt');
+    const response = audit.find((e) => e.kind === 'response');
+    expect(prompt?.tokensIn).toBe(42);
+    expect(response?.tokensOut).toBe(17);
+  });
+
+  it('Accept verdict sets aiVerdictResponseId + kind (M3b.7 unblock)', async () => {
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.acceptAiResponse('r-42');
+    expect(app.aiVerdictResponseId).toBe('r-42');
+    expect(app.aiVerdictKind).toBe('accept');
+  });
+
+  it('Reject verdict sets the matching state', async () => {
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.rejectAiResponse('r-99', 'too-spoilery');
+    expect(app.aiVerdictResponseId).toBe('r-99');
+    expect(app.aiVerdictKind).toBe('reject');
+  });
+
+  it('new response clears the prior verdict so its buttons are hot again', async () => {
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockResolvedValue({
+          raw: JSON.stringify({ safe: 'a', dmOnly: '', sources: [] }),
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r-new'
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
+    app.acceptAiResponse('r-old');
+    expect(app.aiVerdictKind).toBe('accept');
+    await app.submitAiPrompt('hi');
+    expect(app.aiVerdictKind).toBe('');
+    expect(app.aiVerdictResponseId).toBe('');
+  });
+
   it('scope toggle resets to public after submit (M3b.5)', async () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');

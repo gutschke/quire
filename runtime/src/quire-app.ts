@@ -48,8 +48,8 @@ import {
   STAT_MIN,
   STAT_MAX
 } from './character-edits';
-import { callAnthropic, AnthropicError } from './ai/anthropic';
-import { callGemini, GeminiError } from './ai/gemini';
+import { AnthropicProviderError } from './ai/providers/anthropic';
+import { GeminiProviderError } from './ai/providers/gemini';
 import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
 import { anthropicProvider } from './ai/providers/anthropic';
 import { geminiProvider } from './ai/providers/gemini';
@@ -76,11 +76,10 @@ import {
 // AI provider / key / model / system-prompt state lives in
 // src/controllers/ai-key-store.ts (P0-10).  Re-export the public types
 // for callers that import them from quire-app.
-export type { AiProvider, AiClient } from './controllers/ai-key-store';
+export type { AiProvider } from './controllers/ai-key-store';
 import {
   AiKeyStore,
-  type AiProvider,
-  type AiClient
+  type AiProvider
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
 import { decideRoute } from './controllers/route-policy';
@@ -326,9 +325,8 @@ export class QuireApp extends LitElement {
 
   /**
    * M3b.2: provider impls registered with the broker.  Production
-   * uses real fetch-based clients; tests can stub via aiClients
-   * below (legacy text-only path) OR via the AiBroker.provider
-   * field (structured path).
+   * uses real fetch-based clients; tests stub by assigning to this
+   * field directly (it's intentionally public for that reason).
    */
   aiProviders: Record<AiProvider, AiProviderImpl> = {
     claude: anthropicProvider,
@@ -336,12 +334,6 @@ export class QuireApp extends LitElement {
   };
   /** M3b.4: per-DM session-wide token budget. */
   @state() aiBudgetCeiling: number = DEFAULT_BUDGET_CEILING;
-
-  // Tests can replace these; production uses real fetch-based clients.
-  aiClients: Record<AiProvider, AiClient> = {
-    claude: callAnthropic,
-    gemini: callGemini
-  };
   private aiAbort: AbortController | null = null;
 
   // Tests can replace this before connectedCallback runs to swap in
@@ -2401,7 +2393,10 @@ export class QuireApp extends LitElement {
       if ((e as Error).name === 'AbortError') return null;
       if (e instanceof AiBrokerError) {
         this.aiError = e.message;
-      } else if (e instanceof AnthropicError || e instanceof GeminiError) {
+      } else if (
+        e instanceof AnthropicProviderError ||
+        e instanceof GeminiProviderError
+      ) {
         this.aiError =
           e.status != null
             ? `API ${e.status}: ${e.message}`
