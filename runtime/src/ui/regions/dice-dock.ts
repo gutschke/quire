@@ -63,11 +63,32 @@ export class DiceDock extends LitElement {
   @property({ attribute: false }) onToggleHand:
     | (() => void)
     | null = null;
+  /**
+   * M3a.6 (P-M3a-stat-chips): stat modifiers for the bound PC.
+   * When provided, the dock renders 6 click-to-roll chips ABOVE
+   * the dice form.  Each chip shows the stat label + modifier
+   * (e.g. "STR +1") and on click sets the dice draft to
+   * "2d6+<mod>", priming a Roll.  Quire's 2d6+stat resolution
+   * (rules-reference.md) is the load-bearing reason this exists:
+   * a new player who hasn't memorized the notation can roll
+   * without composing a dice expression.
+   *
+   * `stats` is null when no PC is bound (chips hidden).
+   */
+  @property({ attribute: false }) stats: {
+    str: number;
+    dex: number;
+    con: number;
+    int: number;
+    wis: number;
+    cha: number;
+  } | null = null;
 
   override render(): TemplateResult {
     return html`
       <section class="card">
         <h2>Dice</h2>
+        ${this.stats ? this.renderStatChips() : nothing}
         <form
           class="roll-form"
           @submit=${(e: Event) => {
@@ -123,6 +144,37 @@ export class DiceDock extends LitElement {
             `
           : html`<p class="muted">No rolls yet.</p>`}
       </section>
+    `;
+  }
+
+  private renderStatChips(): TemplateResult {
+    const s = this.stats!;
+    const formatMod = (n: number): string => (n >= 0 ? `+${n}` : `${n}`);
+    const chip = (
+      label: string,
+      key: keyof NonNullable<typeof this.stats>
+    ): TemplateResult => {
+      const mod = s[key];
+      const expr = mod === 0 ? '2d6' : `2d6${formatMod(mod)}`;
+      return html`<button
+        type="button"
+        class="dice-stat-chip"
+        title="Roll ${expr} (${label} check)"
+        aria-label="Roll ${label} ${formatMod(mod)}"
+        @click=${() => {
+          this.onRollDraftChange?.(expr);
+          this.onSubmitRoll?.(expr);
+        }}
+      >
+        <span class="dice-stat-label">${label}</span>
+        <span class="dice-stat-mod">${formatMod(mod)}</span>
+      </button>`;
+    };
+    return html`
+      <div class="dice-stat-chips">
+        ${chip('STR', 'str')} ${chip('DEX', 'dex')} ${chip('CON', 'con')}
+        ${chip('INT', 'int')} ${chip('WIS', 'wis')} ${chip('CHA', 'cha')}
+      </div>
     `;
   }
 }

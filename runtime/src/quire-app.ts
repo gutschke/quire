@@ -226,6 +226,18 @@ export class QuireApp extends LitElement {
   };
   @state() renameEditing: boolean = false;
   @state() chatError: string | null = null;
+  /**
+   * M3a.6 P-M3a-rail-always-on / P-M3a-stat-chips: the local
+   * peer's currently-bound PC character record, loaded
+   * asynchronously when the peer-rename pcId binding changes (or
+   * is initially set on subscribe).  Cleared when the binding is
+   * removed or session leaves.  When non-null, the dice dock can
+   * surface stat chips, the player Rail can always show the
+   * sheet, and the Aside roster can render harm/stress glyphs.
+   */
+  @state() boundCharacter: LoadedCharacter | null = null;
+  /** Track which (campaign+pcId) the boundCharacter was loaded for. */
+  private boundCharacterFor: string = '';
   // Persistence UI state
   @state() saveStatus: { kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string } =
     { kind: 'idle' };
@@ -313,6 +325,11 @@ export class QuireApp extends LitElement {
           this.campaignDiscoveryInFlight = false;
         });
       }
+      // M3a.6: track bound-PC for always-on rail + stat chips +
+      // roster glyphs.  When the local peer has a pcId binding and
+      // a campaign is loaded, lazy-fetch the PC character so the
+      // Rail / Dice / Aside renderers have the data.
+      this.refreshBoundCharacter();
       // Live-bounce a non-coordinator player if they're currently
       // viewing a scene the DM has just un-revealed.  Without this,
       // they'd see the now-private content until they navigate away.
@@ -1359,6 +1376,10 @@ export class QuireApp extends LitElement {
       v?.status === 'active' && !!v.peerId && !this.isCoordinator();
     const handRaised =
       v?.status === 'active' && !!v.peerId && v.filteredShared.raisedHands.has(v.peerId);
+    // M3a.6: stat chips for the bound PC.  Compute effective
+    // stats by applying pcEdits.  Returns null when no PC is
+    // bound, hiding the chips.
+    const stats = this.computeBoundStats();
     return html`
       <dice-dock
         .rollDraft=${this.rollDraft}
@@ -1366,6 +1387,7 @@ export class QuireApp extends LitElement {
         .entries=${entries}
         .handAvailable=${handAvailable}
         .handRaised=${handRaised}
+        .stats=${stats}
         .onRollDraftChange=${(v: string) => {
           this.rollDraft = v;
         }}
@@ -1376,12 +1398,82 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Effective stats (after pcEdits overlay) for the local peer's
+   * bound PC.  Returns null when no PC is bound or the bound PC
+   * lacks stats (legacy / minimal sheets — see
+   * schemas.md "What goes in a record" — only name + version are
+   * required).
+   */
+  private computeBoundStats(): {
+    str: number;
+    dex: number;
+    con: number;
+    int: number;
+    wis: number;
+    cha: number;
+  } | null {
+    const c = this.boundCharacter;
+    if (!c) return null;
+    const eff = this.effectiveCharacter(c);
+    const s = eff.stats;
+    if (!s) return null;
+    return {
+      str: s.str ?? 0,
+      dex: s.dex ?? 0,
+      con: s.con ?? 0,
+      int: s.int ?? 0,
+      wis: s.wis ?? 0,
+      cha: s.cha ?? 0
+    };
+  }
+
+  /**
    * Toggle the local peer's raised-hand state.  Wraps
    * SessionController.toggleHand so e2e tests + harnesses can
    * programmatically invoke via `app.toggleRaisedHand()`.
    */
   toggleRaisedHand(): void {
     this.session?.toggleHand();
+  }
+
+  /**
+   * M3a.6: refresh the bound PC character.  Called from the
+   * session subscribe handler whenever sessionView changes.
+   * Loads the PC asynchronously when the (campaign, pcId) tuple
+   * changes; clears boundCharacter when the binding is removed.
+   * Safe to call repeatedly — short-circuits when nothing changed.
+   */
+  private refreshBoundCharacter(): void {
+    const v = this.sessionView;
+    const campaign = this.getCurrentCampaign();
+    const myPcId =
+      v?.status === 'active' && v.peerId
+        ? v.filteredShared.peers[v.peerId]?.pcId
+        : undefined;
+    const slug = campaign ? this.slugFor(campaign) : '';
+    const key = myPcId ? `${slug}|${myPcId}` : '';
+    if (key === this.boundCharacterFor) return;
+    this.boundCharacterFor = key;
+    if (!myPcId || !campaign) {
+      this.boundCharacter = null;
+      return;
+    }
+    // Fire async load.  Failure clears the cache silently — the
+    // binding is correct, the renderer just shows the unbound
+    // state until the file resolves.
+    void loadCharacter(campaign.base.source, 'pc', myPcId)
+      .then((character) => {
+        // Re-check the binding hasn't changed since we kicked off
+        // the fetch.
+        if (this.boundCharacterFor === key) {
+          this.boundCharacter = character;
+        }
+      })
+      .catch(() => {
+        if (this.boundCharacterFor === key) {
+          this.boundCharacter = null;
+        }
+      });
   }
 
   submitRoll(input: string): DiceRoll | null {
