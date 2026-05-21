@@ -36,13 +36,13 @@ Full M2 retro retained below.
 - [ ] Broadcast button (`broadcast-view` event)
 
 **Process:**
-- [ ] First commit migrates player-visible renderers `shared` → `filteredShared`
-- [ ] STATUS.md cadence rule decision (drop / pre-commit hook / per-commit)
-- [ ] Honest revision of execution-plan.md time estimates
+- [x] STATUS.md cadence rule decision — **DROPPED honestly** (this commit). Per-commit updates added more friction than value at observed pace; the file remains the contract for milestone-boundary + scope-change updates.
+- [x] Honest revision of execution-plan.md time estimates — **DONE** (this commit). Time estimates are no longer load-bearing project artifacts; gates + structural metrics are the quality signal.
+- [ ] First commit migrates player-visible renderers `shared` → `filteredShared` (M3a.1, next).
 
 ## Next planned commit
 
-Open M3a with P-M3a-filteredShared-migrate (the locked-in first commit), then proceed through the structural extractions ahead of the cockpit work.
+M3a.1 — P-M3a-filteredShared-migrate: migrate all player-visible reads from `sessionView.shared` to `sessionView.filteredShared` so the DM-only field skeletons (threadDebt, scratchNotes, aiAudit, pinnedNpcs) stay safely stripped from the player view as M3a.8 materializers populate them.
 
 ---
 

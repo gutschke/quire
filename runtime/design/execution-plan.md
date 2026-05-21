@@ -91,7 +91,7 @@ Apply to ALL milestones; reviewers will check these.
   - Tests testing implementation details of decomposed code may be deleted, **provided** the invariant they protect is covered by an integration or e2e test. Deletion requires a one-line commit-message justification.
 - **Bundle-size CI gate** active from M1: main chunk ≤ 110 KB gzipped; authoring lazy chunk ≤ 150 KB; lazy-chunk shared-deps with main monitored via `vite build --report`.
 - **Feature flags for milestone-cumulative builds.** Each milestone's new user-facing affordances live behind a `?features=<comma-separated>` URL flag defaulting OFF until the milestone enters its ship phase. This allows the developer (or a brave playtester) to pull `main` between milestones without encountering half-built features. The flag spec is documented in `redesign-plan.md`.
-- **STATUS.md** at `runtime/design/STATUS.md`. A one-paragraph file the implementor updates per significant commit (or end-of-day) noting: current milestone, current acceptance-criteria checklist state, blockers, next planned commit. Survives context resets; reviewers read it as input.
+- **STATUS.md** at `runtime/design/STATUS.md`. Updated at milestone boundaries (open / gate-close) and whenever a commit changes the milestone scope or surfaces a blocker. The original "update per significant commit" cadence was dropped at M3a entry (2026-05-21) after both the M1 + M2 Adversarial reviews documented it as unenforced in practice — the implementor was working at a pace where per-commit STATUS rewrites added more friction than navigability value. The file is still the contract for context-reset recovery and gate review briefings; it just doesn't track per-commit state.
 - **REVIEW_HISTORY.md** per lens at `runtime/design/review-history/<lens>.md`. Each file is a running record of `(finding → resolution)` tuples produced by prior gates of that lens. Reviewers MUST be briefed with the relevant lens history. This prevents recurring same-finding-each-gate noise.
 - **No `--no-verify`** on commits. Pre-commit hooks must pass.
 - **No Co-Authored-By trailer.** Per memory.
@@ -396,7 +396,18 @@ Three reviewers. Web-UX optional (spawn if blob ergonomics need tuning). No TTRP
 - In-browser authoring with frontmatter form + lint.
 - Static-image maps with named blobs.
 
-**Honest total**: 20-27 weeks (5-7 months) from M1 start to full feature parity with the design spec. v1 lands in 2-3 months.
+**Honest total** (original estimate): 20-27 weeks (5-7 months) from M1 start to full feature parity. v1 in 2-3 months.
+
+**Revised at M3a entry (2026-05-21)** after observed M1 + M2 actuals:
+- M1 actual: ~3 hours wall-clock (estimated 3-4 weeks).
+- M2 actual: ~30 minutes wall-clock (estimated 2-3 weeks).
+- Cumulative: ~3.5 hours vs ~5-7 weeks budget.
+
+The two Adversarial reviewers and the user have all noted this pace gap. Two diagnoses are possible:
+1. **Planner over-estimated milestone difficulty.** The plan was written when the user did not yet know how Claude would execute these refactors; the actual scope per milestone is much smaller than "human dev with full context-switching overhead" budgets.
+2. **Corners are being cut faster than gates can catch them.** The M1 + M2 gate reviewers DID catch substantive issues (Engine HIGHs at M1, design-spec drift at M2), so this is partially false — gates ARE working — but the time between commit and review IS very compressed.
+
+The honest revision: **plan time estimates are no longer load-bearing.** Use them only as scope sanity checks ("does M3a fit in one work session"). Trust the gate review process to catch quality. Trust the structural metrics (max-method-LOC, delegation ratio, vocabularies) to catch architectural drift. Stop tracking elapsed time as a project artifact.
 
 ## Descope ladder (in order of preference)
 
