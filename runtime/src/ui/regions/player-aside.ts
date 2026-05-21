@@ -66,7 +66,13 @@ export class PlayerAside extends LitElement {
   override render(): TemplateResult {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return html``;
-    const peers = Object.values(v.shared.peers).filter(
+    // M3a.1 (P-M3a-filteredShared-migrate): read the filtered view
+    // so non-coord viewers can never see DM-only fields.  At M3a
+    // entry the materialized DM-only fields are still empty stubs,
+    // so the migration is forward-looking — once M3a.8 ships the
+    // scratch/pin/thread-debt materializers, this region cannot
+    // accidentally leak them.
+    const peers = Object.values(v.filteredShared.peers).filter(
       (p) => p.leftAt === undefined
     );
     if (peers.length === 0) return html``;
@@ -152,9 +158,9 @@ export class PlayerAside extends LitElement {
   }): TemplateResult {
     const v = this.sessionView!;
     const isSelf = peer.peerId === v.peerId;
-    const isDm = v.shared.coordinator === peer.peerId;
+    const isDm = v.filteredShared.coordinator === peer.peerId;
     const canKick = this.localIsCoordinator && !isSelf && !isDm;
-    const handRaised = v.shared.raisedHands.has(peer.peerId);
+    const handRaised = v.filteredShared.raisedHands.has(peer.peerId);
     const name = peer.name ?? '(unnamed)';
     return html`
       <li class="roster-row ${isSelf ? 'roster-row-self' : ''}">

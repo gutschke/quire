@@ -497,7 +497,8 @@ export class QuireApp extends LitElement {
       }
       if (isNonCoordPlayer && route.kind === 'scene') {
         const fullPath = QuireApp.scenePathFor(route.episode, route.scene);
-        if (!this.sessionView!.shared.revealedScenes.includes(fullPath)) {
+        // M3a.1 — player-side reveal gate; reads filtered view.
+        if (!this.sessionView!.filteredShared.revealedScenes.includes(fullPath)) {
           throw new CampaignLoadError(
             'That scene has not been revealed by the DM yet.',
             `Requested scene: ${route.episode}/${route.scene}`
@@ -691,7 +692,8 @@ export class QuireApp extends LitElement {
   private beginRename(): void {
     const v = this.sessionView;
     if (!v?.peerId) return;
-    const self = v.shared.peers[v.peerId];
+    // M3a.1 — reading own peer record (player-visible field).
+    const self = v.filteredShared.peers[v.peerId];
     this.renameDraft = {
       name: self?.name ?? '',
       character: self?.character ?? ''
@@ -905,7 +907,8 @@ export class QuireApp extends LitElement {
   private renderRevealBanner(): TemplateResult {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return html``;
-    const list = v.shared.revealedScenes;
+    // M3a.1 — player-visible renderer reads filteredShared.
+    const list = v.filteredShared.revealedScenes;
     if (list.length === 0) return html``;
     const campaign = this.getCurrentCampaign();
     if (!campaign) return html``;
@@ -1261,8 +1264,10 @@ export class QuireApp extends LitElement {
     if (!this.sessionView || this.sessionView.status !== 'active')
       return html``;
     const full = QuireApp.scenePathFor(episodeSlug, scenePath);
+    // M3a.1 — player-visible reveal-state badge (DM also reads
+    // this; revealedScenes is in player-visible vocabulary).
     const already =
-      this.sessionView.shared.revealedScenes.includes(full);
+      this.sessionView.filteredShared.revealedScenes.includes(full);
     if (!this.isCoordinator()) {
       return already
         ? html`<p class="reveal-badge reveal-badge-revealed">Revealed to players</p>`
@@ -1400,13 +1405,14 @@ export class QuireApp extends LitElement {
     // disagrees with the membership count, so the discrepancy is
     // surfaced when it matters (someone dropped) without cluttering
     // the bar in the happy path.
-    const sessionMembers = Object.values(v.shared.peers).filter(
+    // M3a.1 — session-bar is player-visible; reads filteredShared.
+    const sessionMembers = Object.values(v.filteredShared.peers).filter(
       (p) => p.peerId !== v.peerId && p.leftAt === undefined
     );
     // Disambiguate DM from other players (per manual-testing
     // feedback: "1 other player" was confusing when the only
     // other was the DM).
-    const coordPeerId = v.shared.coordinator;
+    const coordPeerId = v.filteredShared.coordinator;
     const dmInOthers = sessionMembers.some((p) => p.peerId === coordPeerId);
     const playerCount = sessionMembers.filter(
       (p) => p.peerId !== coordPeerId
@@ -1522,7 +1528,8 @@ export class QuireApp extends LitElement {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return html``;
     if (!v.peerId) return html``;
-    if (v.shared.coordinator === v.peerId) return html``;
+    // M3a.1 — player-visible affordance (only non-DM peers see it).
+    if (v.filteredShared.coordinator === v.peerId) return html``;
     // Currently we're a non-coordinator.  Allow taking over.
     return html`
       <button
@@ -1659,7 +1666,8 @@ export class QuireApp extends LitElement {
    */
   private renderRollPanel(): TemplateResult {
     const inSession = this.sessionView?.status === 'active';
-    const shared = inSession ? this.sessionView!.shared.diceRolls : [];
+    // M3a.1 — player-visible renderer reads filteredShared.
+    const shared = inSession ? this.sessionView!.filteredShared.diceRolls : [];
     const entries: Array<{
       key: string;
       label: string;
@@ -1686,7 +1694,7 @@ export class QuireApp extends LitElement {
     const handAvailable =
       v?.status === 'active' && !!v.peerId && !this.isCoordinator();
     const handRaised =
-      v?.status === 'active' && !!v.peerId && v.shared.raisedHands.has(v.peerId);
+      v?.status === 'active' && !!v.peerId && v.filteredShared.raisedHands.has(v.peerId);
     return html`
       <dice-dock
         .rollDraft=${this.rollDraft}
@@ -1904,9 +1912,12 @@ export class QuireApp extends LitElement {
    */
   effectiveCharacter(character: LoadedCharacter): CharacterRecord {
     if (!this.sessionView) return character.record;
+    // M3a.1 — player-visible (rendered via <player-rail>); reads
+    // filtered.  pcEdits is preserved by filterForViewer (player-
+    // visible field) so behavior is unchanged.
     const overrides =
       character.kind === 'pc'
-        ? this.sessionView.shared.pcEdits[character.id]
+        ? this.sessionView.filteredShared.pcEdits[character.id]
         : undefined;
     return applyCharacterEdits(character.record, overrides);
   }
@@ -2253,7 +2264,8 @@ export class QuireApp extends LitElement {
   }
 
   private displayNameFor(peerId: string): string {
-    const peer = this.sessionView?.shared.peers[peerId];
+    // M3a.1 — used by player-visible chat + dice attribution.
+    const peer = this.sessionView?.filteredShared.peers[peerId];
     if (peer?.name && peer.name.length > 0) return peer.name;
     return peerId;
   }
