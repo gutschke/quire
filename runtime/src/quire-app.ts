@@ -17,6 +17,7 @@ import './ui/regions/player-aside';
 import './ui/regions/dice-dock';
 import './ui/regions/chat-panel';
 import './ui/regions/session-bar';
+import './ui/regions/ai-panel';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -61,7 +62,6 @@ import {
 export type { AiProvider, AiClient } from './controllers/ai-key-store';
 import {
   AiKeyStore,
-  AI_DEFAULTS,
   type AiProvider,
   type AiClient
 } from './controllers/ai-key-store';
@@ -691,180 +691,50 @@ export class QuireApp extends LitElement {
     `;
   }
 
+  /**
+   * AI panel delegated to <ai-panel> region (M3a.5, P-M3a-ai-panel-region).
+   * AiKeyStore state still lives on QuireApp via the getters added
+   * in M1.7a; the region receives them as props.  The provider /
+   * key / model / system-prompt setters delegate to AiKeyStore via
+   * the existing setXxx methods.  submitAiPrompt + cancelAiPrompt
+   * + shareAiResponseToChat stay as QuireApp methods.
+   *
+   * Pre-rendered response HTML: renderMarkdown(this.aiResponse) is
+   * sanitized here so the region stays sanitize-pipeline-agnostic.
+   */
   private renderAiPanel(): TemplateResult {
     if (!this.showAiPanel()) return html``;
-    const hasKey = this.aiApiKey.length > 0;
+    const responseHtml = this.aiResponse
+      ? renderMarkdown(this.aiResponse)
+      : null;
     return html`
-      <section class="card ai-panel">
-        <div class="ai-panel-head">
-          <h2>
-            DM aide
-            <span class="ai-provider-tag">${AI_DEFAULTS[this.aiProvider].label}</span>
-          </h2>
-          ${hasKey
-            ? html`<button
-                type="button"
-                class="ai-settings-toggle"
-                @click=${() => {
-                  this.aiShowSettings = !this.aiShowSettings;
-                }}
-              >
-                ${this.aiShowSettings ? 'Hide settings' : 'Settings'}
-              </button>`
-            : nothing}
-        </div>
-        ${this.aiShowSettings || !hasKey
-          ? this.renderAiSettings()
-          : nothing}
-        ${hasKey ? this.renderAiPromptForm() : nothing}
-        ${this.aiError
-          ? html`<p class="ai-error">${this.aiError}</p>`
-          : nothing}
-        ${this.aiResponse
-          ? html`
-              <div class="ai-response">
-                <div class="markdown">
-                  ${unsafeHTML(renderMarkdown(this.aiResponse))}
-                </div>
-                ${this.sessionView?.status === 'active'
-                  ? html`
-                      <button
-                        type="button"
-                        @click=${() => this.shareAiResponseToChat()}
-                      >
-                        Share to chat
-                      </button>
-                    `
-                  : nothing}
-              </div>
-            `
-          : nothing}
-      </section>
-    `;
-  }
-
-  private renderAiSettings(): TemplateResult {
-    const provider = this.aiProvider;
-    const defs = AI_DEFAULTS[provider];
-    const keyPlaceholder =
-      provider === 'claude' ? 'sk-ant-…' : 'AIza…';
-    const endpointLabel =
-      provider === 'claude'
-        ? 'api.anthropic.com'
-        : 'generativelanguage.googleapis.com';
-    const keyHint =
-      provider === 'claude'
-        ? html`Get an API key at
-            <a
-              href="https://console.anthropic.com/settings/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              >console.anthropic.com</a
-            >
-            (paid; usage-based).  Free tier requires a credit card on
-            file.`
-        : html`Get an API key at
-            <a
-              href="https://aistudio.google.com/app/apikey"
-              target="_blank"
-              rel="noopener noreferrer"
-              >aistudio.google.com</a
-            >
-            (generous free tier; no credit card needed).  This is the
-            AI Studio key, NOT a Google One AI Premium subscription.`;
-    return html`
-      <div class="ai-settings">
-        <fieldset class="ai-provider-choice">
-          <legend>Provider</legend>
-          ${(['claude', 'gemini'] as AiProvider[]).map(
-            (p) => html`
-              <label class="ai-provider-radio">
-                <input
-                  type="radio"
-                  name="ai-provider"
-                  .checked=${this.aiProvider === p}
-                  @change=${() => this.setAiProvider(p)}
-                />
-                ${AI_DEFAULTS[p].label}
-              </label>
-            `
-          )}
-        </fieldset>
-        <label>
-          <span>${defs.label} API key</span>
-          <input
-            type="password"
-            .value=${this.aiApiKeys[provider]}
-            placeholder=${keyPlaceholder}
-            autocomplete="off"
-            @input=${(e: Event) =>
-              this.setAiApiKey((e.target as HTMLInputElement).value)}
-          />
-          <p class="ai-key-hint muted">${keyHint}</p>
-        </label>
-        <label>
-          <span>Model</span>
-          <select
-            .value=${this.aiModels[provider]}
-            @change=${(e: Event) =>
-              this.setAiModel((e.target as HTMLSelectElement).value)}
-          >
-            ${defs.models.map(
-              (m) => html`
-                <option .value=${m} ?selected=${m === this.aiModels[provider]}>
-                  ${m}
-                </option>
-              `
-            )}
-          </select>
-        </label>
-        <label>
-          <span>System prompt</span>
-          <textarea
-            rows="4"
-            .value=${this.aiSystemPrompt}
-            @input=${(e: Event) =>
-              this.setAiSystemPrompt((e.target as HTMLTextAreaElement).value)}
-          ></textarea>
-        </label>
-        <p class="muted">
-          Stored only in this browser's localStorage. Sent directly to
-          ${endpointLabel} using your key.
-        </p>
-      </div>
-    `;
-  }
-
-  private renderAiPromptForm(): TemplateResult {
-    return html`
-      <form
-        class="ai-form"
-        @submit=${(e: Event) => {
-          e.preventDefault();
-          void this.submitAiPrompt(this.aiPromptDraft);
+      <ai-panel
+        .visible=${true}
+        .provider=${this.aiProvider}
+        .apiKey=${this.aiApiKey}
+        .apiKeys=${this.aiApiKeys}
+        .models=${this.aiModels}
+        .systemPrompt=${this.aiSystemPrompt}
+        .showSettings=${this.aiShowSettings}
+        .promptDraft=${this.aiPromptDraft}
+        .loading=${this.aiLoading}
+        .error=${this.aiError}
+        .responseHtml=${responseHtml}
+        .inSession=${this.sessionView?.status === 'active'}
+        .onSetProvider=${(p: AiProvider) => this.setAiProvider(p)}
+        .onSetApiKey=${(k: string) => this.setAiApiKey(k)}
+        .onSetModel=${(m: string) => this.setAiModel(m)}
+        .onSetSystemPrompt=${(t: string) => this.setAiSystemPrompt(t)}
+        .onToggleSettings=${() => {
+          this.aiShowSettings = !this.aiShowSettings;
         }}
-      >
-        <textarea
-          rows="3"
-          .value=${this.aiPromptDraft}
-          placeholder="Describe Yui's reaction. Or: NPC voice for the gate agent. Or: three sensory beats from the cabin."
-          aria-label="AI prompt"
-          ?disabled=${this.aiLoading}
-          @input=${(e: Event) => {
-            this.aiPromptDraft = (e.target as HTMLTextAreaElement).value;
-          }}
-        ></textarea>
-        <div class="ai-form-actions">
-          ${this.aiLoading
-            ? html`<button
-                type="button"
-                @click=${() => this.cancelAiPrompt()}
-              >
-                Cancel
-              </button>`
-            : html`<button type="submit">Ask</button>`}
-        </div>
-      </form>
+        .onPromptDraftChange=${(t: string) => {
+          this.aiPromptDraft = t;
+        }}
+        .onSubmit=${(p: string) => void this.submitAiPrompt(p)}
+        .onCancel=${() => this.cancelAiPrompt()}
+        .onShareToChat=${() => this.shareAiResponseToChat()}
+      ></ai-panel>
     `;
   }
 
