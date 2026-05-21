@@ -198,9 +198,92 @@ test.describe('M3a per-paragraph reveal — player DOM omission', () => {
           { timeout: 10000 }
         )
         .toContain('intro.md');
+
+      // ' focuses the DM scratch input (silent regression check
+      // — pre-FU-1 this hotkey was broken because the lookup
+      // queried light DOM instead of the shadow root).
+      await host.evaluate(() => document.body.focus());
+      await host.keyboard.press("'");
+      await expect(host.locator('dm-scratch textarea')).toBeFocused();
     } finally {
       await hostCtx.close();
       await guestCtx.close();
+    }
+  });
+
+  test('Cmd+Enter ignores lapsed pips (does not silently drop reveals)', async ({
+    browser
+  }) => {
+    // Regression: pre-fix, Cmd+Enter found the first pip without
+    // aria-pressed=true.  Lapsed pips have no aria-pressed at all,
+    // so when every real block was revealed AND a lapsed entry
+    // existed, Cmd+Enter would click the lapsed pip and silently
+    // drop the stale reveal.  Selector now excludes
+    // .scene-block-pip-lapsed.
+    const ctx = await browser.newContext();
+    try {
+      const host = await openCampaignPeer(ctx);
+      await hostSession(host, 'DM');
+      await navigateToIntro(host);
+      // Wait for the scene to load + pips to render before
+      // manipulating reveals.
+      await expect(host.locator('.scene-block-pip').first()).toBeVisible({
+        timeout: 10000
+      });
+      // Synthesize a lapsed reveal entry by calling
+      // QuireApp.toggleBlockReveal with a hash that won't match
+      // any current block — and reveal every real block first
+      // via real pip clicks.
+      const pipCount = await host.locator('.scene-block-pip').count();
+      for (let i = 0; i < pipCount; i++) {
+        await host.locator('.scene-block-pip').nth(i).click();
+      }
+      await host.evaluate(() => {
+        const app = document.querySelector('quire-app') as unknown as {
+          toggleBlockReveal: (
+            fullScenePath: string,
+            blockHash: string
+          ) => boolean;
+        };
+        app.toggleBlockReveal(
+          'episodes/001-test/scenes/intro.md',
+          'aaaaaaaaaaaaaaaa'
+        );
+      });
+      // Now there's a lapsed strip + all real blocks revealed.
+      await expect
+        .poll(
+          async () =>
+            host.evaluate(() => {
+              const app = document.querySelector('quire-app') as unknown as {
+                renderRoot: ParentNode;
+              };
+              return (
+                app?.renderRoot.querySelector('.scene-block-lapsed-strip') !==
+                null
+              );
+            }),
+          { timeout: 5000 }
+        )
+        .toBe(true);
+      // Cmd+Enter must be a no-op (every real pip is pressed; the
+      // selector excludes lapsed pips so no fallback target exists).
+      const lapsedCountBefore = await host
+        .locator('.scene-block-pip-lapsed')
+        .count();
+      await host.evaluate(() => document.body.focus());
+      const modifier =
+        process.platform === 'darwin' ? 'Meta+Enter' : 'Control+Enter';
+      await host.keyboard.press(modifier);
+      // Lapsed pip count is unchanged — Cmd+Enter did not click it.
+      // (Brief wait to allow any erroneous render.)
+      await host.waitForTimeout(200);
+      const lapsedCountAfter = await host
+        .locator('.scene-block-pip-lapsed')
+        .count();
+      expect(lapsedCountAfter).toBe(lapsedCountBefore);
+    } finally {
+      await ctx.close();
     }
   });
 });

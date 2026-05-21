@@ -383,7 +383,9 @@ export class QuireApp extends LitElement {
    */
   private walkScenePip(delta: 1 | -1): void {
     const pips = Array.from(
-      this.renderRoot.querySelectorAll<HTMLButtonElement>('.scene-block-pip')
+      this.renderRoot.querySelectorAll<HTMLButtonElement>(
+        '.scene-block-pip:not(.scene-block-pip-lapsed)'
+      )
     );
     if (pips.length === 0) return;
     // `document.activeElement` returns the shadow host when focus is
@@ -410,7 +412,9 @@ export class QuireApp extends LitElement {
    */
   private revealNextBlock(): void {
     const pips = Array.from(
-      this.renderRoot.querySelectorAll<HTMLButtonElement>('.scene-block-pip')
+      this.renderRoot.querySelectorAll<HTMLButtonElement>(
+        '.scene-block-pip:not(.scene-block-pip-lapsed)'
+      )
     );
     const next = pips.find(
       (p) => p.getAttribute('aria-pressed') !== 'true'
