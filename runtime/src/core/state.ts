@@ -196,6 +196,7 @@ function isPlainObjectPayload(p: unknown): p is Record<string, unknown> {
  * "this save contains events your version doesn't understand").
  */
 export const KNOWN_EVENT_KINDS = new Set([
+  // v0 kinds (legacy; no payload version field)
   'peer-join',
   'peer-leave',
   'peer-rename',
@@ -208,8 +209,43 @@ export const KNOWN_EVENT_KINDS = new Set([
   'dice-roll',
   'chat',
   'pc-edit',
-  'note'
+  'note',
+  // M1 additions (P0-5).  Registered now so saves from intermediate
+  // versions of the runtime stay forward-compatible; materializers
+  // land per-feature in M3a/M3b/M4/M5/M6.  Every new payload schema
+  // carries an explicit `v: 1` field — materializers added later
+  // MUST check v and reject unknown versions, surfacing via the H-4
+  // unknown-kind banner.  This buys freedom to revise payload shapes
+  // through M3a/M3b without breaking saves.  Spec: redesign-plan.md
+  // § "Event vocabulary additions" + "Payload versioning."
+  'scene-reveal-paragraph',
+  'scene-unreveal-paragraph',
+  'thread-debt-set',
+  'npc-pin',
+  'npc-unpin',
+  'map-blob-add',
+  'map-blob-move',
+  'map-blob-remove',
+  'map-blob-reveal',
+  'map-blob-unreveal',
+  'broadcast-view',
+  'raise-hand',
+  'lower-hand',
+  'scratch-note',
+  'ai-prompt',
+  'ai-response',
+  'ai-accept',
+  'ai-reject'
 ]);
+
+/**
+ * Payload version constant for M1+ event kinds.  Every materializer
+ * added in M3a+ for the M1-registered kinds MUST validate
+ * `payload.v === EVENT_PAYLOAD_V1` and reject unknown versions.
+ * This lets payload schemas evolve through the project without
+ * silently corrupting saves from intermediate versions.
+ */
+export const EVENT_PAYLOAD_V1 = 1;
 
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   switch (event.kind) {

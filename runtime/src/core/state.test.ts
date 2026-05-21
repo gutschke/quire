@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { EventLog } from './event-log';
-import { materialize, emptyState } from './state';
+import {
+  materialize,
+  emptyState,
+  KNOWN_EVENT_KINDS,
+  EVENT_PAYLOAD_V1
+} from './state';
 
 describe('materialize — empty', () => {
   it('produces an empty state from no events', () => {
@@ -183,6 +188,75 @@ describe('materialize — unknown event kinds', () => {
     const state = materialize(log.events());
     expect(state.chat).toHaveLength(1);
     expect(state.peers.alice).toBeDefined();
+  });
+});
+
+describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
+  it('contains all 13 legacy v0 kinds', () => {
+    const legacy = [
+      'peer-join', 'peer-leave', 'peer-rename', 'peer-disconnect',
+      'coordinator-claim', 'coordinator-yield', 'coordinator-reclaim',
+      'scene-reveal', 'scene-unreveal',
+      'dice-roll', 'chat', 'pc-edit', 'note'
+    ];
+    for (const k of legacy) {
+      expect(KNOWN_EVENT_KINDS.has(k)).toBe(true);
+    }
+  });
+
+  it('contains the 18 M1-registered new kinds (per redesign-plan.md)', () => {
+    const m1 = [
+      // per-paragraph reveal
+      'scene-reveal-paragraph', 'scene-unreveal-paragraph',
+      // thread debt
+      'thread-debt-set',
+      // NPC pinning
+      'npc-pin', 'npc-unpin',
+      // map state
+      'map-blob-add', 'map-blob-move', 'map-blob-remove',
+      'map-blob-reveal', 'map-blob-unreveal',
+      // broadcast view
+      'broadcast-view',
+      // raise hand
+      'raise-hand', 'lower-hand',
+      // DM scratch
+      'scratch-note',
+      // AI audit chain
+      'ai-prompt', 'ai-response', 'ai-accept', 'ai-reject'
+    ];
+    for (const k of m1) {
+      expect(KNOWN_EVENT_KINDS.has(k)).toBe(true);
+    }
+    expect(m1.length).toBe(18);
+  });
+
+  it('total kind count is 31 (13 legacy + 18 M1)', () => {
+    expect(KNOWN_EVENT_KINDS.size).toBe(31);
+  });
+
+  it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
+    // Materializers for the new kinds are NOT required at M1 — they
+    // land per-feature in later milestones.  The kinds are registered
+    // now so they replicate correctly in the event log; the
+    // materializer's switch silently no-ops unknown cases until the
+    // case lands.  This test pins that behavior so a future drop of
+    // forward-compat would be caught immediately.
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    log.append('scene-reveal-paragraph', { v: EVENT_PAYLOAD_V1, scenePath: 'x', blockHash: 'abcdef0123456789' });
+    log.append('scratch-note', { v: EVENT_PAYLOAD_V1, text: 'remember the cable' });
+    log.append('thread-debt-set', { v: EVENT_PAYLOAD_V1, pcId: 'jules', level: 'noticed' });
+    log.append('chat', { text: 'visible chat' });
+    const state = materialize(log.events());
+    // Existing v0 kinds materialize as before:
+    expect(state.peers.alice).toBeDefined();
+    expect(state.chat).toHaveLength(1);
+    // M1 kinds do not produce state yet (materializers ship later):
+    expect(state.revealedScenes).toEqual([]); // not yet derived from paragraph reveals
+  });
+
+  it('exports EVENT_PAYLOAD_V1 = 1', () => {
+    expect(EVENT_PAYLOAD_V1).toBe(1);
   });
 });
 
