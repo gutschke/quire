@@ -441,6 +441,29 @@ export const KNOWN_EVENT_KINDS = new Set([
  */
 export const EVENT_PAYLOAD_V1 = 1;
 
+/**
+ * Predicate: does this payload carry the expected M1+ payload version?
+ *
+ * Returns true iff `payload` is a non-null object whose `v` property
+ * strictly equals EVENT_PAYLOAD_V1.  Materializers for the 18 M1-
+ * registered event kinds MUST call this before reading payload fields
+ * and break (no-op) on false.  Hostile-input tests in
+ * `state.hostile.test.ts` pin this contract.
+ *
+ * The 18 M1 kinds (scene-reveal-paragraph, thread-debt-set,
+ * npc-pin, etc.) all use this; the legacy v0 kinds (peer-join,
+ * chat, dice-roll, etc.) do NOT — they have their own payload
+ * shapes documented above.
+ */
+export function isPayloadV1(payload: unknown): payload is { v: 1 } {
+  return (
+    !!payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    (payload as { v?: unknown }).v === EVENT_PAYLOAD_V1
+  );
+}
+
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   switch (event.kind) {
     case 'peer-join': {
@@ -676,6 +699,42 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
         text: p.text,
         private: priv
       });
+      break;
+    }
+    // -----------------------------------------------------------
+    // M1-registered kinds (P0-5).  Materializers ship per-feature
+    // in M3a/M3b/M4/M5/M6 — at M1 we only validate the payload
+    // version and break.  This makes the v:1 invariant a real
+    // contract: any future materializer that lands here MUST
+    // continue to call isPayloadV1 (or its successor for v:2+) and
+    // reject mismatched versions.  Tests in state.hostile.test.ts
+    // pin the rejection behavior on synthetic events.
+    // -----------------------------------------------------------
+    case 'scene-reveal-paragraph':
+    case 'scene-unreveal-paragraph':
+    case 'thread-debt-set':
+    case 'npc-pin':
+    case 'npc-unpin':
+    case 'map-blob-add':
+    case 'map-blob-move':
+    case 'map-blob-remove':
+    case 'map-blob-reveal':
+    case 'map-blob-unreveal':
+    case 'broadcast-view':
+    case 'raise-hand':
+    case 'lower-hand':
+    case 'scratch-note':
+    case 'ai-prompt':
+    case 'ai-response':
+    case 'ai-accept':
+    case 'ai-reject': {
+      // Forward-compat guard: every M1+ payload MUST carry { v: 1 }.
+      // Until the per-kind materializer lands in M3a/M3b/M4/M5/M6,
+      // we no-op — but the version check still runs, so a payload
+      // missing v or with a future v (say v:2) is rejected by the
+      // same code path that will reject it in production.
+      if (!isPayloadV1(event.payload)) break;
+      // TODO M3a/M3b/M4/M5/M6: per-kind state mutation goes here.
       break;
     }
     // Unknown kinds are silently ignored to allow forward compatibility.

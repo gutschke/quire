@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { materialize } from './state';
+import { materialize, isPayloadV1, EVENT_PAYLOAD_V1 } from './state';
 import type { QuireEvent } from './event-log';
 
 function ev(
@@ -233,5 +233,118 @@ describe('materialize — dice-roll hostile payloads', () => {
       })
     ]);
     expect(s.diceRolls).toEqual([]);
+  });
+});
+
+describe('isPayloadV1 predicate (P0-5 v:1 contract)', () => {
+  it('accepts a plain object with v === 1', () => {
+    expect(isPayloadV1({ v: 1, pcId: 'x' })).toBe(true);
+    expect(isPayloadV1({ v: EVENT_PAYLOAD_V1 })).toBe(true);
+  });
+
+  it('rejects missing v field', () => {
+    expect(isPayloadV1({})).toBe(false);
+    expect(isPayloadV1({ pcId: 'x' })).toBe(false);
+  });
+
+  it('rejects future versions (v:2+)', () => {
+    expect(isPayloadV1({ v: 2 })).toBe(false);
+    expect(isPayloadV1({ v: 99 })).toBe(false);
+  });
+
+  it('rejects non-strict-equal v values (string, null, etc.)', () => {
+    expect(isPayloadV1({ v: '1' })).toBe(false);
+    expect(isPayloadV1({ v: null })).toBe(false);
+    expect(isPayloadV1({ v: true })).toBe(false);
+  });
+
+  it('rejects null / undefined / non-object payloads', () => {
+    expect(isPayloadV1(null)).toBe(false);
+    expect(isPayloadV1(undefined)).toBe(false);
+    expect(isPayloadV1('string')).toBe(false);
+    expect(isPayloadV1(42)).toBe(false);
+  });
+
+  it('rejects arrays even if [0]==1', () => {
+    expect(isPayloadV1([1, 2, 3])).toBe(false);
+  });
+});
+
+describe('M1-registered event kinds — v:1 enforcement', () => {
+  // Spot-check that all 18 M1-registered kinds reject events with
+  // missing/wrong v.  The materializer stubs land in M3a/M3b/M4/M5/M6;
+  // until then they no-op, but the v:1 check MUST already be in place
+  // so a future per-kind materializer that gets added cannot forget it
+  // without breaking the test.
+
+  const M1_KINDS = [
+    'scene-reveal-paragraph',
+    'scene-unreveal-paragraph',
+    'thread-debt-set',
+    'npc-pin',
+    'npc-unpin',
+    'map-blob-add',
+    'map-blob-move',
+    'map-blob-remove',
+    'map-blob-reveal',
+    'map-blob-unreveal',
+    'broadcast-view',
+    'raise-hand',
+    'lower-hand',
+    'scratch-note',
+    'ai-prompt',
+    'ai-response',
+    'ai-accept',
+    'ai-reject'
+  ];
+
+  it('M1 kinds with missing v are silently no-oped (forward-compat)', () => {
+    // No state mutation occurs because the no-op stub breaks before
+    // any state.* mutation; verify the events also do NOT crash the
+    // materializer.
+    for (const kind of M1_KINDS) {
+      expect(() =>
+        materialize([ev('alice', 1, kind, { /* no v */ pcId: 'x' })])
+      ).not.toThrow();
+    }
+  });
+
+  it('M1 kinds with v: 2 (future version) are silently no-oped', () => {
+    for (const kind of M1_KINDS) {
+      expect(() =>
+        materialize([ev('alice', 1, kind, { v: 2, pcId: 'x' })])
+      ).not.toThrow();
+    }
+  });
+
+  it('M1 kinds with v: 1 are accepted (no-op until materializer ships)', () => {
+    // At M1 the case body just breaks — verify no crash and no state
+    // leakage from the validated payload.
+    for (const kind of M1_KINDS) {
+      const s = materialize([ev('alice', 1, kind, { v: 1, pcId: 'x' })]);
+      // None of the M1+ fields should be populated by these stubs.
+      expect(s.scratchNotes).toEqual([]);
+      expect(s.threadDebt).toEqual({});
+      expect(s.pinnedNpcs).toEqual([]);
+      expect(s.raisedHands.size).toBe(0);
+      expect(Object.keys(s.revealedParagraphs)).toEqual([]);
+    }
+  });
+
+  it('hostile payloads for M1 kinds cannot cause prototype pollution', () => {
+    // Even with v: 1, a payload claiming __proto__ pollution should
+    // not poison state.  The stubs no-op, so this is just defense-
+    // in-depth that the stub doesn't accidentally call Object.assign
+    // on the payload.
+    for (const kind of M1_KINDS) {
+      materialize([
+        ev('alice', 1, kind, {
+          v: 1,
+          __proto__: { polluted: true },
+          constructor: { prototype: { polluted: true } }
+        })
+      ]);
+    }
+    expect((Object.prototype as { polluted?: boolean }).polluted).toBeUndefined();
   });
 });

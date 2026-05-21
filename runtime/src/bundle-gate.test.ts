@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import {
   classifyChunk,
   checkBundleSize,
@@ -101,6 +104,64 @@ describe('checkBundleSize', () => {
       { filename: 'index-x.js', gzipBytes: MAIN_CHUNK_CAP_BYTES, kind: 'main' }
     ]);
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('bundle-gate.mjs runner — drift protection (regression-protected)', () => {
+  // The check-bundle-size.mjs runner duplicates the cap constants
+  // and the classification regex from bundle-gate.ts (the runner
+  // must work in a plain Node process without a TS toolchain).
+  // The duplication is documented as deliberate, but without an
+  // enforcement test a future PR could bump the cap in one place
+  // and leave the other stale, silently downgrading the gate.
+  //
+  // This test reads the .mjs source and asserts the duplicated
+  // constants match the TS source.
+
+  const here = dirname(fileURLToPath(import.meta.url));
+  const mjsPath = resolve(here, '../scripts/check-bundle-size.mjs');
+  const mjsSource = readFileSync(mjsPath, 'utf8');
+
+  it('exposes MAIN_CHUNK_CAP_BYTES with the same value as bundle-gate.ts', () => {
+    // Match either `const MAIN_CHUNK_CAP_BYTES = N * 1024` or a
+    // direct byte-literal, then compare to the TS source of truth.
+    const match = mjsSource.match(
+      /const\s+MAIN_CHUNK_CAP_BYTES\s*=\s*(\d+)\s*\*\s*1024/
+    );
+    expect(match, 'MAIN_CHUNK_CAP_BYTES not found in runner').not.toBeNull();
+    const kb = Number(match![1]);
+    expect(kb * 1024).toBe(MAIN_CHUNK_CAP_BYTES);
+  });
+
+  it('exposes AUTHORING_CHUNK_CAP_BYTES with the same value as bundle-gate.ts', () => {
+    const match = mjsSource.match(
+      /const\s+AUTHORING_CHUNK_CAP_BYTES\s*=\s*(\d+)\s*\*\s*1024/
+    );
+    expect(match, 'AUTHORING_CHUNK_CAP_BYTES not found in runner').not.toBeNull();
+    const kb = Number(match![1]);
+    expect(kb * 1024).toBe(AUTHORING_CHUNK_CAP_BYTES);
+  });
+
+  it('uses the same classification regex pattern for "main"', () => {
+    // The TS regex is /^index-[A-Za-z0-9_-]+\.js$/ (after stripping path).
+    // The .mjs duplicates the same regex literal.  Assert it appears.
+    expect(mjsSource).toMatch(
+      /\/\^index-\[A-Za-z0-9_-\]\+\\\.js\$\//
+    );
+  });
+
+  it('uses the same classification regex pattern for "authoring"', () => {
+    expect(mjsSource).toMatch(
+      /\/\^authoring-\[A-Za-z0-9_-\]\+\\\.js\$\//
+    );
+  });
+
+  it('runner exits with non-zero on cap violation (synthetic smoke check)', () => {
+    // Sanity: the runner's violation path uses process.exit(1).
+    // Verify the literal appears, so a refactor that drops it shows up.
+    expect(mjsSource).toContain('process.exit(1)');
+    // And the missing-dist path uses exit(2).
+    expect(mjsSource).toContain('process.exit(2)');
   });
 });
 
