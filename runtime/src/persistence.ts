@@ -67,6 +67,70 @@ export function serializeSession(
 }
 
 /**
+ * Event kinds whose payloads carry DM-only material and must be
+ * stripped when a non-coordinator viewer saves or autosaves the
+ * session.  Per the Quire threat model: civilized players who
+ * share their save file should not accidentally leak the DM's
+ * scratch notes, pinned NPCs, thread-debt rungs, or AI prompts
+ * into a JSON the recipient opens in a text editor.
+ *
+ * The materialized state already filters these via filterForViewer
+ * at render time; this filter does the same for the EVENT LOG
+ * before serialization, closing the only remaining accidental-
+ * disclosure path.
+ *
+ * Kept in sync with the DM-only fields in `SessionState`:
+ * scratchNotes, pinnedNpcs, threadDebt, aiAudit.  When a new
+ * DM-only event kind ships, add it here and to the corresponding
+ * filterForViewer wipe.
+ */
+const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
+  'scratch-note',
+  'npc-pin',
+  'npc-unpin',
+  'thread-debt-set',
+  'ai-prompt',
+  'ai-response',
+  'ai-accept',
+  'ai-reject'
+]);
+
+/**
+ * Serialize the session for a non-coordinator viewer.  Drops events
+ * whose payloads carry DM-only material — see PLAYER_SCOPE_STRIP_KINDS.
+ *
+ * Whole-scene `scene-reveal` / per-block `scene-reveal-paragraph` /
+ * `broadcast-view` are PLAYER-VISIBLE state, so their events stay
+ * in the save (a player who reloads must see what was already
+ * revealed to them).
+ *
+ * When `viewerPeerId === currentCoordinator`, this returns the full
+ * unfiltered save — the DM saves everything.  When the viewer is
+ * NOT the coordinator (regardless of past coord history), DM-only
+ * events are stripped.  This matches the accidental-disclosure
+ * model: only the currently-acting DM holds DM material.
+ */
+export function serializeSessionForViewer(
+  events: readonly QuireEvent[],
+  campaign: CampaignRef,
+  savedByPeerId: string,
+  currentCoordinator: string | undefined
+): SaveDocument {
+  const isCoord =
+    currentCoordinator !== undefined && savedByPeerId === currentCoordinator;
+  const filtered = isCoord
+    ? events.slice()
+    : events.filter((e) => !PLAYER_SCOPE_STRIP_KINDS.has(e.kind));
+  return {
+    $schemaVersion: SAVE_SCHEMA_VERSION,
+    savedAt: new Date().toISOString(),
+    campaign: { ...campaign },
+    savedByPeerId,
+    events: filtered
+  };
+}
+
+/**
  * Produce a deterministic JSON string for the save document.  Keys
  * sorted alphabetically at every depth; events ordered by causal
  * sort (which they already are if they came from EventLog.events()).

@@ -52,6 +52,7 @@ import { callAnthropic, AnthropicError } from './ai/anthropic';
 import { callGemini, GeminiError } from './ai/gemini';
 import {
   serializeSession,
+  serializeSessionForViewer,
   stringifySave,
   parseSaveDocument,
   type SaveDocument,
@@ -2194,6 +2195,12 @@ export class QuireApp extends LitElement {
   /**
    * Build the current save document for the loaded campaign +
    * active session.  Returns null when no session OR no campaign.
+   *
+   * Full event log — used by autosave (resilience: every player's
+   * device keeps the complete log so we never lose DM material if
+   * a single device fails).  USER-INITIATED file downloads go
+   * through buildShareableSaveDocument instead, which strips
+   * DM-only events for non-coord viewers.
    */
   buildSaveDocument(): SaveDocument | null {
     if (!this.session || this.sessionView?.status !== 'active') return null;
@@ -2208,12 +2215,42 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Build a save document suitable for SHARING — the JSON that
+   * lands in a user-initiated download.  Per the Quire threat
+   * model (see design/security.md + memory: project_quire_threat_model):
+   *
+   *   - players STORING DM notes in their device's autosave is
+   *     explicitly wanted (resilience against single-device data
+   *     loss);
+   *   - players READING DM notes (rendered, or surfaced in a file
+   *     they downloaded + opened in a text editor) is the bug.
+   *
+   * The currently-acting DM gets the full save; everyone else
+   * gets DM-only events filtered out.
+   */
+  buildShareableSaveDocument(): SaveDocument | null {
+    if (!this.session || this.sessionView?.status !== 'active') return null;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return null;
+    const src = campaign.base.source;
+    return serializeSessionForViewer(
+      this.session.getEvents(),
+      { owner: src.owner, repo: src.repo, ref: src.ref },
+      this.sessionView.peerId ?? 'unknown',
+      this.sessionView.shared.coordinator
+    );
+  }
+
+  /**
    * Download the current session as a JSON file.  No-op when not in
    * an active session (button is disabled in that state).  Returns
    * the SaveDocument that was offered, for tests.
    */
   saveToFile(): SaveDocument | null {
-    const doc = this.buildSaveDocument();
+    // User-initiated download → shareable variant.  A non-coord
+    // player who hands this file to someone else cannot
+    // accidentally leak DM scratch / pins / debt / AI audit.
+    const doc = this.buildShareableSaveDocument();
     if (!doc) {
       this.saveStatus = {
         kind: 'error',
