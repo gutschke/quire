@@ -109,8 +109,8 @@ describe('materialize — scene reveal', () => {
 });
 
 describe('materialize — scene-reveal-paragraph (P2-2)', () => {
-  const VALID_HASH = '0123456789ab';
-  const ANOTHER_HASH = 'abcdef012345';
+  const VALID_HASH = '0123456789abcdef';
+  const ANOTHER_HASH = 'abcdef0123456789';
 
   it('coordinator can reveal a block in a scene', () => {
     const log = new EventLog('alice');
@@ -161,12 +161,12 @@ describe('materialize — scene-reveal-paragraph (P2-2)', () => {
     log.append('scene-reveal-paragraph', {
       v: 1,
       scenePath: 'x.md',
-      blockHash: 'g123456789ab' // 'g' is not hex
+      blockHash: 'g123456789abcdef' // 'g' is not hex
     });
     log.append('scene-reveal-paragraph', {
       v: 1,
       scenePath: 'x.md',
-      blockHash: 'ABCDEF012345' // uppercase rejected
+      blockHash: 'ABCDEF0123456789' // uppercase rejected
     });
     expect(materialize(log.events()).revealedParagraphs).toEqual({});
   });
@@ -246,6 +246,70 @@ describe('materialize — scene-reveal-paragraph (P2-2)', () => {
     });
     expect(materialize(log.events()).revealedParagraphs['a.md']).toEqual(
       new Set([ANOTHER_HASH])
+    );
+  });
+
+  it('caps at REVEALED_BLOCKS_PER_SCENE_CAP (256) per scene', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    // Append 260 distinct hashes; only the first 256 should land.
+    for (let i = 0; i < 260; i++) {
+      const hex = i.toString(16).padStart(16, '0');
+      log.append('scene-reveal-paragraph', {
+        v: 1,
+        scenePath: 'big.md',
+        blockHash: hex
+      });
+    }
+    const state = materialize(log.events());
+    expect(state.revealedParagraphs['big.md']!.size).toBe(256);
+  });
+
+  it('cap-saturated set still allows re-reveal of existing hashes (idempotent)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    for (let i = 0; i < 256; i++) {
+      const hex = i.toString(16).padStart(16, '0');
+      log.append('scene-reveal-paragraph', {
+        v: 1,
+        scenePath: 'big.md',
+        blockHash: hex
+      });
+    }
+    // Re-revealing the very first hash is a no-op on a saturated set
+    // (not a "cap exceeded" rejection).
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'big.md',
+      blockHash: '0'.padStart(16, '0')
+    });
+    expect(materialize(log.events()).revealedParagraphs['big.md']!.size).toBe(256);
+  });
+
+  it('accepts a valid paragraphIndex hint (no-op) and rejects malformed ones', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH,
+      paragraphIndex: 3
+    });
+    // NaN / non-number / Infinity → reject the event.
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: ANOTHER_HASH,
+      paragraphIndex: NaN
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: ANOTHER_HASH,
+      paragraphIndex: 'three' as unknown as number
+    });
+    expect(materialize(log.events()).revealedParagraphs['a.md']).toEqual(
+      new Set([VALID_HASH])
     );
   });
 

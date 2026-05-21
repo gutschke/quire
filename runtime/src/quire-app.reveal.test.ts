@@ -77,7 +77,7 @@ function fakeScene(path: string): {
     path,
     blocks: [
       {
-        blockHash: '0123456789ab',
+        blockHash: '0123456789abcdef',
         html: '<p>scene body</p>' as SanitizedHtml,
         raw: 'scene body',
         index: 0
@@ -205,11 +205,11 @@ describe('QuireApp scene-reveal', () => {
       scene: fakeScene('scenes/intro.md')
     };
     const fullPath = 'episodes/001/scenes/intro.md';
-    expect(app.toggleBlockReveal(fullPath, '0123456789ab')).toBe(true);
+    expect(app.toggleBlockReveal(fullPath, '0123456789abcdef')).toBe(true);
     await flush();
     expect(
       app.sessionView!.shared.revealedParagraphs[fullPath]
-    ).toEqual(new Set(['0123456789ab']));
+    ).toEqual(new Set(['0123456789abcdef']));
   });
 
   it('toggleBlockReveal is symmetric — re-toggle unreveals (P2-2)', async () => {
@@ -224,9 +224,9 @@ describe('QuireApp scene-reveal', () => {
       scene: fakeScene('scenes/intro.md')
     };
     const fullPath = 'episodes/001/scenes/intro.md';
-    app.toggleBlockReveal(fullPath, '0123456789ab');
+    app.toggleBlockReveal(fullPath, '0123456789abcdef');
     await flush();
-    app.toggleBlockReveal(fullPath, '0123456789ab');
+    app.toggleBlockReveal(fullPath, '0123456789abcdef');
     await flush();
     expect(
       app.sessionView!.shared.revealedParagraphs[fullPath]
@@ -252,7 +252,7 @@ describe('QuireApp scene-reveal', () => {
     expect(
       guest.toggleBlockReveal(
         'episodes/001/scenes/intro.md',
-        '0123456789ab'
+        '0123456789abcdef'
       )
     ).toBe(false);
     await flush();

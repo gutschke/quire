@@ -237,12 +237,19 @@ export function renderMarkdownDocument(text: string): RenderedDocument {
  * One addressable block in a scene file.  Each block corresponds to
  * a top-level markdown construct: a paragraph, heading, list,
  * blockquote, fenced code block, or table.  The `blockHash` is the
- * first 12 hex chars of sha256(normalizeBlock(raw)) — content-
- * addressed so DM-side reveals survive editorial reordering and
- * unrelated edits, and lapse cleanly when the block's text changes.
+ * first 16 hex chars of sha256(normalizeBlock(raw)) (`BLOCK_HASH_LENGTH`
+ * in redesign-plan.md) — content-addressed so DM-side reveals
+ * survive editorial reordering and unrelated edits, and lapse
+ * cleanly when the block's text changes.
+ *
+ * Identical-text caveat: two blocks with the same normalized text
+ * hash identically and share their reveal state.  This is rare in
+ * prose (intentional refrains DM-side aside) and accepted by the
+ * spec — the alternative (positional addressing) breaks under
+ * editorial reordering, which is worse.
  */
 export interface MarkdownBlock {
-  /** Stable 12-hex-char content hash; identifier in reveal events. */
+  /** Stable 16-hex-char content hash; identifier in reveal events. */
   blockHash: string;
   /** Sanitized HTML for this block alone. */
   html: SanitizedHtml;
@@ -269,7 +276,14 @@ export function normalizeBlock(raw: string): string {
 }
 
 /**
- * Async sha256 (Web Crypto), first 12 hex chars.  Used for block
+ * BLOCK_HASH_LENGTH from redesign-plan.md: 16 hex chars (64 bits).
+ * At 256K hashes (256 blocks × 1000 scenes) the birthday-paradox
+ * collision probability is ~1-in-130B — comfortable headroom.
+ */
+const BLOCK_HASH_HEX_LENGTH = 16;
+
+/**
+ * Async sha256 (Web Crypto), first 16 hex chars.  Used for block
  * identity in scene-reveal-paragraph events.  Async so we can use
  * the platform's crypto.subtle without bundling a JS implementation;
  * the only caller (renderMarkdownParagraphs) is itself async via
@@ -281,8 +295,8 @@ export async function blockHash(raw: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   const view = new Uint8Array(digest);
   let hex = '';
-  // We need only the first 6 bytes (12 hex chars).
-  for (let i = 0; i < 6; i++) {
+  // 16 hex chars = 8 bytes.
+  for (let i = 0; i < BLOCK_HASH_HEX_LENGTH / 2; i++) {
     hex += view[i].toString(16).padStart(2, '0');
   }
   return hex;

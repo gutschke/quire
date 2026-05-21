@@ -229,9 +229,9 @@ describe('normalizeBlock', () => {
 });
 
 describe('blockHash', () => {
-  it('returns a 12-character lowercase hex string', async () => {
+  it('returns a 16-character lowercase hex string', async () => {
     const h = await blockHash('hello world');
-    expect(h).toMatch(/^[0-9a-f]{12}$/);
+    expect(h).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('equal-after-normalize inputs produce the same hash', async () => {
@@ -261,10 +261,10 @@ describe('renderMarkdownParagraphs', () => {
     expect(r.blocks[1].html).toContain('Para two');
   });
 
-  it('hashes each block independently with 12-char hex', async () => {
+  it('hashes each block independently with 16-char hex', async () => {
     const r = await renderMarkdownParagraphs('A.\n\nB.\n');
-    expect(r.blocks[0].blockHash).toMatch(/^[0-9a-f]{12}$/);
-    expect(r.blocks[1].blockHash).toMatch(/^[0-9a-f]{12}$/);
+    expect(r.blocks[0].blockHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(r.blocks[1].blockHash).toMatch(/^[0-9a-f]{16}$/);
     expect(r.blocks[0].blockHash).not.toBe(r.blocks[1].blockHash);
   });
 

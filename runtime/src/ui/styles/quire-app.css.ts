@@ -1041,11 +1041,14 @@ export const quireAppStyles = css`
     }
 
     /* M3a.7 P2-2: per-block scene rendering + DM gutter pips.
-       Players see only revealed blocks (DOM-omitted, not CSS-hidden).
-       DM sees every block with a clickable reveal/hide pip in the
-       gutter; non-revealed blocks fade so the DM can scan what the
-       player can currently see. */
+       Players see only revealed blocks (DOM-omitted; this is paced
+       disclosure, not confidentiality — see scene-stage.ts).  The
+       DM view opts into the gutter via .scene-block-dm so older
+       browsers without :has() still flow player blocks normally. */
     .scene-block {
+      margin: 1em 0;
+    }
+    .scene-block-dm {
       display: grid;
       grid-template-columns: 1.5rem 1fr;
       gap: 0.4rem;
@@ -1082,12 +1085,6 @@ export const quireAppStyles = css`
     }
     .scene-block-body > :last-child {
       margin-bottom: 0;
-    }
-    /* Player view: no pip column.  Style is unset so .markdown
-       children flow as before. */
-    .markdown > .scene-block:not(:has(.scene-block-pip)) {
-      display: block;
-      margin: 1em 0;
     }
 
     /* M3a.6a: dice stat chips. */

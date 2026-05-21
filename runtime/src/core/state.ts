@@ -329,19 +329,29 @@ interface SceneRevealPayload {
 interface SceneRevealParagraphPayload {
   v: 1;
   scenePath: string;
-  /** 12-hex-char content hash from `blockHash` in markdown.ts. */
+  /** 16-hex-char content hash from `blockHash` in markdown.ts. */
   blockHash: string;
-  /** Non-authoritative UI hint; materializer ignores it. */
+  /** Non-authoritative UI hint; materializer ignores its value. */
   paragraphIndex?: number;
 }
 
 /**
- * Validate a block-hash payload field.  Must be exactly 12 lowercase
- * hex characters (matching the {@link blockHash} output format).
+ * Validate a block-hash payload field.  Must be exactly 16 lowercase
+ * hex characters (matching the {@link blockHash} output format —
+ * `BLOCK_HASH_LENGTH` in redesign-plan.md).
  */
 function isBlockHash(s: unknown): s is string {
-  return typeof s === 'string' && /^[0-9a-f]{12}$/.test(s);
+  return typeof s === 'string' && /^[0-9a-f]{16}$/.test(s);
 }
+
+/**
+ * Per-scene cap on tracked revealed-block hashes — `REVEALED_BLOCKS_PER_SCENE_CAP`
+ * in redesign-plan.md.  DoS guard: prevents a hostile coordinator
+ * (or replayed compromised log) from growing a Set unboundedly.
+ * 256 is well above any realistic scene length; if scenes ever do
+ * exceed it, the campaign is structurally over-long.
+ */
+const REVEALED_BLOCKS_PER_SCENE_CAP = 256;
 
 interface DiceRollPayload {
   expression: string;
@@ -795,7 +805,7 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     }
     case 'scene-reveal-paragraph': {
       // Coord-authored per-block reveal.  Block identity is the
-      // 12-hex-char content hash (`blockHash` in markdown.ts);
+      // 16-hex-char content hash (`blockHash` in markdown.ts);
       // see redesign-plan.md § "Event vocabulary additions" for
       // the content-addressing rationale.
       if (!state.coordHolders.has(event.peerId)) break;
@@ -803,10 +813,26 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       const p = event.payload as Partial<SceneRevealParagraphPayload>;
       if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
       if (!isBlockHash(p.blockHash)) break;
+      // paragraphIndex is a UI hint only — accept absence or any
+      // finite number, drop pathological values (huge floats, NaN,
+      // non-numbers) before they reach the (unused) field.
+      if (
+        p.paragraphIndex !== undefined &&
+        (typeof p.paragraphIndex !== 'number' ||
+          !Number.isFinite(p.paragraphIndex))
+      ) {
+        break;
+      }
       let set = state.revealedParagraphs[p.scenePath];
       if (!set) {
         set = new Set<string>();
         state.revealedParagraphs[p.scenePath] = set;
+      }
+      // Cap enforcement — protect against hostile peers or replayed
+      // logs from a compromised session.  Silently drops once the
+      // set is full; a sane DM never approaches the cap.
+      if (set.size >= REVEALED_BLOCKS_PER_SCENE_CAP && !set.has(p.blockHash)) {
+        break;
       }
       set.add(p.blockHash);
       break;
@@ -820,6 +846,13 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       const p = event.payload as Partial<SceneRevealParagraphPayload>;
       if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
       if (!isBlockHash(p.blockHash)) break;
+      if (
+        p.paragraphIndex !== undefined &&
+        (typeof p.paragraphIndex !== 'number' ||
+          !Number.isFinite(p.paragraphIndex))
+      ) {
+        break;
+      }
       const set = state.revealedParagraphs[p.scenePath];
       if (!set) break;
       set.delete(p.blockHash);

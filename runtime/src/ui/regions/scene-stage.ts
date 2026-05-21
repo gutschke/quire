@@ -67,8 +67,12 @@ export class SceneStage extends LitElement {
    * M3a.7 P2-2: when true, the viewer is the coordinator (DM).
    * DM sees every block with a gutter pip; players see only the
    * revealed subset.  Player-side filtering happens at the DOM
-   * level (not CSS) per the security boundary in
-   * design/security.md.
+   * level (not CSS) — this is a paced-disclosure boundary, NOT
+   * a confidentiality boundary: scene markdown lives in the
+   * unencrypted campaign repo per design/security.md (only `dm/*`
+   * is age-encrypted), so a determined player can fetch the
+   * source directly.  DOM-omission keeps spoilers out of the
+   * page for the curious-but-not-adversarial viewer.
    */
   @property({ type: Boolean }) isCoordinator: boolean = false;
   @property({ attribute: false }) onToggleBlock: ToggleBlockCallback | null =
@@ -136,9 +140,11 @@ export class SceneStage extends LitElement {
    * pip is clickable to toggle reveal.  For players, only blocks
    * whose hash is in `revealedBlocks` (or every block, if
    * `sceneFullyRevealed`) are rendered — non-revealed blocks are
-   * OMITTED FROM THE DOM entirely, not CSS-hidden.  This is the
-   * load-bearing security boundary: an inspector-savvy player
-   * must not be able to read unrevealed scene content.
+   * omitted from the DOM entirely, not CSS-hidden.  This is a
+   * paced-disclosure boundary (keep spoilers out of the casual
+   * viewer's page) and NOT a confidentiality boundary — the
+   * underlying scene markdown is fetchable from the campaign
+   * repo per design/security.md.
    */
   private renderBlocks(): TemplateResult | TemplateResult[] | typeof nothing {
     // Consumers can pass `undefined` explicitly via Lit property
@@ -153,7 +159,7 @@ export class SceneStage extends LitElement {
           this.sceneFullyRevealed || revealedSet.has(block.blockHash);
         return html`
           <div
-            class="scene-block ${revealed
+            class="scene-block scene-block-dm ${revealed
               ? 'scene-block-revealed'
               : 'scene-block-hidden'}"
           >
