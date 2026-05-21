@@ -262,6 +262,52 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
   });
 });
 
+describe('peer-join — knownKindsCount (P0-12)', () => {
+  it('captures the joining peer’s KNOWN_EVENT_KINDS count', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice', knownKindsCount: 31 });
+    const state = materialize(log.events());
+    expect(state.peers.alice.knownKindsCount).toBe(31);
+  });
+
+  it('treats absent count as undefined (legacy peer-join from older runtimes)', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice' });
+    const state = materialize(log.events());
+    expect(state.peers.alice.knownKindsCount).toBeUndefined();
+  });
+
+  it('rejects negative / NaN / non-number / oversize values', () => {
+    const tests = [
+      { name: 'A', knownKindsCount: -1 },
+      { name: 'B', knownKindsCount: 'thirty-one' as unknown as number },
+      { name: 'C', knownKindsCount: NaN },
+      { name: 'D', knownKindsCount: 10001 }, // bound
+      { name: 'E', knownKindsCount: Infinity }
+    ];
+    for (const payload of tests) {
+      const log = new EventLog('alice');
+      log.append('peer-join', payload);
+      const state = materialize(log.events());
+      expect(state.peers.alice.knownKindsCount).toBeUndefined();
+    }
+  });
+
+  it('accepts the boundary value 10000', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice', knownKindsCount: 10000 });
+    const state = materialize(log.events());
+    expect(state.peers.alice.knownKindsCount).toBe(10000);
+  });
+
+  it('accepts 0 (legacy or minimal runtime)', () => {
+    const log = new EventLog('alice');
+    log.append('peer-join', { name: 'Alice', knownKindsCount: 0 });
+    const state = materialize(log.events());
+    expect(state.peers.alice.knownKindsCount).toBe(0);
+  });
+});
+
 describe('filterForViewer (P0-4)', () => {
   function dmState(): SessionState {
     const s = emptyState();

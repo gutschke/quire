@@ -58,6 +58,7 @@ import {
   type AiClient
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
+import { KNOWN_EVENT_KINDS } from './core/state';
 import {
   extractJoinCode as extractJoinCodeHelper,
   parseRevealedPath as parseRevealedPathHelper,
@@ -2226,20 +2227,23 @@ export class QuireApp extends LitElement {
         return null;
       }
     }
-    const tempLog = new (class {
-      readonly events: import('./core/event-log').QuireEvent[] = [];
-      apply(): boolean {
-        return false;
-      }
-    })() as unknown as import('./core/event-log').EventLog;
-    // We use applySaveToLog's counting via a passthrough: it calls
-    // log.events() once for dedup so we synthesize a minimal stub.
-    // Actually simpler: apply directly via the session controller.
     let applied = 0;
+    let unknownKinds = 0;
     for (const e of parsed.doc.events) {
       if (this.session.applyEvents([e]) > 0) applied++;
+      // H-4 unknown-kind detection: count events whose kind isn't
+      // in the local runtime's KNOWN_EVENT_KINDS vocabulary.  These
+      // events still replicate (EventLog dedups by id) but the
+      // materializer silently drops them — the banner alerts the
+      // user that some scene state may be incomplete because they
+      // are running an older Quire than the save was produced on.
+      if (
+        typeof e.kind !== 'string' ||
+        !KNOWN_EVENT_KINDS.has(e.kind)
+      ) {
+        unknownKinds++;
+      }
     }
-    void tempLog; // unused (kept for readability)
     // Auto-reclaim if needed: when a host loads a save, the
     // session-1 coordinator-claim may sort earlier (older
     // clock-sum) than the new host's own claim, depending on
@@ -2260,12 +2264,20 @@ export class QuireApp extends LitElement {
       applied,
       duplicates: parsed.doc.events.length - applied,
       rejected: 0,
-      unknownKinds: 0,
+      unknownKinds,
       errors: []
     };
+    // H-4 banner: prepend a one-line warning when the save contained
+    // events from a newer runtime.  The events still replicate
+    // (forward-compat), but the local materializer can't render
+    // them; surface this so the user knows to update.
+    const banner =
+      unknownKinds > 0
+        ? `This save contains ${unknownKinds} event kind${unknownKinds === 1 ? '' : 's'} this runtime doesn't recognize; some scene state may be incomplete (consider updating). `
+        : '';
     this.loadStatus = {
       kind: 'loaded',
-      message: `Loaded ${applied} new event${applied === 1 ? '' : 's'} (${result.duplicates} already present).`
+      message: `${banner}Loaded ${applied} new event${applied === 1 ? '' : 's'} (${result.duplicates} already present).`
     };
     return result;
   }

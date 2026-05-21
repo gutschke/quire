@@ -18,7 +18,7 @@ import { Peer } from './core/peer';
 import type { QuireEvent } from './core/event-log';
 import type { Transport, Unsubscribe } from './core/transport';
 import type { SessionState as SharedState } from './core/state';
-import { emptyState } from './core/state';
+import { emptyState, KNOWN_EVENT_KINDS } from './core/state';
 
 export type SessionMode = 'solo' | 'host' | 'guest';
 export type SessionStatus = 'idle' | 'connecting' | 'active' | 'error';
@@ -265,7 +265,16 @@ export class SessionController {
     // later; they catch up via Peer's constructor-time sync-request
     // pull-loop (see core/peer.ts constructor) — there's no need to
     // push events here.
-    const peerJoinPayload: Record<string, unknown> = {};
+    //
+    // P0-12: embed the local runtime's KNOWN_EVENT_KINDS count so
+    // peers can detect mixed-version sessions.  When the materializer
+    // sees a peer with `knownKindsCount` < local count, it can
+    // surface a banner ("peer X is running an older Quire; some
+    // events may not replicate visibly to them").  Forward-compat
+    // is preserved either way; the warning is for the user.
+    const peerJoinPayload: Record<string, unknown> = {
+      knownKindsCount: KNOWN_EVENT_KINDS.size
+    };
     if (displayName) peerJoinPayload.name = displayName;
     if (campaign) peerJoinPayload.campaign = campaign;
     this.peer!.append('peer-join', peerJoinPayload);
@@ -299,7 +308,12 @@ export class SessionController {
     this.peerId = handle.transport.peerId;
     this.pairingCode = null;
     this.status = 'active';
-    this.peer!.append('peer-join', { name: displayName });
+    // Guest peer-join — also embeds knownKindsCount so the host (and
+    // other peers) can detect a mixed-version session early.
+    this.peer!.append('peer-join', {
+      name: displayName,
+      knownKindsCount: KNOWN_EVENT_KINDS.size
+    });
     this.notify();
   }
 

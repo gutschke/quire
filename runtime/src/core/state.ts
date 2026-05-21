@@ -22,6 +22,16 @@ export interface PeerPresence {
   character?: string;
   joinedAt: number;
   leftAt?: number;
+  /**
+   * P0-12: count of KNOWN_EVENT_KINDS the peer's runtime recognized
+   * at peer-join time.  When this is < the local runtime's count,
+   * the peer is running an older Quire and may not render some
+   * events the local DM emits.  Used by the render layer to surface
+   * a one-line "peer X is on an older version" banner.  Absent for
+   * legacy peer-join events from pre-P0-12 runtimes (treat as
+   * unknown rather than implicitly old).
+   */
+  knownKindsCount?: number;
 }
 
 export interface DiceRoll {
@@ -437,12 +447,27 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       const p = event.payload as
         | (PeerJoinPayload & {
             campaign?: { owner?: unknown; repo?: unknown; ref?: unknown };
+            knownKindsCount?: unknown;
           })
         | undefined;
+      // P0-12: capture the joining peer's KNOWN_EVENT_KINDS count if
+      // it announced one.  Bounded sanity check (no negative, no
+      // larger than 10x current vocabulary) so a hostile payload
+      // can't bloat or confuse the version-mismatch banner.
+      let knownKindsCount: number | undefined;
+      if (
+        typeof p?.knownKindsCount === 'number' &&
+        Number.isFinite(p.knownKindsCount) &&
+        p.knownKindsCount >= 0 &&
+        p.knownKindsCount <= 10000
+      ) {
+        knownKindsCount = p.knownKindsCount;
+      }
       state.peers[event.peerId] = {
         peerId: event.peerId,
         name: p?.name,
-        joinedAt: event.ts
+        joinedAt: event.ts,
+        knownKindsCount
       };
       // R3-C: a host's peer-join may embed the campaign reference
       // so guests who joined via a bare URL (play.quire.games +

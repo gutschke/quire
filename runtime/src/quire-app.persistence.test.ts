@@ -159,6 +159,72 @@ describe('QuireApp persistence — Save/Load round-trip', () => {
     expect(r).toBeNull();
     expect(app.loadStatus.kind).toBe('error');
   });
+
+  it('H-4: surfaces a banner when the save contains unknown event kinds (P0-12)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app);
+    app.startHosting();
+    await flush();
+    // Construct a save with one unknown-kind event (simulates loading
+    // a save authored by a newer runtime that emitted a kind this one
+    // doesn't recognize).  Events from KNOWN_EVENT_KINDS materialize
+    // normally; the unknown one is counted.
+    const json = JSON.stringify({
+      $schemaVersion: '0.1.0',
+      savedAt: new Date().toISOString(),
+      campaign: { owner: 'test', repo: 'test-camp', ref: 'main' },
+      savedByPeerId: 'x',
+      events: [
+        {
+          id: 'evt-1',
+          peerId: 'x',
+          seq: 1,
+          clock: { x: 1 },
+          kind: 'chat',
+          payload: { text: 'visible' },
+          ts: 1
+        },
+        {
+          id: 'evt-2',
+          peerId: 'x',
+          seq: 2,
+          clock: { x: 2 },
+          kind: 'future-feature-from-newer-runtime',
+          payload: { v: 1 },
+          ts: 2
+        }
+      ]
+    });
+    const result = app.loadFromString(json);
+    expect(result).not.toBeNull();
+    expect(result!.unknownKinds).toBe(1);
+    expect(app.loadStatus.kind).toBe('loaded');
+    // Banner appears at the start of the loadStatus message.
+    expect(app.loadStatus.message).toMatch(
+      /this runtime doesn't recognize/i
+    );
+    expect(app.loadStatus.message).toMatch(/1 event kind /);
+  });
+
+  it('H-4: no banner when the save is fully understood', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app);
+    app.startHosting();
+    await flush();
+    app.submitChat('hello');
+    const doc = app.buildSaveDocument()!;
+    const json = (await import('./persistence')).stringifySave(doc);
+    document.body.removeChild(app);
+    const app2 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST2'));
+    injectCampaign(app2);
+    app2.startHosting();
+    await flush();
+    const result = app2.loadFromString(json);
+    expect(result!.unknownKinds).toBe(0);
+    expect(app2.loadStatus.message ?? '').not.toMatch(
+      /doesn't recognize/i
+    );
+  });
 });
 
 describe('QuireApp persistence — Reclaim coordinator', () => {
