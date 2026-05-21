@@ -931,6 +931,22 @@ export class QuireApp extends LitElement {
 
       // Character layer (independent of episode/scene)
       if (route.kind === 'character') {
+        // DM-screen guard: NPC sheets carry dmNotes / signature /
+        // voice and are not safe to expose to players in an active
+        // session.  A non-coordinator who URL-hops to ?npc=foo gets
+        // an error rather than the sheet.  In solo mode (no
+        // session, or session not yet active) the gate is lifted —
+        // a solo reader is free to browse NPC content.
+        if (
+          route.characterKind === 'npc' &&
+          this.sessionView?.status === 'active' &&
+          !this.isCoordinator()
+        ) {
+          throw new CharacterLoadError(
+            'NPC sheets are only visible to the DM in an active session.',
+            `Requested NPC: ${route.characterId}`
+          );
+        }
         this.appState = {
           kind: 'loading',
           slug: route.characterId,
@@ -2069,7 +2085,13 @@ export class QuireApp extends LitElement {
   ): TemplateResult {
     if (!characters) return html``;
     const hasPcs = !!characters.pcs?.length;
-    const hasNpcs = !!characters.npcs?.length;
+    // DM-screen guard: in an active session, non-coordinators
+    // never see the NPC menu — the NPC sheet itself is also
+    // gated in navigateToRoute, but hiding the menu prevents the
+    // tantalizing "look at this list of NPCs I can't open" UX.
+    const inActiveSession = this.sessionView?.status === 'active';
+    const npcVisible = !inActiveSession || this.isCoordinator();
+    const hasNpcs = npcVisible && !!characters.npcs?.length;
     if (!hasPcs && !hasNpcs) return html``;
     return html`
       <section class="card">

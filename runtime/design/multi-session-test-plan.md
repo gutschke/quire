@@ -1,102 +1,87 @@
-# Multi-session simulated-play test plan — v2
+# Multi-session simulated-play test plan — v3
 
-Working document.  Revised after first QA review.  Now awaiting
-parallel review from (a) the QA agent for technical correctness and
-(b) a UX expert agent for design / discoverability concerns.
+Working document.  Revised after QA v2 review + UX agent
+pre-simulation evaluation + user direction on DM-vs-player
+perspectives and role-swapping.
 
-## Changes since v1
+## Changes since v2
 
-The first QA review surfaced one architectural decision that cascades
-through the whole plan: **how does coordinator authority survive a
-save/load cycle?**  PeerJS issues a new peerId per session, but the
-loaded event log carries a `coordinator-claim` from the old peerId.
-The current `state.ts:115-117` "first-claim-wins" guard then silently
-no-ops any subsequent claim, leaving the DM with no coordinator powers
-(scene-reveal in particular fails silently).
+**Three UX blockers fixed first.**  B1 (dice not on scene pages),
+B2 (shared.diceRolls unrendered), B3 (chat /roll affordance trap)
+are real runtime bugs that would have produced noisy QA data
+during simulation.  Fixed in commit `298e55f` before drafting v3.
+Per user direction: fix showstoppers immediately; batch minor bugs
+in subsequent test runs to amortize cost.
 
-v2 introduces a new event kind, `coordinator-reclaim`, that
-supersedes a prior coordinator-claim.  This becomes the fix for the
-single most likely "shipped and broke immediately" scenario.
+**QA v2 blockers addressed:**
+- Reclaim button visibility tightened to `currentPeerId ===
+  savedByPeerId`; confirmation dialog required.
+- Concurrent-reclaim race added to Phase 4 tests.
+- Player C executability resolved: persona is now scripted with
+  annotation, not freeform narration.
 
-Also added per the QA review:
-- Deterministic serialization (sorted keys, stable event order) as a
-  Phase 1 requirement, not a downstream nicety.
-- Structured load-result (`{applied, rejected, duplicates,
-  unknownKinds}`) instead of a bare count.
-- Load-into-non-empty-log, load-twice idempotency, divergent-history
-  cases in Phase 1.
-- Phase 4 expanded substantially — coordinator-reclaim mechanic,
-  ghost-peers UI, joining with own autosaved state.
-- Phase 6 (git-as-snapshot) redesigned to test the engine via
-  diff-readability + cross-version load + meaningful branch
-  divergence instead of just exercising git.
-- Phase 7 (QA probes) folded into Phases 3-5 at planning time.
-- Concurrent-save resolution, quota exhaustion, cross-campaign load,
-  forward-compat unknown event kinds, AI panel localStorage scope
-  documented.
-- Time estimates roughly doubled to match the actual surface.
-
-Added per the UX-expert-as-player suggestion:
-- A fourth player persona in the simulated session: a UX expert
-  actually playing through.  Not adversarial — they're trying to
-  enjoy the game.  They report friction points: things that took
-  more clicks than expected, things they couldn't find, things they
-  found and didn't realize were available.
+**User directive incorporated:**
+- DM-as-distinct-role recognized as a first-class testing concern.
+  A DM's task surface (host, save, load, reclaim, reveal, AI aide,
+  NPC sheets, track all PCs, leave-as-coordinator) is quite
+  different from a player's (join, read, roll, chat, edit own PC).
+  Sessions must exercise BOTH.
+- Two persona seats now: Player C (player UX) and Player D (DM UX).
+- Role-swap: each agent runs as one role in run-1 and as the other
+  in run-2.  Different friction surfaces.  The DM-only views (NPC
+  sheets, AI aide, save/load surface) are only stress-tested when
+  a UX-evaluator is in the DM seat.
 
 ## Why this exists
 
-Today's automated coverage is layered (471 unit + 40 e2e) but
-artificial:
-- Unit tests probe isolated pieces
-- E2E tests cover individual scenarios in single sittings
-- Nothing exercises an actual end-to-end campaign across multiple
-  play sessions
+Current automated coverage (473 unit + 41 e2e) is layered but
+artificial: isolated pieces, single-sitting scenarios.  Nothing
+exercises:
 
-The gap that matters: **a DM and players play Episode 1 of
-Underleaf, come back the following week, and want to continue.  The
-current runtime has no persistence, so session 2 starts from zero.**
-A user who experiences this once stops trusting the platform.
+- An actual end-to-end campaign played across multiple sittings
+- Persistence (the runtime has no save/load today — a fresh feature)
+- DM-specific frequent tasks (currently never tested as a real-use
+  flow; piecewise tested only)
+- The "shipped and broke immediately" scenario where a saved
+  session corrupts on reload
 
-This plan addresses three distinct problems:
-
+This plan addresses:
 1. **Persistence** — a real feature gap
-2. **Realistic flow testing** including multi-session continuity,
-   adversarial play, and corruption recovery
-3. **UX evaluation under actual play** — does the runtime feel
-   right to a real user trying to enjoy it, not just pass
-   assertions?
+2. **Realistic multi-session flow testing**
+3. **UX evaluation under actual play, with DM and player as
+   distinct first-class personas**
 
 ## Scope
 
 **In scope:**
-- Persistence design + implementation (save/load event log)
-- `coordinator-reclaim` event kind — the multi-session fix
-- Full-session simulation (4 browser contexts: DM + 3 players,
-  including the QA-player and the UX-player; scripted real-time
-  play; mocked AI; real Underleaf campaign)
-- Multi-session continuity (save → load → continue, with
-  coordinator-reclaim)
-- State corruption recovery (graceful degradation)
-- Git-as-snapshot test methodology (diff-readability + cross-version
-  load + meaningful divergence)
-- UX evaluation by the UX-player agent during the simulated play
+- Persistence design + implementation
+- `coordinator-reclaim` event kind
+- Full-session simulation with 4 contexts (DM, Player A scripted,
+  Player B QA-adversarial, Player C UX-player)
+- Role-swap: a second simulation where Player C becomes the DM and
+  the previous DM becomes a player
+- Multi-session continuity (save → load → continue, with reclaim)
+- Concurrent-reclaim race resolution
+- Corruption recovery
+- Git-as-snapshot test methodology
+- UX evaluation reports from both DM and player perspectives
 
 **Out of scope:**
-- AI creative quality (mocked; we test wiring + UX, not content)
-- Story quality (the players follow a script; they don't ad-lib)
+- AI creative quality (mocked)
+- Story quality (scripted, not improvised)
 - Cloud sync of saves
-- Implementing the UX fixes the report surfaces (those go on a
-  separate followup list)
+- Implementing the long-tail UX findings (batched for a separate
+  pass; only the blockers found mid-execution get fixed inline)
 - Performance benchmarking
 
 ## Architecture decisions
 
 ### Save format
 
-JSON document, deterministically serialized (sorted top-level keys,
-stable event order by `(sum-of-clock, peerId, seq)`).  Git-friendly
-diffs: appending one event should produce a small N-line diff, not
-a re-serialize.
+JSON document, deterministically serialized (sorted top-level
+keys, stable event order by `(sum-of-clock, peerId, seq)`).
+Git-friendly diffs: appending one event should produce a small
+N-line diff.
 
 ```json
 {
@@ -104,313 +89,348 @@ a re-serialize.
   "savedAt": "<ISO-8601>",
   "campaign": { "owner": "...", "repo": "...", "ref": "main" },
   "savedByPeerId": "...",
-  "events": [ ... ]
+  "events": [ ... sorted ... ]
 }
 ```
 
-Note: `pairingCode` is intentionally NOT saved — a new pairing code
-is generated when the DM re-hosts.  This avoids stale-code joins.
+`pairingCode` is intentionally NOT saved — stale codes would be
+worse.  DMs share a new code each session via the same out-of-band
+channel they used in session 1 (Discord/text).
 
-### Coordinator-reclaim (the v2 addition)
+### Coordinator-reclaim
 
-New event kind, `coordinator-reclaim`, materialized by `state.ts` as:
+New event kind, materialized unconditionally:
 
 ```typescript
 case 'coordinator-reclaim': {
-  // Unlike coordinator-claim ("first claim wins"), reclaim is
-  // unconditional: the issuing peerId becomes coordinator.  This is
-  // what a DM emits at the start of session 2 after loading a save
-  // whose coordinator-claim refers to their now-defunct session-1
-  // peerId.
+  // Unlike coordinator-claim ("first claim wins"), reclaim
+  // unconditionally promotes the issuing peerId.  R2.1's
+  // transport-sender-vs-event.peerId check prevents non-DM forgery.
   state.coordinator = event.peerId;
   break;
 }
 ```
 
-Trust model: same as coordinator-claim (Peer.handleMessage already
-enforces transport-sender vs event.peerId, so a non-DM cannot
-forge a reclaim).  Documented in the design doc.
+**Visibility rule** (user override of QA v2): the "Reclaim
+coordinator role" button is visible to ANY peer in an active
+session who has loaded a save (or who has localStorage autosave
+state).  The strict `currentPeerId === savedByPeerId` rule would
+block a legitimate workflow: the DM is sick, a trusted player
+steps in with the previous session's save and takes over.
 
-UI surface: when a load happens and `state.coordinator !==
-currentPeerId`, the session bar surfaces "Reclaim coordinator
-role" as an explicit one-click action.  Not auto-fired, because:
-(a) the loading user may be a player who joined the DM's saved
-session, in which case they're NOT supposed to be coordinator,
-and (b) the user-facing intent of "I'm taking over" should be
-explicit.
+The protection is procedural, not technical:
+
+1. **Confirmation dialog** is required and names the current
+   coordinator: *"Take over coordinator from Riley?  This will
+   override their session-coordinator powers."*  That's the
+   "deliberate action" gate.
+2. **Audit trail in chat**: every reclaim materializes a visible
+   system-message chat entry — *"Sam took over as coordinator
+   from Riley"* — broadcast to all peers.  A misbehaving
+   reclaim is immediately visible to everyone in the session
+   and the social contract handles the rest.
+
+This matches how analogous tools work (Discord transferring server
+ownership, Google Doc editor handoff): permission + transparency
+beats permission alone.
+
+**Concurrent-reclaim race**: two ex-coordinators both load the
+same save and both click Reclaim within the same window.  Both
+reclaim events land; materializer applies in causal order
+(`(clock-sum, peerId, seq)` total order).  Last-write-wins by
+event order.  Loser's UI updates to reflect they are not
+coordinator.  Phase 4 has an explicit test.
 
 ### Storage layers
 
-1. **localStorage autosave** — every N events (or every 30s,
-   debounced).  Key: `quire.save.<campaign-slug>`.  Survives
-   refresh, dies with browser data clear.
-2. **Downloadable JSON** — explicit "Save session" button.  This
-   is the cross-week / cross-machine save.
-3. **Upload** — "Load session" button accepts a `.json` file.
+1. **localStorage autosave**: every N events / 30s debounced.
+   Key `quire.save.<campaign-slug>`.  1MB warn, 4MB refuse.
+2. **Downloadable JSON**: explicit "Save session" button.
+3. **Upload**: "Load session" button.
 
-### localStorage quota
+### Save scope
 
-5MB soft limit; saves over 1MB warn the user; over 4MB refuses
-autosave (downloadable save still works).  Tests cover the
-warning + refusal paths.
-
-### Save scope (cross-cutting)
-
-- **In save**: event log, campaign source ref, savedByPeerId, ISO
-  timestamp, schema version.
-- **NOT in save**: AI API keys, AI provider choice, system prompt
-  (per-browser-per-user; saves are shared between DMs and emailing
-  one would leak credentials), pairing code, chat draft, current
-  scene selection, current AppRoute, local roll panel mirror.
-- The QA agent's specific concern about API keys leaking via shared
-  saves is addressed here.
+- **In save**: event log, campaign source ref, savedByPeerId,
+  savedAt, $schemaVersion.
+- **NOT in save**: AI API keys, AI provider choice, system
+  prompt, pairing code, chat draft, current AppRoute, local
+  roll panel mirror.  (Per QA v1: avoids credential leak when
+  DMs share saves.)
 
 ### Schema versioning
 
 - Same major → accepted
 - Different major → rejected with explicit error
-- Unknown `event.kind` in a known-version save → applied to log
-  (idempotent, deterministic order) but silently dropped by the
-  materializer's switch (it already is).  Counted in load-result's
-  `unknownKinds` so the loader can surface "this save contains 3
-  events your version doesn't understand; update for full
-  compatibility."
+- Unknown `event.kind` in known major → applied to log
+  (forward-compat); silently dropped by materializer's switch.
+  Counted in `LoadResult.unknownKinds` so the loader can
+  surface "this save contains 3 events your version doesn't
+  understand."
 
-### Concurrent-save resolution
+## Persona spec (revised — DM and player both first-class)
 
-Two peers in the same session save 200ms apart.  Both downloaded
-saves are equally valid; vector clocks merge them on either-load.
-The Load UI shows the timestamp + savedByPeerId so the user can
-pick if they have both files.  No "this save is more recent" magic.
+| Persona | Seat in run-1 | Seat in run-2 (role-swap) | Notes |
+|---|---|---|---|
+| DM | Scripted host | Becomes Player A | Coordinator, story driver |
+| Player A | Scripted player | Becomes DM | Plays Yui in run-1 |
+| Player B (QA-adversarial) | Player | DM | Inlined adversarial probes; in run-2 covers DM-specific probes |
+| Player C (UX-evaluator) | Player | DM | Sam in run-1; "Riley the DM" in run-2 |
+
+**Why role-swap matters**: the UX-evaluator playing Player C
+catches "rolling dice from a scene page feels right" but never
+sees the save/load flow as a DM.  Run-2 puts them in the DM seat
+where their friction list shifts to "I couldn't find where to
+share the pairing code", "the AI aide settings are buried", "I
+saved but couldn't tell whether players had loaded the file."  The
+QA-adversarial agent gets the same role-swap: run-1 tests probes
+like "send 600-char chat", run-2 tests DM-only probes like "load
+a save mid-active-session", "reclaim coordinator when I shouldn't
+be able to", "save then immediately leave session."
+
+### Player C (Sam) — player seat, scripted
+
+Authored by the UX agent.  Mid-30s player, comfortable with Discord
++ Roll20.  Reads top-to-bottom, types when possible.  Beats include:
+URL with code should auto-join (assert; documents friction if not);
+typing in chat takes focus within 100ms; clicking reveal banner
+loads scene <300ms; rolling from scene page requires no navigation
+(B1 fix verified); roll appears in DM's view <500ms (B2 fix
+verified); typing `/roll 2d6` in chat does NOT submit as literal
+(B3 fix verified); etc.
+
+Report format: JSON `e2e/results/player-c-<runId>.json` with
+`{beat, task, expectedSteps, actualSteps, msToFirstFeedback,
+friction[]}`.  Friction entries include `severity` (blocking /
+significant / minor / nit) and `filePathHint`.
+
+### Player D (Riley) — DM seat, scripted
+
+Authored by the UX agent (Phase 0.5 below).  An experienced DM who
+runs games online twice a week.  Beats DM-specific:
+
+- **Pre-session prep**: open campaign, scan NPC sheets, configure
+  AI aide
+- **Host + share code**: how does Riley get the code to players?
+  (Currently: triple-click + Discord paste.  Friction.)
+- **Reveal scenes in sequence**: assert the reveal-banner history
+  is visible — when Riley scrolls back to scene 1, can players
+  return there?  (Currently only latest reveal in banner; lost
+  history is significant UX gap.)
+- **Use AI aide for an NPC voice**: Riley enables Anthropic
+  (mocked), prompts for Yui's reaction, shares to chat.  Assert
+  the [AI] prefix is the only marker; Riley might want to disguise
+  it as in-character.
+- **Track PC harm/stress as story unfolds**: when Riley narrates
+  "the cave-in deals 2 harm to Yui," can Riley apply that without
+  asking the player to do it?  (Currently: only the PC's own
+  player can edit their sheet — DM cannot.  Significant UX gap.)
+- **Save mid-session**: assert Save is discoverable, downloaded
+  file is sensibly named (`underleaf-2026-05-20.json` or similar).
+- **Load + reclaim next session**: assert Reclaim button is visible
+  only to Riley (not to other peers who happen to have the file).
+
+Report format: same JSON shape as Player C.
 
 ## Implementation phases
 
+### Phase 0: simulation prerequisites (~3-4 hr — completed for B1/B2/B3; remaining for Phase 0.5)
+
+- B1, B2, B3 fixed in commit `298e55f` ✓
+- **Phase 0.5**: Write the Player D (DM) persona spec.  Spawn UX
+  agent to author it based on the runtime's DM-facing surface.
+  Output: `design/player-d-persona.md`.
+
 ### Phase 1a: serialization (~1.5 hr)
 
-- `src/persistence.ts`:
-  - `serializeSession(events, campaign, peerId) → SaveDocument`
-  - `stringifySave(doc) → string` — sorted keys, stable event order
-  - `parseSaveDocument(json) → ParseResult` — discriminated success/error
-- Unit tests:
-  - Round-trip serialize → parse → equal
-  - Deterministic output for the same input
-  - Single-event-added diff is small
-  - Malformed JSON, missing fields, wrong type fields all rejected
-    cleanly
+`src/persistence.ts`:
+- `serializeSession(events, campaign, peerId) → SaveDocument`
+- `stringifySave(doc) → string` — sorted keys, stable event order
+- `parseSaveDocument(json) → ParseResult` discriminated success/error
+
+Tests: round-trip, deterministic output, malformed JSON, missing
+fields, wrong-type fields.
 
 ### Phase 1b: apply-to-log (~2 hr)
 
-- `applySaveToLog(eventLog, doc) → LoadResult` with
-  `{applied, rejected, duplicates, unknownKinds, errors[]}`
-- Unit tests:
-  - Apply into empty log: full count applied
-  - Apply twice: second call returns all-duplicates
-  - Apply into log with divergent local events: both sets present,
-    order respects causal clock
-  - Apply with one corrupt event: that one rejected, rest applied
-  - Apply with unknown event.kind: applied to log (forward-compat),
-    counted in `unknownKinds`
+`applySaveToLog(eventLog, doc) → LoadResult` returning
+`{applied, rejected, duplicates, unknownKinds, errors[]}`.
+
+Tests: empty log, twice (idempotency), divergent log, single
+corrupt event, unknown kind (forward-compat).
 
 ### Phase 2a: coordinator-reclaim event (~1.5 hr)
 
-- Add to `state.ts` case + types
-- Add `Peer.reclaimCoordinator()` convenience method
-- Unit tests:
-  - reclaim sets state.coordinator unconditionally
-  - reclaim through transport authority (R2.1 cross-check applies)
-  - replay determinism: reclaim then claim yields reclaim's
-    coordinator
-  - Tests in `state.test.ts` + `peer.test.ts` + the hostile suites
+`state.ts` case + types; `Peer.reclaimCoordinator()` convenience.
+Tests in state.test.ts + peer.test.ts + hostile suites.  Includes
+the concurrent-reclaim race test.
 
-### Phase 2b: persistence UI (~2.5 hr)
+### Phase 2b: persistence UI (~4 hr — per QA v2 revised estimate)
 
-- `quire-app.ts`:
-  - Save button (download JSON)
-  - Load button (file picker)
-  - localStorage autosave debounced + quota handling
-  - "Resume previous session?" prompt on campaign load when an
-    autosave exists for that slug
-  - When loaded state has `coordinator` set but it's not the current
-    peerId, show a "Reclaim coordinator role" button next to the
-    pairing code
-- Save button is enabled IFF an active session exists AND the
-  campaign is loaded.
-- Load is always available but warns when an active session is
-  being replaced.
+- Save button (download JSON), enabled IFF active session
+- Load button (file picker), always available, warns when replacing
+  an active session
+- localStorage autosave debounced + quota tiers
+- "Resume previous session?" prompt on campaign load when an
+  autosave exists for that slug
+- **Reclaim coordinator role** button visible ONLY when
+  `currentPeerId === savedByPeerId`; confirmation dialog required
 
-### Phase 3: full-session simulation (~3 hr)
+### Phase 3: full-session simulation run-1 (~3 hr)
 
-- `e2e/full-session.spec.ts`:
-  - 4 Chromium contexts: DM, Player A (scripted narrative), Player
-    B (QA adversarial), Player C (UX evaluator)
-  - Real Underleaf campaign via GitHub fetch interception
-  - Mocked Anthropic + Gemini routes
-  - Scripted beats covering Episode 1's opening
-- Inline adversarial probes (per QA review, not deferred):
-  - Player B sends 600-char chat at beat 4
-  - Player B clicks "Reveal" as non-coordinator (should no-op)
-  - Player B rapid-clicks +/- bumpers (no race)
-  - Player B opens same code in second tab
-- Inline UX checks (the UX-player agent records observations
-  during play; see Phase 3.5)
-- Assertions: every event lands on every peer; event order
-  converges; chat replicates; reveal banner appears + dismisses
-  correctly; PC edits propagate
+`e2e/full-session.spec.ts`:
+- 4 Chromium contexts: DM (scripted), Player A (scripted), Player B
+  (QA-adversarial as player), Player C (UX-player; Sam)
+- Real Underleaf campaign via GitHub fetch interception
+- Mocked Anthropic + Gemini routes
+- Scripted beats covering Episode 1 opening
+- Inline adversarial probes (QA, player role): long chat,
+  non-coordinator reveal, rapid bumper clicks, duplicate-tab
+  pairing code
+- Inline UX assertions (Sam's persona-driven checks)
+- Assertions: convergence, replication, banner correctness, edit
+  propagation
 
-### Phase 3.5: UX-player report (~within Phase 3 budget)
+### Phase 3.5: full-session simulation run-2 (~3 hr) — role-swap
 
-The UX expert agent participates in the full-session run with their
-own Playwright context.  They:
-- Try to accomplish each task the DM/players might want without
-  prior knowledge of the codebase
-- Report friction: how many clicks for the most common actions?
-  Where did they get confused?  What did they expect to find that
-  wasn't there?
-- Compare frequency vs friction: the most frequent actions (rolling
-  dice, reading scenes, chatting) should be the lowest-friction
-- Output: a UX findings report saved to `design/ux-findings-<date>.md`
+`e2e/full-session-swap.spec.ts`:
+- Same 4 contexts but:
+  - Original DM is now Player A
+  - Player A from run-1 is now DM
+  - Player B (QA) now in DM seat — runs DM-only adversarial probes
+  - Player C (UX) now in DM seat — Riley's persona-driven checks
+- Inline DM-only adversarial probes (Player B): load mid-active-
+  session, reclaim when shouldn't, save → leave immediately, two
+  rapid AI requests, save during in-flight AI request
+- Inline DM UX assertions (Riley's persona-driven checks)
 
-The plan does NOT commit to fixing what they find — that's a
-follow-up triage step.  But the findings inform the test plan: if
-the UX agent says "I couldn't find the save button," then a Phase
-2b test should assert the save button has a clear label and is
-findable.
+### Phase 4: multi-session continuity (~5-6 hr — per QA v2 revised)
 
-### Phase 4: multi-session continuity (~4 hr — the headline phase)
+`e2e/multi-session.spec.ts`:
+- Session 1 runs to completion (shortened version of Phase 3)
+- DM saves to JSON
+- All browsers close, reopen
+- DM loads the save
+- **Reclaim button visibility assertion**: Riley sees it; other
+  peers don't
+- DM clicks Reclaim, confirms
+- DM hosts new session (new pairing code)
+- Players join
+- Player A joins with their OWN session-1 autosave still in
+  localStorage — assert merge respects causal order without
+  double-apply
+- Continue session 2
+- Final state assertions
 
-- `e2e/multi-session.spec.ts`:
-  - Session 1: short play through, then DM saves
-  - All browsers close
-  - Reopen: DM clicks Load
-  - DM clicks "Reclaim coordinator role" (new in v2)
-  - DM hosts fresh session
-  - Players join with new pairing code
-  - Player A joins with their OWN session-1 autosave still in
-    localStorage — assert that the merge respects causal order
-    and doesn't double-apply
-  - Continue with session 2: more reveals, rolls, edits
-  - Final state assertions
+`e2e/coordinator-reclaim-race.spec.ts`:
+- Two ex-coordinators both load same save
+- Both click Reclaim within 500ms
+- Assert deterministic resolution
+- Loser's UI reflects non-coordinator status
 
-- `e2e/peerid-continuity.spec.ts`:
-  - The specific bug: load → host → reveal scene → assert reveal
-    landed in revealedScenes (currently silently fails without
-    coordinator-reclaim)
-- Ghost-peer assertion: after load, `state.peers` still contains
-  session-1 peerIds.  The UI should NOT show them as "currently
-  online" (their leftAt should reflect their not-rejoining).
-  Specific UI assertion required.
+`e2e/peerid-continuity.spec.ts`:
+- The specific bug: load → host → reveal scene → assert reveal
+  landed.  Catches absence of coordinator-reclaim.
+- Ghost-peer UI assertion: session-1 peerIds in `state.peers` are
+  NOT shown as currently online.
 
 ### Phase 5: corruption + recovery (~2 hr)
 
-- `e2e/save-corruption.spec.ts`:
-  - Truncated JSON → reject cleanly
-  - Missing required fields → reject
-  - Wrong schema major → reject with version message
-  - Single corrupt event → that one rejected, rest applied,
-    load-result surfaces the rejection
-  - Tampered event.peerId (mismatches clock) → caught by EventLog
-    validation, surfaced in load-result
-  - Save that exceeds maxEvents bound → contract is "reject"
-  - Cross-campaign load (save's campaign ≠ current campaign) →
-    refuses, doesn't merge
+`e2e/save-corruption.spec.ts`:
+- Truncated JSON, missing fields, wrong major version, single
+  corrupt event, tampered event.peerId, over-cap save,
+  cross-campaign load
 
-### Phase 6: git-as-snapshot (~2 hr — redesigned per QA review)
+### Phase 6: git-as-snapshot (~2 hr)
 
-- `e2e/git-snapshot.spec.ts`:
-  - Boot a temp `git init` directory
-  - Run a session; commit save at each beat
-  - **Diff-size assertion**: appending one dice-roll produces a
-    git diff of <10 lines (catches non-deterministic key order
-    regression)
-  - **Cross-version migration**: commit a v0.1.0 save, edit the
-    file to v0.2.0 in a follow-up commit, roll back to v0.1.0,
-    load — exercises schema-version handling
-  - **Meaningful branch divergence**: branch A continues from
-    commit N with events {a, b, c}; branch B continues from N
-    with events {x, y, z}; load both into separate peer
-    instances; verify each replays to its own state.  Then merge
-    branches by loading both saves into a third peer; verify the
-    merged state contains all 6 events in causal order.  This
-    exercises the actual CRDT merge that the plan otherwise
-    dodges.
+`e2e/git-snapshot.spec.ts`:
+- `git init` temp dir; commit save at each beat
+- **Diff-size assertion**: one dice-roll = <10-line diff
+- **Cross-version migration**: commit v0.1.0, edit to v0.2.0,
+  roll back, load
+- **Meaningful branch divergence**: branch A with events {a,b,c},
+  branch B with {x,y,z}; load each separately and verify; load
+  both into a third peer and verify merged state contains all 6
+  in causal order
 
-### Phase 7: integrated probes (folded into Phases 3, 4, 5)
+### Phase 7: triage UX/QA reports (~1 hr)
 
-Per QA review, "probes authored separately, integrated later" tends
-to produce probes that don't fit the e2e harness's timing.  Inline
-the full list:
+After Phase 3 and Phase 3.5 both run, review:
+- Player C's run-1 report
+- Player C's run-2 report (Riley as DM)
+- Player B's run-1 + run-2 probes
+- Cross-reference: which findings are NEW (not anticipated by
+  pre-simulation evaluation)?  Which are showstoppers?
 
-- Phase 3 inlined: long chat, non-coordinator reveal, rapid bumper
-  clicks, duplicate-tab pairing code
-- Phase 4 inlined: load mid-active-session (UI should warn), load
-  as guest (UI should refuse), open-two-tabs-same-campaign
-  autosave race, network partition during save
-- Phase 5 inlined: refresh-during-autosave (interrupted partial
-  write), AI panel mid-stream save, save with no session active
+Showstoppers found here get fixed immediately.  Minor + nit
+batched for the next test cycle (per user direction).
 
-## Player personas (revised)
+## Inter-agent communication
 
-| Persona | Role | Script |
-|---|---|---|
-| DM | Coordinator, story driver | Fixed script: walks through scenes 1-3, reveals each, prompts dice, uses AI aide once |
-| Player A | Narrative player | Fixed script: rolls when prompted, sends in-character chat, takes harm/stress when DM narrates damage |
-| Player B (QA) | Adversarial player | Authored by QA agent: 12-15 probes interleaved with normal play |
-| Player C (UX) | First-time-feel player | Plays naturally, narrates observations: "I tried X and was surprised by Y", "the dice panel was where I expected", "I couldn't find the save button for 30s" |
+Both Player B (QA) and Player C (UX) need to communicate with the
+DM agent during the run.  Realistic options:
 
-## QA + UX review iteration
+- **Shared scratchpad file**: `e2e/results/scratchpad-<runId>.md`,
+  appended by each agent.  DM reads at beat boundaries.  Players
+  write friction observations as they happen.  Simple, durable,
+  reviewable.
+- **In-test chat**: agents use the runtime's own chat surface to
+  exchange notes ("DM, take 2 harm now" → DM applies it).  This is
+  realistic (matches how human groups coordinate) but mixes test
+  signal with assertion data.
 
-After this v2 plan:
-1. **QA agent**: technical re-review — does v2 close the gaps from
-   v1?  Are the time estimates now realistic?  Is the
-   coordinator-reclaim mechanic correct?
-2. **UX expert agent**: fresh review — read the runtime UI surface,
-   walk through the player personas, identify expected friction
-   points BEFORE the simulation runs.  Their pre-simulation
-   predictions become test assertions.
-3. Revise to v3 if needed
-4. User sign-off
-5. Execute
+Plan: scratchpad for test-meta communication, in-runtime chat for
+in-character communication.  Boundaries kept clean.
+
+## QA + UX iteration
+
+This v3 needs one more review pass:
+- QA agent: re-verifies the three v2 blockers (reclaim visibility,
+  concurrent race, Player C executability) are now addressed
+- UX agent: drafts Player D (Riley) persona for Phase 0.5
+
+Then execute.
 
 ## Success criteria
 
-- All seven phases (rolled into v2's 6 phase numbers) land with
-  green tests
-- The "shipped and broke immediately" scenario from QA's v1 review
-  is now caught by the Phase 4 reclaim-tests
-- The UX agent's predicted friction points are either fixed or
-  documented as known UX gaps for a future pass
-- Multi-session play: a save authored by the DM at end of session
-  1 can be loaded by the DM in session 2, reclaimed, and session 2
-  proceeds without state corruption
-- Git-snapshot: rolling back to any commit + loading produces the
-  same state the session had at that commit
+- All phases land green
+- The "shipped and broke immediately" scenarios are caught:
+  - Reload doesn't lose state (Phase 4)
+  - Reclaim isn't accidentally invoked by players (Phase 4)
+  - Concurrent reclaim resolves deterministically (Phase 4)
+  - Save corruption fails gracefully (Phase 5)
+  - Git rollback restores expected state (Phase 6)
+- Both DM and player perspectives have been exercised by UX-eval
+- Showstoppers found mid-run are fixed inline; minor are batched
+- Total test count grows by ~80-100 (mostly e2e)
+- No regressions in existing 473 unit / 41 e2e
 
 ## Time estimate
 
 | Phase | Estimate |
 |---|---|
+| 0 B1/B2/B3 | ✓ done |
+| 0.5 Player D persona | 0.5 hr (agent-authored) |
 | 1a serialization | 1.5 hr |
 | 1b apply-to-log | 2 hr |
 | 2a coordinator-reclaim | 1.5 hr |
-| 2b persistence UI | 2.5 hr |
-| 3 full-session simulation (with UX/QA personas inlined) | 3 hr |
-| 4 multi-session continuity | 4 hr |
+| 2b persistence UI | 4 hr |
+| 3 simulation run-1 | 3 hr |
+| 3.5 simulation run-2 (swap) | 3 hr |
+| 4 multi-session continuity | 5-6 hr |
 | 5 corruption recovery | 2 hr |
 | 6 git-snapshot | 2 hr |
-| **Total** | **18.5 hr** |
+| 7 triage | 1 hr |
+| **Total** | **~26-28 hr** |
 
-This is roughly two full work days.  Plan accordingly; this is not a
-"finish today" task.
+Three work days.  Plan accordingly.
 
 ## What this plan does NOT do
 
-- Persist to anything other than localStorage / downloadable JSON
-- Implement signature-based event authentication (the trust
-  improvement that would close the sync-response gossip hole)
-- Implement undo/redo within a session (different feature)
-- Address the "two peers diverged for hours and now have
-  conflicting histories" merge problem beyond what vector clocks
-  already provide
-- Commit to fixing the UX findings the UX agent surfaces (they
-  inform future work; this plan validates the runtime, not the
-  design system)
+- Persist to anything beyond localStorage / downloadable JSON
+- Implement signature-based event authentication
+- Implement undo/redo
+- Address the "two peers diverged for hours" merge problem
+  beyond what vector clocks provide
+- Commit to fixing the long-tail UX findings (significant +
+  minor + nit) the agents surface — those inform future work
+- Fix UX issues found mid-run unless they're test-blocking
