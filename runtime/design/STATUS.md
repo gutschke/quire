@@ -29,11 +29,11 @@ Full M2 retro retained below.
 - [ ] `<dm-rail>` (scene navigator + active-PC focus card)
 - [ ] `<dm-aside>` (roster-dominant + pinned NPCs + DM aide + AI console)
 - [x] Per-paragraph reveal with content-hash addressing + gutter pips (M3a.7, commits d32e360 / 2ac700e / 4423ed4 / 50bf471 — critic-driven fixes for hash length + cap + paced-disclosure framing)
-- [ ] DM scratch column in Dock with `'` hotkey
-- [ ] NPC pinning (`npc-pin` / `npc-unpin` materializers)
-- [ ] Thread-debt ladder in active-PC card
-- [ ] Caution rail on `dm/*` paths
-- [ ] Broadcast button (`broadcast-view` event)
+- [x] DM scratch column in Dock with `'` hotkey (M3a.8, commit 2c17e28 — `<dm-scratch>` region)
+- [x] NPC pinning (`npc-pin` / `npc-unpin` materializers) (M3a.8, commits 825c1a9 + 2150c22 — pin button on NPC page; pinned-NPC LIST lands with dm-aside in M3a.9)
+- [x] Thread-debt ladder in active-PC card (M3a.8, commit 2150c22 — selector on PC page; relocates to Rail's focus card with M3a.9)
+- [x] Caution rail on `dm/*` paths (M3a.8, commit f8a69ce)
+- [x] Broadcast button (`broadcast-view` event) (M3a.8, commits a1bc499 + cecf28b — DM scene-stage button + far-future-ts lock-out guard)
 
 **Process:**
 - [x] STATUS.md cadence rule decision — DROPPED honestly at M3a.0; this update is at the M3a.7 milestone-internal boundary, not per-commit.
@@ -42,7 +42,7 @@ Full M2 retro retained below.
 
 ## Next planned commit
 
-M3a.8 — DM cockpit affordances: scratch column, NPC pinning, thread-debt ladder, caution rail on `dm/*` paths, broadcast button.  These are independent materializer-only landings — each gates on its own materializer + tiny UI.  No new event-shape design (the kinds were registered in M1 P0-5; v:1 payloads validated).
+M3a.9 — `<dm-rail>` + `<dm-aside>` region extractions.  Pulls the pinned-NPC list, thread-debt summary, and AI console into stable DM-only regions per ui.md.  Also relocates the M3a.8 affordances that currently live on the character page (pin button, thread-debt selector) into their spec'd home.  Two new region modules + 1 facade slot rewire.  Expected to take quire-app.ts below the 2000-LOC soft cap as the affordances + render methods migrate.
 
 ---
 
