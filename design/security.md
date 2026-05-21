@@ -56,12 +56,23 @@ Soft-spoiler plaintext mode is opt-in for campaigns where DM-private content is 
 - **Key derivation:** passphrase → Argon2id → encryption key.
 - **CLI tooling:** `quire encrypt-dm` and `quire decrypt-dm` handle batch operations. The browser runtime can also decrypt on-the-fly given the passphrase, without a CLI round trip.
 
+## AI key storage
+
+AI provider API keys are persisted to `localStorage` on the DM's machine under `quire.ai.<provider>.apiKey`. The runtime's canonical-origin model (`play.quire.games`, SRI-pinned assets, no third-party JavaScript) prevents page-resident code from leaking the key — but the key is NOT encrypted at rest. Specifically:
+
+- A malicious **browser extension** with `storage` permission for the origin can read the key.
+- **DevTools** users see the key in plain text under Application → Storage.
+- **Browser clipboard managers** (CopyQ, Klipper, GPaste, macOS Universal Clipboard) retain a copy whenever the DM copies the key into the input.
+- **Self-hosted forks (mode 2)** inherit this layout without the canonical-origin protections; the fork's runtime owners are responsible for the key's safety in their deployment.
+
+This is documented residual risk, not a bug. The DM is treated as having control of their own machine. Production deployments may layer a per-user encryption-at-rest scheme (passphrase-derived key, libsodium SecretBox) over the localStorage layer if their threat model demands it; v1 does not.
+
 ## What forkers need to know
 
 A few practices every forker should follow:
 
 - Do not embed API keys in committed files. The runtime never asks for keys via campaign content; campaigns that prompt the user to paste an API key into a custom UI are suspect.
-- Do not include `<untrusted_content>` literal strings in raw content — the load-time validator will reject them. This guards against would-be prompt-injection forks.
+- Do not include `<untrusted_content>` literal strings or `<!--UC_CLOSE-->` sentinels in raw content. **Note (M1):** the load-time validator that will enforce this is scheduled for M3b alongside the AI broker upgrade. Until M3b ships, the prohibition is policy-only — comply via authorial discipline.
 - Do not put player-targeted Markdown inside `dm/` folders. The runtime will not surface them to players, but the encryption is for content the DM intends to keep hidden.
 - If you fork the runtime itself (mode 2), audit your `_headers` CSP, your AI broker, and your Markdown sanitizer. The published Quire releases pass a security review; your fork is your responsibility.
 
