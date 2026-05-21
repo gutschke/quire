@@ -66,6 +66,7 @@ import {
   type AiClient
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
+import { decideRoute } from './controllers/route-policy';
 import { KNOWN_EVENT_KINDS } from './core/state';
 import {
   extractJoinCode as extractJoinCodeHelper,
@@ -403,6 +404,20 @@ export class QuireApp extends LitElement {
       return;
     }
 
+    // M3a.4 (P-M3a-route-policy): centralized gating policy.
+    // Throws the appropriate error class based on the policy's
+    // tag so the existing catch block below converts to error
+    // state with the right wording.
+    const decision = decideRoute(route, this.sessionView);
+    if (decision.kind === 'deny') {
+      this._appState = {
+        kind: 'error',
+        message: decision.message,
+        details: decision.details
+      };
+      return;
+    }
+
     try {
       // Reuse already-loaded campaign if the slug matches.
       let campaign = this.getCurrentCampaign();
@@ -434,24 +449,9 @@ export class QuireApp extends LitElement {
         return;
       }
 
-      // Character layer (independent of episode/scene)
+      // Character layer (independent of episode/scene).  The
+      // DM-only NPC gate already ran via decideRoute above.
       if (route.kind === 'character') {
-        // DM-screen guard: NPC sheets carry dmNotes / signature /
-        // voice and are not safe to expose to players in an active
-        // session.  A non-coordinator who URL-hops to ?npc=foo gets
-        // an error rather than the sheet.  In solo mode (no
-        // session, or session not yet active) the gate is lifted —
-        // a solo reader is free to browse NPC content.
-        if (
-          route.characterKind === 'npc' &&
-          this.sessionView?.status === 'active' &&
-          !this.isCoordinator()
-        ) {
-          throw new CharacterLoadError(
-            'NPC sheets are only visible to the DM in an active session.',
-            `Requested NPC: ${route.characterId}`
-          );
-        }
         this._appState ={
           kind: 'loading',
           slug: route.characterId,
@@ -468,44 +468,7 @@ export class QuireApp extends LitElement {
         return;
       }
 
-      // R3-A: scene/episode routes are session-only.  Pre-session
-      // arrivals (someone clicked a URL the DM shared in chat) used
-      // to auto-render the scene, leaking story content to a
-      // not-yet-joined player.  Now we require an active session.
-      //
-      // - Pre-session: scene/episode routes are blocked; arrival
-      //   lands on the campaign view with a clear "join first"
-      //   message.  Solo browsing of scenes is gone — acceptable
-      //   trade for the leak fix.  A DM doing solo prep clicks
-      //   Host to become coordinator before navigating to scenes.
-      // - Active session, coordinator: full access.
-      // - Active session, non-coordinator: episode list refused;
-      //   scene access limited to revealed scenes (B5 gating).
-      const inActiveSession = this.sessionView?.status === 'active';
-      if (!inActiveSession && (route.kind === 'episode' || route.kind === 'scene')) {
-        throw new CampaignLoadError(
-          'Scenes and episodes are only visible inside an active session.  Click "Host session" if you are the DM, or paste a code from your DM to join.',
-          `Requested route: ${route.kind === 'scene' ? `${route.episode}/${route.scene}` : route.episode}`
-        );
-      }
-      const isNonCoordPlayer =
-        inActiveSession && !this.isCoordinator();
-      if (isNonCoordPlayer && route.kind === 'episode') {
-        throw new CampaignLoadError(
-          'Episode lists are only visible to the DM.  Wait for the DM to reveal a scene.',
-          `Requested episode: ${route.episode}`
-        );
-      }
-      if (isNonCoordPlayer && route.kind === 'scene') {
-        const fullPath = QuireApp.scenePathFor(route.episode, route.scene);
-        // M3a.1 — player-side reveal gate; reads filtered view.
-        if (!this.sessionView!.filteredShared.revealedScenes.includes(fullPath)) {
-          throw new CampaignLoadError(
-            'That scene has not been revealed by the DM yet.',
-            `Requested scene: ${route.episode}/${route.scene}`
-          );
-        }
-      }
+      // Scene + episode pre-session gates already ran above.
 
       // Episode layer
       let episode = this.getCurrentEpisode();
