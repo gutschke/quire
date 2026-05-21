@@ -3,8 +3,10 @@ import { EventLog } from './event-log';
 import {
   materialize,
   emptyState,
+  filterForViewer,
   KNOWN_EVENT_KINDS,
-  EVENT_PAYLOAD_V1
+  EVENT_PAYLOAD_V1,
+  type SessionState
 } from './state';
 
 describe('materialize — empty', () => {
@@ -257,6 +259,129 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
 
   it('exports EVENT_PAYLOAD_V1 = 1', () => {
     expect(EVENT_PAYLOAD_V1).toBe(1);
+  });
+});
+
+describe('filterForViewer (P0-4)', () => {
+  function dmState(): SessionState {
+    const s = emptyState();
+    s.coordHolders.add('dm');
+    s.coordinator = 'dm';
+    s.peers['dm'] = { peerId: 'dm', name: 'DM', joinedAt: 1 };
+    s.peers['alice'] = { peerId: 'alice', name: 'Alice', joinedAt: 2 };
+    s.peers['bob'] = { peerId: 'bob', name: 'Bob', joinedAt: 3 };
+    // Populate DM-only fields with synthetic content (materializers
+    // for these arrive in M3a/M3b; the test constructs them by hand).
+    s.threadDebt['alice'] = 'noticed';
+    s.threadDebt['bob'] = 'quiet';
+    s.pinnedNpcs = ['yui-tanaka', 'reggie-okeke'];
+    s.scratchNotes.push({
+      peerId: 'dm', ts: 100, text: 'remember the cable', scenePath: 'scenes/01.md'
+    });
+    s.aiAudit.push({
+      peerId: 'dm', ts: 110, kind: 'prompt', promptHash: 'abc', tokensIn: 50
+    });
+    // Map state with a partial reveal mask.
+    s.mapBlobs['scenes/sfo-gate.png'] = [
+      { id: 'pc1', label: 'PC1', x: 100, y: 200 },
+      { id: 'pc2', label: 'PC2', x: 150, y: 220 },
+      { id: 'secret', label: 'hidden trap', x: 300, y: 400 }
+    ];
+    s.mapBlobReveals['scenes/sfo-gate.png'] = new Set(['pc1', 'pc2']);
+    // Player-visible fields the filter should leave alone:
+    s.revealedScenes = ['scenes/01.md'];
+    s.revealedParagraphs['scenes/01.md'] = new Set(['hash1', 'hash2']);
+    s.diceRolls.push({ peerId: 'alice', ts: 200, expression: '2d6+1', result: 9, dice: [4, 4] });
+    s.chat.push({ peerId: 'alice', ts: 210, text: 'hello' });
+    s.raisedHands.add('alice');
+    s.broadcastView = { stagePath: 'scenes/01.md', ts: 220 };
+    return s;
+  }
+
+  it('DM (coord-holder) sees the full state unchanged', () => {
+    const s = dmState();
+    const filtered = filterForViewer(s, 'dm');
+    expect(filtered).toBe(s); // strict identity — no allocation
+    expect(filtered.threadDebt['alice']).toBe('noticed');
+    expect(filtered.pinnedNpcs).toEqual(['yui-tanaka', 'reggie-okeke']);
+    expect(filtered.scratchNotes).toHaveLength(1);
+    expect(filtered.aiAudit).toHaveLength(1);
+    expect(filtered.mapBlobs['scenes/sfo-gate.png']).toHaveLength(3); // all blobs
+  });
+
+  it('non-coord viewer (player) sees DM-only fields wiped', () => {
+    const s = dmState();
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered).not.toBe(s); // new object
+    expect(filtered.threadDebt).toEqual({});
+    expect(filtered.pinnedNpcs).toEqual([]);
+    expect(filtered.scratchNotes).toEqual([]);
+    expect(filtered.aiAudit).toEqual([]);
+  });
+
+  it('non-coord viewer sees player-visible fields preserved', () => {
+    const s = dmState();
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered.peers['alice']).toBeDefined();
+    expect(filtered.peers['dm']).toBeDefined(); // roster includes DM
+    expect(filtered.coordinator).toBe('dm');
+    expect(filtered.coordHolders.has('dm')).toBe(true);
+    expect(filtered.revealedScenes).toEqual(['scenes/01.md']);
+    expect(filtered.revealedParagraphs['scenes/01.md']).toEqual(new Set(['hash1', 'hash2']));
+    expect(filtered.diceRolls).toHaveLength(1);
+    expect(filtered.chat).toHaveLength(1);
+    expect(filtered.raisedHands.has('alice')).toBe(true);
+    expect(filtered.broadcastView?.stagePath).toBe('scenes/01.md');
+  });
+
+  it('non-coord viewer sees only revealed map blobs', () => {
+    const s = dmState();
+    const filtered = filterForViewer(s, 'alice');
+    const blobs = filtered.mapBlobs['scenes/sfo-gate.png'];
+    expect(blobs).toBeDefined();
+    expect(blobs).toHaveLength(2); // pc1 + pc2; 'secret' filtered out
+    expect(blobs.map((b) => b.id).sort()).toEqual(['pc1', 'pc2']);
+  });
+
+  it('non-coord viewer sees no blobs when reveal mask is empty', () => {
+    const s = dmState();
+    s.mapBlobReveals['scenes/sfo-gate.png'] = new Set(); // empty reveal set
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered.mapBlobs['scenes/sfo-gate.png']).toBeUndefined();
+  });
+
+  it('non-coord viewer sees no blobs for scenes without any reveal mask', () => {
+    const s = dmState();
+    s.mapBlobs['scenes/secret-room.png'] = [
+      { id: 'trap', label: 'pit', x: 0, y: 0 }
+    ];
+    // No mapBlobReveals entry for secret-room
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered.mapBlobs['scenes/secret-room.png']).toBeUndefined();
+  });
+
+  it('does not mutate the source state', () => {
+    const s = dmState();
+    filterForViewer(s, 'alice');
+    // Source state still has all the DM-only content
+    expect(s.threadDebt['alice']).toBe('noticed');
+    expect(s.scratchNotes).toHaveLength(1);
+    expect(s.mapBlobs['scenes/sfo-gate.png']).toHaveLength(3);
+  });
+
+  it('handles a viewer with no roster entry (defensive)', () => {
+    const s = dmState();
+    // unknown viewer is treated as non-coord
+    const filtered = filterForViewer(s, 'unknown-peer');
+    expect(filtered.scratchNotes).toEqual([]);
+  });
+
+  it('handles empty state cleanly', () => {
+    const s = emptyState();
+    const filtered = filterForViewer(s, 'anyone');
+    expect(filtered.peers).toEqual({});
+    expect(filtered.scratchNotes).toEqual([]);
+    expect(filtered.mapBlobs).toEqual({});
   });
 });
 

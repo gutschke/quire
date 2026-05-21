@@ -51,6 +51,62 @@ export interface CampaignRef {
   ref: string;
 }
 
+/**
+ * Per-PC thread-debt rung.  Render-gated DM-only (see filterForViewer).
+ * Materializer ships in M3a (P2-5).
+ */
+export type ThreadDebtLevel =
+  | 'quiet'
+  | 'noticed'
+  | 'watched'
+  | 'pushing-back'
+  | 'hunted';
+
+/**
+ * DM scratch note — quick-jot during play, ingested by the
+ * living-document AI post-session.  Render-gated DM-only AND
+ * event-stripped from player save exports (see
+ * `serializeSessionForViewer` in persistence.ts, lands in M3a).
+ * Materializer ships in M3a (P2-3).
+ */
+export interface ScratchNote {
+  peerId: PeerId;
+  ts: number;
+  text: string;
+  scenePath?: string;
+}
+
+/**
+ * Hash-chain audit entry for AI broker calls.  The full prompt and
+ * response text lives in IndexedDB keyed by hash on the DM's
+ * machine; only the chain head + token counts replicate via events.
+ * Render-gated DM-only AND event-stripped from player save exports.
+ * Materializer ships in M3b (P2-7).
+ */
+export interface AiAuditEntry {
+  peerId: PeerId;
+  ts: number;
+  kind: 'prompt' | 'response' | 'accept' | 'reject';
+  responseId?: string;
+  promptHash?: string;
+  responseHash?: string;
+  prevHash?: string;
+  tokensIn?: number;
+  tokensOut?: number;
+  category?: string;
+}
+
+/**
+ * Single blob on a schematic map.  Materializer ships in M6 (P5-3).
+ */
+export interface MapBlob {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  kind?: 'token' | 'note' | 'hazard';
+}
+
 export interface SessionState {
   peers: Record<PeerId, PeerPresence>;
   /**
@@ -87,6 +143,67 @@ export interface SessionState {
   chat: ChatMessage[];
   pcEdits: Record<string, Record<string, unknown>>;
   notes: Note[];
+
+  // ── M1+ fields (materializers land per-feature) ──
+
+  /**
+   * Block-hash set of revealed paragraphs per scene.  See
+   * `redesign-plan.md` § "Event vocabulary additions" for the
+   * content-addressed hashing rationale.  Materializer ships in
+   * M3a (P2-2).  Player-visible (no DM-only gating); the player
+   * Stage filters its rendered DOM by this set.
+   */
+  revealedParagraphs: Record<string /*scenePath*/, Set<string /*blockHash*/>>;
+
+  /**
+   * Per-PC thread-debt rung.  Authoritative shared state for co-DM
+   * continuity; render-gated DM-only.  Materializer ships in M3a (P2-5).
+   */
+  threadDebt: Record<string /*pcId*/, ThreadDebtLevel>;
+
+  /**
+   * Ordered list of NPC ids the DM has pinned for quick reference.
+   * Shared (co-DM continuity); render-gated DM-only.  Materializer
+   * ships in M3a (P2-4).
+   */
+  pinnedNpcs: string[];
+
+  /**
+   * Map blobs per scene.  Shared; DM places, players see only
+   * revealed blobs.  Materializer ships in M6 (P5-3).
+   */
+  mapBlobs: Record<string /*scenePath*/, MapBlob[]>;
+  /**
+   * Per-scene set of blob ids that are currently revealed to
+   * players.  Materializer ships in M6 (P5-3).
+   */
+  mapBlobReveals: Record<string /*scenePath*/, Set<string /*blobId*/>>;
+
+  /**
+   * Most recent broadcast-view event (LWW single slot).  Players
+   * navigate to this when it changes.  Materializer ships in M3a (P2-11).
+   */
+  broadcastView?: { stagePath: string; tab?: string; ts: number };
+
+  /**
+   * Peers with hand currently raised (self-only authorship).
+   * Player-visible.  Materializer ships in M2 (P1-7).
+   */
+  raisedHands: Set<PeerId>;
+
+  /**
+   * DM scratch notes (chronological).  Authoritative shared
+   * (events.jsonl needs them for AI ingestion), render-gated
+   * DM-only, AND event-stripped from player save exports.
+   * Materializer ships in M3a (P2-3).
+   */
+  scratchNotes: ScratchNote[];
+
+  /**
+   * AI audit chain entries.  Render-gated DM-only, event-stripped
+   * from player save exports.  Materializer ships in M3b (P2-7).
+   */
+  aiAudit: AiAuditEntry[];
 }
 
 export function emptyState(): SessionState {
@@ -97,7 +214,74 @@ export function emptyState(): SessionState {
     diceRolls: [],
     chat: [],
     pcEdits: {},
-    notes: []
+    notes: [],
+    // M1+ fields — materializers land per-feature; until then, empty.
+    revealedParagraphs: {},
+    threadDebt: {},
+    pinnedNpcs: [],
+    mapBlobs: {},
+    mapBlobReveals: {},
+    raisedHands: new Set(),
+    scratchNotes: [],
+    aiAudit: []
+  };
+}
+
+/**
+ * Render-side filter that strips DM-only fields when the viewing peer
+ * is NOT in the coordinator-holders set.  Use this at the boundary
+ * between SessionController and UI region components — every region
+ * MUST read from a filtered `SessionView`, never from the raw
+ * `SessionState`.  Centralizing the gate here prevents per-region
+ * regressions where a new field forgets to be gated.
+ *
+ * The complementary save-export filter (`serializeSessionForViewer`
+ * in persistence.ts) handles the EVENT-LEVEL stripping for player
+ * save exports; that lands in M3a alongside the first DM-only event.
+ *
+ * Note: M3a/M3b/M4/M5/M6 materializers populate the DM-only fields.
+ * At M1, every DM-only field is empty (no materializers yet), so
+ * this filter is effectively a no-op behaviorally — but its contract
+ * is locked in now.
+ *
+ * Visibility classes:
+ *   - Always-visible: peers, campaign, coordinator, coordHolders,
+ *     revealedScenes, revealedParagraphs, diceRolls, chat, pcEdits,
+ *     notes, raisedHands, broadcastView, mapBlobs (filtered),
+ *     mapBlobReveals.
+ *   - DM-only (stripped for non-coord-holders): threadDebt,
+ *     pinnedNpcs, scratchNotes, aiAudit.
+ *   - Reveal-mask-gated (DM sees all, players see only revealed):
+ *     mapBlobs (filtered through mapBlobReveals).
+ */
+export function filterForViewer(
+  state: SessionState,
+  viewerPeerId: PeerId
+): SessionState {
+  if (state.coordHolders.has(viewerPeerId)) {
+    return state; // DM (or past coordinator) sees everything
+  }
+  // Filter mapBlobs by the reveal mask, scene-by-scene.
+  const filteredMapBlobs: Record<string, MapBlob[]> = {};
+  for (const [scenePath, blobs] of Object.entries(state.mapBlobs)) {
+    const reveals = state.mapBlobReveals[scenePath];
+    if (reveals && reveals.size > 0) {
+      const visible = blobs.filter((b) => reveals.has(b.id));
+      if (visible.length > 0) filteredMapBlobs[scenePath] = visible;
+    }
+    // If no reveals for the scene, players see no blobs.  Skipping
+    // the assignment leaves the entry absent (cleaner than an empty
+    // array, signals "nothing here" semantically).
+  }
+  return {
+    ...state,
+    // DM-only fields wiped:
+    threadDebt: {},
+    pinnedNpcs: [],
+    scratchNotes: [],
+    aiAudit: [],
+    // Reveal-mask-gated:
+    mapBlobs: filteredMapBlobs
   };
 }
 
