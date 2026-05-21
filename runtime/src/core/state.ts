@@ -326,6 +326,23 @@ interface SceneRevealPayload {
   scenePath: string;
 }
 
+interface SceneRevealParagraphPayload {
+  v: 1;
+  scenePath: string;
+  /** 12-hex-char content hash from `blockHash` in markdown.ts. */
+  blockHash: string;
+  /** Non-authoritative UI hint; materializer ignores it. */
+  paragraphIndex?: number;
+}
+
+/**
+ * Validate a block-hash payload field.  Must be exactly 12 lowercase
+ * hex characters (matching the {@link blockHash} output format).
+ */
+function isBlockHash(s: unknown): s is string {
+  return typeof s === 'string' && /^[0-9a-f]{12}$/.test(s);
+}
+
 interface DiceRollPayload {
   expression: string;
   result: number;
@@ -776,8 +793,41 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
       state.raisedHands.delete(event.peerId);
       break;
     }
-    case 'scene-reveal-paragraph':
-    case 'scene-unreveal-paragraph':
+    case 'scene-reveal-paragraph': {
+      // Coord-authored per-block reveal.  Block identity is the
+      // 12-hex-char content hash (`blockHash` in markdown.ts);
+      // see redesign-plan.md § "Event vocabulary additions" for
+      // the content-addressing rationale.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<SceneRevealParagraphPayload>;
+      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
+      if (!isBlockHash(p.blockHash)) break;
+      let set = state.revealedParagraphs[p.scenePath];
+      if (!set) {
+        set = new Set<string>();
+        state.revealedParagraphs[p.scenePath] = set;
+      }
+      set.add(p.blockHash);
+      break;
+    }
+    case 'scene-unreveal-paragraph': {
+      // DM-revoke of a per-block reveal.  Symmetric to the reveal
+      // path above; deletes from the set and prunes the empty set
+      // so the keyed map doesn't grow unboundedly across sessions.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<SceneRevealParagraphPayload>;
+      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
+      if (!isBlockHash(p.blockHash)) break;
+      const set = state.revealedParagraphs[p.scenePath];
+      if (!set) break;
+      set.delete(p.blockHash);
+      if (set.size === 0) {
+        delete state.revealedParagraphs[p.scenePath];
+      }
+      break;
+    }
     case 'thread-debt-set':
     case 'npc-pin':
     case 'npc-unpin':

@@ -108,6 +108,170 @@ describe('materialize — scene reveal', () => {
   });
 });
 
+describe('materialize — scene-reveal-paragraph (P2-2)', () => {
+  const VALID_HASH = '0123456789ab';
+  const ANOTHER_HASH = 'abcdef012345';
+
+  it('coordinator can reveal a block in a scene', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'episodes/001/scenes/01.md',
+      blockHash: VALID_HASH
+    });
+    const state = materialize(log.events());
+    expect(state.revealedParagraphs['episodes/001/scenes/01.md']).toEqual(
+      new Set([VALID_HASH])
+    );
+  });
+
+  it('non-coordinator paragraph reveal is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'x.md',
+      blockHash: VALID_HASH
+    });
+    alice.apply(ev);
+    expect(materialize(alice.events()).revealedParagraphs).toEqual({});
+  });
+
+  it('payload without v:1 is rejected', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      scenePath: 'x.md',
+      blockHash: VALID_HASH
+    } as unknown as { v: 1; scenePath: string; blockHash: string });
+    expect(materialize(log.events()).revealedParagraphs).toEqual({});
+  });
+
+  it('malformed blockHash (wrong length or non-hex) is rejected', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'x.md',
+      blockHash: 'too-short'
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'x.md',
+      blockHash: 'g123456789ab' // 'g' is not hex
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'x.md',
+      blockHash: 'ABCDEF012345' // uppercase rejected
+    });
+    expect(materialize(log.events()).revealedParagraphs).toEqual({});
+  });
+
+  it('multiple block reveals accumulate per scene', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: ANOTHER_HASH
+    });
+    const state = materialize(log.events());
+    expect(state.revealedParagraphs['a.md']).toEqual(
+      new Set([VALID_HASH, ANOTHER_HASH])
+    );
+  });
+
+  it('re-revealing an already-revealed block is idempotent', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    expect(materialize(log.events()).revealedParagraphs['a.md']).toEqual(
+      new Set([VALID_HASH])
+    );
+  });
+
+  it('scene-unreveal-paragraph removes the hash and prunes empty sets', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    log.append('scene-unreveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    const state = materialize(log.events());
+    expect(state.revealedParagraphs['a.md']).toBeUndefined();
+    expect(state.revealedParagraphs).toEqual({});
+  });
+
+  it('scene-unreveal-paragraph leaves other blocks in the set intact', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    log.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: ANOTHER_HASH
+    });
+    log.append('scene-unreveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    expect(materialize(log.events()).revealedParagraphs['a.md']).toEqual(
+      new Set([ANOTHER_HASH])
+    );
+  });
+
+  it('non-coordinator scene-unreveal-paragraph is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    alice.append('scene-reveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    bob.apply(alice.events()[1]);
+    const ev = bob.append('scene-unreveal-paragraph', {
+      v: 1,
+      scenePath: 'a.md',
+      blockHash: VALID_HASH
+    });
+    alice.apply(ev);
+    expect(materialize(alice.events()).revealedParagraphs['a.md']).toEqual(
+      new Set([VALID_HASH])
+    );
+  });
+});
+
 describe('materialize — dice rolls', () => {
   it('appends rolls in causal order', () => {
     const log = new EventLog('alice');
