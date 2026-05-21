@@ -26,8 +26,8 @@ Full M2 retro retained below.
 - [x] `<scene-stage>` renders scene-strip frontmatter (M3a.6c, commit a049c6b)
 
 **DM cockpit (the actual M3a scope from execution-plan.md):**
-- [ ] `<dm-rail>` (scene navigator + active-PC focus card)
-- [ ] `<dm-aside>` (roster-dominant + pinned NPCs + DM aide + AI console)
+- [x] `<dm-rail>` (scene navigator) — M3a.9, commit 731146e.  Active-PC focus card deferred (no active-PC concept; M3a polish / M3b)
+- [x] `<dm-aside>` (pinned NPCs + thread-debt summary) — M3a.9, commit 731146e.  Roster/chat/AI panel remain in the player aside cluster; DM aide is a separate region above them
 - [x] Per-paragraph reveal with content-hash addressing + gutter pips (M3a.7, commits d32e360 / 2ac700e / 4423ed4 / 50bf471 — critic-driven fixes for hash length + cap + paced-disclosure framing)
 - [x] DM scratch column in Dock with `'` hotkey (M3a.8, commit 2c17e28 — `<dm-scratch>` region)
 - [x] NPC pinning (`npc-pin` / `npc-unpin` materializers) (M3a.8, commits 825c1a9 + 2150c22 — pin button on NPC page; pinned-NPC LIST lands with dm-aside in M3a.9)
@@ -42,7 +42,12 @@ Full M2 retro retained below.
 
 ## Next planned commit
 
-M3a.9 — `<dm-rail>` + `<dm-aside>` region extractions.  Pulls the pinned-NPC list, thread-debt summary, and AI console into stable DM-only regions per ui.md.  Also relocates the M3a.8 affordances that currently live on the character page (pin button, thread-debt selector) into their spec'd home.  Two new region modules + 1 facade slot rewire.  Expected to take quire-app.ts below the 2000-LOC soft cap as the affordances + render methods migrate.
+M3a.10 — gate: 4 reviewers (TTRPG-craft, Engine, Security, Adversarial).  Each reviewer evaluates the M3a milestone independently and votes `pass | ship-with-followups | block`; severity-floor authority on critical findings.  Open items for the gate brief:
+
+- quire-app.ts at 2749 LOC vs 2000 soft cap.  Mitigation: 9 regions extracted in M3a (session-bar, ai-panel, route-policy, dm-scratch, dm-aside, dm-rail, player-rail-as-bound, plus pre-existing player-rail/aside/dice-dock/scene-stage/chat).
+- DM character-page affordances (pin button, thread-debt selector) still live in quire-app.renderDmCharacterAffordances pending relocation to the cockpit regions in M3a polish.
+- SCRATCH_NOTE_TEXT_CAP = 5000 chars is invented; document or shrink (decided at gate).
+- Hostile tests for serialized-save scratch-note stripping land in the gate's adversarial pass.
 
 ---
 
