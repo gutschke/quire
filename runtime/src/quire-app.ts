@@ -13,6 +13,7 @@ import './ui/shell/quire-aside';
 import './ui/shell/quire-dock';
 import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
+import './ui/regions/player-aside';
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -637,78 +638,35 @@ export class QuireApp extends LitElement {
    * Helps roleplay continuity ("wait, who plays Yui?").  Toggleable
    * so the bar doesn't dominate the screen when not needed.
    */
+  /**
+   * Roster panel delegated to <player-aside> region (M2.5, P1-3).
+   * @state fields (showRoster, renameEditing, renameDraft) stay on
+   * QuireApp; the component receives them as @property and emits
+   * callback events to mutate them.  beginRename / submitRename
+   * stay as private methods invoked by the callback handlers.
+   */
   private renderRosterPanel(): TemplateResult {
-    const v = this.sessionView;
-    if (!v || v.status !== 'active') return html``;
-    const peers = Object.values(v.shared.peers).filter(
-      (p) => p.leftAt === undefined
-    );
-    if (peers.length === 0) return html``;
     return html`
-      <section class="card roster-panel">
-        <div class="roster-head">
-          <h2>
-            Roster
-            <span class="roster-count">(${peers.length})</span>
-          </h2>
-          <button
-            type="button"
-            class="roster-toggle"
-            @click=${() => {
-              this.showRoster = !this.showRoster;
-            }}
-          >
-            ${this.showRoster ? 'Hide' : 'Show'}
-          </button>
-        </div>
-        ${this.showRoster
-          ? html`
-              <ul class="roster-list">
-                ${peers.map((p) => this.renderRosterRow(p))}
-              </ul>
-              ${this.renderRenameForm()}
-            `
-          : nothing}
-      </section>
-    `;
-  }
-
-  private renderRosterRow(
-    peer: { peerId: string; name?: string; character?: string }
-  ): TemplateResult {
-    const v = this.sessionView!;
-    const isSelf = peer.peerId === v.peerId;
-    const isDm = v.shared.coordinator === peer.peerId;
-    const localIsDm = this.isCoordinator();
-    const canKick = localIsDm && !isSelf && !isDm;
-    const name = peer.name ?? '(unnamed)';
-    return html`
-      <li class="roster-row ${isSelf ? 'roster-row-self' : ''}">
-        ${isDm ? html`<span class="roster-dm-tag">DM</span>` : nothing}
-        <span class="roster-name">${name}</span>
-        ${peer.character
-          ? html`<span class="roster-char">${peer.character}</span>`
-          : nothing}
-        ${isSelf
-          ? html`<button
-              type="button"
-              class="roster-edit"
-              @click=${() => this.beginRename()}
-            >
-              edit
-            </button>`
-          : nothing}
-        ${canKick
-          ? html`<button
-              type="button"
-              class="roster-kick"
-              title="Remove this peer from the roster (use if they've left without disconnecting cleanly)"
-              @click=${() => this.kickPeer(peer.peerId, name)}
-            >
-              remove
-            </button>`
-          : nothing}
-      </li>
+      <player-aside
+        .sessionView=${this.sessionView}
+        .localIsCoordinator=${this.isCoordinator()}
+        .showRoster=${this.showRoster}
+        .renameEditing=${this.renameEditing}
+        .renameDraft=${this.renameDraft}
+        .onToggleRoster=${() => {
+          this.showRoster = !this.showRoster;
+        }}
+        .onBeginRename=${() => this.beginRename()}
+        .onCancelRename=${() => {
+          this.renameEditing = false;
+        }}
+        .onSubmitRename=${() => this.submitRename()}
+        .onRenameDraftChange=${(d: { name: string; character: string }) => {
+          this.renameDraft = d;
+        }}
+        .onKickPeer=${(peerId: string, name: string) =>
+          this.kickPeer(peerId, name)}
+      ></player-aside>
     `;
   }
 
@@ -716,60 +674,6 @@ export class QuireApp extends LitElement {
     if (!this.session) return;
     if (!window.confirm(`Remove ${name} from the roster?`)) return;
     this.session.kickPeer(peerId);
-  }
-
-  private renderRenameForm(): TemplateResult {
-    if (!this.renameEditing) return html``;
-    return html`
-      <form
-        class="rename-form"
-        @submit=${(e: Event) => {
-          e.preventDefault();
-          this.submitRename();
-        }}
-      >
-        <label>
-          <span>Your name</span>
-          <input
-            type="text"
-            .value=${this.renameDraft.name}
-            maxlength="80"
-            @input=${(e: Event) => {
-              this.renameDraft = {
-                ...this.renameDraft,
-                name: (e.target as HTMLInputElement).value
-              };
-            }}
-          />
-        </label>
-        <label>
-          <span>Character / status</span>
-          <input
-            type="text"
-            .value=${this.renameDraft.character}
-            maxlength="80"
-            placeholder="e.g. Yui Tanaka, or Tim (afk)"
-            @input=${(e: Event) => {
-              this.renameDraft = {
-                ...this.renameDraft,
-                character: (e.target as HTMLInputElement).value
-              };
-            }}
-          />
-        </label>
-        <div class="rename-actions">
-          <button
-            type="button"
-            @click=${() => {
-              this.renameEditing = false;
-            }}
-          >
-            Cancel
-          </button>
-          <button type="submit">Save</button>
-        </div>
-      </form>
-    `;
   }
 
   private beginRename(): void {
