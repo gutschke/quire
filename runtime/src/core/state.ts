@@ -146,6 +146,26 @@ function isPlainObjectPayload(p: unknown): p is Record<string, unknown> {
   return !!p && typeof p === 'object' && !Array.isArray(p);
 }
 
+/**
+ * Set of event kinds the materializer knows how to handle.  Kept in
+ * sync with the switch below.  Used by persistence to flag
+ * unknown-kind events in a save (forward-compat: still applied to
+ * the log so they replicate, but counted so the loader can warn
+ * "this save contains events your version doesn't understand").
+ */
+export const KNOWN_EVENT_KINDS = new Set([
+  'peer-join',
+  'peer-leave',
+  'coordinator-claim',
+  'coordinator-yield',
+  'coordinator-reclaim',
+  'scene-reveal',
+  'dice-roll',
+  'chat',
+  'pc-edit',
+  'note'
+]);
+
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   switch (event.kind) {
     case 'peer-join': {
@@ -168,6 +188,30 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     }
     case 'coordinator-yield': {
       if (state.coordinator === event.peerId) state.coordinator = undefined;
+      break;
+    }
+    case 'coordinator-reclaim': {
+      // Unlike coordinator-claim ("first claim wins"), reclaim is
+      // unconditional: the issuing peer becomes coordinator.  The
+      // R2.1 cross-check in Peer.handleMessage prevents non-DM
+      // forgery on the wire; here we trust that the event reached
+      // us legitimately.  Synthesizes a system chat entry as the
+      // audit trail so every peer sees "who took over from whom."
+      if (!isPlainObjectPayload(event.payload)) break;
+      const p = event.payload as { fromPeerId?: unknown };
+      const fromPeerId =
+        typeof p.fromPeerId === 'string' && p.fromPeerId.length > 0
+          ? p.fromPeerId
+          : state.coordinator;
+      state.coordinator = event.peerId;
+      const auditText = fromPeerId
+        ? `[system] ${event.peerId} took over as coordinator from ${fromPeerId}`
+        : `[system] ${event.peerId} took over as coordinator`;
+      state.chat.push({
+        peerId: event.peerId,
+        ts: event.ts,
+        text: auditText
+      });
       break;
     }
     case 'scene-reveal': {

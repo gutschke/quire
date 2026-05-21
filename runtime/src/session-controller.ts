@@ -15,6 +15,7 @@
  */
 
 import { Peer } from './core/peer';
+import type { QuireEvent } from './core/event-log';
 import type { Transport, Unsubscribe } from './core/transport';
 import type { SessionState as SharedState } from './core/state';
 import { emptyState } from './core/state';
@@ -78,6 +79,43 @@ export class SessionController {
       shared: this.peer ? this.peer.state() : emptyState(),
       error: this.error
     };
+  }
+
+  /**
+   * Snapshot the current event log for serialization.  Returns an
+   * empty array when no session is active (solo mode never builds
+   * an event log).
+   */
+  getEvents(): readonly QuireEvent[] {
+    return this.peer ? this.peer.events() : [];
+  }
+
+  /**
+   * Apply a previously-saved event sequence to the current log.
+   * Used by Load to rehydrate a session.  Caller is responsible for
+   * ensuring the session is active first.  Returns the number of
+   * events that were applied (vs duplicates / rejects, which are
+   * counted elsewhere by applySaveToLog).
+   */
+  applyEvents(events: readonly QuireEvent[]): number {
+    if (!this.peer) return 0;
+    let applied = 0;
+    for (const e of events) {
+      if (this.peer.applyEvent(e)) applied++;
+    }
+    if (applied > 0) this.notify();
+    return applied;
+  }
+
+  /**
+   * Issue a coordinator-reclaim event.  Caller is responsible for
+   * gating this behind a deliberate UI confirmation.  No-op when
+   * not in an active session.
+   */
+  reclaimCoordinator(): void {
+    if (!this.peer) return;
+    this.peer.reclaimCoordinator();
+    this.notify();
   }
 
   subscribe(listener: SessionListener): () => void {

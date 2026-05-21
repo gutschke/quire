@@ -24,6 +24,18 @@ import {
 } from './character-edits';
 import { callAnthropic, AnthropicError } from './ai/anthropic';
 import { callGemini, GeminiError } from './ai/gemini';
+import {
+  serializeSession,
+  stringifySave,
+  parseSaveDocument,
+  type SaveDocument,
+  type LoadResult
+} from './persistence';
+
+const SAVE_STORAGE_PREFIX = 'quire.save.';
+const SAVE_AUTOSAVE_DEBOUNCE_MS = 1500;
+const SAVE_QUOTA_WARN_BYTES = 1_000_000;
+const SAVE_QUOTA_REFUSE_BYTES = 4_000_000;
 
 export type AiProvider = 'claude' | 'gemini';
 
@@ -128,6 +140,23 @@ type AppState =
  */
 export function normalizeSlug(slug: string): string {
   return slug.endsWith('@main') ? slug.slice(0, -'@main'.length) : slug;
+}
+
+/**
+ * Render a human-friendly relative timestamp ("2 minutes ago", "3
+ * days ago") for the resume-prompt + save-status messages.
+ */
+function formatTimeAgo(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return 'recently';
+  const diffMs = Date.now() - then;
+  const min = Math.floor(diffMs / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hr / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function isAbortError(e: unknown): boolean {
@@ -455,6 +484,94 @@ export class QuireApp extends LitElement {
     .session-bar.session-error {
       border-color: light-dark(#cc8888, #884444);
       background: light-dark(#fcf4f4, #221a1a);
+    }
+
+    .session-load-label {
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      font-size: 0.85em;
+    }
+
+    .session-load-label input[type='file'] {
+      display: none;
+    }
+
+    .reclaim-button {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#bb6a3a, #87481c);
+      border-radius: 4px;
+      background: light-dark(#fdf0d0, #2a1f10);
+      color: light-dark(#7a4010, #d4885c);
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+
+    .reclaim-modal {
+      margin: 0.5rem 0;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#bb6a3a, #87481c);
+      border-radius: 6px;
+      background: light-dark(#fdf6e8, #221a10);
+    }
+
+    .reclaim-modal-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .reclaim-modal-actions button {
+      padding: 0.25rem 0.75rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .reclaim-button-confirm {
+      border-color: light-dark(#bb6a3a, #87481c) !important;
+      background: light-dark(#fdf0d0, #2a1f10) !important;
+      font-weight: 600;
+    }
+
+    .resume-prompt {
+      margin: 0 0 1rem;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#9bb09b, #4a6a4a);
+      border-radius: 6px;
+      background: light-dark(#f4faf4, #1a221a);
+    }
+
+    .resume-prompt-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .resume-prompt-actions button {
+      padding: 0.25rem 0.75rem;
+      border: 1px solid light-dark(#ccc, #444);
+      border-radius: 4px;
+      background: light-dark(#f4f4f4, #222);
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .save-status {
+      font-size: 0.85em;
+      color: light-dark(#555, #aaa);
+      width: 100%;
+    }
+
+    .save-status.save-error {
+      color: light-dark(#a01010, #ff7070);
     }
 
     .broker-badge {
@@ -812,6 +929,15 @@ export class QuireApp extends LitElement {
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
   @state() chatDraft: string = '';
+  // Persistence UI state
+  @state() saveStatus: { kind: 'idle' | 'saving' | 'saved' | 'error'; message?: string } =
+    { kind: 'idle' };
+  @state() loadStatus: { kind: 'idle' | 'loading' | 'loaded' | 'error'; message?: string } =
+    { kind: 'idle' };
+  @state() resumePromptDoc: SaveDocument | null = null;
+  @state() reclaimConfirmShown: boolean = false;
+  private autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private autosaveQuotaWarned: boolean = false;
   @state() aiProvider: AiProvider = 'claude';
   @state() aiApiKeys: Record<AiProvider, string> = { claude: '', gemini: '' };
   @state() aiModels: Record<AiProvider, string> = {
@@ -850,6 +976,9 @@ export class QuireApp extends LitElement {
     this.session = new SessionController(this.sessionFactory);
     this.unsubscribeSession = this.session.subscribe((v) => {
       this.sessionView = v;
+      // Debounced autosave to localStorage whenever the session state
+      // changes — covers new events from any peer.
+      if (v.status === 'active') this.scheduleAutosave();
     });
     // Hydrate AI settings from localStorage if available.  Wrapped in
     // a try because localStorage can throw in some sandboxed contexts.
@@ -926,6 +1055,11 @@ export class QuireApp extends LitElement {
 
       if (route.kind === 'campaign') {
         this.appState = { kind: 'campaign', campaign };
+        // Surface the Resume-previous-session prompt when an autosave
+        // exists for this campaign.  The prompt is dismissable and
+        // only fires when arriving on the campaign view (not on
+        // sub-routes — we don't want to interrupt episode/scene reads).
+        this.checkResumePrompt();
         return;
       }
 
@@ -1644,7 +1778,142 @@ export class QuireApp extends LitElement {
               : `${peerCount} peers`}
         </span>
         ${brokerBadge}
+        <button
+          @click=${() => this.saveToFile()}
+          title="Download a JSON save of this session"
+        >
+          Save
+        </button>
+        <label class="session-load-label" title="Load a JSON save file into this session">
+          Load
+          <input
+            type="file"
+            accept="application/json,.json"
+            @change=${(e: Event) => {
+              const f = (e.target as HTMLInputElement).files?.[0];
+              if (f) void this.loadFromFile(f);
+              (e.target as HTMLInputElement).value = '';
+            }}
+          />
+        </label>
+        ${this.renderReclaimAffordance()}
         <button @click=${() => this.leaveSession()}>Leave</button>
+        ${this.saveStatus.kind === 'saved'
+          ? html`<span class="save-status">${this.saveStatus.message}</span>`
+          : nothing}
+        ${this.saveStatus.kind === 'error'
+          ? html`<span class="save-status save-error">${this.saveStatus.message}</span>`
+          : nothing}
+        ${this.loadStatus.kind === 'loaded'
+          ? html`<span class="save-status">${this.loadStatus.message}</span>`
+          : nothing}
+        ${this.loadStatus.kind === 'error'
+          ? html`<span class="save-status save-error">${this.loadStatus.message}</span>`
+          : nothing}
+      </div>
+      ${this.renderReclaimConfirmation()}
+      ${this.renderResumePrompt()}
+    `;
+  }
+
+  /**
+   * The "Reclaim coordinator" button.  Visible to ANY peer in an
+   * active session whose own peerId is NOT the current coordinator —
+   * this supports the sick-DM scenario where a trusted player steps
+   * in.  The confirmation dialog names the current coordinator
+   * (deliberate action), and the reclaim itself is audit-trailed in
+   * chat (broadcast transparency).
+   */
+  private renderReclaimAffordance(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return html``;
+    if (!v.peerId) return html``;
+    if (v.shared.coordinator === v.peerId) return html``;
+    // Currently we're a non-coordinator.  Allow taking over.
+    return html`
+      <button
+        class="reclaim-button"
+        @click=${() => {
+          this.reclaimConfirmShown = true;
+        }}
+        title="Take over as session coordinator (DM role)"
+      >
+        Reclaim DM
+      </button>
+    `;
+  }
+
+  private renderReclaimConfirmation(): TemplateResult {
+    if (!this.reclaimConfirmShown) return html``;
+    const v = this.sessionView;
+    const current = v?.shared.coordinator;
+    const currentName = current ? this.displayNameFor(current) : 'no-one';
+    return html`
+      <div class="reclaim-modal" role="alertdialog">
+        <p>
+          Take over as coordinator from <strong>${currentName}</strong>?
+          This action is visible to all peers in chat.
+        </p>
+        <div class="reclaim-modal-actions">
+          <button
+            @click=${() => {
+              this.reclaimConfirmShown = false;
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            class="reclaim-button-confirm"
+            @click=${() => this.reclaimCoordinator()}
+          >
+            Yes, take over
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Resume prompt: when the campaign view loads and an autosave
+   * exists for the current slug, offer to surface the contents (so
+   * the DM can either Load to continue or Dismiss to start fresh).
+   */
+  private renderResumePrompt(): TemplateResult {
+    if (!this.resumePromptDoc) return html``;
+    const doc = this.resumePromptDoc;
+    const ago = formatTimeAgo(doc.savedAt);
+    return html`
+      <div class="resume-prompt" role="status">
+        <p>
+          You have an autosaved session for this campaign (${doc.events.length}
+          events, saved ${ago}).
+        </p>
+        <div class="resume-prompt-actions">
+          <button @click=${() => this.dismissResumePrompt()}>
+            Start fresh
+          </button>
+          <button
+            @click=${() => {
+              const json = stringifySave(doc);
+              this.dismissResumePrompt();
+              if (this.session && this.sessionView?.status !== 'active') {
+                // Need an active session before applying.  For
+                // simplicity, prompt the user to host first; the
+                // autosave still sits in localStorage so they can
+                // re-trigger via the prompt after hosting.
+                this.saveStatus = {
+                  kind: 'error',
+                  message:
+                    'Host a session first, then this autosave will be available to load.'
+                };
+                return;
+              }
+              this.loadFromString(json);
+            }}
+          >
+            Load autosave
+          </button>
+        </div>
       </div>
     `;
   }
@@ -2042,6 +2311,185 @@ export class QuireApp extends LitElement {
         ? this.aiResponse.slice(0, room - 1) + '…'
         : this.aiResponse;
     return this.submitChat(head + body);
+  }
+
+  // -----------------------------------------------------------------
+  // Persistence: Save / Load / Autosave / Reclaim
+  // -----------------------------------------------------------------
+
+  /**
+   * Build the current save document for the loaded campaign +
+   * active session.  Returns null when no session OR no campaign.
+   */
+  buildSaveDocument(): SaveDocument | null {
+    if (!this.session || this.sessionView?.status !== 'active') return null;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return null;
+    const src = campaign.base.source;
+    return serializeSession(
+      this.session.getEvents(),
+      { owner: src.owner, repo: src.repo, ref: src.ref },
+      this.sessionView.peerId ?? 'unknown'
+    );
+  }
+
+  /**
+   * Download the current session as a JSON file.  No-op when not in
+   * an active session (button is disabled in that state).  Returns
+   * the SaveDocument that was offered, for tests.
+   */
+  saveToFile(): SaveDocument | null {
+    const doc = this.buildSaveDocument();
+    if (!doc) {
+      this.saveStatus = {
+        kind: 'error',
+        message: 'No active session to save.'
+      };
+      return null;
+    }
+    const json = stringifySave(doc);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${doc.campaign.owner}-${doc.campaign.repo}-${doc.savedAt.slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    this.saveStatus = { kind: 'saved', message: `Saved ${doc.events.length} events.` };
+    return doc;
+  }
+
+  /**
+   * Parse + apply a save document from a JSON string.  Returns the
+   * LoadResult on success or null on parse failure (with the error
+   * surfaced in loadStatus).
+   */
+  loadFromString(json: string): LoadResult | null {
+    const parsed = parseSaveDocument(json);
+    if (!parsed.ok) {
+      this.loadStatus = { kind: 'error', message: parsed.error };
+      return null;
+    }
+    if (!this.session || this.sessionView?.status !== 'active') {
+      this.loadStatus = {
+        kind: 'error',
+        message: 'Start or host a session first, then load.'
+      };
+      return null;
+    }
+    // Cross-campaign protection: refuse to load a save for a
+    // different campaign than the one currently open.
+    const currentCampaign = this.getCurrentCampaign();
+    if (currentCampaign) {
+      const c = currentCampaign.base.source;
+      if (
+        c.owner !== parsed.doc.campaign.owner ||
+        c.repo !== parsed.doc.campaign.repo
+      ) {
+        this.loadStatus = {
+          kind: 'error',
+          message: `Save is for ${parsed.doc.campaign.owner}/${parsed.doc.campaign.repo}, current campaign is ${c.owner}/${c.repo}.`
+        };
+        return null;
+      }
+    }
+    const tempLog = new (class {
+      readonly events: import('./core/event-log').QuireEvent[] = [];
+      apply(): boolean {
+        return false;
+      }
+    })() as unknown as import('./core/event-log').EventLog;
+    // We use applySaveToLog's counting via a passthrough: it calls
+    // log.events() once for dedup so we synthesize a minimal stub.
+    // Actually simpler: apply directly via the session controller.
+    let applied = 0;
+    for (const e of parsed.doc.events) {
+      if (this.session.applyEvents([e]) > 0) applied++;
+    }
+    void tempLog; // unused (kept for readability)
+    const result: LoadResult = {
+      applied,
+      duplicates: parsed.doc.events.length - applied,
+      rejected: 0,
+      unknownKinds: 0,
+      errors: []
+    };
+    this.loadStatus = {
+      kind: 'loaded',
+      message: `Loaded ${applied} new event${applied === 1 ? '' : 's'} (${result.duplicates} already present).`
+    };
+    return result;
+  }
+
+  /** File-picker driven load. */
+  async loadFromFile(file: File): Promise<LoadResult | null> {
+    const text = await file.text();
+    return this.loadFromString(text);
+  }
+
+  /** Reclaim coordinator with confirmation. */
+  reclaimCoordinator(): void {
+    if (!this.session) return;
+    this.session.reclaimCoordinator();
+    this.reclaimConfirmShown = false;
+  }
+
+  /**
+   * Trigger debounced autosave to localStorage.  Called on every
+   * sessionView change while in an active session.  Storage key:
+   * quire.save.<owner>-<repo>.
+   */
+  private scheduleAutosave(): void {
+    if (this.autosaveTimer) clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = setTimeout(() => {
+      this.autosaveTimer = null;
+      this.performAutosave();
+    }, SAVE_AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  private performAutosave(): void {
+    const doc = this.buildSaveDocument();
+    if (!doc) return;
+    const json = stringifySave(doc);
+    if (json.length > SAVE_QUOTA_REFUSE_BYTES) {
+      // Refuse — the user can still download via Save button.
+      this.autosaveQuotaWarned = true;
+      return;
+    }
+    if (json.length > SAVE_QUOTA_WARN_BYTES && !this.autosaveQuotaWarned) {
+      console.warn(
+        `[quire] autosave is large (${(json.length / 1000).toFixed(0)}KB); consider downloading a manual save.`
+      );
+      this.autosaveQuotaWarned = true;
+    }
+    try {
+      const key = `${SAVE_STORAGE_PREFIX}${doc.campaign.owner}-${doc.campaign.repo}`;
+      window.localStorage?.setItem(key, json);
+    } catch {
+      // QuotaExceededError or unavailable storage; drop silently.
+    }
+  }
+
+  /** Look up an autosave for the current campaign and stage it as a Resume prompt. */
+  private checkResumePrompt(): void {
+    try {
+      const campaign = this.getCurrentCampaign();
+      if (!campaign) return;
+      const c = campaign.base.source;
+      const key = `${SAVE_STORAGE_PREFIX}${c.owner}-${c.repo}`;
+      const json = window.localStorage?.getItem(key);
+      if (!json) return;
+      const parsed = parseSaveDocument(json);
+      if (parsed.ok) this.resumePromptDoc = parsed.doc;
+    } catch {
+      // ignore
+    }
+  }
+
+  dismissResumePrompt(): void {
+    this.resumePromptDoc = null;
   }
 
   submitChat(text: string): boolean {

@@ -105,6 +105,19 @@ export class Peer {
     return event;
   }
 
+  /**
+   * Take over as session coordinator.  Unconditional: succeeds even
+   * if another peer is currently coordinator (this is the supported
+   * sick-DM-handoff workflow).  Synthesizes an audit chat entry
+   * visible to all peers; callers are expected to gate this behind
+   * a deliberate UI action with a named-coordinator confirmation
+   * dialog (see UI in Phase 2b).
+   */
+  reclaimCoordinator(): QuireEvent {
+    const fromPeerId = this.state().coordinator;
+    return this.append('coordinator-reclaim', { fromPeerId });
+  }
+
   /** Current materialized state. */
   state(): SessionState {
     return materialize(this.log.events());
@@ -124,6 +137,21 @@ export class Peer {
   /** For inspection / testing — direct access to the event list. */
   events(): readonly QuireEvent[] {
     return this.log.events();
+  }
+
+  /**
+   * Apply an externally-provided event to the local log without
+   * broadcasting.  Used by load/restore paths: the events were
+   * authored by someone else (the original session's peers), so
+   * R2.1's transport-sender vs event.peerId check would reject any
+   * re-share we'd attempt.  Future joiners catch up via the normal
+   * sync-response pull when they connect.  Returns whether the
+   * event was newly applied (false if duplicate or invalid).
+   */
+  applyEvent(event: QuireEvent): boolean {
+    const applied = this.log.apply(event);
+    if (applied) this.notifyStateChange();
+    return applied;
   }
 
   close(): void {
