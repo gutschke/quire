@@ -122,7 +122,7 @@ This pattern is added to the user's `feedback_tdd_and_critic_workflow` memory as
 
 **Acceptance criteria:**
 
-- [ ] `src/quire-app.ts` is ≤ **1200 LOC** (revised from v0.1's 800 — see facade-migration pattern). The remaining content is shell composition, mode routing, AI key plumbing dispatch, autosave dispatch, region event routing.
+- [ ] `src/quire-app.ts` is ≤ **2750 LOC at M1 close**, ≤ **1500 at M2 close**, ≤ **900 at M3a close**. Tiered re-baseline (user ack 2026-05-21) replacing the original ≤1200-at-M1 target; the original cap miscalibrated by not budgeting the `renderXxx` templates that the facade-migration pattern defers to M2 region work. The tiers tie reduction to specific milestones so reviewers can check progress, not just an absolute end-state.
 - [ ] `src/controllers/session-bootstrap.ts` extracted — encapsulates campaign loading, session lifecycle (host/join/leave), R3-A pre-session route gating, R3-C campaign discovery.
 - [ ] `src/controllers/autosave-controller.ts` extracted — debounced autosave with quota warning.
 - [ ] `src/controllers/ai-key-store.ts` extracted — provider selection, key management, legacy migration.

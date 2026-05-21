@@ -1,6 +1,47 @@
 # STATUS
 
-Current milestone: **M1 — Foundation: god-object decomposition** — **gate closed `ship-with-followups`** (pending user ack on LOC cap re-baseline)
+Current milestone: **M2 — Player view region-extracted** (M1 closed 2026-05-21)
+
+## Previous milestone — M1 closed `ship-with-followups`
+
+Gate verdict: 4/4 reviewers ship-with-followups. All HIGH-severity findings resolved. LOC cap re-baselined (user ack 2026-05-21): M1 ≤2750 / M2 ≤1500 / M3a ≤900. Followup P-tasks tracked in `redesign-plan.md` § "M1 gate — follow-up P-tasks." Tag: `milestone-M1` at commit `e11abb7` (or whichever final commit ends up).
+
+Full M1 retro retained below for the record.
+
+## M2 — acceptance criteria progress
+
+- [ ] `<player-rail>` renders condensed sheet (name/pronouns/alignment, 6 stats 2-col, harm 4-box, stress 4-box, top skills as chips, foci summary). Tap own portrait → Rail grows to `clamp(420px, 44ch, 480px)`; Stage absorbs the delta. No modal.
+- [ ] `<scene-stage>` renders Markdown via existing `renderMarkdown` with scene-strip header (name·location·mood·duration·presentNpcs). 68ch centered. Scene-strip sticky to top.
+- [ ] `<player-aside>` renders roster (avatar+name+harm/stress glyph+connection dot) + collapsible chat (default collapsed in-person) + private notes (local-only).
+- [ ] `<dice-dock>` renders 6 stat chips + modifier stepper + roll button + last 3 pills. Keyboard `R`/`1-6`/`+-`/`Enter`. Doubles trigger colored halo.
+- [ ] `raise-hand` / `lower-hand` events propagate ✋ glyph to all peers' rosters.
+- [ ] P0-8b — host/join/leave extracted to session-bootstrap (M1 gate follow-up; lands as first M2 commit).
+- [ ] P0-4-followup — `SessionController.view()` exposes a filtered shared state so M2 regions cannot accidentally read raw `sessionView.shared`.
+- [ ] P0-11-followup-appState — `appState` becomes readonly via getter.
+- [ ] P0-11-followup — tightened `QuireAppHooks` type test.
+- [ ] P0-12-followup-banner — runtime peer-version-mismatch banner.
+- [ ] All existing player-side e2e tests pass against the new components. Helper updates allowed.
+- [ ] One new e2e: player joins host, sees condensed sheet, taps stat chip to pre-fill dice, rolls, result broadcasts.
+- [ ] Bundle ≤ 85 KB gzipped.
+- [ ] `quire-app.ts` ≤ 1500 LOC at M2 close.
+- [ ] STATUS.md updated through milestone (per cadence rule restated in M1 gate adversarial review).
+
+## M2 — gate reviewers
+
+Per `execution-plan.md`:
+- **TTRPG-craft** (mandatory)
+- **Web-UX** (mandatory)
+- **Adversarial critic** (mandatory)
+
+Three reviewers (down from M1's four). No Engine / Security at M2 because no event-vocab or persistence changes are planned (those moved into M1 vocab + M3a filter).
+
+## Next planned commit
+
+P0-8b — extract host/join/leave/regeneratePairingCode to session-bootstrap controller. This is the bridge from M1 close into M2, addressing the Adversarial reviewer's recommendation to extract NOW before M2 region work increases coupling.
+
+---
+
+## M1 closure retrospective (frozen)
 
 ## Gate result (2026-05-21)
 
