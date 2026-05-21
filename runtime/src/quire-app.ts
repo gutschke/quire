@@ -14,6 +14,7 @@ import './ui/shell/quire-dock';
 import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
+import './ui/regions/dm-scratch';
 import './ui/regions/dice-dock';
 import './ui/regions/chat-panel';
 import './ui/regions/session-bar';
@@ -303,6 +304,24 @@ export class QuireApp extends LitElement {
   private unsubscribeSession: (() => void) | null = null;
 
   private abortController?: AbortController;
+  /**
+   * M3a.8 P2-3: ` ' ` hotkey focuses the DM scratch input.  Hotkey
+   * runs only when the local peer is the DM and the focus is not
+   * already in a text input (so the quote character itself can be
+   * typed normally inside any text field).
+   */
+  private readonly hotkeyHandler = (e: KeyboardEvent): void => {
+    if (e.key !== "'") return;
+    if (!this.isCoordinator()) return;
+    const target = e.target as Element | null;
+    const tag = target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const scratch = this.querySelector<HTMLElement>('dm-scratch');
+    if (!scratch) return;
+    e.preventDefault();
+    (scratch as unknown as { focusInput: () => void }).focusInput();
+  };
+
   private readonly popstateHandler = (): void => {
     // Re-parse both route and mode on history navigation so the URL
     // is the source of truth across reloads + back/forward.  Mode is
@@ -320,6 +339,7 @@ export class QuireApp extends LitElement {
     this.appMode = parseMode(window.location.search);
     window.addEventListener('popstate', this.popstateHandler);
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    window.addEventListener('keydown', this.hotkeyHandler);
     this.session = new SessionController(this.sessionFactory);
     this.unsubscribeSession = this.session.subscribe((v) => {
       this.sessionView = v;
@@ -431,6 +451,7 @@ export class QuireApp extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this.popstateHandler);
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+    window.removeEventListener('keydown', this.hotkeyHandler);
     this.abortController?.abort();
     this.unsubscribeSession?.();
     this.unsubscribeSession = null;
@@ -658,8 +679,26 @@ export class QuireApp extends LitElement {
         <quire-rail slot="rail">${this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
         <quire-aside slot="aside">${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}</quire-aside>
-        <quire-dock slot="dock">${this.renderVersionBadge()}</quire-dock>
+        <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
       </quire-shell>
+    `;
+  }
+
+  /**
+   * M3a.8 P2-3: render the <dm-scratch> region in the Dock slot
+   * when the local peer is the DM.  Hidden for players (the
+   * scratchNotes field is also stripped from their view by
+   * filterForViewer; this is belt-and-suspenders).
+   */
+  private renderDmScratch(): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    return html`
+      <dm-scratch
+        .entries=${v.shared.scratchNotes}
+        .onSubmit=${(text: string) => this.appendScratchNote(text)}
+      ></dm-scratch>
     `;
   }
 
@@ -1569,6 +1608,27 @@ export class QuireApp extends LitElement {
    */
   toggleRaisedHand(): void {
     this.session?.toggleHand();
+  }
+
+  /**
+   * M3a.8 P2-3: append a scratch note as the current scene-path
+   * (when in a scene context — the note carries the scenePath
+   * hint so post-session AI ingestion can locate it).  Coord-only;
+   * silently no-ops outside an active session.
+   */
+  appendScratchNote(text: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return false;
+    const s = this.appState;
+    const scenePath =
+      s.kind === 'scene'
+        ? `episodes/${s.episode.slug}/${s.scene.path}`
+        : undefined;
+    this.session.append('scratch-note', { v: 1, text: trimmed, scenePath });
+    return true;
   }
 
   /**

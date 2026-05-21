@@ -345,6 +345,62 @@ describe('QuireApp scene-reveal', () => {
     expect(app.sessionView!.shared.threadDebt).toEqual({});
   });
 
+  it('DM appendScratchNote appends to scratchNotes (P2-3)', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    expect(app.appendScratchNote('remember the locket')).toBe(true);
+    await flush();
+    expect(app.sessionView!.shared.scratchNotes).toHaveLength(1);
+    expect(app.sessionView!.shared.scratchNotes[0].text).toBe(
+      'remember the locket'
+    );
+  });
+
+  it('appendScratchNote tags the current scene path when in scene view', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'scene',
+      campaign: fakeCampaign(),
+      episode: fakeEpisode('001'),
+      scene: fakeScene('scenes/intro.md')
+    };
+    app.appendScratchNote('mid-scene note');
+    await flush();
+    expect(app.sessionView!.shared.scratchNotes[0].scenePath).toBe(
+      'episodes/001/scenes/intro.md'
+    );
+  });
+
+  it('non-coordinator appendScratchNote is a no-op (P2-3)', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    expect(guest.appendScratchNote('rogue note')).toBe(false);
+    await flush();
+    expect(host.sessionView!.shared.scratchNotes).toHaveLength(0);
+  });
+
+  it('appendScratchNote rejects whitespace-only input', async () => {
+    const network = new InMemoryNetwork();
+    const app = mountApp(inMemoryFactory(network, 'HOST'));
+    app.startHosting();
+    await flush();
+    expect(app.appendScratchNote('   ')).toBe(false);
+    expect(app.appendScratchNote('')).toBe(false);
+    await flush();
+    expect(app.sessionView!.shared.scratchNotes).toHaveLength(0);
+  });
+
   it('multiple reveals accumulate in order', async () => {
     const network = new InMemoryNetwork();
     const host = mountApp(inMemoryFactory(network, 'HOST'));

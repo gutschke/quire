@@ -1040,6 +1040,39 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.8 P2-3: DM scratch column (Dock region). */
+    .dm-scratch textarea {
+      width: 100%;
+      box-sizing: border-box;
+      resize: vertical;
+      min-height: 2.5em;
+      font-family: inherit;
+    }
+    .dm-scratch button {
+      margin-top: 0.3rem;
+    }
+    .dm-scratch-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.4rem 0 0;
+      font-size: 0.9em;
+    }
+    .dm-scratch-entry {
+      padding: 0.2rem 0;
+      border-top: 1px dotted light-dark(#ccc, #444);
+      display: flex;
+      gap: 0.4em;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .dm-scratch-ts {
+      color: light-dark(#777, #999);
+      font-size: 0.85em;
+    }
+    .dm-scratch-scene {
+      color: light-dark(#888, #999);
+    }
+
     /* M3a.8 P2-4/P2-5: DM-only affordances on the character page —
        NPC pin button or PC thread-debt selector.  Sits as a small
        card above the player-rail. */
