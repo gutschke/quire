@@ -1,3 +1,5 @@
+import { containsUcCloseSentinel } from './ai/context';
+
 /**
  * Campaign loader.  Pure data layer — no DOM, no Lit.
  *
@@ -179,7 +181,20 @@ export async function fetchCampaignFile(
       `URL: ${url}`
     );
   }
-  return await response.text();
+  const text = await response.text();
+  // M3b.6 — Reject raw content that contains the literal
+  // <!--UC_CLOSE--> sentinel.  This is the load-time half of the
+  // wrapUntrusted() smuggling defense in src/ai/context.ts: a
+  // hostile campaign author can't embed the sentinel directly
+  // and break out of the model-prompt wrapper later.  H-2-now
+  // followup from M1.
+  if (containsUcCloseSentinel(text)) {
+    throw new CampaignLoadError(
+      `Campaign file ${path} contains a reserved sentinel marker.`,
+      `The marker <!--UC_CLOSE--> is used internally to wrap untrusted content for AI prompts and must not appear in raw campaign files.`
+    );
+  }
+  return text;
 }
 
 export async function loadCampaign(
