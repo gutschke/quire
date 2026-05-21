@@ -1040,6 +1040,93 @@ export const quireAppStyles = css`
       opacity: 0.5;
     }
 
+    /* M3a.9: <dm-aside> and <dm-rail> DM-only regions.
+       Light styling — these are workhorse panels.  Color hints
+       use the existing amber accent so DM cockpit affordances
+       feel of a piece. */
+    .dm-aside-card,
+    .dm-aside-empty,
+    .dm-rail,
+    .dm-rail-empty {
+      border-left: 3px solid light-dark(#d4a017, #a07820);
+    }
+    .dm-aside-subhead {
+      margin: 0.6rem 0 0.3rem;
+      font-size: 0.95em;
+    }
+    .dm-aside-pinned,
+    .dm-aside-debts {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .dm-aside-pinned-row,
+    .dm-aside-debt-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.5em;
+      padding: 0.15rem 0;
+      border-bottom: 1px dotted light-dark(#ddd, #333);
+    }
+    .dm-aside-unpin {
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      color: light-dark(#aa3030, #ff8080);
+      padding: 0 0.3rem;
+      font-size: 1.1em;
+      line-height: 1;
+    }
+    .dm-aside-unpin:hover {
+      color: light-dark(#cc1010, #ffa0a0);
+    }
+    .dm-aside-debt-level {
+      font-variant: small-caps;
+      letter-spacing: 0.04em;
+      font-size: 0.85em;
+      padding: 0.05rem 0.4rem;
+      border-radius: 2px;
+      background: light-dark(#eee, #2a2a2a);
+    }
+    .dm-aside-debt-noticed {
+      background: light-dark(#fff5d0, #3a3318);
+    }
+    .dm-aside-debt-watched {
+      background: light-dark(#fde0b3, #4a3618);
+    }
+    .dm-aside-debt-pushing-back {
+      background: light-dark(#fdc0a0, #5a2e10);
+    }
+    .dm-aside-debt-hunted {
+      background: light-dark(#fa9080, #6a1818);
+      color: light-dark(#000, #fff);
+    }
+    .dm-rail-episodes {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .dm-rail-episode {
+      padding: 0.2rem 0;
+    }
+    .dm-rail-episode-name {
+      font-weight: 500;
+    }
+    .dm-rail-episode-current .dm-rail-episode-name {
+      color: light-dark(#0b3d7f, #79b8f0);
+    }
+    .dm-rail-scenes {
+      list-style: none;
+      padding: 0;
+      margin: 0.2rem 0 0 1rem;
+      font-size: 0.9em;
+    }
+    .dm-rail-scene-current a {
+      font-weight: 600;
+      color: light-dark(#0b3d7f, #79b8f0);
+    }
+
     /* M3a.8 P2-3: DM scratch column (Dock region). */
     .dm-scratch textarea {
       width: 100%;

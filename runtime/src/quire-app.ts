@@ -15,6 +15,9 @@ import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
+import './ui/regions/dm-aside';
+import './ui/regions/dm-rail';
+import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
 import './ui/regions/chat-panel';
 import './ui/regions/session-bar';
@@ -679,14 +682,80 @@ export class QuireApp extends LitElement {
     // chat + AI panel.  When no PC is bound (DM, unbound player,
     // idle) the Rail slot renders empty — the chrome remains so the
     // 5-slot layout stays consistent.
+    // M3a.9: DM gets cockpit regions (Rail = scene navigator; Aside
+    // gains pinned-NPC + thread-debt summary above the shared
+    // roster/chat/AI cluster).  Player view is unchanged.
+    const dmRail = this.renderDmRail();
+    const dmAside = this.renderDmAside();
     return html`
       <quire-shell>
         <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
-        <quire-rail slot="rail">${this.renderBoundCharacterRail()}</quire-rail>
+        <quire-rail slot="rail">${dmRail ? dmRail : this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
-        <quire-aside slot="aside">${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}</quire-aside>
+        <quire-aside slot="aside">${dmAside}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}</quire-aside>
         <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
       </quire-shell>
+    `;
+  }
+
+  /**
+   * M3a.9: render the DM's Rail content.  Returns null when the
+   * local peer is not the coordinator so the shell falls back to
+   * the player's always-on bound-character rail.
+   */
+  private renderDmRail(): TemplateResult | null {
+    if (!this.isCoordinator()) return null;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return null;
+    const slug = this.slugFor(campaign);
+    const episodes: DmRailEpisode[] = (
+      campaign.base.manifest.episodes ?? []
+    ).map((epId) => {
+      const loaded =
+        this.getCurrentEpisode()?.slug === epId
+          ? this.getCurrentEpisode()
+          : undefined;
+      return {
+        slug: epId,
+        name: loaded?.manifest.name ?? epId,
+        scenes: loaded?.manifest.scenes ?? []
+      };
+    });
+    const ep = this.getCurrentEpisode();
+    const sceneState = this.appState;
+    const currentScene =
+      sceneState.kind === 'scene' ? sceneState.scene.path : '';
+    return html`
+      <dm-rail
+        .campaignSlug=${slug}
+        .campaignName=${campaign.base.manifest.name}
+        .episodes=${episodes}
+        .currentEpisode=${ep?.slug ?? ''}
+        .currentScene=${currentScene}
+        .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
+      ></dm-rail>
+    `;
+  }
+
+  /**
+   * M3a.9: render the DM's Aside content.  Returns nothing when
+   * the local peer is not the coordinator so the player Aside
+   * (roster + chat + AI panel) renders alone.
+   */
+  private renderDmAside(): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    const campaign = this.getCurrentCampaign();
+    const slug = campaign ? this.slugFor(campaign) : '';
+    return html`
+      <dm-aside
+        .campaignSlug=${slug}
+        .pinnedNpcs=${v.shared.pinnedNpcs}
+        .threadDebt=${v.shared.threadDebt}
+        .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
+        .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
+      ></dm-aside>
     `;
   }
 
