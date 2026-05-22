@@ -62,6 +62,29 @@ Design doc + expert convergence point at three primitives:
 
 Recommended pre-implementation 4-reviewer gate on the design doc.
 
+## Backlog prioritization pass (2026-05-22)
+
+68-item backlog (see `design/backlog-catalog.md`) ranked by three
+parallel expert lenses (TTRPG-craft, UX, Engine).  Synthesis in
+`design/prioritized-backlog.md`.
+
+**Distribution:** 6 items at P0 (next-milestone must-ship), 18 at
+P1, 24 at P2, 14 at P3 (defer indefinitely), 6 aliases.
+
+**P0 set:** M3D-3 (stale-DM-peer), M3D-4 (2d6 dice UI), M3D-5
+(`pcSlots` live state), M3D-7 (scene-switching), CC-18 (player-
+facing scope override), CC-20 (forbidden-token check).
+
+**Dependency seams** (engine sequencing constraints): `navController`
+extraction inside M3D-3 unblocks 5 items; M3D-5 unblocks 7 rebinding
+items; CC-17 schema unblocks the AI synthesis stack; M3C-1 per-kind
+materializer extraction should precede new event kinds.
+
+**Recommended next milestone:** four-phase plan in
+`prioritized-backlog.md` §"Recommended next-milestone scope" —
+~7 weeks of work split foundations → P0 → P1 stack → post-playtest
+polish.
+
 ## Engine-vs-campaign boundary survey (2026-05-22)
 
 User surfaced a cross-cutting design principle: Quire engine hosts
