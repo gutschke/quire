@@ -49,6 +49,37 @@ export const quireAppStyles = css`
       padding: 0.3rem 1rem;
     }
 
+    /*
+     * P3D-3: chargen route renders outside the five-region shell
+     * (a player visiting an invite URL doesn't need the cockpit).
+     * Centered single-column with a comfortable max-width and
+     * generous padding; mobile-friendly because the column shrinks
+     * to viewport width below the max.
+     */
+    .chargen-shell {
+      display: block;
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+      box-sizing: border-box;
+      overflow-y: auto;
+      max-height: 100dvh;
+    }
+
+    .invite-manager-mode-b-warning {
+      margin: 0.6rem 0;
+      padding: 0.6rem 0.9rem;
+      border-left: 3px solid light-dark(#cc8a00, #d4a73a);
+      background: light-dark(#fff8e6, #2a2310);
+      color: light-dark(#5a4400, #e6cd80);
+      font-size: 0.88rem;
+      border-radius: 3px;
+    }
+    .invite-manager-mode-b-warning strong {
+      color: light-dark(#7a4400, #f0d68a);
+    }
+
     header h1 {
       font-size: 1.75rem;
       margin: 0;
@@ -1394,6 +1425,20 @@ export const quireAppStyles = css`
     }
     .character-creation-qa-hint-warn {
       color: light-dark(#925a17, #d6a559);
+    }
+    /* P3U-3: "Required: pack your character" callout on step 5.
+       Stronger visual weight than .muted because the action is
+       load-bearing — without the pack, the DM has no way to receive
+       the player's answers (live pull isn't wired yet). */
+    .character-creation-required-pack {
+      padding: 0.6rem 0.9rem;
+      border-left: 3px solid light-dark(#925a17, #d6a559);
+      background: light-dark(#fef9e9, #2a2104);
+      color: light-dark(#3a2606, #e6d09a);
+      border-radius: 3px;
+    }
+    .character-creation-required-pack strong {
+      color: light-dark(#683f10, #f0c477);
     }
     /* CC-10: Pack-my-character button + transient feedback. */
     .character-creation-pack-actions {

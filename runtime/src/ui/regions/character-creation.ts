@@ -267,9 +267,11 @@ export class CharacterCreation extends LitElement {
         </li>
         <li>
           <strong>Your answers stay on your device until session
-          1.</strong>  Optionally, you can "pack" your character
-          into a file or token and send it to your DM as backup —
-          recommended in case anything happens to your browser.
+          1.</strong>  At step 5 you'll "pack" your character into
+          a file to email or chat to your DM <em>before</em>
+          session 1 — this is currently the only way for the DM to
+          receive your work.  (Live pull-from-player isn't wired
+          yet.)
         </li>
       </ol>
     `;
@@ -515,12 +517,13 @@ export class CharacterCreation extends LitElement {
         Your answers are saved on this device.  When session 1
         starts, sit down with the DM and they'll run the synthesis.
       </p>
-      <p class="muted">
-        <strong>Recommended:</strong> click "Pack my character"
-        below to download a backup file — send it to your DM via
-        chat or email so they have a copy too.  If you clear your
-        browser data or switch devices, the backup is how the DM
-        recovers your work.
+      <p class="character-creation-required-pack">
+        <strong>Required:</strong> click "Pack my character" below
+        to download your character file, then email or chat it to
+        your DM <em>before</em> session 1.  Your DM cannot synthesize
+        without this file — your answers live only on this device.
+        (Live DM-pull is not wired yet, so the file is currently
+        the only way for them to get your work.)
       </p>
       ${this.onPack
         ? html`

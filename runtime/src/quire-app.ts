@@ -1080,6 +1080,19 @@ export class QuireApp extends LitElement {
     // M3a.9: DM gets cockpit regions (Rail = scene navigator; Aside
     // gains pinned-NPC + thread-debt summary above the shared
     // roster/chat/AI cluster).  Player view is unchanged.
+
+    // P3D-3: the chargen route ("character-creation") is a player
+    // visiting an invite URL.  The full play cockpit (session bar,
+    // roster, chat, AI panel, dice dock, reveal banner) is noise at
+    // chargen time — the player only needs the wizard.  Strip the
+    // shell and render a centered single-column page; mobile-
+    // friendly with no aside overflow on narrow viewports.
+    if (this.appState.kind === 'character-creation') {
+      return html`
+        <main class="chargen-shell">${this.renderBody()}</main>
+      `;
+    }
+
     const dmRail = this.renderDmRail();
     const dmAside = this.renderDmAside();
     return html`
@@ -1323,7 +1336,11 @@ export class QuireApp extends LitElement {
       return {
         ok: false,
         code: 'provider-error',
-        message: `No saved chargen state for slot ${slot}.  Import the player's pack first (CC-13).`
+        message:
+          `No chargen answers for slot ${slot} on this device.  ` +
+          `Ask the player to send you their packed character file ` +
+          `from the end of their invite flow (or load the pack from ` +
+          `disk if they already sent it), then try again.`
       };
     }
     const provider = this.aiProvider;

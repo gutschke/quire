@@ -107,6 +107,15 @@ export class InviteManager extends LitElement {
           email body — it's deliberately NOT in the URL so a
           forwarded link doesn't leak design intent.
         </p>
+        <div class="invite-manager-mode-b-warning" role="note">
+          <strong>Heads up:</strong> the player's chargen answers
+          stay on <em>their</em> device.  To synthesize at session 1
+          you'll need either (a) the player sitting next to you with
+          their browser open, or (b) the packed character file they
+          download at the end of their invite flow.  Live pull-from-
+          player isn't wired yet — ask players to email or chat the
+          pack file before session 1.
+        </div>
         <div class="invite-manager-controls">
           <label class="invite-manager-slot-label">
             Slot
