@@ -148,7 +148,7 @@ export interface ScratchNote {
 export interface AiAuditEntry {
   peerId: PeerId;
   ts: number;
-  kind: 'prompt' | 'response' | 'accept' | 'reject';
+  kind: 'prompt' | 'response' | 'accept' | 'reject' | 'rejected-hard-gate';
   responseId?: string;
   promptHash?: string;
   responseHash?: string;
@@ -156,6 +156,15 @@ export interface AiAuditEntry {
   tokensIn?: number;
   tokensOut?: number;
   category?: string;
+  /**
+   * M3c.5: when `kind === 'rejected-hard-gate'`, a human-readable
+   * reason the materializer used to reject an AI-proposed event
+   * that failed the hard-gate check.  Surfaced in the DM banner
+   * + audit log so silent drops can't happen.
+   */
+  rejectedReason?: string;
+  /** Set on rejected-hard-gate entries — which event kind was refused. */
+  rejectedKind?: string;
 }
 
 /**
@@ -544,6 +553,105 @@ const SPAM_COUNT_CAP = 100;
 /** Cap on `caster-state-set.reason` length. */
 const CASTER_REASON_CAP = 500;
 
+/**
+ * M3c.5: scan state.aiAudit for a matching ai-accept entry.  The
+ * coord owns both the ai-accept and the AI-proposed state-update
+ * events; both come from the same peer's seq counter, so the
+ * ai-accept (smaller seq) materializes first.  This scan finds
+ * an existing entry in O(audit-depth) which is bounded by
+ * AI_AUDIT_CAP.
+ */
+function hasMatchingAiAccept(
+  state: SessionState,
+  responseId: string
+): boolean {
+  for (let i = state.aiAudit.length - 1; i >= 0; i--) {
+    const e = state.aiAudit[i];
+    if (e.kind === 'accept' && e.responseId === responseId) return true;
+  }
+  return false;
+}
+
+/**
+ * M3c.5: append a rejected-hard-gate audit entry.  Visible to the
+ * DM in the cockpit banner so silent rejection can't happen.
+ */
+function recordRejectedHardGate(
+  state: SessionState,
+  event: { peerId: PeerId; ts: number; kind: string },
+  responseId: string,
+  reason: string
+): void {
+  if (state.aiAudit.length >= AI_AUDIT_CAP) return;
+  state.aiAudit.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    kind: 'rejected-hard-gate',
+    responseId,
+    rejectedReason: reason,
+    rejectedKind: event.kind
+  });
+}
+
+/**
+ * M3c.5: is the proposed pc-edit hard-gated?  Returns a non-empty
+ * reason when yes; empty string otherwise.  Compares the new value
+ * to the prior recorded value (event hasn't applied yet).
+ */
+function pcEditHardGateReason(
+  state: SessionState,
+  event: { peerId: PeerId },
+  pcId: string,
+  field: string,
+  newValue: unknown
+): string {
+  if (typeof newValue !== 'number') return '';
+  if (field === 'harm') {
+    if (newValue >= 3) {
+      return `harm box ${Math.min(4, Math.floor(newValue))} is out-of-action`;
+    }
+  }
+  if (field === 'stress') {
+    if (newValue >= 4) {
+      return 'stress box 4 (Broken)';
+    }
+  }
+  // Cross-PC: the event's coord is editing a PC bound by another
+  // active peer.  Same heuristic as AiWriteController.
+  for (const p of Object.values(state.peers)) {
+    if (p.leftAt !== undefined) continue;
+    if (p.peerId === event.peerId) continue;
+    if (p.pcId === pcId) {
+      return `cross-PC edit on ${pcId}`;
+    }
+  }
+  return '';
+}
+
+/**
+ * M3c.5: is the proposed caster-state-set hard-gated?
+ */
+function casterStateHardGateReason(
+  state: SessionState,
+  pcId: string,
+  proposed: {
+    ladderState: CasterLadderState;
+    taxActive?: boolean;
+  }
+): string {
+  if (proposed.ladderState === 'hunted') {
+    return 'ladder advancing to Hunted';
+  }
+  const prior = state.casterState[pcId];
+  const priorTax = prior?.taxActive ?? false;
+  if (proposed.taxActive !== undefined && proposed.taxActive !== priorTax) {
+    return proposed.taxActive
+      ? 'trying-too-hard activating'
+      : 'trying-too-hard releasing';
+  }
+  return '';
+}
+
 interface DiceRollPayload {
   expression: string;
   result: number;
@@ -928,9 +1036,35 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     }
     case 'pc-edit': {
       if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<PcEditPayload>;
+      const p = event.payload as Partial<PcEditPayload> & {
+        causedByResponseId?: string;
+      };
       if (!isCharacterId(p.pcId)) break;
       if (!isSafeKey(p.field)) break;
+      // M3c.5: hard-gate enforcement for AI-proposed pc-edits.
+      // When causedByResponseId is set, the event is the result of
+      // the AiWriteController's dispatch path.  Hard-gated
+      // transitions (harm 3-4, stress 4, cross-PC) require a
+      // matching ai-accept already in state.aiAudit (the coord's
+      // ai-accept has a smaller seq → materializes first; see
+      // design/m3c-ai-write-api.md §Phase 3).  No match → reject
+      // and log the refusal.
+      if (
+        typeof p.causedByResponseId === 'string' &&
+        p.causedByResponseId.length > 0
+      ) {
+        const reason = pcEditHardGateReason(
+          state,
+          event,
+          p.pcId,
+          p.field,
+          p.value
+        );
+        if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
+          recordRejectedHardGate(state, event, p.causedByResponseId, reason);
+          break;
+        }
+      }
       // value is intentionally unrestricted at this layer — the
       // character-edits helper (applyCharacterEdits) clamps and
       // type-checks on read so an unknown field is silently
@@ -1264,6 +1398,20 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
         !isBoundedString(p.causedByResponseId, ID_CAP)
       ) {
         break;
+      }
+      // M3c.5: hard-gate enforcement.  Same shape as pc-edit.
+      if (
+        typeof p.causedByResponseId === 'string' &&
+        p.causedByResponseId.length > 0
+      ) {
+        const reason = casterStateHardGateReason(state, p.pcId, {
+          ladderState: p.ladderState,
+          taxActive: p.taxActive
+        });
+        if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
+          recordRejectedHardGate(state, event, p.causedByResponseId, reason);
+          break;
+        }
       }
       const prior = state.casterState[p.pcId];
       const next: CasterState = {

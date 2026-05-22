@@ -1333,6 +1333,198 @@ describe('materialize — caster-state-set (M3c.1)', () => {
   });
 });
 
+describe('materialize — hard-gate enforcement on AI-proposed events (M3c.5)', () => {
+  const RESP_ID = 'resp-abc-123';
+
+  function dmLog(): EventLog {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    return log;
+  }
+
+  it('AI-proposed pc-edit to harm box 3 WITHOUT ai-accept is rejected + audit-logged', () => {
+    const log = dmLog();
+    // Bring harm to 2 first (DM-direct, not AI).
+    log.append('pc-edit', { pcId: 'yui', field: 'harm', value: 2 });
+    // AI proposes harm → 3 without DM accepting.
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'harm',
+      value: 3,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.harm).toBe(2); // pinned at prior value
+    // Audit gains a rejected-hard-gate entry.
+    const rejected = state.aiAudit.find(
+      (e) => e.kind === 'rejected-hard-gate'
+    );
+    expect(rejected).toBeDefined();
+    expect(rejected?.responseId).toBe(RESP_ID);
+    expect(rejected?.rejectedReason).toMatch(/harm box 3/);
+    expect(rejected?.rejectedKind).toBe('pc-edit');
+  });
+
+  it('AI-proposed pc-edit to harm box 3 WITH matching ai-accept is allowed', () => {
+    const log = dmLog();
+    log.append('pc-edit', { pcId: 'yui', field: 'harm', value: 2 });
+    log.append('ai-accept', { v: 1, responseId: RESP_ID });
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'harm',
+      value: 3,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.harm).toBe(3); // applied
+    expect(
+      state.aiAudit.some((e) => e.kind === 'rejected-hard-gate')
+    ).toBe(false);
+  });
+
+  it('DM-direct pc-edit (no causedByResponseId) bypasses hard-gate even at harm 4', () => {
+    // Out-of-scope for M3c — only AI-proposed events are gated.
+    // A DM editing directly is a manual choice, not the AI's
+    // proposal; gating it would be a separate concern.
+    const log = dmLog();
+    log.append('pc-edit', { pcId: 'yui', field: 'harm', value: 4 });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.harm).toBe(4);
+    expect(state.aiAudit).toEqual([]);
+  });
+
+  it('AI-proposed stress to box 4 (Broken) without accept is rejected', () => {
+    const log = dmLog();
+    log.append('pc-edit', { pcId: 'yui', field: 'stress', value: 3 });
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'stress',
+      value: 4,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.stress).toBe(3);
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          e.rejectedReason?.includes('Broken')
+      )
+    ).toBe(true);
+  });
+
+  it('AI-proposed caster ladder → Hunted without accept is rejected', () => {
+    const log = dmLog();
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'hunted',
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']).toBeUndefined();
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          e.rejectedReason?.includes('Hunted')
+      )
+    ).toBe(true);
+  });
+
+  it('AI-proposed ladder → Hunted WITH ai-accept is allowed', () => {
+    const log = dmLog();
+    log.append('ai-accept', { v: 1, responseId: RESP_ID });
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'hunted',
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']?.ladderState).toBe('hunted');
+  });
+
+  it('AI-proposed tax activation without accept is rejected', () => {
+    const log = dmLog();
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'noticed',
+      taxActive: true,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']).toBeUndefined();
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          e.rejectedReason?.includes('activating')
+      )
+    ).toBe(true);
+  });
+
+  it('Engine #1 hostile path: pc-edit appended BEFORE ai-accept on same peer is rejected', () => {
+    // The plan claim (corrected): causal-sort puts the same-peer
+    // ai-accept (smaller seq) before its state-update.  A hostile
+    // coord trying to invert the order (state-update at seq N,
+    // then a retroactive ai-accept at seq N+1) sees the
+    // state-update apply FIRST (when aiAudit is empty for that
+    // responseId), get rejected, then the ai-accept arrives
+    // uselessly.
+    const log = dmLog();
+    log.append('pc-edit', { pcId: 'yui', field: 'harm', value: 2 });
+    // Hostile: state-update FIRST, then ai-accept.  Same peer.
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'harm',
+      value: 3,
+      causedByResponseId: RESP_ID
+    });
+    log.append('ai-accept', { v: 1, responseId: RESP_ID });
+    const state = materialize(log.events());
+    // harm stays at 2 — the rejected event didn't apply.
+    expect(state.pcEdits['yui']?.harm).toBe(2);
+    // Audit captures: rejected-hard-gate, then the accept.
+    const rejectedIdx = state.aiAudit.findIndex(
+      (e) => e.kind === 'rejected-hard-gate'
+    );
+    const acceptIdx = state.aiAudit.findIndex(
+      (e) => e.kind === 'accept'
+    );
+    expect(rejectedIdx).toBeGreaterThanOrEqual(0);
+    expect(acceptIdx).toBeGreaterThan(rejectedIdx);
+  });
+
+  it('cross-PC pc-edit without accept is rejected', () => {
+    const log = dmLog();
+    log.append('peer-join', { name: 'Alice' });
+    // Inject a second peer bound to "bob" PC.
+    const bobLog = new EventLog('guest');
+    bobLog.apply(log.events()[0]); // coord-claim
+    bobLog.append('peer-join', { name: 'Guest' });
+    bobLog.append('peer-rename', { pcId: 'bob' });
+    for (const e of bobLog.events()) log.apply(e);
+    // Alice (coord) proposes AI pc-edit on bob — cross-PC.
+    log.append('pc-edit', {
+      pcId: 'bob',
+      field: 'harm',
+      value: 1, // small delta; cross-PC gates regardless
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['bob']).toBeUndefined();
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          e.rejectedReason?.includes('cross-PC')
+      )
+    ).toBe(true);
+  });
+});
+
 describe('materialize — full session smoke test', () => {
   it('reduces a realistic multi-peer event sequence into the right state', () => {
     const alice = new EventLog('alice'); // DM

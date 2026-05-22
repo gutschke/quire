@@ -139,6 +139,7 @@ export class AiWriteController implements ReactiveController {
    */
   proposeBatch(updates: StateUpdate[], responseId: string): void {
     this.clearUndoTimer();
+    this.emittedAccepts.clear();
     const view = this.env.getSessionView();
     this.batch = updates.map((u) => {
       const reason = this.hardGateReason(u, view);
@@ -167,10 +168,16 @@ export class AiWriteController implements ReactiveController {
    * Apply every non-hard-gated entry in the current batch.  Starts
    * the 60-second undo timer.  Hard-gated entries stay pending for
    * individual `applyOne` clicks.  No-op when nothing pending.
+   *
+   * Emits an `ai-accept` event BEFORE the state-updates so the
+   * M3c.5 materializer's hard-gate scan finds it.  Even for safe
+   * (non-gated) entries we emit the accept — uniform audit chain,
+   * single code path.
    */
   applyAll(): void {
     const toApply = this.batch.filter((u) => u.status === 'pending');
     if (toApply.length === 0) return;
+    this.emitAcceptOnce(toApply[0].causedByResponseId);
     for (const u of toApply) {
       this.dispatch(u);
       u.status = 'applied';
@@ -184,6 +191,7 @@ export class AiWriteController implements ReactiveController {
     const u = this.batch.find((x) => x.id === id);
     if (!u) return;
     if (u.status !== 'pending' && u.status !== 'hard-gate-pending') return;
+    this.emitAcceptOnce(u.causedByResponseId);
     this.dispatch(u);
     u.status = 'applied';
     this.startUndoTimer();
@@ -314,6 +322,23 @@ export class AiWriteController implements ReactiveController {
     }
     // No one currently owns the target PC → not cross-PC.
     return false;
+  }
+
+  /**
+   * Track which responseIds have already had their ai-accept
+   * emitted for the current batch — prevents redundant ai-accept
+   * events when applyOne is called repeatedly within a single
+   * batch.  Reset on every proposeBatch.
+   */
+  private emittedAccepts = new Set<string>();
+
+  private emitAcceptOnce(responseId: string): void {
+    if (responseId.length === 0) return;
+    if (this.emittedAccepts.has(responseId)) return;
+    const s = this.env.getSession();
+    if (!s) return;
+    s.append('ai-accept', { v: 1, responseId });
+    this.emittedAccepts.add(responseId);
   }
 
   /**

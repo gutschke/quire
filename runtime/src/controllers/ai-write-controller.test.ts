@@ -287,9 +287,11 @@ describe('AiWriteController — applyAll', () => {
       'r1'
     );
     ctrl.applyAll();
-    expect(appended.length).toBe(1);
-    expect(appended[0].kind).toBe('pc-edit');
-    expect((appended[0].payload as { field: string }).field).toBe('stress');
+    // applyAll emits ONE ai-accept first, then the state-updates.
+    expect(appended.length).toBe(2);
+    expect(appended[0].kind).toBe('ai-accept');
+    expect(appended[1].kind).toBe('pc-edit');
+    expect((appended[1].payload as { field: string }).field).toBe('stress');
     expect(ctrl.currentBatch[0].status).toBe('applied');
     expect(ctrl.currentBatch[1].status).toBe('hard-gate-pending');
   });
@@ -302,7 +304,7 @@ describe('AiWriteController — applyAll', () => {
     expect(appended.length).toBe(0);
   });
 
-  it('applyOne lands a single hard-gated entry', () => {
+  it('applyOne lands a single hard-gated entry preceded by ai-accept', () => {
     const { host } = makeHost();
     const { session, appended } = makeSession();
     const ctrl = new AiWriteController(
@@ -315,11 +317,42 @@ describe('AiWriteController — applyAll', () => {
     );
     const id = ctrl.currentBatch[0].id;
     ctrl.applyOne(id);
-    expect(appended.length).toBe(1);
+    // ai-accept + the gated pc-edit.
+    expect(appended.length).toBe(2);
+    expect(appended[0].kind).toBe('ai-accept');
+    expect(appended[1].kind).toBe('pc-edit');
     expect(ctrl.currentBatch[0].status).toBe('applied');
   });
 
-  it('stamps causedByResponseId on every applied event', () => {
+  it('emits ai-accept only ONCE per responseId per batch', () => {
+    // Two hard-gated entries in one batch; applyOne twice on each
+    // → only the first applyOne emits ai-accept; the second
+    // reuses it.
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(
+        fakeView({ pcEdits: { yui: { harm: 2, stress: 3 } } }),
+        'yui',
+        session
+      )
+    );
+    ctrl.proposeBatch(
+      [
+        { kind: 'pc-edit', pcId: 'yui', field: 'harm', delta: 1 },
+        { kind: 'pc-edit', pcId: 'yui', field: 'stress', delta: 1 }
+      ],
+      'r1'
+    );
+    ctrl.applyOne(ctrl.currentBatch[0].id);
+    ctrl.applyOne(ctrl.currentBatch[1].id);
+    // ai-accept once + two pc-edits.
+    expect(appended.length).toBe(3);
+    expect(appended.filter((e) => e.kind === 'ai-accept').length).toBe(1);
+  });
+
+  it('stamps causedByResponseId on every applied state-update event', () => {
     const { host } = makeHost();
     const { session, appended } = makeSession();
     const ctrl = new AiWriteController(host, makeEnv(fakeView(), 'yui', session));
@@ -328,8 +361,15 @@ describe('AiWriteController — applyAll', () => {
       'resp-xyz'
     );
     ctrl.applyAll();
+    // [ai-accept, pc-edit].  The state-update has causedByResponseId;
+    // the ai-accept just has responseId.
+    expect(appended[0].kind).toBe('ai-accept');
+    expect((appended[0].payload as { responseId: string }).responseId).toBe(
+      'resp-xyz'
+    );
+    expect(appended[1].kind).toBe('pc-edit');
     expect(
-      (appended[0].payload as { causedByResponseId?: string }).causedByResponseId
+      (appended[1].payload as { causedByResponseId?: string }).causedByResponseId
     ).toBe('resp-xyz');
   });
 });
@@ -388,12 +428,14 @@ describe('AiWriteController — undo', () => {
       'r1'
     );
     ctrl.applyAll();
-    expect(appended.length).toBe(1);
-    ctrl.revertOne(ctrl.currentBatch[0].id);
+    // [ai-accept, pc-edit].
     expect(appended.length).toBe(2);
+    ctrl.revertOne(ctrl.currentBatch[0].id);
+    // + compensating pc-edit.
+    expect(appended.length).toBe(3);
     expect(ctrl.currentBatch[0].status).toBe('reverted');
     expect(
-      (appended[1].payload as { causedByResponseId?: string })
+      (appended[2].payload as { causedByResponseId?: string })
         .causedByResponseId
     ).toBe('');
   });
@@ -407,10 +449,12 @@ describe('AiWriteController — undo', () => {
       'r1'
     );
     ctrl.applyAll();
+    // [ai-accept, pc-edit].
+    const beforeRevert = appended.length;
     mockedTime += UNDO_WINDOW_MS + 1000;
     ctrl.revertOne(ctrl.currentBatch[0].id);
-    expect(appended.length).toBe(1);
-    expect(ctrl.currentBatch[0].status).toBe('applied');
+    expect(appended.length).toBe(beforeRevert); // unchanged; no compensating event
+    expect(ctrl.currentBatch[0].status).toBe('applied'); // not reverted
   });
 
   it('proposeBatch clears the prior undo window', () => {
