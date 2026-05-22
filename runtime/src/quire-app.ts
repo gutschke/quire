@@ -51,6 +51,10 @@ import {
 import { AnthropicProviderError } from './ai/providers/anthropic';
 import { GeminiProviderError } from './ai/providers/gemini';
 import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
+import {
+  buildCampaignContext,
+  wrapCampaignContext
+} from './ai/campaign-context';
 import { anthropicProvider } from './ai/providers/anthropic';
 import { geminiProvider } from './ai/providers/gemini';
 import type { AiResponse } from './ai/schema';
@@ -2375,8 +2379,32 @@ export class QuireApp extends LitElement {
     this.aiScope = 'public';
     const broker = this.brokerForProvider(this.aiProvider);
     try {
+      // M3b followup — campaign context.  Fetch the relevant
+      // files for the DM's current view + scope, wrap each in
+      // <untrusted_content>, and prepend to the user prompt so
+      // the model has the source material to answer from.
+      // Empty when no campaign is loaded; falls through cleanly.
+      const campaign = this.getCurrentCampaign();
+      const episode = this.getCurrentEpisode();
+      const contextFiles = campaign
+        ? await buildCampaignContext({
+            source: campaign.base.source,
+            scope,
+            episode: episode
+              ? {
+                  slug: episode.slug,
+                  scenes: episode.manifest.scenes ?? []
+                }
+              : undefined,
+            signal: ac.signal
+          })
+        : [];
+      const contextBlock = wrapCampaignContext(contextFiles);
+      const composedPrompt = contextBlock
+        ? `${contextBlock}\n\n---\n\n${user}`
+        : user;
       const result = await broker.complete({
-        prompt: user,
+        prompt: composedPrompt,
         scope,
         model: this.aiModel,
         systemPrompt: this.aiSystemPrompt || undefined,

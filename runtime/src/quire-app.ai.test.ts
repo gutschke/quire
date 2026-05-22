@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import './quire-app';
 import type { QuireApp } from './quire-app';
 import type { TransportFactory } from './session-controller';
@@ -382,6 +382,168 @@ describe('QuireApp AI panel — provider switching', () => {
     expect(app.aiModel).toBe('claude-opus-4-7');
     app.setAiProvider('gemini');
     expect(app.aiModel).toBe('gemini-2.5-pro');
+  });
+});
+
+describe('QuireApp AI campaign-context (M3b followup)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('passes the user prompt unchanged when no campaign is loaded', async () => {
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    let receivedPrompt = '';
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+          receivedPrompt = req.prompt;
+          return Promise.resolve({
+            raw: JSON.stringify({ safe: 'ok', dmOnly: '', sources: [] }),
+            tokensIn: 0,
+            tokensOut: 0,
+            responseId: 'r'
+          });
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
+    await app.submitAiPrompt('hello, no context');
+    expect(receivedPrompt).toBe('hello, no context');
+  });
+
+  it('prepends wrapped campaign content when an episode is loaded (public scope)', async () => {
+    // Stub fetch so any campaign fetch returns a marker; the
+    // tested behavior is that the marker text appears in the
+    // prompt passed to the provider, wrapped in untrusted_content.
+    vi.mocked(fetch).mockImplementation(
+      async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('campaign.json')) {
+          return new Response('{"name":"X"}', { status: 200 });
+        }
+        if (url.endsWith('world/overview.md')) {
+          return new Response('WORLD_OVERVIEW_MARKER', { status: 200 });
+        }
+        if (url.endsWith('episodes/E1/episode.json')) {
+          return new Response('{"name":"Ep"}', { status: 200 });
+        }
+        if (url.endsWith('episodes/E1/scenes/01.md')) {
+          return new Response('SCENE_ONE_MARKER', { status: 200 });
+        }
+        // dm/* should NOT be fetched at scope=public.
+        return new Response('', { status: 404 });
+      }
+    );
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    // Inject episode state — bypasses real campaign loader.
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'episode',
+      campaign: {
+        base: {
+          source: { owner: 'g', repo: 'u', ref: 'main' },
+          manifest: { name: 'X', $schemaVersion: '0.1.0' }
+        }
+      },
+      episode: {
+        slug: 'E1',
+        manifest: { name: 'Ep', scenes: ['scenes/01.md'] }
+      }
+    };
+    let receivedPrompt = '';
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+          receivedPrompt = req.prompt;
+          return Promise.resolve({
+            raw: JSON.stringify({ safe: 'ok', dmOnly: '', sources: [] }),
+            tokensIn: 0,
+            tokensOut: 0,
+            responseId: 'r'
+          });
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
+    await app.submitAiPrompt('what happens in scene 1?');
+    expect(receivedPrompt).toContain('WORLD_OVERVIEW_MARKER');
+    expect(receivedPrompt).toContain('SCENE_ONE_MARKER');
+    expect(receivedPrompt).toContain('<untrusted_content');
+    expect(receivedPrompt).toContain('what happens in scene 1?');
+    // The user prompt sits AFTER the context block.
+    const ctxEnd = receivedPrompt.indexOf('</untrusted_content>');
+    const userIdx = receivedPrompt.indexOf('what happens in scene 1?');
+    expect(userIdx).toBeGreaterThan(ctxEnd);
+  });
+
+  it('includes dm/* content when scope=dm (DM-only material reaches the model)', async () => {
+    vi.mocked(fetch).mockImplementation(
+      async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('campaign.json'))
+          return new Response('{}', { status: 200 });
+        if (url.endsWith('world/overview.md'))
+          return new Response('', { status: 200 });
+        if (url.endsWith('episodes/E1/episode.json'))
+          return new Response('{}', { status: 200 });
+        if (url.endsWith('episodes/E1/dm/the-cable.md')) {
+          return new Response('CABLE_IS_BEHIND_PANEL', { status: 200 });
+        }
+        return new Response('', { status: 404 });
+      }
+    );
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    (app as unknown as { _appState: unknown })._appState = {
+      kind: 'episode',
+      campaign: {
+        base: {
+          source: { owner: 'g', repo: 'u', ref: 'main' },
+          manifest: { name: 'X', $schemaVersion: '0.1.0' }
+        }
+      },
+      episode: {
+        slug: 'E1',
+        manifest: { name: 'Ep', scenes: [] }
+      }
+    };
+    app.aiScope = 'dm';
+    let receivedPrompt = '';
+    app.aiProviders = {
+      ...app.aiProviders,
+      claude: {
+        id: 'claude',
+        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+          receivedPrompt = req.prompt;
+          return Promise.resolve({
+            raw: JSON.stringify({ safe: '', dmOnly: 'ok', sources: [] }),
+            tokensIn: 0,
+            tokensOut: 0,
+            responseId: 'r'
+          });
+        }),
+        parse: (raw: string) => JSON.parse(raw)
+      }
+    };
+    await app.submitAiPrompt('where is the cable?');
+    expect(receivedPrompt).toContain('CABLE_IS_BEHIND_PANEL');
   });
 });
 
