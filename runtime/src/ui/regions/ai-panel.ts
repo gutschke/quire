@@ -32,7 +32,27 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { AI_DEFAULTS, type AiProvider } from '../../controllers/ai-key-store';
 import type { SanitizedHtml } from '../../markdown';
 import type { ContextScope } from '../../ai/context';
-import type { SourceRef } from '../../ai/schema';
+import type { SourceRef, StateUpdate } from '../../ai/schema';
+
+/**
+ * M3c.4: AI-write batch view passed from QuireApp.  Mirrors the
+ * AiWriteController's reactive state.  Plain data so the panel
+ * stays controller-agnostic (testable without instantiating the
+ * controller).
+ */
+export interface AiWriteBatchView {
+  /** Entries the DM has not yet acted on or has applied. */
+  batch: ReadonlyArray<{
+    id: string;
+    update: StateUpdate;
+    status: 'pending' | 'applied' | 'reverted' | 'hard-gate-pending';
+    hardGateReason: string;
+  }>;
+  /** Seconds remaining in the undo window (0 when no undo active). */
+  undoSecondsRemaining: number;
+  /** True when at least one entry is still 'pending' OR 'hard-gate-pending'. */
+  hasUnapplied: boolean;
+}
 
 /**
  * Pre-rendered dual-card payload — QuireApp runs the provider's
@@ -135,6 +155,18 @@ export class AiPanel extends LitElement {
   @property({ attribute: false }) onRejectResponse:
     | ((responseId: string) => void)
     | null = null;
+  /**
+   * M3c.4: AI-write batch view.  Null when no pending batch.  The
+   * panel renders the accept-gate strip below the dual-card.
+   */
+  @property({ attribute: false }) writeBatch: AiWriteBatchView | null = null;
+  @property({ attribute: false }) onApplyAllWrites: (() => void) | null = null;
+  @property({ attribute: false }) onApplyWrite:
+    | ((id: string) => void)
+    | null = null;
+  @property({ attribute: false }) onRevertWrite:
+    | ((id: string) => void)
+    | null = null;
 
   override render(): TemplateResult {
     if (!this.visible) return html``;
@@ -165,7 +197,87 @@ export class AiPanel extends LitElement {
           ? html`<p class="ai-error">${this.error}</p>`
           : nothing}
         ${this.response ? this.renderDualCard(this.response) : nothing}
+        ${this.writeBatch ? this.renderWriteBatch(this.writeBatch) : nothing}
       </section>
+    `;
+  }
+
+  /**
+   * M3c.4 (P2-12 extension): render the AI-write accept-gate strip.
+   * One-line summary per pending entry; apply-all-on-Enter for the
+   * safe entries; per-entry explicit-accept buttons for the hard-
+   * gated ones; per-entry revert glyph during the 60s undo window.
+   */
+  private renderWriteBatch(b: AiWriteBatchView): TemplateResult | typeof nothing {
+    if (b.batch.length === 0) return nothing;
+    const undoActive = b.undoSecondsRemaining > 0;
+    return html`
+      <div class="ai-write-strip">
+        <header class="ai-write-strip-head">
+          <span class="ai-write-strip-label"
+            >AI proposed ${b.batch.length} update${b.batch.length === 1 ? '' : 's'}</span
+          >
+          ${b.hasUnapplied
+            ? html`<button
+                type="button"
+                class="ai-write-apply-all"
+                @click=${() => this.onApplyAllWrites?.()}
+              >
+                Apply all
+              </button>`
+            : nothing}
+          ${undoActive
+            ? html`<span class="ai-write-undo-banner"
+                >Undo available (${b.undoSecondsRemaining}s)</span
+              >`
+            : nothing}
+        </header>
+        <ul class="ai-write-list">
+          ${b.batch.map((entry) => this.renderWriteEntry(entry, undoActive))}
+        </ul>
+      </div>
+    `;
+  }
+
+  private renderWriteEntry(
+    entry: AiWriteBatchView['batch'][number],
+    undoActive: boolean
+  ): TemplateResult {
+    const summary = formatStateUpdate(entry.update);
+    const detail = formatStateUpdateDetail(entry.update);
+    return html`
+      <li class="ai-write-entry ai-write-entry-${entry.status}">
+        <span class="ai-write-entry-text">${summary}</span>
+        ${detail
+          ? html`<span class="ai-write-entry-detail muted">${detail}</span>`
+          : nothing}
+        ${entry.status === 'pending'
+          ? nothing
+          : entry.status === 'hard-gate-pending'
+            ? html`<button
+                type="button"
+                class="ai-write-accept-one"
+                title=${entry.hardGateReason}
+                @click=${() => this.onApplyWrite?.(entry.id)}
+              >
+                Accept this change
+              </button>`
+            : entry.status === 'applied'
+              ? html`<span class="ai-write-status-tag">✓ applied</span>
+                ${undoActive
+                  ? html`<button
+                      type="button"
+                      class="ai-write-revert-one"
+                      title="Revert this change"
+                      @click=${() => this.onRevertWrite?.(entry.id)}
+                    >
+                      ↶ revert
+                    </button>`
+                  : nothing}`
+              : html`<span class="ai-write-status-tag muted"
+                  >✗ reverted</span
+                >`}
+      </li>
     `;
   }
 
@@ -440,6 +552,54 @@ export class AiPanel extends LitElement {
         </div>
       </form>
     `;
+  }
+}
+
+/**
+ * M3c.4: one-line summary of a StateUpdate, formatted for the
+ * DM's at-a-glance scan.  Honors rules-reference.md L135 for the
+ * caster-state-set case — `reason` (the narration prompt) is the
+ * primary text; the bare ladder state is metadata in the muted
+ * detail line.  Plain Lit text interpolation (no markdown
+ * rendering, no unsafeHTML) per Security S-2.
+ */
+export function formatStateUpdate(u: StateUpdate): string {
+  switch (u.kind) {
+    case 'pc-edit': {
+      const sign = u.delta >= 0 ? '+' : '';
+      const reason = u.reason ? ` (${u.reason})` : '';
+      return `${u.pcId}: ${u.field} ${sign}${u.delta}${reason}`;
+    }
+    case 'dice-roll': {
+      return `${u.purpose}: roll ${u.expression}`;
+    }
+    case 'caster-state-set': {
+      // reason is primary; state label is secondary (in detail line).
+      const reason = u.reason ?? u.pcId;
+      return `${u.pcId}: ${reason}`;
+    }
+  }
+}
+
+/**
+ * The metadata line for a StateUpdate — shown smaller / muted
+ * beneath the primary summary.  For caster-state-set this is
+ * where the bare ladder label lives.
+ */
+export function formatStateUpdateDetail(u: StateUpdate): string {
+  switch (u.kind) {
+    case 'pc-edit':
+      return '';
+    case 'dice-roll':
+      return u.modifierBreakdown ?? '';
+    case 'caster-state-set': {
+      const parts: string[] = [];
+      parts.push(`ladder → ${u.ladderState}`);
+      if (u.taxActive !== undefined)
+        parts.push(`tax ${u.taxActive ? 'on' : 'off'}`);
+      if (u.spamCount !== undefined) parts.push(`spam ${u.spamCount}`);
+      return parts.join(' · ');
+    }
   }
 }
 

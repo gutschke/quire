@@ -55,6 +55,8 @@ import {
   buildCampaignContext,
   wrapCampaignContext
 } from './ai/campaign-context';
+import { AiWriteController } from './controllers/ai-write-controller';
+import type { AiWriteBatchView } from './ui/regions/ai-panel';
 import { anthropicProvider } from './ai/providers/anthropic';
 import { geminiProvider } from './ai/providers/gemini';
 import type { AiResponse } from './ai/schema';
@@ -304,6 +306,21 @@ export class QuireApp extends LitElement {
    * (`this.aiProvider`, `setAiApiKey(...)`, etc.) continue to work.
    */
   private aiKeys = new AiKeyStore(this);
+  /**
+   * M3c.4: AI-write batch controller.  Stages the AI's proposed
+   * state updates after broker.complete returns; the DM accepts
+   * via the strip in ai-panel.  See ai-write-controller.ts.
+   */
+  private aiWrites = new AiWriteController(this, {
+    getSessionView: () => this.sessionView ?? undefined,
+    getSession: () => this.session,
+    getBoundPcId: () => {
+      const v = this.sessionView;
+      if (!v || v.status !== 'active' || !v.peerId) return undefined;
+      const me = v.filteredShared.peers[v.peerId];
+      return me?.pcId;
+    }
+  });
   @state() aiPromptDraft: string = '';
   @state() aiResponse: string | null = null;
   /**
@@ -1160,6 +1177,10 @@ export class QuireApp extends LitElement {
         .verdictResponseId=${this.aiVerdictResponseId}
         .verdictKind=${this.aiVerdictKind}
         .budget=${this.aiBudgetSummary()}
+        .writeBatch=${this.aiWriteBatchView()}
+        .onApplyAllWrites=${() => this.aiWrites.applyAll()}
+        .onApplyWrite=${(id: string) => this.aiWrites.applyOne(id)}
+        .onRevertWrite=${(id: string) => this.aiWrites.revertOne(id)}
       ></ai-panel>
     `;
   }
@@ -2444,6 +2465,17 @@ export class QuireApp extends LitElement {
       // Clear any prior verdict so the new response's buttons are hot.
       this.aiVerdictResponseId = '';
       this.aiVerdictKind = '';
+      // M3c.4: stage the AI's proposed state updates for DM accept.
+      // Empty stateUpdates → clear() empties any prior batch so the
+      // strip doesn't linger across prompts.
+      if (result.stateUpdates.length > 0) {
+        this.aiWrites.proposeBatch(
+          result.stateUpdates,
+          result.responseId || ''
+        );
+      } else {
+        this.aiWrites.clear();
+      }
       // Maintain legacy `aiResponse` (string) for the "Share to
       // chat" affordance and any test still referencing it.  Use
       // the safe half — never dmOnly — since shareToChat sends
@@ -2502,6 +2534,25 @@ export class QuireApp extends LitElement {
       if (slug !== currentSlug) episodes.push({ slug });
     }
     return episodes;
+  }
+
+  /**
+   * M3c.4: serialize the AiWriteController state for the ai-panel
+   * region.  Returns null when no pending batch.
+   */
+  private aiWriteBatchView(): AiWriteBatchView | null {
+    const batch = this.aiWrites.currentBatch;
+    if (batch.length === 0) return null;
+    return {
+      batch: batch.map((u) => ({
+        id: u.id,
+        update: u.update,
+        status: u.status,
+        hardGateReason: u.hardGateReason
+      })),
+      undoSecondsRemaining: this.aiWrites.undoSecondsRemaining,
+      hasUnapplied: this.aiWrites.hasUnappliedPending
+    };
   }
 
   /**

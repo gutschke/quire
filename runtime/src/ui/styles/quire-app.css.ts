@@ -1288,6 +1288,101 @@ export const quireAppStyles = css`
       font-style: italic;
     }
 
+    /* M3c.4: AI-write accept-gate strip in <ai-panel>.  Sits below
+       the dual-card; one-line summary per state-update proposal,
+       Apply-All-on-Enter, per-entry revert during 60s undo window,
+       hard-gate carve-outs with their own Accept-this-change. */
+    .ai-write-strip {
+      margin-top: 0.7rem;
+      padding: 0.5rem 0.7rem;
+      background: light-dark(#f3f7fa, #1c2229);
+      border-left: 3px solid light-dark(#3a6ea5, #5a8cc8);
+      border-radius: 4px;
+    }
+    .ai-write-strip-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6em;
+      margin-bottom: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .ai-write-strip-label {
+      font-variant: small-caps;
+      letter-spacing: 0.04em;
+      color: light-dark(#3a6ea5, #79b8f0);
+    }
+    .ai-write-apply-all {
+      padding: 0.25rem 0.7rem;
+      font-size: 0.9em;
+      background: light-dark(#3a6ea5, #2e5a8a);
+      color: light-dark(#fff, #fff);
+      border: 0;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .ai-write-apply-all:hover {
+      background: light-dark(#2e5a8a, #406ea5);
+    }
+    .ai-write-undo-banner {
+      font-size: 0.85em;
+      color: light-dark(#0a7a3a, #5ac985);
+    }
+    .ai-write-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .ai-write-entry {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5em;
+      padding: 0.15rem 0;
+      border-bottom: 1px dotted light-dark(#ccc, #333);
+      font-size: 0.92em;
+    }
+    .ai-write-entry-text {
+      flex: 1;
+    }
+    .ai-write-entry-detail {
+      font-size: 0.85em;
+    }
+    .ai-write-entry-applied {
+      opacity: 0.75;
+    }
+    .ai-write-entry-reverted {
+      opacity: 0.5;
+      text-decoration: line-through;
+    }
+    .ai-write-entry-hard-gate-pending {
+      background: light-dark(#fff7e0, #2a2618);
+      padding: 0.2rem 0.4rem;
+      border-left: 2px solid light-dark(#d4a017, #a07820);
+      margin-left: -0.4rem;
+    }
+    .ai-write-accept-one {
+      background: light-dark(#fff, #2a2618);
+      border: 1px solid light-dark(#b8841a, #856010);
+      color: light-dark(#5a4310, #ffd479);
+      padding: 0.15rem 0.5rem;
+      font-size: 0.85em;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    .ai-write-status-tag {
+      font-size: 0.8em;
+      color: light-dark(#0a7a3a, #5ac985);
+    }
+    .ai-write-revert-one {
+      background: transparent;
+      border: 0;
+      cursor: pointer;
+      color: light-dark(#aa3030, #ff8080);
+      font-size: 0.85em;
+    }
+
     /* M3a.8 P2-3: DM scratch column (Dock region). */
     .dm-scratch textarea {
       width: 100%;
