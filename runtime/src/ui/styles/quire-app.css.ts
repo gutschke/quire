@@ -987,6 +987,43 @@ export const quireAppStyles = css`
       word-break: break-word;
     }
 
+    /* B1 (Phase 3b-2A): cockpit input-routing safety.  Two adjacent
+       aside surfaces accept text input — chat (public; goes to all
+       players) and the AI DM-aide (private; visible only to you).
+       The locked threat model is "defend against accidental DM
+       disclosure"; the live play-test confirmed the canonical
+       failure mode is a DM typing an AI-intended message into chat.
+       Visual treatment + explicit copy + /ai slash escape hatch
+       together make the confusion impossible at a glance.
+       Surface-public is blue (cool / outward-facing); surface-
+       private is amber-violet (warm / DM-only, reuses the existing
+       DM-amber + ai-provider-tag palette). */
+    .surface-public {
+      border-left: 3px solid light-dark(#1d4ed8, #6bb6ff);
+    }
+    .surface-private {
+      border-left: 3px solid light-dark(#9978b8, #c4a8e0);
+    }
+    .surface-public-tag,
+    .surface-private-tag {
+      display: inline-block;
+      margin-left: 0.5rem;
+      padding: 0.05rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.7em;
+      font-weight: 400;
+      letter-spacing: 0.02em;
+      vertical-align: middle;
+    }
+    .surface-public-tag {
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e3a8a, #dbeafe);
+    }
+    .surface-private-tag {
+      background: light-dark(#ede4f6, #2a2030);
+      color: light-dark(#5b3a8a, #d0c0e6);
+    }
+
     .chat-form {
       display: flex;
       gap: 0.5rem;
@@ -994,12 +1031,23 @@ export const quireAppStyles = css`
     }
 
     .chat-form input {
-      flex: 1;
+      /* B2 (Phase 3b-2A): explicit flex: 1 1 auto plus min-width: 0
+         so the input shrinks below its intrinsic content size when
+         the aside column is narrow.  Without min-width: 0, flex
+         items default to min-width: auto (= content-based) which
+         pushed the Send button off-screen in the live play-test. */
+      flex: 1 1 auto;
+      min-width: 0;
       padding: 0.3rem 0.5rem;
       border: 1px solid light-dark(#ccc, #444);
       border-radius: 4px;
       background: light-dark(#fff, #111);
       color: inherit;
+    }
+    .chat-form button {
+      /* B2: complement to .chat-form input — button stays intrinsic
+         width and refuses to shrink. */
+      flex: 0 0 auto;
     }
 
     .chat-error {
@@ -1282,6 +1330,13 @@ export const quireAppStyles = css`
     }
 
     .ai-form textarea {
+      /* B2: explicit width + box-sizing so a tall textarea in a
+         narrow aside doesn't overflow its parent card.  Same
+         rationale as .chat-form input — Lit/HTML defaults give a
+         textarea its cols=20 intrinsic width, which collides with
+         the 280-340px aside column. */
+      width: 100%;
+      box-sizing: border-box;
       padding: 0.4rem 0.6rem;
       border: 1px solid light-dark(#ccc, #444);
       border-radius: 4px;

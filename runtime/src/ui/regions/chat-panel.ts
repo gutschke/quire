@@ -55,10 +55,18 @@ export class ChatPanel extends LitElement {
   override render(): TemplateResult {
     if (!this.active) return html``;
     return html`
-      <section class="card chat-panel">
-        <h2>Chat</h2>
+      <section class="card chat-panel surface-public">
+        <h2>
+          Chat
+          <span class="surface-public-tag">visible to all players</span>
+        </h2>
         ${this.entries.length === 0
-          ? html`<p class="muted">No messages yet. Say hello.</p>`
+          ? html`<p class="muted">
+              No messages yet.  Messages here go to every player in the
+              session.  To ask the DM aide instead, use the panel above
+              (or type
+              <code>/ai &lt;question&gt;</code> here).
+            </p>`
           : html`
               <ul class="chat-list">
                 ${this.entries.map(
@@ -81,9 +89,12 @@ export class ChatPanel extends LitElement {
           <input
             type="text"
             .value=${this.chatDraft}
-            placeholder="Say something…"
-            aria-label="Chat message"
+            placeholder="Message all players…"
+            aria-label="Chat message (visible to all players)"
             maxlength="500"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="true"
             @input=${(e: Event) =>
               this.onDraftChange?.((e.target as HTMLInputElement).value)}
           />

@@ -191,10 +191,11 @@ export class AiPanel extends LitElement {
     if (!this.visible) return html``;
     const hasKey = this.apiKey.length > 0;
     return html`
-      <section class="card ai-panel">
+      <section class="card ai-panel surface-private">
         <div class="ai-panel-head">
           <h2>
             DM aide
+            <span class="surface-private-tag">only you see this</span>
             <span class="ai-provider-tag">
               ${AI_DEFAULTS[this.provider].label}
             </span>
@@ -579,8 +580,11 @@ export class AiPanel extends LitElement {
         <textarea
           rows="3"
           .value=${this.promptDraft}
-          placeholder="Describe Yui's reaction. Or: NPC voice for the gate agent. Or: three sensory beats from the cabin."
-          aria-label="AI prompt"
+          placeholder="Ask the AI privately — describe Yui's reaction.  Or: NPC voice for the gate agent.  Or: three sensory beats from the cabin."
+          aria-label="AI prompt (private to you)"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="true"
           ?disabled=${this.loading}
           @input=${(e: Event) =>
             this.onPromptDraftChange?.((e.target as HTMLTextAreaElement).value)}

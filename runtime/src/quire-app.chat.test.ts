@@ -109,6 +109,85 @@ describe('QuireApp chat surface', () => {
     expect(app.sessionView!.shared.diceRolls[0].expression).toBe('2d6+1');
   });
 
+  it('B1 (Phase 3b-2A): /ai prefix re-routes to AI, does NOT broadcast to chat', async () => {
+    // Per the chat/AI confusion threat-model finding, a DM whose
+    // muscle-memory typed an AI-intended message into the chat
+    // input gets a slash-command escape hatch: `/ai <question>`
+    // routes to submitAiPrompt instead of session.append('chat').
+    // Verifies the load-bearing security invariant.
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    // Spy on submitAiPrompt; we don't actually need the AI roundtrip,
+    // just confirm the routing decision was made.
+    let aiCalledWith = '';
+    const origSubmit = app.submitAiPrompt.bind(app);
+    app.submitAiPrompt = async (p: string) => {
+      aiCalledWith = p;
+      return null;
+    };
+    const result = app.submitChat('/ai can you create the pcs for me');
+    expect(result).toBe(true);
+    expect(aiCalledWith).toBe('can you create the pcs for me');
+    // Critically: no chat event was appended.  This is the bug.
+    expect(app.sessionView!.shared.chat).toEqual([]);
+    app.submitAiPrompt = origSubmit;
+  });
+
+  it('B1: @ai prefix also re-routes (muscle-memory tolerance)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    let aiCalledWith = '';
+    app.submitAiPrompt = async (p: string) => {
+      aiCalledWith = p;
+      return null;
+    };
+    app.submitChat('@ai what is the antagonist hiding?');
+    expect(aiCalledWith).toBe('what is the antagonist hiding?');
+    expect(app.sessionView!.shared.chat).toEqual([]);
+  });
+
+  it('B1: /airplane does NOT match the /ai pattern (precise prefix)', async () => {
+    // The regex requires `/ai` followed by whitespace, not just
+    // `/ai...`.  Defensive against a DM typing "/airplane" as
+    // chat literal — should land in chat, not get truncated to
+    // an AI call with "plane" as the prompt.
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    let aiCalledWith: string | null = null;
+    app.submitAiPrompt = async (p: string) => {
+      aiCalledWith = p;
+      return null;
+    };
+    app.submitChat('/airplane is a chat word');
+    expect(aiCalledWith).toBeNull();
+    expect(app.sessionView!.shared.chat).toHaveLength(1);
+    expect(app.sessionView!.shared.chat[0].text).toBe(
+      '/airplane is a chat word'
+    );
+  });
+
+  it('B1: /ai with no message body lands in chat (literal, prompts user)', async () => {
+    // `/ai` alone (no trailing whitespace + text) doesn't match the
+    // re-route regex; falls through to chat as a literal so the user
+    // sees their typo and corrects.
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    let aiCalledWith: string | null = null;
+    app.submitAiPrompt = async (p: string) => {
+      aiCalledWith = p;
+      return null;
+    };
+    app.submitChat('/ai');
+    expect(aiCalledWith).toBeNull();
+    // The literal goes through to chat.
+    expect(app.sessionView!.shared.chat).toHaveLength(1);
+    expect(app.sessionView!.shared.chat[0].text).toBe('/ai');
+  });
+
   it('falls through unparseable /roll to chat (literal, not silent no-op)', async () => {
     const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
     app.startHosting();

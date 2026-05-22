@@ -1143,7 +1143,7 @@ export class QuireApp extends LitElement {
         <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
         <quire-rail slot="rail">${dmRail ? dmRail : this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
-        <quire-aside slot="aside">${dmAside}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}</quire-aside>
+        <quire-aside slot="aside">${dmAside}${this.renderAiPanel()}${this.renderRosterPanel()}${this.renderChatPanel()}</quire-aside>
         <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
       </quire-shell>
     `;
@@ -3442,6 +3442,20 @@ export class QuireApp extends LitElement {
       }
       // Unparseable /roll: send as chat so user sees their literal
       // text rather than getting a silent no-op.
+    }
+    // B1 escape hatch (Phase 3b-2A): `/ai ` or `@ai ` prefix re-routes
+    // an AI-intended message that was muscle-memoried into the chat
+    // input.  Per the chat/AI confusion threat-model finding, this is
+    // the load-bearing recovery affordance for a DM who would
+    // otherwise broadcast a private query to all players.  Only the
+    // DM (coordinator) can use this — players have no AI panel, so
+    // their `/ai` would be a no-op.
+    const aiMatch = trimmed.match(/^[/@]ai\s+(.+)$/is);
+    if (aiMatch && this.isCoordinator()) {
+      void this.submitAiPrompt(aiMatch[1]);
+      this.chatDraft = '';
+      this.chatError = null;
+      return true;
     }
     // F2 fix: cap with explicit user-facing feedback instead of a
     // silent no-op.  The user can see what was over-cap and edit it
