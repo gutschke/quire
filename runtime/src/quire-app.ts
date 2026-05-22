@@ -672,7 +672,21 @@ export class QuireApp extends LitElement {
     const { signal } = this.abortController;
 
     if (route.kind === 'home') {
-      this._appState ={ kind: 'idle' };
+      // M3D-3 (route-change-fires-leave): if an active session is
+      // currently hosted/joined when we SPA-navigate back to home,
+      // emit a clean peer-leave + flush autosave + tear down BEFORE
+      // returning to idle.  Without this, the prior coord's
+      // peer-join + coordinator-claim rehydrate from autosave on a
+      // later restore without a matching leftAt → stale-DM-peer
+      // visible in the roster on rejoin.  The `beforeunload` path
+      // also fires peer-leave, but it's best-effort (the browser may
+      // tear down WebRTC before the message lands and before the
+      // debounced autosave flushes); the SPA-navigation case is
+      // synchronous and reliable.
+      if (this.sessionView?.status === 'active') {
+        this.announceLeaveAndExit();
+      }
+      this._appState = { kind: 'idle' };
       return;
     }
 
@@ -2188,6 +2202,42 @@ export class QuireApp extends LitElement {
     doLeaveSession(this.session);
     this.joinCodeDraft = '';
     this.chatDraft = '';
+  }
+
+  /**
+   * M3D-3: clean shutdown when the SPA navigates back to home
+   * with an active session.  Three steps in order, each load-bearing:
+   *
+   * 1. Append `peer-leave` to the in-memory event log so the leave
+   *    event is observable both locally and to any still-connected
+   *    peers (best-effort across WebRTC, same fire-and-forget shape
+   *    used by `beforeUnloadHandler`).
+   * 2. Run autosave synchronously (`performNow`) — without this, the
+   *    debounced timer hasn't fired and the leave event sits in
+   *    in-memory state only.  Restoring from this incomplete autosave
+   *    on the next session restores the prior coord WITHOUT a
+   *    leftAt — the original stale-DM-peer bug.
+   * 3. Tear down the session controller via `leaveSession()`.
+   *
+   * Step 2 is what distinguishes this path from beforeUnloadHandler
+   * (which doesn't flush — the page is about to unload anyway and
+   * the autosave is racing against tab close).
+   */
+  private announceLeaveAndExit(): void {
+    if (!this.session) return;
+    try {
+      (
+        this.session as unknown as {
+          peer?: { append: (k: string, p: unknown) => void };
+        }
+      ).peer?.append('peer-leave', {});
+    } catch {
+      /* the session is tearing down anyway; missed peer-leave on the
+       * wire is recoverable by other peers' heartbeat reaping (future
+       * M3D-3 follow-on). */
+    }
+    this.autosave.performNow();
+    this.leaveSession();
   }
 
   /**
