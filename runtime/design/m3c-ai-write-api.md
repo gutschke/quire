@@ -51,16 +51,18 @@ Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applic
 - **New event kind `caster-state-set`** (coord-only).
   - Payload: `{ v: 1, pcId, ladderState, reason?, taxActive?, spamCount?, causedByResponseId? }`.
   - `ladderState`: `'quiet' | 'noticed' | 'watched' | 'pushing-back' | 'hunted' | 'clear'` (explicit `'clear'` sentinel — avoids the empty-string-as-sentinel fragility Engine flagged).
-  - `reason`: short string; rendered as the DM's narration prompt (rules-reference.md L135 — ladder must be narrated, not numbered).
+  - `reason`: short string; rendered as the DM's narration prompt (rules-reference.md L135 — ladder must be narrated, not numbered).  **Rendered via plain Lit text interpolation in the UI (auto-escaped), NOT `renderMarkdown(unsafeHTML(...))`** — Security S-2.
   - `taxActive`: bool — trying-too-hard per L179-186.
-  - `spamCount`: int — Free/Cheap cast counter per L141.  Resets on scene transition via `caster-state-set` with `spamCount: 0`.
-  - `causedByResponseId`: when set, materializer enforces hard-gate.
+  - `spamCount`: int — Free/Cheap cast counter per L141.  Reset emitter: **DM-direct "Reset spam counter" button** in the cockpit (Engine #3 / TTRPG #2).  Auto-reset on scene transition deferred to M3d — the runtime has no scene-transition event today; AI is told to ask the DM rather than auto-zero.
+  - `causedByResponseId`: when set, materializer enforces hard-gate (see Phase 3).
 - **Materializer:** mutates `state.casterState: Record<pcId, CasterState>` (NEW DM-only field — wiped by `filterForViewer`, stripped from shareable saves).
 - **PER-KIND MATERIALIZER EXTRACTION** (Engine #2 + redesign-plan.md L67):
-  - Move `caster-state-set`, `pc-edit`, `dice-roll`, `scratch-note`, `npc-pin`, `npc-unpin`, `thread-debt-set`, `broadcast-view`, `ai-*` cases out of the giant switch in state.ts into `src/core/materializers/<kind>.ts` (one file per kind, all exporting an `apply(state, event)` function).
+  - state.ts currently has **31 case arms** (Adversarial A-new-1 — original plan said 17; actual count from `grep -c "case '" src/core/state.ts`).  Materializer extraction is ~4-6 commits at minimum, not a single mechanical drop.
+  - Move every case (caster-state-set + the existing 31) into `src/core/materializers/<kind>.ts`, each exporting an `apply(state, event)` function.
   - state.ts retains the switch as a thin dispatch table.
   - Each per-kind module is independently testable from `<kind>.test.ts`.
-  - This is mechanical refactoring; should land as its own commit ahead of caster-state-set.
+  - Ship the extraction as a sequence of small commits (one per logical grouping — peers/coord, scene-reveal-pair, dice/chat/pcedit, ai-*, scratch/pin/debt/broadcast, caster-state-set) before the rest of M3c lands.
+  - **Slip-valve:** if the extraction overruns the milestone budget, drop the per-kind extraction from M3c and ship caster-state-set inline; the extraction becomes M3c.5.  Document explicitly so the implementer has permission to slip.
 - **AiResponse schema extension:**
   ```ts
   interface AiResponse {
@@ -127,13 +129,21 @@ Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applic
   - `caster-state-set` with `ladderState: 'hunted'`, OR `taxActive: true` transition (was false → now true), OR `taxActive: false` transition (release)
   - cross-PC `pc-edit` (event.peerId is the coord, payload.pcId is a different bound PC than the coord's own)
   - `dice-roll` resulting in a double-1 (the broker won't emit this; this catches a hypothetical hostile)
-- If hard-gated AND `causedByResponseId` is set, the materializer requires the event to be IMMEDIATELY preceded (within the same prompt's emission batch — same prevHash) by a logged `ai-accept` referencing this responseId.  If not, the event is silently rejected (defensive — the broker should never let this happen).
+- **Mechanism** (Engine #1 — corrected from the prior draft):
+  - There is NO "emission batch" or shared-prevHash concept the materializer can see.  EventLog uses causal-then-lexicographic total order (vector-clock-sum primary, `peerId:seq` tiebreak).
+  - At apply-time for a hard-gated event whose payload carries `causedByResponseId`, the materializer scans `state.aiAudit` for an entry with `kind: 'accept'` whose `responseId === event.payload.causedByResponseId`.  The scan is O(audit-depth), bounded by `AI_AUDIT_CAP = 5000`.
+  - **Causality guarantee:** the coord owns both the `ai-accept` and the state-update events.  Both come from the same peer's seq counter.  ai-accept has the smaller seq, so its vector-clock-sum is smaller, so it materializes first.  When the state-update applies, the ai-accept is already in `aiAudit`.
+  - **Hostile path:** if a hostile coord appends a state-update at seq N without first appending an ai-accept at a smaller seq, the materializer scan finds no matching accept and rejects.  A retroactive ai-accept at seq N+1 cannot rescue the earlier event (events are immutable after rejection).  Defense-in-depth holds for free.
+- **Rejection visibility** (TTRPG #1): rejected hard-gated events are NOT silently dropped.  The materializer appends a synthetic audit entry (a new `aiAudit` kind `rejected-hard-gate` or piggyback on existing) so the DM sees that an AI proposal was refused.  The cockpit shows a one-line banner.  Silent drops break forensic auditability and DM trust.
 - Per-kind materializers each gain a `isHardGated(event, state)` helper for readability.
+- **Hostile test required** for the mechanism: append a `pc-edit` with `causedByResponseId: 'r1'` BEFORE the corresponding `ai-accept` on the same peer.  Materialize.  Verify the pc-edit was rejected.
 
-### Phase 4 — Strip-list + audit-chain extension
+**Out-of-scope but documented (Adversarial A-new-2):** manual (DM-direct) cross-PC `pc-edit` events without `causedByResponseId` are NOT gated by this mechanism — they would land as today.  Closing that pre-existing gap is a separate concern.
+
+### Phase 4 — Strip-list
 
 - `serializeSessionForViewer` in persistence.ts: add `caster-state-set` to `PLAYER_SCOPE_STRIP_KINDS`.  (Other M3c-affected kinds are already stripped or are player-visible by design.)
-- Audit binding: `ai-accept` payload gains an optional `appliedEventIds?: string[]` so a single ai-accept can name the events it caused.  Backward-compat: empty array.  Future "which prompt caused Yui to lose 3 harm" forensic queries become trivial.
+- **No `appliedEventIds` on ai-accept** (Engine #2): events have unknown ids at append time; the reverse query already works via `causedByResponseId` + `aiAudit` lookup.  ("Which prompt caused Yui to lose 3 harm?" → scan pc-edit events on Yui, project `causedByResponseId`, look up the matching `aiAudit` entry's prompt half.)  Skipping a redundant field with ordering hazards.
 
 ### Phase 5 — M3c gate
 
@@ -165,12 +175,18 @@ All previous M3c open questions either resolved or moved to M3d.  The implementa
 
 ## Tests
 
-- ~30 vitest cases for the caster-state-set materializer + the per-kind extraction + the AiResponse schema extension + isAiResponse changes.
+- ~60 vitest cases for the caster-state-set materializer + per-kind extraction sweep + AiResponse schema extension + isAiResponse changes + the hard-gate hostile path (Engine-required: pc-edit appended before ai-accept on same peer must reject).
 - 3 e2e specs as listed.
 - Snapshot-style test for the new AI panel strip rendering (already pattern in scene-stage.test.ts).
-- Total budget estimate: ~30 new tests; lands around 950 vitest + 16 playwright.
+- **Realistic landing** (Engine #4 / Adversarial A8): ~880-900 vitest + ~22 playwright spec files (current baseline 823 vitest, 19 specs — three new e2e specs = ~22 total, not 16 as the prior draft erroneously claimed).
 
 ## Followups out of M3c
 
-- **M3d**: inventory primitive (rapid-change tier-2 per user) + content proposals (NPC / room / item, session-scoped only) + "Just say yes" narrate-only path.  Requires the M4 promotion-from-session-scope path to be specified FIRST OR explicit acknowledgment that session content remains session-only until M4.
+- **M3c polish (deferrable):** the "Review every state update individually" settings toggle is the lowest-stakes feature in this milestone.  If implementation runs hot, drop it last; the apply-all-with-undo + hard-gate carve-outs cover the safety properties.  Track as ship-with-followup-ok.  (Adversarial A8.)
+- **Prompt-cache hit-rate verification** (Engine #5): after M3c rollout, verify `tokensIn` on second-and-later AI requests in a session still shows the cache discount.  The new tool schema lands in the system-prompt prefix where Anthropic's prompt caching already covers it; verify the cache-write delta on first-request-after-restart amortizes.
+- **AI prompt framing** (TTRPG #3): the system prompt must instruct the AI to frame the spam-counter / 3rd-4th-cast threshold as a DM-judgment cue ("ask the DM if a stress check is warranted"), not as a deterministic trigger ("spamCount===3 → emit stress check").  Rules-reference.md L141 is explicit that this is DM judgment.
+- **M3d**: inventory primitive (rapid-change tier-2 per user) + content proposals (NPC / room / item, session-scoped only) + "Just say yes" narrate-only path + scene-transition auto-reset for spam counter (if a scene-transition event lands by then).  Requires the M4 promotion-from-session-scope path to be specified FIRST OR explicit acknowledgment that session content remains session-only until M4.
+- **M3d/M4 wrap-untrusted forward-note** (Security S-6): when session-digest cycling lands, any session event field with AI-authored text (currently `caster-state-set.reason`; future inventory/content `reason`s) MUST pass through `wrapUntrusted` when injected as prompt context.  `caster-state-set.reason` is NOT currently cycled back through campaign-context.ts; the latent risk activates when M3d/M4 introduces session-as-context.
 - **M4**: living-doc workflow.  Session-digest builder, DiffProposal schema, GitHub commit path.  Promotes session-scope state (NPCs, items, locations the players will remember) to tier-1 in the campaign repo.
+- **`pushing-back` ladder transition gating** (Adversarial #4): currently NOT hard-gated.  Borderline — the world begins working against the PC (rules-reference.md L132).  Defer to TTRPG-craft after first playtest; add to hard-gate list if it ships at-pace.
+- **Manual cross-PC `pc-edit` gap** (Adversarial A-new-2): a DM directly editing another player's bound PC is not gated.  Pre-existing; M3c adds AI gating only.  Closing the manual gap is a separate concern.
