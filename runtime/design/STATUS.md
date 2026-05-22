@@ -1,6 +1,6 @@
 # STATUS
 
-Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22.  Next: M3d (inventory primitive + content proposals) OR drain M3c followups per user pacing.
+Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22; polish batches 1 + 2 landed 2026-05-22.  Next: M3d (inventory primitive + content proposals) — see decision note below.
 
 ## M3c acceptance criteria
 
@@ -25,16 +25,22 @@ Plan: `design/m3c-ai-write-api.md` — 4-reviewer gate ran 2026-05-22, all `ship
 
 **Followups carried out of M3c** (honestly tracked, not silently slipped):
 - **Per-kind materializer extraction** — slip-valve USED at M3c.0.  state.ts retains the inline switch; 32 case arms.  Land as a separate cleanup commit when budget allows.
-- **DM "Reset spam counter" button** — not shipped (Engine #3 + Adversarial silent-cut).  Today the only way to clear spamCount is via caster-state-set with explicit `spamCount: 0`.  Small UI affordance; M3c polish.
-- **Settings toggle "Review every state update individually"** — not shipped (Adversarial A8).  Apply-All-with-hard-gate-carve-out covers the safety properties; the per-entry mode is first-session-trust polish.
-- **Apply-All keyboard shortcut (Enter)** — not wired (TTRPG F2).  Today the DM must click the Apply-All button.  Polish; mirrors the existing hotkeyHandler pattern.
-- **DM-banner UI for `rejected-hard-gate` audit rows** — Security: the materializer logs the rejection; no UI consumer reads it yet.
+- [x] **DM "Reset spam counter" button** (Engine #3 + Adversarial silent-cut) — landed polish batch 1 (commit 6923f46): dm-aside renders an amber chip when spamCount > 0; click calls `resetSpamCounter(pcId)`.
+- [x] **Settings toggle "Review every state update individually"** (Adversarial A8) — landed polish batch 1 (commit 6923f46): `aiReviewEveryUpdate` plumbed through AiWriteController; flips every entry to hard-gate-pending.
+- [x] **Apply-All keyboard shortcut (Enter)** (TTRPG F2) — landed polish batch 1 (commit 6923f46): hotkeyHandler treats plain Enter outside editables as Apply-All.
+- [x] **DM-banner UI for `rejected-hard-gate` audit rows** (Security) — landed polish batch 1 (commit 6923f46): `renderRejectionBanner()` surfaces the last 5 entries above the prompt form.
+- [x] **Cast-spam e2e bootstrap weakness** (Adversarial #4) — fixed polish batch 2: test now seeds two DM-direct caster-state-set events before the AI's third proposal, exercising the materializer's carry-forward semantic.
+- [x] **Engine #1 hostile test is multi-peer** (Adversarial #10) — added polish batch 2: new e2e proves a non-coord peer cannot forge an ai-accept + matching gated pc-edit through merge.  Both peers see harm unchanged + a rejected-hard-gate audit row.
 - **Dice-roll dispatch placeholder** — controller sends `result: 0, dice: []`.  Broker may extend later to compute the actual roll; today the DM re-rolls if they want physical dice.
-- **Cast-spam e2e bootstrap weakness** — Adversarial #4: the test injects `spamCount: 3` directly in the stub rather than seeding via prior cast events.  Real provider behavior would require the bootstrap; not exercised end-to-end yet.
 - **pc-edit stale-read window** — Adversarial #9: controller computes `value = currentHarm + delta` at dispatch time, not propose time.  Concurrent peer edits in the apply-all window are overwritten LWW.  Real but small risk; revisit if it bites at the table.
-- **Engine #1 hostile test is single-peer** — Adversarial #10: the test verifies the correct outcome (rejection) but uses a single-peer log, not the multi-peer arbitration the commit message describes.  Adequate but oversold.
+- **pc-edit universal-write trust gap** — surfaced while writing the Adversarial #10 hostile test (2026-05-22): the pc-edit materializer accepts writes from any peer for any PC.  Tolerated by the current threat model (civilized players); revisit if a future feature depends on per-PC write authority.  See memory `project_quire_pc_edit_trust_gap`.
 - **`pushing-back` ladder transition gating** — defer post-playtest per the plan.
 - **Prompt-cache hit-rate verification** (Engine #5) — measure once a real session runs.
+
+## M3c polish batches (post-tag)
+
+- **Batch 1** (commit 6923f46) — UX affordances: Enter→Apply-All hotkey; DM reset-spam chip; review-every toggle; rejected-hard-gate banner.  +1 controller test (982 vitest pass).  Bundle +0.94 KB gzip → 91.56 KB.
+- **Batch 2** (this commit) — e2e fidelity: realistic cast-spam bootstrap via prior DM-direct casts; new multi-peer hostile test for Engine #1.  4 ai-write-api e2e pass.
 
 ## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 

@@ -132,16 +132,32 @@ test.describe('M3c AI write API — DM accept-gate', () => {
       await hostSession(host, 'DM');
       await setApiKey(host, 'sk-fake');
       // Bind the host to a PC so cross-PC gating doesn't fire on
-      // the host's own PC edits.
+      // the host's own PC edits, AND seed two prior casts so the
+      // AI is proposing an incremental delta against a real
+      // casterState rather than asserting a fabricated count of 3.
+      // (Adversarial #4 — bootstrap fidelity: the materializer's
+      // partial-merge semantic carries the spamCount forward, so
+      // the AI only needs to bump it by one.)
       await host.evaluate(() => {
         const app = document.querySelector('quire-app') as unknown as {
           session: { append: (kind: string, payload: unknown) => void };
         };
         app.session.append('peer-rename', { pcId: 'timmy' });
+        // First two casts in scene — DM-direct, no ai-accept needed.
+        app.session.append('caster-state-set', {
+          pcId: 'timmy',
+          spamCount: 1,
+          reason: 'first cast — minor effect'
+        });
+        app.session.append('caster-state-set', {
+          pcId: 'timmy',
+          spamCount: 2,
+          reason: 'second cast — air shimmers'
+        });
       });
       await stubAiProvider(host, {
-        safe: 'Timmy weaves five quick castings…',
-        dmOnly: 'Per L141: third+ cast in a scene; consider a stress check.',
+        safe: 'Timmy weaves a third quick casting…',
+        dmOnly: 'Per L141: this is the third cast — stress + ladder.',
         stateUpdates: [
           {
             kind: 'pc-edit',
@@ -165,7 +181,7 @@ test.describe('M3c AI write API — DM accept-gate', () => {
           }
         ]
       });
-      await submitAiPrompt(host, "Timmy casts 5 spells affecting the coin toss");
+      await submitAiPrompt(host, "Timmy casts a third spell affecting the coin toss");
 
       // Strip renders.
       await expect(host.locator('.ai-write-strip')).toBeVisible({
@@ -282,6 +298,133 @@ test.describe('M3c AI write API — DM accept-gate', () => {
         .toBe(3);
     } finally {
       await ctx.close();
+    }
+  });
+
+  test('multi-peer hostile: non-coord forged causedByResponseId cannot land a hard-gated edit (Adversarial #10)', async ({
+    browser
+  }) => {
+    // Adversarial #10 — extends the single-peer Engine #1 mechanism
+    // test to a two-peer scenario.  Threat model: a malicious
+    // non-coord peer crafts BOTH a forged ai-accept AND a gated
+    // state-update with a matching causedByResponseId, hoping the
+    // materializer's audit-scan will accept the state-update after
+    // merge.  Two defenses combine:
+    //   1. ai-accept is coord-only at the materializer (line ~1350
+    //      of state.ts: `if (!state.coordHolders.has(event.peerId)) break;`).
+    //      The forged ai-accept never enters state.aiAudit.
+    //   2. The hard-gated pc-edit's scan finds no matching audit
+    //      entry → rejected + rejected-hard-gate row recorded.
+    // After merge, BOTH peers should see yui.harm unchanged at 2
+    // and a rejected-hard-gate audit row.
+    const hostCtx = await browser.newContext();
+    const guestCtx = await browser.newContext();
+    try {
+      const host = await openCampaignPeer(hostCtx);
+      const guest = await openCampaignPeer(guestCtx);
+      const code = await hostSession(host, 'DM');
+      await joinSession(guest, code, 'Player');
+      // DM-direct: bring yui.harm to 2 so +1 would trip the
+      // box-3 hard gate.
+      await host.evaluate(() => {
+        const app = document.querySelector('quire-app') as unknown as {
+          session: { append: (kind: string, payload: unknown) => void };
+        };
+        app.session.append('peer-rename', { pcId: 'yui' });
+        app.session.append('pc-edit', { pcId: 'yui', field: 'harm', value: 2 });
+      });
+      // Let the harm: 2 propagate to guest so both peers' views
+      // agree on the baseline before the hostile injection.
+      await expect
+        .poll(async () =>
+          guest.evaluate(() => {
+            const a = document.querySelector('quire-app') as unknown as {
+              sessionView?: {
+                shared?: { pcEdits?: Record<string, { harm?: number }> };
+              };
+            };
+            return a.sessionView?.shared?.pcEdits?.yui?.harm ?? -1;
+          })
+        )
+        .toBe(2);
+      // Guest (non-coord) attempts the forgery: ai-accept +
+      // gated pc-edit with matching causedByResponseId.
+      await guest.evaluate(() => {
+        const app = document.querySelector('quire-app') as unknown as {
+          session: { append: (kind: string, payload: unknown) => void };
+        };
+        app.session.append('ai-accept', {
+          v: 1,
+          responseId: 'forged-xyz'
+        });
+        // Use value: 3 (not delta) — the materializer only reads
+        // value, and a concrete numeric value is also what trips
+        // pcEditHardGateReason's harm-box-3 check.
+        app.session.append('pc-edit', {
+          pcId: 'yui',
+          field: 'harm',
+          value: 3,
+          causedByResponseId: 'forged-xyz',
+          reason: 'hostile inject'
+        });
+      });
+      // Wait for the hostile events to land on both peers.
+      await expect
+        .poll(async () =>
+          host.evaluate(() => {
+            const sessionAny = (
+              document.querySelector('quire-app') as unknown as {
+                session?: {
+                  getEvents: () => Array<{ kind: string }>;
+                };
+              }
+            ).session;
+            return (
+              sessionAny?.getEvents()?.filter((e) => e.kind === 'pc-edit')
+                .length ?? 0
+            );
+          })
+        )
+        .toBeGreaterThanOrEqual(2);
+      // BOTH peers: yui.harm is still 2 (forgery rejected).
+      const hostHarm = await host.evaluate(() => {
+        const a = document.querySelector('quire-app') as unknown as {
+          sessionView?: {
+            shared?: { pcEdits?: Record<string, { harm?: number }> };
+          };
+        };
+        return a.sessionView?.shared?.pcEdits?.yui?.harm ?? -1;
+      });
+      const guestHarm = await guest.evaluate(() => {
+        const a = document.querySelector('quire-app') as unknown as {
+          sessionView?: {
+            shared?: { pcEdits?: Record<string, { harm?: number }> };
+          };
+        };
+        return a.sessionView?.shared?.pcEdits?.yui?.harm ?? -1;
+      });
+      expect(hostHarm).toBe(2);
+      expect(guestHarm).toBe(2);
+      // A rejected-hard-gate audit row exists on the coord side
+      // (the materializer records the refusal).
+      const rejectedCount = await host.evaluate(() => {
+        const a = document.querySelector('quire-app') as unknown as {
+          sessionView?: {
+            shared?: {
+              aiAudit?: Array<{ kind: string }>;
+            };
+          };
+        };
+        return (
+          a.sessionView?.shared?.aiAudit?.filter(
+            (e) => e.kind === 'rejected-hard-gate'
+          ).length ?? 0
+        );
+      });
+      expect(rejectedCount).toBeGreaterThanOrEqual(1);
+    } finally {
+      await hostCtx.close();
+      await guestCtx.close();
     }
   });
 
