@@ -1135,6 +1135,19 @@ export const quireAppStyles = css`
       opacity: 0.7;
       font-style: italic;
     }
+    .dm-aside-spam-reset {
+      font-size: 0.75em;
+      padding: 0.1rem 0.5rem;
+      background: light-dark(#fff7e0, #2a2618);
+      border: 1px solid light-dark(#b8841a, #856010);
+      color: light-dark(#5a4310, #ffd479);
+      border-radius: 3px;
+      cursor: pointer;
+      margin-left: 0.4em;
+    }
+    .dm-aside-spam-reset:hover {
+      background: light-dark(#fff2cf, #3a2f20);
+    }
     .dm-rail-episodes {
       list-style: none;
       padding: 0;
@@ -1286,6 +1299,40 @@ export const quireAppStyles = css`
     }
     .ai-card-verdict-done .muted {
       font-style: italic;
+    }
+
+    /* M3c followup (Security): visible banner for rejected
+       hard-gate AI proposals. */
+    .ai-rejection-banner {
+      padding: 0.45rem 0.7rem;
+      margin: 0.4rem 0;
+      background: light-dark(#fff7e0, #3a2f10);
+      border-left: 4px solid light-dark(#d4a017, #a07820);
+      color: light-dark(#5a4310, #ffd479);
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .ai-rejection-list {
+      list-style: disc;
+      padding-left: 1.3em;
+      margin: 0.3rem 0 0;
+    }
+    .ai-rejection-list code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.85em;
+    }
+
+    /* M3c followup (Adversarial A8): individual-review toggle. */
+    .ai-review-every-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4em;
+      margin-top: 0.4rem;
+      font-size: 0.9em;
+      color: light-dark(#666, #aaa);
+    }
+    .ai-review-every-toggle input[type='checkbox'] {
+      margin: 0.2em 0 0;
     }
 
     /* M3c.4: AI-write accept-gate strip in <ai-panel>.  Sits below

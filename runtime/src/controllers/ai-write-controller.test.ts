@@ -55,12 +55,14 @@ function makeSession() {
 function makeEnv(
   view: SessionView | undefined,
   boundPcId: string | undefined,
-  session: ReturnType<typeof makeSession>['session'] | null
+  session: ReturnType<typeof makeSession>['session'] | null,
+  reviewEvery: boolean = false
 ): AiWriteHost {
   return {
     getSessionView: () => view,
     getSession: () => session as never,
-    getBoundPcId: () => boundPcId
+    getBoundPcId: () => boundPcId,
+    getReviewEveryUpdate: () => reviewEvery
   };
 }
 
@@ -124,6 +126,24 @@ describe('AiWriteController — proposeBatch', () => {
     const [u] = ctrl.currentBatch;
     expect(u.status).toBe('hard-gate-pending');
     expect(u.hardGateReason).toMatch(/box 3/);
+  });
+
+  it('review-every mode marks ALL entries hard-gated (Adversarial A8)', () => {
+    const { host } = makeHost();
+    const { session } = makeSession();
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, /* reviewEvery */ true)
+    );
+    ctrl.proposeBatch(
+      [
+        // Would be 'pending' in default mode (stress +1 from 0 → 1).
+        { kind: 'pc-edit', pcId: 'yui', field: 'stress', delta: 1 }
+      ],
+      'r1'
+    );
+    expect(ctrl.currentBatch[0].status).toBe('hard-gate-pending');
+    expect(ctrl.currentBatch[0].hardGateReason).toMatch(/Individual review/);
   });
 
   it('replacing the batch clears prior pending entries', () => {

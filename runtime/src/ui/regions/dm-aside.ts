@@ -21,7 +21,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { routeToSearch, type AppRoute } from '../../routing';
-import type { ThreadDebtLevel } from '../../core/state';
+import type { CasterState, ThreadDebtLevel } from '../../core/state';
 
 export type NavigateCallback = (e: Event, route: AppRoute) => void;
 export type UnpinCallback = (npcId: string) => void;
@@ -29,6 +29,7 @@ export type SetThreadDebtCallback = (
   pcId: string,
   level: ThreadDebtLevel | ''
 ) => void;
+export type ResetSpamCounterCallback = (pcId: string) => void;
 
 /**
  * Bound-PC summary row for the dm-aside thread-debt section.  The
@@ -78,6 +79,17 @@ export class DmAside extends LitElement {
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
   @property({ attribute: false }) onSetThreadDebt:
     | SetThreadDebtCallback
+    | null = null;
+  /**
+   * M3c followup (Engine #3 + TTRPG #2): per-PC caster state for
+   * the cast-spam counter chip.  When `casterState[pcId].spamCount`
+   * is non-zero, the dm-aside surfaces a "Reset spam" chip so the
+   * DM can explicitly zero the counter at scene boundaries (the
+   * runtime has no scene-transition event yet).
+   */
+  @property({ attribute: false }) casterState: Record<string, CasterState> = {};
+  @property({ attribute: false }) onResetSpamCounter:
+    | ResetSpamCounterCallback
     | null = null;
 
   override render(): TemplateResult {
@@ -179,6 +191,8 @@ export class DmAside extends LitElement {
     level: ThreadDebtLevel | '',
     orphan: boolean = false
   ): TemplateResult {
+    const cs = (this.casterState ?? {})[pcId];
+    const spam = cs?.spamCount ?? 0;
     return html`
       <li
         class="dm-aside-debt-row ${orphan ? 'dm-aside-debt-orphan' : ''}"
@@ -199,6 +213,16 @@ export class DmAside extends LitElement {
             })}
           >${label}</a
         >
+        ${spam > 0 && this.onResetSpamCounter
+          ? html`<button
+              type="button"
+              class="dm-aside-spam-reset"
+              title="${label} has ${spam} Free/Cheap casts this scene — reset on scene boundary"
+              @click=${() => this.onResetSpamCounter?.(pcId)}
+            >
+              ${spam} casts · reset
+            </button>`
+          : nothing}
         ${this.onSetThreadDebt
           ? html`<select
               class="dm-aside-debt-select"

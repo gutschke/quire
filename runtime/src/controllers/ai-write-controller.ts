@@ -72,6 +72,13 @@ export interface AiWriteHost {
   getSession(): SessionController | null;
   /** Returns the PC id the local peer has bound (their own), or undefined. */
   getBoundPcId(): string | undefined;
+  /**
+   * M3c followup (Adversarial A8): when true, EVERY proposed
+   * state-update is treated as hard-gated even if its transition
+   * isn't on the M3c.5 list.  First-session-trust mode; the DM
+   * approves each entry individually.  Defaults to false.
+   */
+  getReviewEveryUpdate?(): boolean;
 }
 
 export class AiWriteController implements ReactiveController {
@@ -141,8 +148,14 @@ export class AiWriteController implements ReactiveController {
     this.clearUndoTimer();
     this.emittedAccepts.clear();
     const view = this.env.getSessionView();
+    const reviewEvery = !!this.env.getReviewEveryUpdate?.();
     this.batch = updates.map((u) => {
-      const reason = this.hardGateReason(u, view);
+      let reason = this.hardGateReason(u, view);
+      if (!reason && reviewEvery) {
+        // First-session-trust mode: every entry waits for explicit
+        // accept regardless of policy.
+        reason = 'Individual review mode is on — confirm each change.';
+      }
       const status: PendingUpdateStatus = reason
         ? 'hard-gate-pending'
         : 'pending';

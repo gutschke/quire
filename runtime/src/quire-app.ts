@@ -319,8 +319,16 @@ export class QuireApp extends LitElement {
       if (!v || v.status !== 'active' || !v.peerId) return undefined;
       const me = v.filteredShared.peers[v.peerId];
       return me?.pcId;
-    }
+    },
+    getReviewEveryUpdate: () => this.aiReviewEveryUpdate
   });
+  /**
+   * M3c followup (Adversarial A8): "Review every state update
+   * individually" — first-session-trust mode where every AI-
+   * proposed update faces an explicit-accept click, not just the
+   * spec'd hard-gated transitions.  Persisted via AiKeyStore.
+   */
+  @state() aiReviewEveryUpdate: boolean = false;
   @state() aiPromptDraft: string = '';
   @state() aiResponse: string | null = null;
   /**
@@ -400,6 +408,17 @@ export class QuireApp extends LitElement {
       e.preventDefault();
       this.revealNextBlock();
       return;
+    }
+    // M3c followup (TTRPG F2): plain Enter applies all pending AI
+    // state-updates (Apply-All shortcut).  Only fires when a batch
+    // is pending and not already in the undo window — avoids
+    // re-applying on every Enter press after the DM has acted.
+    if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
+      if (this.aiWrites.hasUnappliedPending) {
+        e.preventDefault();
+        this.aiWrites.applyAll();
+        return;
+      }
     }
     if (e.key === 'b' || e.key === 'B') {
       // Don't fight Cmd+B / Ctrl+B (bold / browser shortcuts).
@@ -950,12 +969,38 @@ export class QuireApp extends LitElement {
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
         .threadDebt=${v.filteredShared.threadDebt}
         .boundPcs=${boundPcs}
+        .casterState=${v.filteredShared.casterState}
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
         .onSetThreadDebt=${(pcId: string, level: ThreadDebtLevel | '') =>
           this.setThreadDebt(pcId, level)}
+        .onResetSpamCounter=${(pcId: string) => this.resetSpamCounter(pcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
     `;
+  }
+
+  /**
+   * M3c followup (Engine #3 + TTRPG #2): emit a caster-state-set
+   * event that zeros the spam counter for a PC, preserving the
+   * other fields via the materializer's carry-forward semantic.
+   * Coord-only.  No causedByResponseId — this is DM-direct, not
+   * AI-proposed, so the hard-gate machinery doesn't apply.
+   */
+  resetSpamCounter(pcId: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const prior = v.filteredShared.casterState[pcId];
+    if (!prior) return false;
+    this.session.append('caster-state-set', {
+      v: 1,
+      pcId,
+      ladderState: prior.ladderState,
+      reason: prior.reason,
+      taxActive: prior.taxActive,
+      spamCount: 0
+    });
+    return true;
   }
 
   /**
@@ -1178,6 +1223,11 @@ export class QuireApp extends LitElement {
         .verdictKind=${this.aiVerdictKind}
         .budget=${this.aiBudgetSummary()}
         .writeBatch=${this.aiWriteBatchView()}
+        .recentRejections=${this.aiRecentRejections()}
+        .reviewEveryUpdate=${this.aiReviewEveryUpdate}
+        .onSetReviewEveryUpdate=${(v: boolean) => {
+          this.aiReviewEveryUpdate = v;
+        }}
         .onApplyAllWrites=${() => this.aiWrites.applyAll()}
         .onApplyWrite=${(id: string) => this.aiWrites.applyOne(id)}
         .onRevertWrite=${(id: string) => this.aiWrites.revertOne(id)}
@@ -2534,6 +2584,38 @@ export class QuireApp extends LitElement {
       if (slug !== currentSlug) episodes.push({ slug });
     }
     return episodes;
+  }
+
+  /**
+   * M3c followup (Security): recent rejected-hard-gate audit
+   * entries surface in a DM banner so silent rejection cannot
+   * happen.  Capped at the most recent 5 entries; cleared when
+   * the DM acknowledges (handled UI-side via a dismiss action).
+   */
+  private aiRecentRejections(): Array<{
+    ts: number;
+    rejectedKind: string;
+    rejectedReason: string;
+  }> {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return [];
+    const audit = v.filteredShared.aiAudit ?? [];
+    const out: Array<{
+      ts: number;
+      rejectedKind: string;
+      rejectedReason: string;
+    }> = [];
+    for (let i = audit.length - 1; i >= 0 && out.length < 5; i--) {
+      const e = audit[i];
+      if (e.kind === 'rejected-hard-gate') {
+        out.unshift({
+          ts: e.ts,
+          rejectedKind: e.rejectedKind ?? '?',
+          rejectedReason: e.rejectedReason ?? ''
+        });
+      }
+    }
+    return out;
   }
 
   /**

@@ -135,6 +135,25 @@ export class AiPanel extends LitElement {
   @property({ attribute: false }) onSetSystemPrompt:
     | ((text: string) => void)
     | null = null;
+  /**
+   * M3c followup (Adversarial A8): first-session-trust mode.  When
+   * true, every AI-proposed state-update faces explicit accept
+   * (per-entry button) instead of riding Apply-All.
+   */
+  @property({ type: Boolean }) reviewEveryUpdate: boolean = false;
+  @property({ attribute: false }) onSetReviewEveryUpdate:
+    | ((value: boolean) => void)
+    | null = null;
+  /**
+   * M3c followup (Security): recent rejected-hard-gate audit
+   * entries.  Surfaced as a one-line banner above the prompt
+   * form so silent rejection cannot happen.  Latest first.
+   */
+  @property({ attribute: false }) recentRejections: ReadonlyArray<{
+    ts: number;
+    rejectedKind: string;
+    rejectedReason: string;
+  }> = [];
   @property({ attribute: false }) onToggleSettings:
     | (() => void)
     | null = null;
@@ -196,9 +215,36 @@ export class AiPanel extends LitElement {
         ${this.error
           ? html`<p class="ai-error">${this.error}</p>`
           : nothing}
+        ${this.renderRejectionBanner()}
         ${this.response ? this.renderDualCard(this.response) : nothing}
         ${this.writeBatch ? this.renderWriteBatch(this.writeBatch) : nothing}
       </section>
+    `;
+  }
+
+  /**
+   * M3c followup (Security): visible DM-only banner listing recent
+   * rejected-hard-gate audit entries.  Empty when no rejections.
+   * Plain Lit text interpolation (no markdown render path) so AI-
+   * authored reason strings can't smuggle markup.
+   */
+  private renderRejectionBanner(): TemplateResult | typeof nothing {
+    if (!this.recentRejections || this.recentRejections.length === 0) {
+      return nothing;
+    }
+    return html`
+      <div class="ai-rejection-banner" role="status">
+        <strong>${this.recentRejections.length} AI proposal${
+          this.recentRejections.length === 1 ? '' : 's'
+        } rejected</strong>
+        <ul class="ai-rejection-list">
+          ${this.recentRejections.map(
+            (r) => html`<li>
+              <code>${r.rejectedKind}</code>: ${r.rejectedReason}
+            </li>`
+          )}
+        </ul>
+      </div>
     `;
   }
 
@@ -491,6 +537,20 @@ export class AiPanel extends LitElement {
             @input=${(e: Event) =>
               this.onSetSystemPrompt?.((e.target as HTMLTextAreaElement).value)}
           ></textarea>
+        </label>
+        <label class="ai-review-every-toggle">
+          <input
+            type="checkbox"
+            ?checked=${this.reviewEveryUpdate}
+            @change=${(e: Event) =>
+              this.onSetReviewEveryUpdate?.(
+                (e.target as HTMLInputElement).checked
+              )}
+          />
+          <span
+            >Review every AI state update individually (first-session-trust
+            mode — every change waits for explicit Accept)</span
+          >
         </label>
         <p class="muted">
           Stored only in this browser's localStorage. Sent directly to
