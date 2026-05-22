@@ -1,172 +1,176 @@
-# M3c — AI write API + inventory primitive
+# M3c — AI state-update write API
 
-**Status:** DRAFT — pending 4-reviewer gate (TTRPG-craft, Engine, Security, Adversarial).
-**Author input:** TTRPG-expert advisor recommendations recorded in `[[project_quire_ai_write_api_design]]`; user-stated requirements in `[[project_quire_state_lifecycle]]`.
-**Date:** 2026-05-22.
+**Status:** REVISED after 4-reviewer gate BLOCK; locked by user 2026-05-22.
+**Scope was split:** content additions + inventory primitive moved to M3d.
+**Predecessor block:** [[project_quire_m3c_gate_verdict]] in memory.
 
 ## Goal
 
-Let the DM offload routine bookkeeping AND ad-hoc improvisation to the AI, with explicit accept-gating:
+Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applications, dice rolls with the right modifier math, advancing the caster ladder.  The AI proposes a batch of state updates; the DM applies-all-with-undo by default, with explicit-click hard gates on the story-shaping transitions.
 
-1. **Tier-2 state updates** — the AI applies harm/stress, rolls dice, advances the caster ladder (the "Timmy cast 5 spells" example).
-2. **Ad-hoc content additions** — the AI generates an unexpected NPC, room description, or item; the DM accepts and the new content is live in the session.
-3. **Inventory** as a first-class state — items have a home; AI can put one in someone's pack.
+**Specifically:** the "Timmy cast 5 spells affecting a coin toss, let me know the outcome and update everyone's stats" scenario from user 2026-05-22.
 
 ## Scope
 
 **IN:**
 
-- New event kind `caster-state-set` (tier-2, ladder + tax + spam-counter for a PC).
-- Existing event kinds become AI-writable (`pc-edit`, `dice-roll`).
-- New session-scoped event kinds: `npc-create-session`, `location-describe-session`, `item-create-session`.
-- New inventory event kinds: `inventory-add`, `inventory-remove`, `inventory-transfer`.
-- AiResponse schema extension: `stateUpdates` (live writes) + `contentProposals` (new content) arrays.
-- Provider tool schemas updated for both providers.
-- DM accept-gate UI:
-  - State updates: apply-all-with-60s-undo, one-line summaries (per TTRPG-expert).
-  - Content proposals: preview + edit + accept/reject (session-scope only).
-- HARD-GATED transitions (always explicit DM click): harm box 3-4, ladder→Hunted, tax-release.
-- Inventory rendering on the player-rail (collapsible).
-- AI-suggested informal weight notes when relevant; no strict encumbrance rules.
+- New event kind `caster-state-set` (tier-2; ladder + tax + spam-counter for a PC).
+- Existing event kinds become AI-writable: `pc-edit`, `dice-roll`.
+- AiResponse schema extension: `stateUpdates: StateUpdate[]` (defaults `[]` for backward compat).
+- Provider tool schemas updated (Anthropic tool, Gemini responseSchema).
+- DM accept-gate UI: apply-all-with-60s-undo, one-line summaries.
+- HARD-GATE list (always explicit DM click; never apply-all-eligible):
+  - harm box 3→4 transition (rules-reference.md L78-79)
+  - stress box 4 (Broken) transition (L90)
+  - caster ladder → Hunted (L133)
+  - trying-too-hard activation (L179-186)
+  - trying-too-hard release (L182)
+  - double-1 wild outcome (L47)
+  - cross-PC pc-edit (delta on a peer's bound PC)
+- Provenance: `causedByResponseId?: string` on every state-update event payload.  Materializer rejects hard-gated transitions when this is set without an `ai-accept` predecessor (defense-in-depth).
+- Per-kind materializer extraction (`src/core/materializers/*.ts`) — landing Phase 1 commits since the switch is already past the redesign-plan.md L67 threshold.
+- `AiWriteController` extraction (parallel to AiKeyStore) — Phase 2 prerequisite.
+
+**OUT (deferred to M3d):**
+
+- Inventory primitive (tier-2 per user; needs its own milestone).
+- Content proposals (NPC / room / item creation).
+- "Just say yes" narrate-only path.
 
 **OUT (deferred to M4 living-doc):**
 
-- Permanent content commits to the GitHub campaign repo.
-- Session-digest builder (M4 P3-1).
-- DiffProposal schema for repo edits (M4 P3-2).
-- Strict weight / encumbrance / item-slot rules — Quire's prime directive rejects this.
+- Permanent commit of session content to GitHub.
+- Session-digest builder.
+- DiffProposal schema.
+- AJV validation pipeline.
 
 ## Phases
 
-### Phase 1 — Tier-2 state-update event vocabulary
+### Phase 1 — Event vocabulary + materializer extraction
 
-- **New event kind `caster-state-set`.**  Coord-authored.  Payload `{ v: 1, pcId, ladderState, reason?, taxActive?, spamCount? }`.
-  - `ladderState`: `'quiet' | 'noticed' | 'watched' | 'pushing-back' | 'hunted' | ''` (empty clears).
-  - `reason`: short string, doubles as DM's suggested narration line (per rules-reference.md L135 — ladder must be narrated in fiction, not as a number).
-  - `taxActive`: bool — trying-too-hard flag per L179-186.
-  - `spamCount`: int — Free/Cheap cast counter per L141 (resets at scene boundary).
-  - Materializer maintains `casterState: Record<pcId, CasterState>` in SessionState.  DM-only render-gated.
+- **New event kind `caster-state-set`** (coord-only).
+  - Payload: `{ v: 1, pcId, ladderState, reason?, taxActive?, spamCount?, causedByResponseId? }`.
+  - `ladderState`: `'quiet' | 'noticed' | 'watched' | 'pushing-back' | 'hunted' | 'clear'` (explicit `'clear'` sentinel — avoids the empty-string-as-sentinel fragility Engine flagged).
+  - `reason`: short string; rendered as the DM's narration prompt (rules-reference.md L135 — ladder must be narrated, not numbered).
+  - `taxActive`: bool — trying-too-hard per L179-186.
+  - `spamCount`: int — Free/Cheap cast counter per L141.  Resets on scene transition via `caster-state-set` with `spamCount: 0`.
+  - `causedByResponseId`: when set, materializer enforces hard-gate.
+- **Materializer:** mutates `state.casterState: Record<pcId, CasterState>` (NEW DM-only field — wiped by `filterForViewer`, stripped from shareable saves).
+- **PER-KIND MATERIALIZER EXTRACTION** (Engine #2 + redesign-plan.md L67):
+  - Move `caster-state-set`, `pc-edit`, `dice-roll`, `scratch-note`, `npc-pin`, `npc-unpin`, `thread-debt-set`, `broadcast-view`, `ai-*` cases out of the giant switch in state.ts into `src/core/materializers/<kind>.ts` (one file per kind, all exporting an `apply(state, event)` function).
+  - state.ts retains the switch as a thin dispatch table.
+  - Each per-kind module is independently testable from `<kind>.test.ts`.
+  - This is mechanical refactoring; should land as its own commit ahead of caster-state-set.
 - **AiResponse schema extension:**
   ```ts
   interface AiResponse {
     safe: string;
     dmOnly: string;
     sources: SourceRef[];
-    stateUpdates: StateUpdate[];   // NEW — empty by default
-    contentProposals: ContentProposal[]; // NEW — empty by default (Phase 4)
-    // raw, tokens, responseId as today
+    stateUpdates: StateUpdate[];   // NEW — defaults to []
+    raw: string;
+    tokensIn: number;
+    tokensOut: number;
+    responseId: string;
   }
 
   type StateUpdate =
-    | { kind: 'pc-edit'; pcId: string; field: 'harm' | 'stress'; delta: number; reason?: string }
-    | { kind: 'dice-roll'; purpose: string; expression: string; modifierBreakdown?: string }
-    | { kind: 'caster-state-set'; pcId: string; ladderState: string; reason?: string; taxActive?: boolean; spamCount?: number };
+    | {
+        kind: 'pc-edit';
+        pcId: string;
+        field: 'harm' | 'stress';
+        delta: number;
+        reason?: string;
+      }
+    | {
+        kind: 'dice-roll';
+        purpose: string;
+        expression: string;
+        modifierBreakdown?: string;
+      }
+    | {
+        kind: 'caster-state-set';
+        pcId: string;
+        ladderState: 'quiet' | 'noticed' | 'watched' | 'pushing-back' | 'hunted' | 'clear';
+        reason?: string;
+        taxActive?: boolean;
+        spamCount?: number;
+      };
   ```
-- **Provider tool/schema updates** — both Anthropic tool_use and Gemini responseSchema gain the new fields.  `stateUpdates` defaults to empty; providers that don't return it (parse failure) get the empty default.
-- **`parseFailureResponse`** keeps `stateUpdates: []` so a degraded response cannot accidentally inject writes.
+  - `isAiResponse` updated to accept `stateUpdates` as optional + defaulted `[]`.  Wrong-type rejects (e.g. `stateUpdates: 'not an array'` → false).
+  - `parseFailureResponse` initializes `stateUpdates: []`.
+- **pc-edit subset rationale:** the AI-writable `pc-edit` is intentionally narrower than the manual one (harm/stress only).  Other pc-edit fields (e.g. arbitrary stat changes) require DM-direct, never AI-proposed.  Document this in the schema.
 
-### Phase 2 — State-update DM-accept UI
+### Phase 2 — AiWriteController + DM accept-gate UI
 
-- **In `<ai-panel>` dual-card:** when `response.stateUpdates.length > 0`, render a **state-updates strip** below the dmOnly card.
-- **Strip layout** (per TTRPG-expert UX):
-  - Heading: "AI proposed N updates."
-  - One-line summary per update — derived from the typed payload:
+- **Extract `AiWriteController`** (new file `src/controllers/ai-write-controller.ts`).  Holds:
+  - The current pending-batch state (array of `{ stateUpdate, status }`).
+  - The 60-second undo timer + cancellation handle.
+  - The per-update hard-gate state (`pending-explicit-accept`).
+  - The dispatch helpers that translate StateUpdate → event append.
+  - The optional `causedByResponseId` stamping (pulled from the broker's most recent response).
+  - QuireApp uses it via `aiWrites.accept(updates)`, `aiWrites.revert(id)`, etc.  Keeps quire-app.ts from collapsing past 3500 LOC.
+- **In `<ai-panel>`:** when `response.stateUpdates.length > 0`, render an **AI Updates strip** below the dmOnly card.
+  - One-line summary per update — derived from the typed payload + the rules-narration convention:
     - `pc-edit`: "Yui: +1 stress (Frayed cast)"
     - `dice-roll`: "Coin toss: 8 — Partial (with +2 from Costly cast)"
-    - `caster-state-set`: "Timmy: ladder → Watched (\"the lights flicker again\")"
-  - **Default action: Apply all** on Enter.  After click, batch commits as events + 60-second undo banner appears.
-  - **Per-update revert glyph** — click during undo window to roll back one specific update.
-  - **HARD-GATE markers** — updates that match the gate list render with an explicit "Accept this change" button INSTEAD of being apply-all-eligible.  These are: harm box 3-4 transitions, ladder→Hunted, tax-release.  The batch can apply EVERYTHING ELSE; the hard-gated entries wait for individual clicks.
-- **Settings toggle (under AI Settings):** "Review every state update individually" — defaults off.  When on, every entry requires explicit click (first-session trust mode).
+    - `caster-state-set`: rendered with `reason` as primary text (e.g. "Timmy: \"the lights flicker again\"") and the state label (e.g. "→ Watched") as small DM-only metadata.  This honors rules-reference.md L135 ("narrate aloud, never by number").
+  - **Default action: Apply All** on Enter.  Batch commits as events with `causedByResponseId = <current ai-response responseId>`.
+  - **60-second undo banner** after apply.  Per-update revert glyph during undo window.
+  - **HARD-GATE entries** are excluded from Apply All; each renders with its own explicit "Accept this change" button + a small description of why it's gated ("Yui's harm reaching box 4 is out-of-action — confirm to apply.").  The non-gated entries can still apply-all-on-Enter; the gated ones wait.
+- **Settings toggle** (under AI Settings): "Review every state update individually" — defaults off.  When on, every entry requires explicit click (first-session trust mode).
 
-### Phase 3 — Inventory primitive
+### Phase 3 — Materializer-side hard-gate enforcement
 
-- **Schema:** PC character record gains `inventory?: Item[]` field.  Item shape:
-  ```ts
-  interface Item {
-    id: string;          // stable within the session/repo
-    name: string;
-    description?: string;
-    /** Informal note like "2 lbs" or "heavy" — display only, no rule enforcement. */
-    weight?: string;
-    /** Free-form tags like "fragile", "equipped", "consumable". */
-    tags?: string[];
-  }
-  ```
-- **State:** session-derived `pcInventory: Record<pcId, Item[]>` materialized from inventory events.
-- **New event kinds (all coord-only OR self-only-for-own-PC per discussion):**
-  - `inventory-add` — `{ v: 1, pcId, item: Item }`
-  - `inventory-remove` — `{ v: 1, pcId, itemId }`
-  - `inventory-transfer` — `{ v: 1, fromPcId, toPcId, itemId }`
-- **Materializer:** standard apply-to-Record pattern; idempotent by itemId; cap items-per-PC at 100 (DoS guard).
-- **UI:** new `<player-inventory>` region OR inline section on `<player-rail>` (below stats, above bonds/foci).  Collapsible.  DM sees every bound PC's inventory in `<dm-aside>` summary view.
+- When an event arrives with `payload.causedByResponseId` set, the materializer checks whether it's a hard-gated transition:
+  - `pc-edit` transitioning harm to box 3 or 4 (current vs new value), OR stress to box 4
+  - `caster-state-set` with `ladderState: 'hunted'`, OR `taxActive: true` transition (was false → now true), OR `taxActive: false` transition (release)
+  - cross-PC `pc-edit` (event.peerId is the coord, payload.pcId is a different bound PC than the coord's own)
+  - `dice-roll` resulting in a double-1 (the broker won't emit this; this catches a hypothetical hostile)
+- If hard-gated AND `causedByResponseId` is set, the materializer requires the event to be IMMEDIATELY preceded (within the same prompt's emission batch — same prevHash) by a logged `ai-accept` referencing this responseId.  If not, the event is silently rejected (defensive — the broker should never let this happen).
+- Per-kind materializers each gain a `isHardGated(event, state)` helper for readability.
 
-### Phase 4 — Content proposal API
+### Phase 4 — Strip-list + audit-chain extension
 
-- **AiResponse `contentProposals` array:**
-  ```ts
-  type ContentProposal =
-    | { kind: 'npc'; id: string; name: string; role: string; motivation?: string; voice?: string; stats?: Partial<Stats>; backstory?: string }
-    | { kind: 'location'; id: string; name: string; description: string; tags?: string[] }
-    | { kind: 'item'; id: string; name: string; description?: string; weight?: string; tags?: string[]; proposedOwner?: string };
-  ```
-- **DM accept UI** — different from state-updates because the DM might want to edit before accepting:
-  - One card per proposal, expandable.
-  - Edit-in-place text fields for every value.
-  - Three actions: **Accept (session-only)**, **Accept + add to inventory** (item only, when proposedOwner is set), **Reject**.
-  - No apply-all default — each proposal is a discrete creative decision.
-- **Session-scoped persistence:** new event kinds (coord-only, v:1):
-  - `npc-create-session` — `{ npc: NpcProposal }`
-  - `location-describe-session` — `{ location: LocationProposal }`
-  - `item-create-session` — `{ item: ItemProposal }` (optionally followed by `inventory-add`)
-- **Stripped from shareable saves** — like scratch-note + npc-pin.  DM's mid-session improvisation doesn't accidentally leak.
-- **Visual distinction in roster / dm-aside:** session-scoped NPCs render with a small "session" badge so the DM remembers "this one isn't canon yet — promote via M4 living-doc to commit."
+- `serializeSessionForViewer` in persistence.ts: add `caster-state-set` to `PLAYER_SCOPE_STRIP_KINDS`.  (Other M3c-affected kinds are already stripped or are player-visible by design.)
+- Audit binding: `ai-accept` payload gains an optional `appliedEventIds?: string[]` so a single ai-accept can name the events it caused.  Backward-compat: empty array.  Future "which prompt caused Yui to lose 3 harm" forensic queries become trivial.
 
 ### Phase 5 — M3c gate
 
-Standard 4-reviewer pattern.  Acceptance tests:
+Standard 4-reviewer pattern.  Acceptance:
 
-- **e2e/ai-cast-spam.spec.ts** — Timmy-5-spells scenario.  Mock AI returns stateUpdates with pc-edit + dice-roll + caster-state-set.  DM hits Apply All; all 3 events land; undo restores previous state.
-- **e2e/ai-npc-add.spec.ts** — AI proposes a new NPC; DM accepts; NPC appears in dm-aside roster with "session" badge; DM can pin them.
-- **e2e/ai-item-to-inventory.spec.ts** — AI proposes an item with proposedOwner set; DM clicks "Accept + add to inventory"; item appears on the PC's inventory section.
-- **Hard-gate e2e:** AI proposes harm box 3 transition for Yui; DM cannot Apply-All past it; must click explicitly.
+- **e2e/ai-cast-spam.spec.ts** — Timmy-5-spells.  Mock AI returns `stateUpdates` with pc-edit + dice-roll + caster-state-set.  DM hits Apply All; non-gated events land with `causedByResponseId`; budget meter updates.  Undo restores previous state.
+- **e2e/ai-hard-gate.spec.ts** — AI proposes harm box 3 transition for Yui.  Apply All applies everything else; hard-gated entry sits with explicit-accept button; DM clicks it, event lands.
+- **e2e/ai-cross-pc-gate.spec.ts** — DM is bound to PC alice; AI proposes pc-edit on PC bob (bound to peer "guest").  Hard-gate triggers.  DM accepts explicitly.
+- **Vitest hostile suite** for caster-state-set materializer: cap (none — single per-pcId LWW), format, coord-gate, ladderState enum + 'clear' sentinel, taxActive bool only, spamCount finite int only, causedByResponseId either absent or matching ai-response in audit.
 
-## Open questions for review
+## Open questions (none blocking — locked at user-decision)
 
-1. **Inventory authority** — should PCs be able to add items to their own inventory (self-only `inventory-add` if `pcId === my-bound-PC`), or coord-only?  TTRPG-craft + UX should weigh in.
-2. **Session-scoped NPC visibility to players** — session NPCs DO need to be player-visible (they're in the scene); but the AI-generated proposal text might include DM-only motivation.  Need to split the proposal into player-visible card (name, role, voice) + DM-only card (motivation, stats, backstory) BEFORE the accept lands.
-3. **Inventory weight philosophy** — purely cosmetic display, or does the AI ever use it for narrative ("the cable is heavy — Yui can carry one or the other, not both")?  Per the user's "informal tracking by AI" guidance, the latter — but where does the AI's awareness come from?  Probably: AI reads each PC's full inventory in context (already wired by [[project_quire_ai_character_access]] once PC sheets are fetched).
-4. **Spam-counter scene boundary** — `casterState.spamCount` resets when?  Scene transition is the natural anchor (DM advances scene); but Quire scenes can blur.  Maybe AI handles reset implicitly via caster-state-set with `spamCount: 0`.
-5. **Edit-in-place for content proposals** — what fields are editable?  All free-text yes; what about NPC stats (numeric)?  Probably all editable, with validation against the rules schema before commit.
-6. **Token cost** — adding stateUpdates + contentProposals to the structured tool roughly doubles the output size when the AI fires writes.  Acceptable per the cache strategy memo (output tokens cost 5x input but are still bounded).
+All previous M3c open questions either resolved or moved to M3d.  The implementation should proceed once this revision passes the 4-reviewer gate.
 
-## Vocabulary additions summary
+## Vocabulary additions
 
-| Event kind | Authority | Tier | DM-only field affected |
-|---|---|---|---|
-| caster-state-set | coord | 2 | casterState (NEW, DM-only) |
-| inventory-add | coord OR self-bound-pc | 2/persisted | pcInventory (player-visible) |
-| inventory-remove | coord OR self-bound-pc | 2/persisted | pcInventory |
-| inventory-transfer | coord | 2/persisted | pcInventory |
-| npc-create-session | coord | 2 | sessionNpcs (NEW, partially player-visible) |
-| location-describe-session | coord | 2 | sessionLocations (NEW, player-visible) |
-| item-create-session | coord | 2 | sessionItems (NEW, player-visible) |
+| Event kind | Authority | Tier | DM-only field affected | causedByResponseId |
+|---|---|---|---|---|
+| caster-state-set | coord | 2 | casterState (NEW, DM-only) | always set when AI-emitted |
+| (extends) pc-edit | coord OR self-bound-pc | 2 | pcEdits | when AI-emitted |
+| (extends) dice-roll | coord OR self-bound-pc | 2 | diceRolls | when AI-emitted |
+| (extends) ai-accept | coord | 2 | aiAudit | n/a — extends appliedEventIds |
 
 ## Migration / compatibility
 
-- All new event kinds get `v: 1`; materializers reject unknown `v` (existing pattern).
-- Adding fields to `AiResponse` is backward-compatible — old providers omit them; broker defaults to empty arrays.
-- `parseFailureResponse` keeps every write array empty, so a parse failure cannot inject writes.
+- `caster-state-set` is new in v:1.  Existing peers without it ignore via the unknown-kinds banner (P0-12).
+- AiResponse extension: optional fields, defaulted `[]`.  Old providers omit them; broker fills the default.
+- `causedByResponseId` is optional on every state-update payload.  Manual (DM-direct) events omit it.
 
 ## Tests
 
-- Per-materializer hostile coverage (cap, format, coord-gate) — ~8 tests per kind × 6 new kinds = 48 vitest tests.
-- AiResponse schema tests: stateUpdates + contentProposals parsing, type-guard, parseFailure fallback.
-- Provider parse tests for the new fields.
-- 4 e2e tests as listed in Phase 5.
+- ~30 vitest cases for the caster-state-set materializer + the per-kind extraction + the AiResponse schema extension + isAiResponse changes.
+- 3 e2e specs as listed.
+- Snapshot-style test for the new AI panel strip rendering (already pattern in scene-stage.test.ts).
+- Total budget estimate: ~30 new tests; lands around 950 vitest + 16 playwright.
 
-## Followups carried out of M3c
+## Followups out of M3c
 
-- M4 — permanent commit of session content via living-doc workflow (DiffProposal, session-digest, baseSha validation).
-- M4 — promotion rules for tier-2 → tier-1 (which states auto-carry across sessions: harm, stress, debt, tax per TTRPG-expert).
-- M3c polish — AI-suggested weight commentary integrated into the inventory UI (after baseline lands).
+- **M3d**: inventory primitive (rapid-change tier-2 per user) + content proposals (NPC / room / item, session-scoped only) + "Just say yes" narrate-only path.  Requires the M4 promotion-from-session-scope path to be specified FIRST OR explicit acknowledgment that session content remains session-only until M4.
+- **M4**: living-doc workflow.  Session-digest builder, DiffProposal schema, GitHub commit path.  Promotes session-scope state (NPCs, items, locations the players will remember) to tier-1 in the campaign repo.
