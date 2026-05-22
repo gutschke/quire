@@ -27,6 +27,12 @@ import {
   campaignFingerprint,
   InviteTokenError
 } from './invite-token';
+import {
+  packChargen,
+  stringifyChargenPack,
+  suggestedPackFilename,
+  ChargenPackError
+} from './chargen-pack';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -281,6 +287,14 @@ export class QuireApp extends LitElement {
    * in CC-4 + CC-11.  Empty object means "no answers yet."
    */
   @state() private chargenAnswers: Record<string, string> = {};
+
+  /**
+   * CC-10: transient feedback on the "Pack my character" download.
+   * The chargen region surfaces "Packed!" / "Couldn't pack" copy
+   * keyed on this value; auto-clears after a few seconds via
+   * setTimeout.
+   */
+  @state() private chargenPackFeedback: '' | 'packed' | 'pack-failed' = '';
 
   /**
    * Code-split: track which chargen surfaces have been dynamically
@@ -1205,6 +1219,64 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * CC-10: serialize the in-progress chargen state for the given
+   * campaign+slot and trigger a browser download.  Surfaces
+   * "packed!" / "couldn't pack" feedback through
+   * `chargenPackFeedback` for ~3 seconds.
+   *
+   * Pure-DOM download via Blob URL + anchor click — works in any
+   * modern browser; no clipboard / filesystem APIs.  When the page
+   * is served over `file://` or in a sandboxed iframe where Blob
+   * URLs are disabled, the trigger surfaces a 'pack-failed' state
+   * (the player can copy the answers manually as a fallback).
+   */
+  private packChargenAndDownload(
+    campaign: LoadedCampaign,
+    slot: number
+  ): void {
+    try {
+      const fingerprint = campaignFingerprint(campaign.base.source);
+      const doc = packChargen({
+        campaignFingerprint: fingerprint,
+        slot,
+        chosenPath: this.chargenChosenPath,
+        answers: this.chargenAnswers
+      });
+      const json = stringifyChargenPack(doc);
+      const filename = suggestedPackFilename(doc, this.slugFor(campaign));
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      this.chargenPackFeedback = 'packed';
+    } catch (e) {
+      if (
+        e instanceof ChargenPackError ||
+        e instanceof Error // includes URL.createObjectURL failures in sandboxed envs
+      ) {
+        this.chargenPackFeedback = 'pack-failed';
+      } else {
+        throw e;
+      }
+    }
+    // Auto-clear feedback after 3 seconds so the next interaction
+    // doesn't see stale text.
+    setTimeout(() => {
+      if (
+        this.chargenPackFeedback === 'packed' ||
+        this.chargenPackFeedback === 'pack-failed'
+      ) {
+        this.chargenPackFeedback = '';
+      }
+    }, 3000);
+  }
+
+  /**
    * CC-12: generate an invite-URL for the given slot.  Coord-only
    * (the `<invite-manager>` region is only mounted in DM views, but
    * defense-in-depth check here too).  Returns the full URL on
@@ -1597,12 +1669,14 @@ export class QuireApp extends LitElement {
         .chosenPath=${this.chargenChosenPath}
         .questions=${campaign.base.manifest.characterCreation?.questions ?? []}
         .answers=${this.chargenAnswers}
+        .packFeedback=${this.chargenPackFeedback}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
           this.chargenChosenPath = p;
         }}
         .onAnswerChange=${(id: string, value: string) => {
           this.chargenAnswers = { ...this.chargenAnswers, [id]: value };
         }}
+        .onPack=${() => this.packChargenAndDownload(campaign, slot)}
       ></character-creation>
     `;
   }

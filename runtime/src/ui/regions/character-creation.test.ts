@@ -395,6 +395,91 @@ describe('<character-creation>', () => {
       expect(nums).toEqual(['1.', '2.', '3.']);
     });
 
+    it('CC-10: step 5 renders Pack button when onPack is wired', async () => {
+      const el = mount();
+      el.onPack = () => {};
+      await el.updateComplete;
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      // Advance to step 5 (Next × 4).
+      for (let i = 0; i < 4; i++) {
+        next.click();
+        await el.updateComplete;
+      }
+      expect(el.querySelector('.character-creation-pack-button')).not.toBeNull();
+    });
+
+    it('CC-10: Pack button click invokes onPack', async () => {
+      const el = mount();
+      let invoked = 0;
+      el.onPack = () => {
+        invoked++;
+      };
+      await el.updateComplete;
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      for (let i = 0; i < 4; i++) {
+        next.click();
+        await el.updateComplete;
+      }
+      el.querySelector<HTMLButtonElement>(
+        '.character-creation-pack-button'
+      )!.click();
+      expect(invoked).toBe(1);
+    });
+
+    it('CC-10: Pack button hidden when onPack is null', async () => {
+      const el = mount();
+      el.onPack = null;
+      await el.updateComplete;
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      for (let i = 0; i < 4; i++) {
+        next.click();
+        await el.updateComplete;
+      }
+      expect(el.querySelector('.character-creation-pack-button')).toBeNull();
+    });
+
+    it('CC-10: packFeedback="packed" renders the ✓ success line', async () => {
+      const el = mount();
+      el.onPack = () => {};
+      el.packFeedback = 'packed';
+      await el.updateComplete;
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      for (let i = 0; i < 4; i++) {
+        next.click();
+        await el.updateComplete;
+      }
+      expect(
+        el.querySelector('.character-creation-pack-feedback-ok')
+      ).not.toBeNull();
+      expect(el.textContent).toContain('Pack downloaded');
+    });
+
+    it('CC-10: packFeedback="pack-failed" renders the error line', async () => {
+      const el = mount();
+      el.onPack = () => {};
+      el.packFeedback = 'pack-failed';
+      await el.updateComplete;
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      for (let i = 0; i < 4; i++) {
+        next.click();
+        await el.updateComplete;
+      }
+      expect(
+        el.querySelector('.character-creation-pack-feedback-err')
+      ).not.toBeNull();
+      expect(el.textContent).toContain('Could not pack');
+    });
+
     it('selected MC option gets the chosen-styling class', async () => {
       const el = await mountAtStep4WithPath();
       el.questions = [

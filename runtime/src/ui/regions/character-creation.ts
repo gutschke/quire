@@ -118,6 +118,23 @@ export class CharacterCreation extends LitElement {
   @property({ attribute: false }) onAnswerChange: AnswerChangeCallback | null =
     null;
 
+  /**
+   * CC-10: callback fired when the player clicks the "Pack my
+   * character" button on step 5.  Host (QuireApp) serializes the
+   * chargen state via `packChargen` + triggers a download.
+   *
+   * When null, the button is hidden — the host hasn't wired the
+   * export path yet.
+   */
+  @property({ attribute: false }) onPack: (() => void) | null = null;
+
+  /**
+   * CC-10 feedback: when the host wants to surface "packed!" or
+   * "couldn't pack — try again" state on step 5.  Empty string =
+   * no feedback shown.
+   */
+  @property() packFeedback: '' | 'packed' | 'pack-failed' = '';
+
   @state() private currentStep: number = 1;
 
   override render(): TemplateResult {
@@ -478,6 +495,20 @@ export class CharacterCreation extends LitElement {
   }
 
   private renderDone(): TemplateResult {
+    const feedback = (() => {
+      switch (this.packFeedback) {
+        case 'packed':
+          return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-ok"
+            >✓ Pack downloaded — send it to your DM as a backup.</span
+          >`;
+        case 'pack-failed':
+          return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-err"
+            >Could not pack — try again?</span
+          >`;
+        default:
+          return nothing;
+      }
+    })();
     return html`
       <h2>You're done — see you at session 1</h2>
       <p>
@@ -487,9 +518,24 @@ export class CharacterCreation extends LitElement {
       <p class="muted">
         <strong>Recommended:</strong> click "Pack my character"
         below to download a backup file — send it to your DM via
-        chat or email so they have a copy too.  (The "Pack my
-        character" affordance lands in a later commit.)
+        chat or email so they have a copy too.  If you clear your
+        browser data or switch devices, the backup is how the DM
+        recovers your work.
       </p>
+      ${this.onPack
+        ? html`
+            <div class="character-creation-pack-actions">
+              <button
+                type="button"
+                class="character-creation-pack-button"
+                @click=${() => this.onPack?.()}
+              >
+                Pack my character
+              </button>
+              ${feedback}
+            </div>
+          `
+        : nothing}
     `;
   }
 

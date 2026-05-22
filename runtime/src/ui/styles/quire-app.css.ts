@@ -1354,6 +1354,31 @@ export const quireAppStyles = css`
     .character-creation-qa-hint-warn {
       color: light-dark(#925a17, #d6a559);
     }
+    /* CC-10: Pack-my-character button + transient feedback. */
+    .character-creation-pack-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.7rem;
+    }
+    .character-creation-pack-button {
+      padding: 0.5rem 0.8rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#925a17, #d6a559);
+      background: light-dark(#fef3c7, #3a2a04);
+      color: light-dark(#683f10, #f0c477);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .character-creation-pack-feedback {
+      font-size: 0.88em;
+    }
+    .character-creation-pack-feedback-ok {
+      color: light-dark(#16803d, #4ade80);
+    }
+    .character-creation-pack-feedback-err {
+      color: light-dark(#dc2626, #ef4444);
+    }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×
        button at row end. */
