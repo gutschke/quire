@@ -33,6 +33,10 @@ import {
   suggestedPackFilename,
   ChargenPackError
 } from './chargen-pack';
+import {
+  loadChargenState,
+  saveChargenState
+} from './chargen-persistence';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -860,6 +864,24 @@ export class QuireApp extends LitElement {
           const payload = decodeInviteToken(route.inviteToken, {
             expectedFingerprint: expectedFp
           });
+          // CC-11: resume — load any in-progress chargen state
+          // for this campaign + slot from localStorage and seed
+          // the @state fields.  Per F3 critique, key is slug+slot
+          // not token, so token regeneration doesn't orphan data.
+          const slug = this.slugFor(campaign);
+          const resumed = loadChargenState(slug, payload.slot);
+          if (resumed) {
+            this.chargenChosenPath = resumed.chosenPath;
+            this.chargenAnswers = resumed.answers;
+          } else {
+            // First visit (or different device): start fresh.
+            // This is also the "wrong-device empty state" — no
+            // banner needed because the player sees a clean
+            // chargen flow.  The Pack-my-character export (CC-10)
+            // is the cross-device recovery affordance.
+            this.chargenChosenPath = '';
+            this.chargenAnswers = {};
+          }
           this._appState = {
             kind: 'character-creation',
             campaign,
@@ -1216,6 +1238,33 @@ export class QuireApp extends LitElement {
     if (!Number.isInteger(slot) || slot < 1 || slot > 9) return false;
     this.session.append('pc-slot-bind', { v: 1, slot, pcId });
     return true;
+  }
+
+  /**
+   * CC-11: debounced save of in-progress chargen state to
+   * localStorage.  Called from the chargen region's onPickPath and
+   * onAnswerChange callbacks.  Per F3 critique, the key is
+   * slug+slot not invite-token UUID — token regeneration doesn't
+   * orphan the player's data.
+   *
+   * Debounce window is shorter than the play-time autosave (300 ms
+   * vs 1500 ms) because the chargen flow has fewer state changes
+   * per unit time and the player will close the tab without
+   * realizing the autosave is debounced; saving aggressively gives
+   * a stronger "your work is safe" guarantee.
+   */
+  private chargenSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private persistChargen(campaign: LoadedCampaign, slot: number): void {
+    if (this.chargenSaveTimer) clearTimeout(this.chargenSaveTimer);
+    this.chargenSaveTimer = setTimeout(() => {
+      this.chargenSaveTimer = null;
+      const slug = this.slugFor(campaign);
+      saveChargenState(slug, slot, {
+        chosenPath: this.chargenChosenPath,
+        answers: this.chargenAnswers
+      });
+    }, 300);
   }
 
   /**
@@ -1672,9 +1721,11 @@ export class QuireApp extends LitElement {
         .packFeedback=${this.chargenPackFeedback}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
           this.chargenChosenPath = p;
+          this.persistChargen(campaign, slot);
         }}
         .onAnswerChange=${(id: string, value: string) => {
           this.chargenAnswers = { ...this.chargenAnswers, [id]: value };
+          this.persistChargen(campaign, slot);
         }}
         .onPack=${() => this.packChargenAndDownload(campaign, slot)}
       ></character-creation>
