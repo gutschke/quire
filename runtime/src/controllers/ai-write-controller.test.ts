@@ -543,6 +543,49 @@ describe('AiWriteController — M3C-2 dice-roll dispatch', () => {
     expect(payload.dice).toEqual([]);
   });
 
+  it('Engine M1: double-1 on the dice appends a wild-outcome scratch-note alongside the roll', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // RNG that returns ~0 maps to die-result 1 (floor(0*6)+1).  Two
+    // dice → [1, 1].
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, false, () => 0)
+    );
+    ctrl.proposeBatch(
+      [{ kind: 'dice-roll', purpose: 'climb', expression: '2d6' }],
+      'r1'
+    );
+    ctrl.applyAll();
+    const diceEvent = appended.find((e) => e.kind === 'dice-roll');
+    expect(diceEvent).toBeDefined();
+    expect((diceEvent!.payload as { dice: number[] }).dice).toEqual([1, 1]);
+    // Wild-outcome scratch-note follows.
+    const note = appended.find((e) => e.kind === 'scratch-note');
+    expect(note).toBeDefined();
+    expect((note!.payload as { text: string }).text).toMatch(/Double-1/);
+    expect((note!.payload as { text: string }).text).toMatch(/owns the twist/);
+    expect((note!.payload as { text: string }).text).toMatch(/climb/);
+  });
+
+  it('Engine M1: non-double-1 dice rolls do NOT trigger the wild-outcome note', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // RNG returning 0.5 → die-result 4; two dice → [4, 4] (double-4
+    // is NOT wild-outcome material; only double-1 + double-6 are).
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, false, () => 0.5)
+    );
+    ctrl.proposeBatch(
+      [{ kind: 'dice-roll', purpose: 'climb', expression: '2d6' }],
+      'r1'
+    );
+    ctrl.applyAll();
+    const note = appended.find((e) => e.kind === 'scratch-note');
+    expect(note).toBeUndefined();
+  });
+
   it('honors the expression modifier in the rolled total', () => {
     const { host } = makeHost();
     const { session, appended } = makeSession();

@@ -281,14 +281,12 @@ export class AiWriteController implements ReactiveController {
         return '';
       }
       case 'dice-roll': {
-        // The broker SHOULDN'T propose double-1 outcomes (those are
-        // DM-narrated wild outcomes per underleaf/world/rules.md L47), but
-        // a hostile / malformed expression could.  Defensive only.
-        if (/(?:^|[^d])2d6/.test(update.expression) && /double-?1/i.test(
-          update.modifierBreakdown ?? ''
-        )) {
-          return `Double-1 wild outcome — the DM owns the twist — confirm to apply.`;
-        }
+        // No pre-roll gate — the broker doesn't know what dice will
+        // come up.  Wild-outcome handling (rules.md §Resolution L47)
+        // is surfaced POST-roll inside `dispatch`: when the rolled
+        // dice come up double-1, the dispatcher appends a
+        // scratch-note so the DM has an audit breadcrumb to anchor
+        // their narrated twist.  See `dispatch:'dice-roll'`.
         return '';
       }
     }
@@ -411,6 +409,33 @@ export class AiWriteController implements ReactiveController {
           modifierBreakdown: u.update.modifierBreakdown,
           causedByResponseId: u.causedByResponseId
         });
+        // Engine M1 (Cluster E step 7a): wild-outcome surfacing.
+        // Per rules.md §Resolution L47, double-1s on a 2d6 roll
+        // resolve mechanically as normal but the DM MUST introduce
+        // an unexpected fictional complication.  The pre-Cluster-E
+        // gate detector at `hardGateReason` checked `modifierBreakdown`
+        // for the literal string "double-1" — which the broker
+        // never wrote, so the gate was dead code.  Now that the
+        // dispatcher rolls real dice, we can inspect the result.
+        // Surface as a scratch-note so the DM has an audit-trail
+        // breadcrumb to anchor their twist narration; the DM's
+        // physical-table workflow (read aloud, narrate) does the
+        // rest.  We don't BLOCK the dispatch — that would lose the
+        // resolved-outcome event the player needs.
+        if (
+          rolled &&
+          rolled.rolls.length === 2 &&
+          rolled.rolls[0] === 1 &&
+          rolled.rolls[1] === 1
+        ) {
+          s.append('scratch-note', {
+            v: 1,
+            text:
+              `Double-1 wild outcome on AI-proposed roll (${u.update.purpose}):` +
+              ` rules.md L47 says the DM owns the twist — narrate an ` +
+              `unexpected complication independent of success/failure.`
+          });
+        }
         break;
       }
       case 'caster-state-set': {
