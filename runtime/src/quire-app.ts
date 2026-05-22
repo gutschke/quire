@@ -316,6 +316,19 @@ export class QuireApp extends LitElement {
     if (this.pcCharacterInFlight.has(pcId)) return;
     const campaign = this.getCurrentCampaign();
     if (!campaign) return;
+    // Phase 3b-1 step 2: loader-overlay resolution.  If the pcId
+    // refers to a synthesized PC (in `state.synthesizedPcs`), the
+    // record lives in shared session state, not in the campaign
+    // repo — resolve it synchronously without hitting the network.
+    // The DM-review surface's display-name lookup and the bound-
+    // character refresh both flow through this method, so a single
+    // overlay-check here is sufficient for the chargen-accept path.
+    const overlay = this.resolvePcFromOverlay(pcId, campaign);
+    if (overlay) {
+      this.pcCharacterCache.set(pcId, overlay);
+      this.requestUpdate();
+      return;
+    }
     this.pcCharacterInFlight.add(pcId);
     // `loadCharacter` rejects on missing/invalid; on resolve the
     // record is always a non-null `LoadedCharacter` (see
@@ -329,6 +342,35 @@ export class QuireApp extends LitElement {
       .catch(() => {
         this.pcCharacterInFlight.delete(pcId);
       });
+  }
+
+  /**
+   * Phase 3b-1 step 2: synthesized-PC overlay resolver.  Reads
+   * `sessionView.filteredShared.synthesizedPcs[pcId]` and wraps the
+   * `CharacterRecord` in a synthetic `LoadedCharacter` shaped
+   * identically to a campaign-shipped PC, so downstream code
+   * (`boundCharacter`, `pcCharacterCache`, `displayNameForBound`,
+   * `computeBoundStats`) doesn't need to discriminate the two
+   * sources.
+   *
+   * Returns null on overlay miss; the caller falls through to the
+   * GitHub-raw fetch path.  Lookup is O(1) on a Record; no caching
+   * needed.
+   */
+  private resolvePcFromOverlay(
+    pcId: string,
+    campaign: LoadedCampaign
+  ): LoadedCharacter | null {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return null;
+    const record = v.filteredShared.synthesizedPcs?.[pcId];
+    if (!record) return null;
+    return {
+      kind: 'pc',
+      id: pcId,
+      record,
+      source: campaign.base.source
+    };
   }
 
   get appState(): Readonly<AppState> {
@@ -2465,6 +2507,20 @@ export class QuireApp extends LitElement {
     if (!myPcId || !campaign) {
       this.boundCharacter = null;
       this.boundCampaign = null;
+      return;
+    }
+    // Phase 3b-1 step 2: synthesized PC overlay check.  When the
+    // local peer's bound PC is a chargen-synthesized record, resolve
+    // synchronously from session state — no network hit, no async
+    // race.  Mirrors the same check in `loadCharacterByPcId`.
+    const overlayChar = this.resolvePcFromOverlay(myPcId, campaign);
+    if (overlayChar) {
+      this.boundCharacter = overlayChar;
+      this.boundCampaign = campaign;
+      // Mirror into the per-pcId cache so the DM-review surface's
+      // display-name lookup hits the same record without a second
+      // resolve.
+      this.pcCharacterCache.set(myPcId, overlayChar);
       return;
     }
     // Fire async load.  Failure clears the cache silently — the
