@@ -41,6 +41,14 @@ export type GenerateInviteCallback = (slot: number) => Promise<string | null>;
 export type SynthesizeCallback = (
   slot: number
 ) => Promise<SynthesizeBackstoryResult>;
+/**
+ * P3U-12: resolve a bound pcId to its display name.  Host wires to
+ * `ChargenController.displayNameForBound`.  Returns null while the
+ * character file is still loading; the region falls back to raw
+ * pcId in that case.  A subsequent render after the lazy load
+ * resolves will see the name.
+ */
+export type DisplayNameLookup = (pcId: string) => string | null;
 
 @customElement('chargen-dm-review')
 export class ChargenDmReview extends LitElement {
@@ -76,6 +84,15 @@ export class ChargenDmReview extends LitElement {
    * only renders the dim state when present).
    */
   @property({ attribute: false }) acceptedSlots: Set<number> = new Set();
+
+  /**
+   * P3U-12: resolve a bound pcId to its character display name.
+   * When null, the region renders the raw pcId.  The host's
+   * `ChargenController.displayNameForBound` triggers a lazy load
+   * on first call; a subsequent re-render shows the resolved name.
+   */
+  @property({ attribute: false })
+  displayNameLookup: DisplayNameLookup | null = null;
 
   /**
    * Generate an invite URL for a slot.  Host wires to
@@ -159,7 +176,7 @@ export class ChargenDmReview extends LitElement {
           <span class="chargen-dm-review-seat-pill">PC${slot}</span>
           <span class="chargen-dm-review-seat-name">
             ${bound
-              ? html`<code title="Character id (display-name resolution lands in step 3)">${boundPcId}</code>`
+              ? this.renderBoundName(boundPcId)
               : html`<span class="muted">open</span>`}
           </span>
         </header>
@@ -186,6 +203,27 @@ export class ChargenDmReview extends LitElement {
         ${synth ? this.renderSynthResult(slot, synth) : nothing}
       </li>
     `;
+  }
+
+  /**
+   * P3U-12: render the bound seat's display name.  Lit auto-escapes
+   * interpolated content, so a hostile `name` field in the
+   * character JSON cannot inject HTML.  Falls back to the raw pcId
+   * (in a code-tag) while the lookup resolves OR if the character
+   * file has no name field.
+   */
+  private renderBoundName(pcId: string): TemplateResult {
+    const name = this.displayNameLookup?.(pcId) ?? null;
+    if (name && name !== pcId) {
+      return html`<span class="chargen-dm-review-seat-display-name"
+        >${name}</span
+      ><code
+        class="chargen-dm-review-seat-id"
+        title="Character id"
+        >(${pcId})</code
+      >`;
+    }
+    return html`<code title="Character id">${pcId}</code>`;
   }
 
   private renderInviteResult(slot: number, url: string): TemplateResult {

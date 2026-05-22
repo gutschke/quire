@@ -122,6 +122,14 @@ export const quireAppStyles = css`
       background: transparent;
       font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
     }
+    .chargen-dm-review-seat-display-name {
+      font-weight: 500;
+    }
+    .chargen-dm-review-seat-id {
+      font-size: 0.78em;
+      opacity: 0.6;
+      margin-left: 0.35rem;
+    }
     .chargen-dm-review-seat-actions {
       display: flex;
       flex-wrap: wrap;

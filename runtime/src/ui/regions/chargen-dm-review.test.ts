@@ -57,6 +57,44 @@ describe('<chargen-dm-review> — structure', () => {
     expect(seats[2].textContent).toMatch(/reggie-okeke/);
   });
 
+  it('P3U-12: renders display name when displayNameLookup resolves', async () => {
+    const el = mount();
+    el.pcSlots = { 1: 'mei-tanaka' };
+    el.displayNameLookup = (pcId) => {
+      return pcId === 'mei-tanaka' ? 'Mei Tanaka' : null;
+    };
+    await el.updateComplete;
+    const seat = el.querySelector('.chargen-dm-review-seat');
+    expect(
+      seat?.querySelector('.chargen-dm-review-seat-display-name')?.textContent
+    ).toBe('Mei Tanaka');
+    expect(
+      seat?.querySelector('.chargen-dm-review-seat-id')?.textContent
+    ).toMatch(/mei-tanaka/);
+  });
+
+  it('P3U-12: falls back to raw pcId while display name is loading', async () => {
+    const el = mount();
+    el.pcSlots = { 1: 'mei-tanaka' };
+    el.displayNameLookup = () => null; // not yet resolved
+    await el.updateComplete;
+    const seat = el.querySelector('.chargen-dm-review-seat');
+    expect(seat?.textContent).toMatch(/mei-tanaka/);
+    expect(
+      seat?.querySelector('.chargen-dm-review-seat-display-name')
+    ).toBeNull();
+  });
+
+  it('P3U-12: Lit auto-escapes a hostile name field (XSS defense)', async () => {
+    const el = mount();
+    el.pcSlots = { 1: 'evil' };
+    el.displayNameLookup = () => '<script>alert(1)</script>';
+    await el.updateComplete;
+    const seat = el.querySelector('.chargen-dm-review-seat');
+    expect(seat?.querySelector('script')).toBeNull();
+    expect(seat?.textContent).toMatch(/script.alert/);
+  });
+
   it('renders the Mode-B warning at the top of the card', async () => {
     const el = mount();
     await el.updateComplete;
@@ -153,10 +191,12 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
 
   it('renders ok result: name + warnings count when present', async () => {
     const el = mount();
-    const r = okResult('Reggie Okeke');
-    r.warnings = [
-      { severity: 'warning', code: 'tags-too-many', message: 'too many' }
-    ];
+    const r: SynthesizeBackstoryResult = {
+      ...okResult('Reggie Okeke'),
+      warnings: [
+        { severity: 'warning', code: 'tags-too-many', message: 'too many' }
+      ]
+    } as SynthesizeBackstoryResult;
     el.synthResults = new Map([[2, r]]);
     await el.updateComplete;
     const synth = el.querySelectorAll('.chargen-dm-review-synth-ok');

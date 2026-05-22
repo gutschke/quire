@@ -1190,6 +1190,8 @@ export class QuireApp extends LitElement {
         .synthResults=${this.chargenSynthResultsView()}
         .synthInFlight=${this.chargenSynthInFlightView()}
         .acceptedSlots=${this.chargenAcceptedSlotsView()}
+        .displayNameLookup=${(pcId: string) =>
+          this.chargen.displayNameForBound(pcId)}
         .onGenerate=${(slot: number) => this.chargen.generateInviteUrl(slot)}
         .onSynthesize=${(slot: number) =>
           this.chargen.synthesizeForSlot(slot, {
