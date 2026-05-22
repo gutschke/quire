@@ -16,7 +16,10 @@ import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
-import './ui/regions/seat-strip';
+// Phase 3a Cluster E step 6: <seat-strip> mount removed; the
+// per-seat row rendering is now inside <chargen-dm-review>.  The
+// region module still exists in the repo for git history; future
+// commits may delete the file entirely.
 // CC-3 / CC-5 / CC-12: chargen regions are dynamically imported
 // (see `loadChargenRegion` / `loadInviteManagerRegion`).  They live
 // outside the main bundle to keep the play-time path lean; users in
@@ -328,25 +331,6 @@ export class QuireApp extends LitElement {
       });
   }
 
-  /**
-   * `<invite-manager>` lazy-render gate.  Flipped true once the
-   * dynamic import resolves; kept on the host (not the controller)
-   * because Lit's render-time conditional needs an @state read.
-   * Cluster E step 6 removes this when `<invite-manager>` is fully
-   * subsumed by `<chargen-dm-review>`.
-   */
-  @state() private inviteManagerDefined: boolean = false;
-  private inviteManagerLoaded: Promise<void> | null = null;
-
-  private loadInviteManagerRegion(): Promise<void> {
-    if (this.inviteManagerLoaded) return this.inviteManagerLoaded;
-    this.inviteManagerLoaded = import('./ui/regions/invite-manager').then(
-      () => {
-        this.inviteManagerDefined = true;
-      }
-    );
-    return this.inviteManagerLoaded;
-  }
   get appState(): Readonly<AppState> {
     return this._appState;
   }
@@ -1164,21 +1148,14 @@ export class QuireApp extends LitElement {
         .onResetSpamCounter=${(pcId: string) => this.resetSpamCounter(pcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
-      <seat-strip
-        .pcSlots=${v.filteredShared.pcSlots}
-        .onUnbind=${(slot: number) => this.bindPcSlot(slot, null)}
-      ></seat-strip>
-      ${this.renderInviteManagerLazy(v.filteredShared.pcSlots)}
       ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
     `;
   }
 
   /**
-   * Phase 3a Cluster E step 2: lazy-mount the new unified DM-review
-   * region alongside the legacy `<seat-strip>` + `<invite-manager>`
-   * for this transitional commit.  Step 6 deletes the legacy mounts.
-   * Until then, both render — the DM sees two surfaces but no
-   * functionality is lost.
+   * Phase 3a Cluster E step 2/6: the unified DM-review region —
+   * subsumes the prior `<seat-strip>` + `<invite-manager>` mounts.
+   * Lazy-mounts the module on first DM render.
    */
   private renderChargenDmReviewLazy(
     pcSlots: Record<number, string>
@@ -1240,70 +1217,6 @@ export class QuireApp extends LitElement {
     return out;
   }
 
-  /**
-   * Code-split: render the `<invite-manager>` region only after its
-   * module is dynamically loaded.  Triggers the load on first call
-   * (fire-and-forget; Lit re-renders once the import resolves and
-   * the custom element is defined).  Until then, renders nothing
-   * so the DM aside doesn't show a placeholder for an inert tag.
-   */
-  private renderInviteManagerLazy(
-    pcSlots: Record<number, string>
-  ): TemplateResult | typeof nothing {
-    void this.loadInviteManagerRegion();
-    // Lit gracefully renders an unknown custom element as a no-op
-    // until the class is defined; once defined, the upgrade swaps
-    // in the real element.  But to avoid even the empty-tag flicker
-    // (and to keep the DOM clean for screen readers), we hold off
-    // rendering until the import has resolved.  `inviteManagerLoaded`
-    // is the in-flight promise; we use its existence as a "ready
-    // soon" sentinel and re-render once it resolves (via the
-    // .then().requestUpdate() in loadInviteManagerRegion below).
-    if (!this.inviteManagerDefined) return nothing;
-    return html`
-      <invite-manager
-        .pcSlots=${pcSlots}
-        .onGenerate=${(slot: number) => this.generateInviteUrl(slot)}
-        .onSynthesize=${(slot: number) =>
-          this.synthesizeBackstoryForSlotSurface(slot)}
-      ></invite-manager>
-    `;
-  }
-
-  /**
-   * CC-23 adapter (Cluster E step 1 shim): the legacy
-   * `<invite-manager>` mount still consumes the lossy
-   * `SynthSurfaceResult` shape.  Cluster E step 6 deletes both this
-   * adapter and the legacy mount in favor of the new region
-   * consuming `SynthesizeBackstoryResult` directly.  Keep the shim
-   * in place until then so the migration is per-step reviewable.
-   */
-  private async synthesizeBackstoryForSlotSurface(
-    slot: number
-  ): Promise<{
-    ok: boolean;
-    name?: string;
-    message: string;
-    warningCount?: number;
-    spoilerHit?: boolean;
-  }> {
-    const result = await this.chargen.synthesizeForSlot(slot, {
-      playerDisplayName: this.displayNameDraft || undefined
-    });
-    if (result.ok) {
-      return {
-        ok: true,
-        name: result.response.name,
-        message: `Backstory ready (${result.response.tokensOut} tokens).`,
-        warningCount: result.warnings.length
-      };
-    }
-    return {
-      ok: false,
-      message: result.message,
-      spoilerHit: result.code === 'spoiler-leak-persistent'
-    };
-  }
 
   /**
    * M3c followup (Engine #3 + TTRPG #2): emit a caster-state-set

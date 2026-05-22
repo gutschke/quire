@@ -15,7 +15,10 @@ function mount(): ChargenDmReview {
   return el;
 }
 
-function okResult(name = 'Mei Tanaka'): SynthesizeBackstoryResult {
+function okResult(name = 'Mei Tanaka'): Extract<
+  SynthesizeBackstoryResult,
+  { ok: true }
+> {
   return {
     ok: true,
     response: {
@@ -265,11 +268,8 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
 
   it('shows Accept button only when synth result is ok', async () => {
     const el = mount();
-    el.synthResults = new Map([
-      [
-        2,
-        { ok: false, code: 'parse-failed', message: 'bad' }
-      ],
+    el.synthResults = new Map<number, SynthesizeBackstoryResult>([
+      [2, { ok: false, code: 'parse-failed', message: 'bad' }],
       [3, okResult()]
     ]);
     el.onAccept = () => {};
@@ -311,7 +311,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
 
   it('Revise button appears on both ok and failure results', async () => {
     const el = mount();
-    el.synthResults = new Map([
+    el.synthResults = new Map<number, SynthesizeBackstoryResult>([
       [2, { ok: false, code: 'parse-failed', message: 'bad' }],
       [6, okResult()]
     ]);
