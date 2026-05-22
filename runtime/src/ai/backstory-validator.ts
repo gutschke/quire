@@ -1,27 +1,67 @@
 /**
- * CC-21 (M4 char-creation): structural validator for AI-synthesized
+ * CC-21 (M4 char-creation): SEMANTIC validator for AI-synthesized
  * backstories.  Third layer of the chargen-AI quality pipeline:
  *
  *   1. CC-18 — player-facing scope override (no DM-only context to
  *              the synthesis prompt).
  *   2. CC-20 — forbidden-token post-check (no Quiet/magic/etc.).
- *   3. CC-21 — structural validator (this file): word count, tag
- *              count, name uniqueness, optional place-token
- *              presence.
- *   4. CC-24 — DM approval gate (human-eyes; lands later).
+ *   3. CC-21 — semantic validator (this file): name-uniqueness vs
+ *              the player's display name, word count, stat
+ *              distribution multiset, place-token presence.
+ *   4. CC-24 — DM approval gate (human-eyes; cluster E).
  *
  * The validator is NON-BLOCKING: it returns a list of issues with
  * severities (`error` / `warning`) but doesn't reject the response.
- * The caller (broker glue, lands later) decides whether to auto-
- * retry (single retry on `error`) or surface as a DM warning at the
- * approval gate.
+ * The synthesizer's auto-retry path runs once on `error`-severity
+ * issues; warnings surface at the DM approval gate.
+ *
+ * **Phase 3b-X step 6 — shape-subsumed-by-schema posture:**
+ *
+ * Constrained decoding (Anthropic strict tool use; Gemini
+ * responseSchema) at the provider boundary now enforces the
+ * structural shape of the response — stats has all 6 keys with
+ * integer values in range; skillMastery is a subset of
+ * QUIRE_SKILL_CATEGORIES with uniqueItems; tags has 3-5 entries.
+ * Several issue codes below are no longer reachable in the happy
+ * path:
+ *
+ *   - `stats-shape-invalid`           — schema requires all 6 keys.
+ *   - `stats-out-of-range`            — schema enforces -2..+3 bound.
+ *   - `skill-mastery-shape-invalid`   — schema requires array.
+ *   - `skill-mastery-unknown-category`— schema enum forbids.
+ *   - `skill-mastery-duplicate`       — schema uniqueItems forbids.
+ *   - `tags-too-few` / `tags-too-many`— schema minItems/maxItems.
+ *   - `tag-empty` / `tag-too-long`    — schema item minLength/maxLength.
+ *
+ * Per the Phase 3b-X plan's Q1 (locked: keep as defense-in-depth),
+ * these checks STAY in the validator but document themselves as
+ * "schema-subsumed" — they fire only on schema drift (consumer
+ * code path that bypasses the schema, future provider regression,
+ * test mocks that don't enforce shapes).  The codes remain in the
+ * STABLE CONTRACT issue-code union so downstream switches don't
+ * break.
+ *
+ * The SEMANTIC checks below are NOT schema-subsumed and remain
+ * load-bearing:
+ *   - `name-empty` / `name-matches-player` (cross-checks player
+ *     display name; impossible to express in a JSON Schema).
+ *   - `pronouns-empty` (semantic empty-vs-missing distinction).
+ *   - `backstory-too-short` / `backstory-too-long` (WORD count —
+ *     the schema's minLength/maxLength is CHARACTER count, kept
+ *     conservative; this is the load-bearing 250-400 word bound).
+ *   - `place-token-missing` (campaign-declared allowlist; can't
+ *     be expressed in a static JSON Schema).
+ *   - `stats-shape-invalid` — multiset distribution check (one
+ *     +2, three +1s, two 0s) IS load-bearing semantic; the
+ *     schema's range bound (-2..+3) is insufficient.  The shape-
+ *     error code is reused for this stricter check.
  *
  * Engine-vs-campaign positioning:
- * - The validator's STRUCTURE checks (tag count, word count, name
- *   uniqueness) are [E] — they're independent of campaign content.
- * - The CONTENT bounds (min/max word range, min/max tag count,
- *   place-token allowlist) are [H] — engine defaults at v1; campaign
- *   override per `campaign.json` later.
+ * - STRUCTURE checks ([E]): name uniqueness, word count, stat
+ *   multiset — independent of campaign content.
+ * - CONTENT bounds ([H]): min/max word range, place-token
+ *   allowlist — engine defaults at v1; campaign override per
+ *   `campaign.json` later.
  */
 
 import {
