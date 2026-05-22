@@ -714,10 +714,33 @@ export class QuireApp extends LitElement {
     window.addEventListener('keydown', this.hotkeyHandler);
     this.session = new SessionController(this.sessionFactory);
     this.unsubscribeSession = this.session.subscribe((v) => {
+      const wasActive = this.sessionView?.status === 'active';
       this.sessionView = v;
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.
       if (v.status === 'active') this.scheduleAutosave();
+      // Clear stale save/load banners on the transition INTO active.
+      // saveStatus/loadStatus are sticky between status changes, so
+      // an error fired before hosting (e.g. "No active session to
+      // save", "Start or host a session first, then load.") would
+      // otherwise contradict the now-visible "Hosting code: ..."
+      // banner.  Only clear errors; preserve success banners (a
+      // "Saved N events" pip should survive the surrounding
+      // re-render).
+      if (
+        !wasActive &&
+        v.status === 'active' &&
+        this.saveStatus.kind === 'error'
+      ) {
+        this.saveStatus = { kind: 'idle' };
+      }
+      if (
+        !wasActive &&
+        v.status === 'active' &&
+        this.loadStatus.kind === 'error'
+      ) {
+        this.loadStatus = { kind: 'idle' };
+      }
       // R3-C: guest discovered the campaign via the host's
       // peer-join.  If we're idle (no campaign in the URL), trigger
       // a load + navigate to the campaign view.  Skip if we're
@@ -2213,18 +2236,13 @@ export class QuireApp extends LitElement {
             @click=${() => {
               const json = stringifySave(doc);
               this.dismissResumePrompt();
-              if (this.session && this.sessionView?.status !== 'active') {
-                // Need an active session before applying.  For
-                // simplicity, prompt the user to host first; the
-                // autosave still sits in localStorage so they can
-                // re-trigger via the prompt after hosting.
-                this.saveStatus = {
-                  kind: 'error',
-                  message:
-                    'Host a session first, then this autosave will be available to load.'
-                };
-                return;
-              }
+              // loadFromString carries its own "session not active"
+              // gate (surfaced via loadStatus).  We previously also
+              // wrote a duplicate gate here into saveStatus — that
+              // produced a contradictory "Host a session first..."
+              // banner that persisted in the session bar even after
+              // the DM actually started hosting (saveStatus is
+              // sticky between transitions).  Drop the duplicate.
               this.loadFromString(json);
             }}
           >

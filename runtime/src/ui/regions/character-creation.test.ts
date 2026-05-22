@@ -115,8 +115,22 @@ describe('<character-creation>', () => {
     expect(el.innerHTML).toContain('Pick a pre-made PC');
   });
 
-  it('path button click invokes onPickPath with the chosen path', async () => {
+  it('path button click invokes onPickPath with the chosen path (qa, questions present)', async () => {
+    // Phase 3 polish (2026-05-22): pre-gen and free-write buttons
+    // are now disabled with hover-text reasons (placeholder paths
+    // until CC-7 / pre-gen browser lands).  The qa button is
+    // enabled only when the campaign declares questions.  Pass a
+    // non-empty questions array so the qa button is live for this
+    // wiring test.
     const el = mount();
+    el.questions = [
+      {
+        id: 'q1',
+        kind: 'short-answer',
+        prompt: 'A question.',
+        required: true
+      }
+    ];
     let chosen: CreationPath | null = null;
     el.onPickPath = (p) => {
       chosen = p;
@@ -133,8 +147,63 @@ describe('<character-creation>', () => {
     const paths = el.querySelectorAll<HTMLButtonElement>(
       '.character-creation-path'
     );
-    paths[1].click(); // free-write
-    expect(chosen).toBe('free-write');
+    paths[0].click(); // qa (the first button)
+    expect(chosen).toBe('qa');
+  });
+
+  it('disabled path button click does NOT invoke onPickPath', async () => {
+    // Free-write and pre-gen are unimplemented; they render as
+    // disabled with hover-text.  Clicks must be inert.
+    const el = mount();
+    let chosen: CreationPath | null = null;
+    el.onPickPath = (p) => {
+      chosen = p;
+    };
+    await el.updateComplete;
+    const next = el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-stepnav button'
+    )[1];
+    next.click();
+    await el.updateComplete;
+    next.click();
+    await el.updateComplete;
+    const paths = el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-path'
+    );
+    paths[1].click(); // free-write — disabled
+    paths[2].click(); // pre-gen — disabled
+    expect(chosen).toBeNull();
+    // disabledReason surfaces as title hover-text.
+    expect(paths[1].getAttribute('title')).toContain('free-write');
+    expect(paths[2].getAttribute('title')).toContain('pre-made');
+  });
+
+  it('clicking an enabled path auto-advances to step 4 (no separate Next click)', async () => {
+    const el = mount();
+    el.questions = [
+      {
+        id: 'q1',
+        kind: 'short-answer',
+        prompt: 'A question.',
+        required: true
+      }
+    ];
+    await el.updateComplete;
+    const next = el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-stepnav button'
+    )[1];
+    next.click();
+    await el.updateComplete;
+    next.click();
+    await el.updateComplete;
+    // Currently on step 3.
+    expect(el.textContent).toContain('Step 3 of 5');
+    const paths = el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-path'
+    );
+    paths[0].click();
+    await el.updateComplete;
+    expect(el.textContent).toContain('Step 4 of 5');
   });
 
   it('step 4 renders the free-write placeholder when chosenPath=free-write', async () => {

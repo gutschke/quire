@@ -1628,6 +1628,21 @@ export const quireAppStyles = css`
       background: light-dark(#f8fafc, #1e293b);
       border-color: light-dark(#94a3b8, #475569);
     }
+    .character-creation-path:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      background: light-dark(#f1f5f9, #0b1220);
+    }
+    .character-creation-path:disabled:hover {
+      background: light-dark(#f1f5f9, #0b1220);
+      border-color: light-dark(#cbd5e1, #334155);
+    }
+    .character-creation-path-unavailable {
+      margin-top: 0.4rem;
+      font-size: 0.8em;
+      font-style: italic;
+      color: light-dark(#92400e, #d6a559);
+    }
     .character-creation-path-chosen {
       border-color: light-dark(#0b3d7f, #79b8f0);
       background: light-dark(#dbeafe, #1e3a8a);
@@ -2503,6 +2518,28 @@ export const quireAppStyles = css`
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      /* Slide newly-inserted roll pills in from the left so the
+         player has a clear "new roll arrived" cue.  Old pills
+         (retained between renders via the Lit \`repeat\` key) keep
+         their animation-name from a prior render but don't
+         re-fire — only freshly inserted DOM nodes run the keyframe.
+         Honors prefers-reduced-motion (rule below). */
+      animation: dice-pill-slide-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @keyframes dice-pill-slide-in {
+      from {
+        transform: translateX(-32px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .dice-recent-pill {
+        animation: none;
+      }
     }
     .dice-recent-pill code {
       font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;

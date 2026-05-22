@@ -281,6 +281,24 @@ export class CharacterCreation extends LitElement {
 
   private renderPickPath(): TemplateResult {
     const choice = this.chosenPath;
+    // Reasons each path may be unavailable.  When set, the button
+    // renders disabled with the reason as hover-text so the player
+    // sees WHY a path is offered-but-blocked instead of clicking a
+    // dead button.  Empty string = path is live.
+    const qaDisabled =
+      this.questions.length === 0
+        ? "Your DM hasn't set up the character questions yet."
+        : '';
+    // CC-7: free-write editor isn't implemented — the path renders
+    // a placeholder.  Disable to set expectations honestly.
+    const freeWriteDisabled =
+      'The free-write editor isn’t built yet — coming in a later release.';
+    // Pre-gen pool isn't declared in the campaign manifest yet;
+    // when it is, the host should pass an availability flag and
+    // this reason will go away.  Today the path is universally
+    // unavailable + the browser UI is a placeholder.
+    const preGenDisabled =
+      "Your DM hasn’t prepared any pre-made characters.";
     return html`
       <h2>How do you want to build your character?</h2>
       <p class="muted">
@@ -293,21 +311,24 @@ export class CharacterCreation extends LitElement {
           'Answer questions',
           'AI-assisted',
           'A short questionnaire — about 5 minutes.  At session 1, the AI weaves your answers into a backstory you can edit.',
-          choice
+          choice,
+          qaDisabled
         )}
         ${this.renderPathButton(
           'free-write',
           'Write it yourself',
           'No AI',
           'Open a Markdown editor and write your backstory from scratch.  Best when you have a clear character in mind.',
-          choice
+          choice,
+          freeWriteDisabled
         )}
         ${this.renderPathButton(
           'pre-gen',
           'Pick a pre-made PC',
           'Quickest',
           'Choose from the DM-prepared characters.  You can tweak the details after picking.',
-          choice
+          choice,
+          preGenDisabled
         )}
       </div>
     `;
@@ -318,9 +339,20 @@ export class CharacterCreation extends LitElement {
     title: string,
     badge: string,
     description: string,
-    chosen: CreationPath | ''
+    chosen: CreationPath | '',
+    disabledReason: string
   ): TemplateResult {
     const isChosen = chosen === path;
+    const isDisabled = disabledReason !== '';
+    // Auto-advance: picking a path commits the choice AND moves to
+    // step 4.  If the player regrets, the step-nav's "← Back"
+    // button takes them right back to this picker — no need to
+    // require a separate "Next" click.
+    const onClick = () => {
+      if (isDisabled) return;
+      this.onPickPath?.(path);
+      this.currentStep = Math.min(this.currentStep + 1, TOTAL_STEPS);
+    };
     return html`
       <button
         type="button"
@@ -328,7 +360,9 @@ export class CharacterCreation extends LitElement {
           ? 'character-creation-path-chosen'
           : ''}"
         aria-pressed=${isChosen ? 'true' : 'false'}
-        @click=${() => this.onPickPath?.(path)}
+        ?disabled=${isDisabled}
+        title=${isDisabled ? disabledReason : ''}
+        @click=${onClick}
       >
         <div class="character-creation-path-header">
           <span class="character-creation-path-title">${title}</span>
@@ -337,6 +371,11 @@ export class CharacterCreation extends LitElement {
         <div class="character-creation-path-description">
           ${description}
         </div>
+        ${isDisabled
+          ? html`<div class="character-creation-path-unavailable">
+              ${disabledReason}
+            </div>`
+          : nothing}
       </button>
     `;
   }

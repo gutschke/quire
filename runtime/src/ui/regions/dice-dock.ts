@@ -27,6 +27,7 @@
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 
 export interface DiceHistoryEntry {
   key: string;
@@ -270,22 +271,32 @@ export class DiceDock extends LitElement {
   private renderRecentPills(): TemplateResult | typeof nothing {
     if (this.entries.length === 0) return nothing;
     const last3 = this.entries.slice(0, 3);
+    // Use `repeat` with the entry's stable key so Lit creates a new
+    // DOM node for each new roll (rather than reusing the existing
+    // first-child node and just swapping text).  A CSS animation on
+    // `.dice-recent-pill` fires fresh on each insertion, giving the
+    // player a clear "new roll arrived" cue even when only 3 pills
+    // are visible.
     return html`
       <ol class="dice-recent-pills" aria-label="Recent rolls">
-        ${last3.map((e) => {
-          const doublesClass =
-            e.doubles === 'snake-eyes'
-              ? ' roll-doubles-snake-eyes'
-              : e.doubles === 'box-cars'
-                ? ' roll-doubles-box-cars'
-                : '';
-          return html`<li
-            class="dice-recent-pill ${e.tierClass}${doublesClass}"
-            title=${e.label}
-          >
-            <code>${e.label}</code>
-          </li>`;
-        })}
+        ${repeat(
+          last3,
+          (e) => e.key,
+          (e) => {
+            const doublesClass =
+              e.doubles === 'snake-eyes'
+                ? ' roll-doubles-snake-eyes'
+                : e.doubles === 'box-cars'
+                  ? ' roll-doubles-box-cars'
+                  : '';
+            return html`<li
+              class="dice-recent-pill ${e.tierClass}${doublesClass}"
+              title=${e.label}
+            >
+              <code>${e.label}</code>
+            </li>`;
+          }
+        )}
       </ol>
     `;
   }
