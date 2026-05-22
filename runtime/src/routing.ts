@@ -25,6 +25,24 @@ export type AppRoute =
       slug: string;
       characterKind: CharacterKind;
       characterId: string;
+    }
+  | {
+      /**
+       * CC-3 (M4 char-creation): an invite-token route for a player
+       * filling in their PC asynchronously before session 1.  The
+       * token is an opaque base64url-encoded JSON payload — see
+       * `src/invite-token.ts` for the encoder/decoder.
+       *
+       * Per the F1 resolution (prioritized-backlog.md §"Phase 2
+       * design notes"), the token carries `{slot, issuedAt,
+       * campaignFingerprint}` and DELIBERATELY OMITS archetypeHint /
+       * displayHint — those leak DM intent if the URL is
+       * screenshot / forwarded.  The DM communicates archetype
+       * hints in the email body alongside the URL.
+       */
+      kind: 'character-creation';
+      slug: string;
+      inviteToken: string;
     };
 
 export function parseRoute(input: string | URLSearchParams): AppRoute {
@@ -38,8 +56,17 @@ export function parseRoute(input: string | URLSearchParams): AppRoute {
   const scene = params.get('scene') ?? '';
   const pc = params.get('pc') ?? '';
   const npc = params.get('npc') ?? '';
+  const invite = params.get('invite') ?? '';
 
   if (!slug) return { kind: 'home' };
+  // CC-3: the chargen invite-token route.  `?campaign=...&invite=...`
+  // takes precedence over other routes — a player visiting an
+  // invite link should land on chargen, not on the campaign
+  // overview.  Token validation lives in `src/invite-token.ts`;
+  // the parser here just plumbs the string.
+  if (invite) {
+    return { kind: 'character-creation', slug, inviteToken: invite };
+  }
   // Character route (pc wins over npc when both set).
   if (pc) {
     return { kind: 'character', slug, characterKind: 'pc', characterId: pc };
@@ -69,6 +96,9 @@ export function routeToSearch(route: AppRoute): string {
   }
   if (route.kind === 'character') {
     params.set(route.characterKind, route.characterId);
+  }
+  if (route.kind === 'character-creation') {
+    params.set('invite', route.inviteToken);
   }
   return '?' + params.toString();
 }

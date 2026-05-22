@@ -186,4 +186,53 @@ describe('routeToSearch', () => {
     };
     expect(parseRoute(routeToSearch(original))).toEqual(original);
   });
+
+  describe('CC-3 character-creation route', () => {
+    it('parses ?campaign=...&invite=... into a character-creation route', () => {
+      expect(
+        parseRoute('?campaign=g/u&invite=opaque-token-here')
+      ).toEqual({
+        kind: 'character-creation',
+        slug: 'g/u',
+        inviteToken: 'opaque-token-here'
+      });
+    });
+
+    it('invite takes precedence over episode / scene / pc / npc', () => {
+      // A token URL must land on chargen, not on the campaign
+      // overview, episode, scene, or character views — even if
+      // the URL accidentally carries other params.
+      expect(
+        parseRoute(
+          '?campaign=g/u&invite=tok&episode=001&scene=intro.md&pc=mei&npc=yui'
+        ).kind
+      ).toBe('character-creation');
+    });
+
+    it('roundtrips through routeToSearch', () => {
+      const original = {
+        kind: 'character-creation' as const,
+        slug: 'g/u',
+        inviteToken: 'abc123-def456'
+      };
+      expect(parseRoute(routeToSearch(original))).toEqual(original);
+    });
+
+    it('routeToSearch emits the invite param', () => {
+      expect(
+        routeToSearch({
+          kind: 'character-creation',
+          slug: 'g/u',
+          inviteToken: 'xyz'
+        })
+      ).toBe('?campaign=g%2Fu&invite=xyz');
+    });
+
+    it('omits character-creation when invite is empty (falls back to campaign)', () => {
+      // ?invite= with empty value shouldn't accidentally claim
+      // the chargen route — that's a URL-construction error, not
+      // an intentional chargen visit.
+      expect(parseRoute('?campaign=g/u&invite=').kind).toBe('campaign');
+    });
+  });
 });

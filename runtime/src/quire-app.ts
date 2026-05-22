@@ -742,6 +742,21 @@ export class QuireApp extends LitElement {
         return;
       }
 
+      // CC-3: character-creation route — player visiting an invite
+      // link OR DM previewing a token redeem.  Today this lands on
+      // the campaign view as a placeholder; the 6-step
+      // `<character-creation>` region (CC-5) replaces this branch
+      // when it lands.  Token validation (CC-3 follow-on) and the
+      // actual chargen UI ship in subsequent commits.
+      if (route.kind === 'character-creation') {
+        this._appState = { kind: 'campaign', campaign };
+        // No resume prompt — the player is entering a different
+        // workflow than session-load.  The chargen-resume affordance
+        // (CC-11, P2) hangs off the IndexedDB key
+        // `{campaignSlug}:{slotIndex}` not the autosave path.
+        return;
+      }
+
       // Character layer (independent of episode/scene).  The
       // DM-only NPC gate already ran via decideRoute above.
       if (route.kind === 'character') {
