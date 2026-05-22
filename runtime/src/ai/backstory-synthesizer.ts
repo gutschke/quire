@@ -26,6 +26,7 @@
  */
 
 import type { AiProvider } from './broker';
+import { PC_BACKSTORY_SYNTHESIS_CALL_SCHEMA } from './schema-json';
 import type { ContextFile } from './campaign-context';
 import {
   buildBackstorySynthesisPrompt,
@@ -102,7 +103,13 @@ export type SynthesizeBackstoryResult =
         | 'validation-failed'
         | 'spoiler-leak-persistent'
         | 'provider-error'
-        | 'aborted';
+        | 'aborted'
+        // Phase 3b-X step 5 ADDITIVE: provider declined the request
+        // OR the chosen model doesn't support constrained decoding.
+        // Safe to add per the STABLE CONTRACT note above (additive,
+        // not breaking).  UI distinguishes from generic provider-error
+        // for clearer DM messaging.
+        | 'provider-refused';
       message: string;
       /** Present on validation-failed; lists the error-severity issues. */
       errors?: BackstoryValidationIssue[];
@@ -110,6 +117,8 @@ export type SynthesizeBackstoryResult =
       rawResponse?: string;
       /** Present on spoiler-leak-persistent — which tokens kept hitting. */
       persistentTokens?: string[];
+      /** Present on provider-refused — the refusal sub-kind. */
+      refusalKind?: 'safety' | 'model-unsupported' | 'truncated';
     };
 
 /**
@@ -200,26 +209,43 @@ type CallParseResult =
   | { ok: true; response: PcBackstorySynthesisResponse; rawResponse: string }
   | {
       ok: false;
-      code: 'parse-failed' | 'provider-error' | 'aborted';
+      code: 'parse-failed' | 'provider-error' | 'aborted' | 'provider-refused';
       message: string;
       rawResponse?: string;
+      refusalKind?: 'safety' | 'model-unsupported' | 'truncated';
     };
 
+/**
+ * Phase 3b-X step 5: invoke the provider via constrained-decoding
+ * `callStructured`.  Replaces the prior `provider.call() + regex
+ * JSON-extract + JSON.parse + shape guard` pipeline — the
+ * provider now emits a typed payload by construction.
+ *
+ * `parse-failed` becomes nearly unreachable: it survives ONLY for
+ * the case where constrained decoding succeeded structurally but
+ * the result somehow fails the runtime type guard (defense-in-
+ * depth against future schema drift).  Provider refusals + safety
+ * blocks + model-unsupported land as `provider-refused`; network
+ * errors land as `provider-error`; aborts as `aborted`.
+ */
 async function callAndParse(
   provider: AiProvider,
   req: SynthesizeBackstoryRequest,
   system: string,
   user: string
 ): Promise<CallParseResult> {
-  let callResult;
+  let result;
   try {
-    callResult = await provider.call({
-      apiKey: req.apiKey,
-      model: req.model,
-      systemPrompt: system,
-      prompt: user,
-      signal: req.signal
-    });
+    result = await provider.callStructured<PcBackstorySynthesisResponse>(
+      {
+        apiKey: req.apiKey,
+        model: req.model,
+        systemPrompt: system,
+        prompt: user,
+        signal: req.signal
+      },
+      PC_BACKSTORY_SYNTHESIS_CALL_SCHEMA
+    );
   } catch (e) {
     if ((e as Error).name === 'AbortError') {
       return {
@@ -235,102 +261,63 @@ async function callAndParse(
     };
   }
 
-  // The AI may wrap the JSON in a fenced code block (```json ... ```)
-  // or include preamble text before the JSON.  Strip both before
-  // parsing.
-  const cleaned = extractJsonObject(callResult.raw);
-  if (cleaned === null) {
+  if (!result.ok) {
+    if (result.refusal.kind === 'provider-error') {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: result.refusal.message,
+        rawResponse: result.raw || undefined
+      };
+    }
+    // Refused: safety, model-unsupported, or truncated.  Distinct
+    // from provider-error so the DM-facing UI can give a precise
+    // message ("AI declined" vs "AI is misconfigured" vs "network
+    // dropped").
     return {
       ok: false,
-      code: 'parse-failed',
-      message: 'Response did not contain a parseable JSON object.',
-      rawResponse: callResult.raw
+      code: 'provider-refused',
+      message: result.refusal.message,
+      rawResponse: result.raw || undefined,
+      refusalKind: result.refusal.kind
     };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    return {
-      ok: false,
-      code: 'parse-failed',
-      message: 'Extracted JSON object failed to parse.',
-      rawResponse: callResult.raw
-    };
-  }
-
-  // Augment with broker-filled fields BEFORE shape-checking; the
-  // type guard allows them to be absent (provider-side parse can
-  // satisfy the shape), but downstream code expects them filled.
-  const augmented = {
-    ...(typeof parsed === 'object' && parsed !== null ? parsed : {}),
-    raw: callResult.raw,
-    tokensIn: callResult.tokensIn,
-    tokensOut: callResult.tokensOut,
-    responseId: callResult.responseId
+  // Augment with broker-filled fields.  Under constrained decoding
+  // the schema does NOT include these (the synthesizer attaches
+  // them post-call) — that's why they're added here.
+  const augmented: PcBackstorySynthesisResponse = {
+    ...result.value,
+    raw: result.raw,
+    tokensIn: result.tokensIn,
+    tokensOut: result.tokensOut,
+    responseId: result.responseId
   };
 
+  // Defense-in-depth: the schema enforces shape, but if a future
+  // provider regresses + emits something that satisfies the schema
+  // but not the TS guard (theoretically impossible, practically
+  // worth guarding), surface as parse-failed.
   if (!isPcBackstorySynthesisResponse(augmented)) {
     return {
       ok: false,
       code: 'parse-failed',
       message:
-        'Response is missing required fields (name / pronouns / tags / backstory).',
-      rawResponse: callResult.raw
+        'Provider returned schema-valid JSON that fails the runtime type guard.  Likely a schema drift; surface to maintainers.',
+      rawResponse: result.raw
     };
   }
 
   return {
     ok: true,
     response: augmented,
-    rawResponse: callResult.raw
+    rawResponse: result.raw
   };
 }
 
-/**
- * Extract a JSON object substring from a raw provider response.
- * Handles three common cases:
- *   1. Raw text is already a JSON object — return as-is.
- *   2. Wrapped in a fenced code block (```json ... ``` or ``` ... ```)
- *      — strip the fence.
- *   3. Object embedded in surrounding prose ("Here's the JSON: { ... }")
- *      — substring from first `{` to last matching `}`.
- *
- * Returns null when no candidate object substring is found.  The
- * caller treats null as a parse failure.
- *
- * Exported via the test file for unit coverage.
- */
-export function extractJsonObject(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-
-  // Case 1: already a JSON object.
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-    return trimmed;
-  }
-
-  // Case 2: fenced code block.  Conservative — match common
-  // variants: ```json\n{...}\n```  and  ```\n{...}\n```.
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) {
-    const inner = fenceMatch[1].trim();
-    if (inner.startsWith('{') && inner.endsWith('}')) {
-      return inner;
-    }
-  }
-
-  // Case 3: object embedded in prose.  Find the FIRST `{` and the
-  // LAST `}` and try that substring.  Brittle (won't handle a JSON
-  // string containing `}` followed by trailing prose ending in `}`)
-  // but good enough for the "preamble + JSON + trailing newline"
-  // pattern most providers fall into.
-  const first = trimmed.indexOf('{');
-  const last = trimmed.lastIndexOf('}');
-  if (first >= 0 && last > first) {
-    return trimmed.slice(first, last + 1);
-  }
-
-  return null;
-}
+// Phase 3b-X step 5: `extractJsonObject` deleted.  Under constrained
+// decoding, providers emit schema-conforming JSON by construction;
+// the regex-based prose-stripping the function did is no longer
+// needed.  Step-1 shim's JSON.parse handles the legacy-mock test
+// path (which now treats fenced/prose responses as `truncated`,
+// surfaced to the synthesizer as `code: 'provider-refused'`).

@@ -142,6 +142,11 @@ export async function shimCallStructuredViaLegacy<T>(
   try {
     result = await provider.call(req);
   } catch (e) {
+    // AbortError must propagate up — the synthesizer's outer try/
+    // catch checks `(e as Error).name === 'AbortError'` to set
+    // `code: 'aborted'`.  If the shim swallows it as a refusal,
+    // cancellation looks like a network failure.
+    if ((e as Error).name === 'AbortError') throw e;
     return {
       ok: false,
       refusal: {

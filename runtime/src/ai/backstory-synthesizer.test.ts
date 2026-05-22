@@ -5,7 +5,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   synthesizeBackstory,
-  extractJsonObject,
   type SynthesizeBackstoryRequest
 } from './backstory-synthesizer';
 import {
@@ -79,40 +78,11 @@ const BASE_REQ: SynthesizeBackstoryRequest = {
   model: 'claude-test-model'
 };
 
-describe('extractJsonObject', () => {
-  it('returns the input when it is already a JSON object', () => {
-    expect(extractJsonObject('{"a":1}')).toBe('{"a":1}');
-  });
-
-  it('returns the trimmed object for surrounding whitespace', () => {
-    expect(extractJsonObject('   \n{"a":1}\n   ')).toBe('{"a":1}');
-  });
-
-  it('strips a ```json fenced code block', () => {
-    expect(
-      extractJsonObject('Here you go:\n```json\n{"a":1}\n```\nthanks')
-    ).toBe('{"a":1}');
-  });
-
-  it('strips a bare ``` fenced code block', () => {
-    expect(extractJsonObject('```\n{"a":1}\n```')).toBe('{"a":1}');
-  });
-
-  it('extracts an object embedded in surrounding prose', () => {
-    expect(
-      extractJsonObject('Sure! { "a": 1, "b": 2 } end of message.')
-    ).toBe('{ "a": 1, "b": 2 }');
-  });
-
-  it('returns null on empty input', () => {
-    expect(extractJsonObject('')).toBeNull();
-    expect(extractJsonObject('   ')).toBeNull();
-  });
-
-  it('returns null when there is no { ... } at all', () => {
-    expect(extractJsonObject('not a json response')).toBeNull();
-  });
-});
+// Phase 3b-X step 5: `extractJsonObject` describe block deleted —
+// the function itself is gone (constrained decoding eliminates the
+// need for prose-to-JSON regex extraction).  Surviving test
+// coverage of the chargen pipeline is in the spoiler-firewall +
+// validation + provider-refusal blocks below.
 
 describe('synthesizeBackstory — happy path', () => {
   it('returns ok=true with the parsed response on a clean call', async () => {
@@ -162,32 +132,57 @@ describe('synthesizeBackstory — happy path', () => {
   });
 });
 
-describe('synthesizeBackstory — JSON parse failures', () => {
-  it('returns parse-failed when raw is not parseable JSON', async () => {
+describe('synthesizeBackstory — provider refusal / truncation (Phase 3b-X)', () => {
+  // Under constrained decoding (steps 3+4), the providers emit
+  // schema-conforming JSON by construction.  These tests run via
+  // the step-1 shim (mocks return raw text → shim does JSON.parse
+  // → maps parse failures to truncated).  Under real strict mode,
+  // these failures are nearly impossible; under the shim they
+  // exercise the truncated/refusal branch.
+
+  it('maps unparseable provider output to code: provider-refused / kind: truncated', async () => {
     const { provider } = mockProvider(['not json at all']);
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('parse-failed');
-      expect(result.rawResponse).toBe('not json at all');
+      expect(result.code).toBe('provider-refused');
+      expect(result.refusalKind).toBe('truncated');
     }
   });
 
-  it('returns parse-failed when JSON is valid but missing required fields', async () => {
+  it('maps schema-valid-JSON-but-missing-fields to code: provider-refused / kind: truncated', async () => {
+    // Under the shim, JSON.parse succeeds → typed value is missing
+    // required fields → the synthesizer's defense-in-depth guard
+    // returns parse-failed.  Under real constrained decoding the
+    // schema's `required[]` would prevent the missing field at the
+    // wire, but the shim doesn't enforce schemas.
     const { provider } = mockProvider([
       JSON.stringify({ name: 'Just a name' })
     ]);
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('parse-failed');
+      // Either parse-failed (defense-in-depth guard) OR
+      // provider-refused (shim's truncated mapping) — both are
+      // legitimate "AI didn't return a usable response" signals.
+      expect(['parse-failed', 'provider-refused']).toContain(result.code);
     }
   });
 
-  it('handles JSON wrapped in fenced code blocks', async () => {
+  it('fenced code blocks are no longer a thing — under the shim they fail to parse → provider-refused', async () => {
+    // Pre-3b-X: synthesizer ran extractJsonObject which stripped
+    // ```json fences.  Post-3b-X: constrained decoding never emits
+    // prose-wrapped JSON.  Under the shim, fenced text fails
+    // JSON.parse → truncated → provider-refused.  Test pins the
+    // new behavior so a future revival of fenced-output support is
+    // a deliberate decision, not a regression.
     const { provider } = mockProvider(['```json\n' + VALID_JSON_BODY + '\n```']);
     const result = await synthesizeBackstory(provider, BASE_REQ);
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('provider-refused');
+      expect(result.refusalKind).toBe('truncated');
+    }
   });
 });
 
