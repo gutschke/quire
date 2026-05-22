@@ -1071,8 +1071,54 @@ export const quireAppStyles = css`
     .dm-aside-card,
     .dm-aside-empty,
     .dm-rail,
-    .dm-rail-empty {
+    .dm-rail-empty,
+    .seat-strip,
+    .seat-strip-empty {
       border-left: 3px solid light-dark(#d4a017, #a07820);
+    }
+    /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
+       slot label as a small pill, pc id beside, optional unbind ×
+       button at row end. */
+    .seat-strip-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .seat-strip-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0;
+    }
+    .seat-strip-slot {
+      display: inline-block;
+      min-width: 2.5rem;
+      padding: 0.05rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.85em;
+      font-weight: 600;
+      text-align: center;
+      background: light-dark(#fef3c7, #3a2a04);
+      color: light-dark(#925a17, #d6a559);
+    }
+    .seat-strip-pc-id {
+      flex: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .seat-strip-unbind {
+      width: 1.4rem;
+      height: 1.4rem;
+      padding: 0;
+      border-radius: 999px;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+      line-height: 1;
+      font-weight: 600;
+    }
+    .seat-strip-unbind:hover {
+      background: light-dark(#fee2e2, #3a1010);
+      border-color: light-dark(#dc2626, #ef4444);
     }
     .dm-aside-subhead {
       margin: 0.6rem 0 0.3rem;

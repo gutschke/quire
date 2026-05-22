@@ -16,6 +16,7 @@ import './ui/regions/scene-stage';
 import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
+import './ui/regions/seat-strip';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -997,6 +998,10 @@ export class QuireApp extends LitElement {
         .onResetSpamCounter=${(pcId: string) => this.resetSpamCounter(pcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
+      <seat-strip
+        .pcSlots=${v.filteredShared.pcSlots}
+        .onUnbind=${(slot: number) => this.bindPcSlot(slot, null)}
+      ></seat-strip>
     `;
   }
 
