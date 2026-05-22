@@ -1172,6 +1172,27 @@ export const quireAppStyles = css`
       font-weight: 600;
       color: light-dark(#0b3d7f, #79b8f0);
     }
+    /* M3D-7: dm-doc sublist beneath scenes; amber-tinted label
+       echoes the dm-only caution palette so the DM has a glance
+       cue that these are not read-aloud files.  Indent matches
+       the scenes list for visual grouping. */
+    .dm-rail-dmdocs-label {
+      font-size: 0.78em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: light-dark(#925a17, #d6a559);
+      margin: 0.4rem 0 0 1rem;
+    }
+    .dm-rail-dmdocs {
+      margin-top: 0.1rem;
+    }
+    .dm-rail-scene-dmdoc a {
+      color: light-dark(#925a17, #d6a559);
+    }
+    .dm-rail-scene-dmdoc.dm-rail-scene-current a {
+      color: light-dark(#683f10, #f0c477);
+    }
 
     /* M3b.5 P2-12: dual-card AI response.  Two stacked cards
        (safe + DM-only); the DM-only card carries amber border +

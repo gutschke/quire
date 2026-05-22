@@ -23,6 +23,14 @@ export interface DmRailEpisode {
   slug: string;
   name: string;
   scenes: string[];
+  /**
+   * M3D-7: DM-only docs from `episode.json.dmDocs` (pacing, npcs,
+   * stakes, coincidences, etc.).  Rendered as a sibling group
+   * beneath the scene list when the episode is current.  Empty
+   * array when the manifest didn't declare any — the section
+   * collapses to nothing.
+   */
+  dmDocs?: string[];
 }
 
 @customElement('dm-rail')
@@ -60,6 +68,7 @@ export class DmRail extends LitElement {
 
   private renderEpisode(ep: DmRailEpisode): TemplateResult {
     const isCurrent = ep.slug === this.currentEpisode;
+    const dmDocs = ep.dmDocs ?? [];
     return html`
       <li class="dm-rail-episode ${isCurrent ? 'dm-rail-episode-current' : ''}">
         <a
@@ -80,36 +89,66 @@ export class DmRail extends LitElement {
         ${isCurrent && ep.scenes.length > 0
           ? html`
               <ul class="dm-rail-scenes">
-                ${ep.scenes.map((scenePath) => {
-                  const isCurrentScene = scenePath === this.currentScene;
-                  return html`
-                    <li
-                      class="dm-rail-scene ${isCurrentScene
-                        ? 'dm-rail-scene-current'
-                        : ''}"
-                    >
-                      <a
-                        href=${routeToSearch({
-                          kind: 'scene',
-                          slug: this.campaignSlug,
-                          episode: ep.slug,
-                          scene: scenePath
-                        })}
-                        @click=${(e: Event) =>
-                          this.onNavigate?.(e, {
-                            kind: 'scene',
-                            slug: this.campaignSlug,
-                            episode: ep.slug,
-                            scene: scenePath
-                          })}
-                        >${scenePath}</a
-                      >
-                    </li>
-                  `;
-                })}
+                ${ep.scenes.map((scenePath) =>
+                  this.renderSceneEntry(ep.slug, scenePath, 'scene')
+                )}
               </ul>
             `
           : nothing}
+        ${isCurrent && dmDocs.length > 0
+          ? html`
+              <div class="dm-rail-dmdocs-label" aria-hidden="true">
+                DM notes
+              </div>
+              <ul class="dm-rail-scenes dm-rail-dmdocs">
+                ${dmDocs.map((docPath) =>
+                  this.renderSceneEntry(ep.slug, docPath, 'dmdoc')
+                )}
+              </ul>
+            `
+          : nothing}
+      </li>
+    `;
+  }
+
+  /**
+   * Render one entry in the scenes-or-dm-docs list.  Same shape
+   * whether the entry is a scene or a dm doc; only the class differs
+   * so CSS can render dm-docs with the amber-rail caution affordance
+   * (existing dm-only-path styling kicks in inside `<scene-stage>`
+   * once the user navigates).
+   */
+  private renderSceneEntry(
+    episodeSlug: string,
+    scenePath: string,
+    variant: 'scene' | 'dmdoc'
+  ): TemplateResult {
+    const isCurrent = scenePath === this.currentScene;
+    const classes = [
+      'dm-rail-scene',
+      isCurrent ? 'dm-rail-scene-current' : '',
+      variant === 'dmdoc' ? 'dm-rail-scene-dmdoc' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return html`
+      <li class=${classes}>
+        <a
+          href=${routeToSearch({
+            kind: 'scene',
+            slug: this.campaignSlug,
+            episode: episodeSlug,
+            scene: scenePath
+          })}
+          @click=${(e: Event) =>
+            this.onNavigate?.(e, {
+              kind: 'scene',
+              slug: this.campaignSlug,
+              episode: episodeSlug,
+              scene: scenePath
+            })}
+          >${scenePath}</a
+        >
       </li>
     `;
   }

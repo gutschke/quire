@@ -937,7 +937,8 @@ export class QuireApp extends LitElement {
       return {
         slug: epId,
         name: loaded?.manifest.name ?? epId,
-        scenes: loaded?.manifest.scenes ?? []
+        scenes: loaded?.manifest.scenes ?? [],
+        dmDocs: loaded?.manifest.dmDocs ?? []
       };
     });
     const ep = this.getCurrentEpisode();

@@ -21,6 +21,19 @@ export interface EpisodeManifest {
   prerequisites?: string[];
   hooks?: string[];
   scenes?: string[];
+  /**
+   * M3D-7: DM-only docs to surface in `<dm-rail>` alongside scenes
+   * for the active episode.  Authorial-list because raw.gh.com has
+   * no directory enumeration; the campaign author declares which
+   * files are navigation-relevant (typically pacing / npcs /
+   * stakes / coincidences / etc.).  Each entry is a path relative
+   * to the episode root (e.g., `dm/pacing.md`).
+   *
+   * Optional + falls back to `[]` so legacy campaigns that don't
+   * declare it continue to work — dm files remain reachable via
+   * URL but not surfaced in the rail's navigation list.
+   */
+  dmDocs?: string[];
   arcBeats?: string[];
   inGameDate?: string;
   tags?: string[];

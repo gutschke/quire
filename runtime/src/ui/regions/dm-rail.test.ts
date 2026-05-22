@@ -65,4 +65,83 @@ describe('<dm-rail>', () => {
     );
     expect(receivedKind).toBe('episode');
   });
+
+  describe('M3D-7: dmDocs sublist', () => {
+    it('renders dmDocs beneath scenes when episode is current', async () => {
+      const el = mount();
+      el.campaignSlug = 'x/y';
+      el.episodes = [
+        {
+          slug: '001',
+          name: 'Ep1',
+          scenes: ['scenes/01.md'],
+          dmDocs: ['dm/pacing.md', 'dm/stakes.md']
+        }
+      ];
+      el.currentEpisode = '001';
+      await el.updateComplete;
+      expect(el.innerHTML).toContain('dm/pacing.md');
+      expect(el.innerHTML).toContain('dm/stakes.md');
+      // Sibling group label is present.
+      expect(el.querySelector('.dm-rail-dmdocs-label')).not.toBeNull();
+      // Dm-docs get the variant class so CSS can amber-tint them.
+      expect(el.querySelectorAll('.dm-rail-scene-dmdoc').length).toBe(2);
+    });
+
+    it('hides dmDocs when the episode is NOT current', async () => {
+      const el = mount();
+      el.campaignSlug = 'x/y';
+      el.episodes = [
+        { slug: '001', name: 'Ep1', scenes: [], dmDocs: ['dm/pacing.md'] },
+        { slug: '002', name: 'Ep2', scenes: [], dmDocs: ['dm/stakes.md'] }
+      ];
+      el.currentEpisode = '001';
+      await el.updateComplete;
+      // Ep1 is current, its dm-docs render.
+      expect(el.innerHTML).toContain('dm/pacing.md');
+      // Ep2 is NOT current, its dm-docs are hidden.
+      expect(el.innerHTML).not.toContain('dm/stakes.md');
+    });
+
+    it('omits the dm-docs label when the array is empty / undefined', async () => {
+      const el = mount();
+      el.campaignSlug = 'x/y';
+      el.episodes = [{ slug: '001', name: 'Ep1', scenes: ['scenes/01.md'] }];
+      el.currentEpisode = '001';
+      await el.updateComplete;
+      expect(el.querySelector('.dm-rail-dmdocs-label')).toBeNull();
+    });
+
+    it('dm-doc click invokes onNavigate with kind=scene (same route as scenes)', async () => {
+      const el = mount();
+      el.campaignSlug = 'x/y';
+      el.episodes = [
+        { slug: '001', name: 'Ep1', scenes: [], dmDocs: ['dm/pacing.md'] }
+      ];
+      el.currentEpisode = '001';
+      let receivedScene = '';
+      el.onNavigate = (_e, route) => {
+        if (route.kind === 'scene') receivedScene = route.scene;
+      };
+      await el.updateComplete;
+      const a = el.querySelector<HTMLAnchorElement>(
+        '.dm-rail-scene-dmdoc a'
+      )!;
+      a.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(receivedScene).toBe('dm/pacing.md');
+    });
+
+    it('current scene highlight applies to dm-docs too', async () => {
+      const el = mount();
+      el.campaignSlug = 'x/y';
+      el.episodes = [
+        { slug: '001', name: 'Ep1', scenes: [], dmDocs: ['dm/pacing.md'] }
+      ];
+      el.currentEpisode = '001';
+      el.currentScene = 'dm/pacing.md';
+      await el.updateComplete;
+      const docLi = el.querySelector('.dm-rail-scene-dmdoc');
+      expect(docLi?.classList.contains('dm-rail-scene-current')).toBe(true);
+    });
+  });
 });
