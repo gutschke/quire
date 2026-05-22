@@ -285,9 +285,45 @@ describe('PC_BACKSTORY_SYNTHESIS_SCHEMA — mirror tests', () => {
 });
 
 describe('toAnthropicSchema (step 3 adapter)', () => {
-  it('is identity for the strict-mode-compatible canonical schema', () => {
-    expect(toAnthropicSchema(PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>))
-      .toBe(PC_BACKSTORY_SYNTHESIS_SCHEMA);
+  it('preserves additionalProperties and other strict-mode features for the chargen schema', () => {
+    const adapted = toAnthropicSchema(
+      PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
+    );
+    // Strict mode supports additionalProperties: false — must survive.
+    expect(adapted.additionalProperties).toBe(false);
+    expect(adapted.required).toEqual([
+      'name',
+      'pronouns',
+      'tags',
+      'stats',
+      'skillMastery',
+      'backstory'
+    ]);
+  });
+
+  it('Phase 3b-X follow-up: flattens oneOf for AI_RESPONSE_SCHEMA (strict mode rejects oneOf)', () => {
+    // Live-tested 2026-05-22: Anthropic strict tool use returns
+    // `tools.0.custom: Schema type 'oneOf' is not supported` when
+    // input_schema contains oneOf at depth.  The adapter must
+    // flatten — same algorithm as toGeminiSchema.
+    const adapted = toAnthropicSchema(
+      AI_RESPONSE_SCHEMA as unknown as Record<string, unknown>
+    );
+    const stateUpdates = (
+      adapted.properties as Record<string, Record<string, unknown>>
+    ).stateUpdates;
+    const items = stateUpdates.items as Record<string, unknown>;
+    expect(items.oneOf).toBeUndefined();
+    expect(items.anyOf).toBeUndefined();
+    expect(items.type).toBe('object');
+    // Merged property set includes fields from all 3 variants.
+    const props = items.properties as Record<string, unknown>;
+    expect(props.kind).toBeDefined();
+    expect(props.field).toBeDefined(); // pc-edit
+    expect(props.purpose).toBeDefined(); // dice-roll
+    expect(props.ladderState).toBeDefined(); // caster-state-set
+    // Intersection: only `kind` is in every variant's required[].
+    expect(items.required).toEqual(['kind']);
   });
 });
 

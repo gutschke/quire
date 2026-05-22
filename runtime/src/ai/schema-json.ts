@@ -346,14 +346,39 @@ function flattenUnion(
 }
 
 /**
- * Phase 3b-X step 3 (Anthropic): the canonical schema is already
- * strict-mode compatible (no $ref, no format, additionalProperties:
- * false everywhere).  This adapter is identity today but exists as
- * a future-proofing seam — if Anthropic's strict subset ever
- * changes, the translation lives here, not at the call site.
+ * Phase 3b-X step 3 (Anthropic): translate the canonical schema to
+ * Anthropic's strict tool-use dialect.
+ *
+ * Strict mode is more permissive than Gemini's OpenAPI 3.0
+ * subset, but it does NOT support `oneOf` / `anyOf` / `allOf` —
+ * tested live 2026-05-22: Anthropic returns
+ *   `tools.0.custom: Schema type 'oneOf' is not supported` (400).
+ * So we flatten unions the same way `toGeminiSchema` does (union
+ * of properties, intersection of `required[]`); the runtime
+ * `isStateUpdate` guard re-enforces variant-specific required
+ * fields after parse.
+ *
+ * Otherwise the canonical schema is strict-mode compatible
+ * (no $ref, no format, additionalProperties: false everywhere).
  */
 export function toAnthropicSchema(
   schema: Record<string, unknown>
 ): Record<string, unknown> {
-  return schema;
+  function strip(node: unknown): unknown {
+    if (Array.isArray(node)) return node.map(strip);
+    if (!node || typeof node !== 'object') return node;
+    const obj = node as Record<string, unknown>;
+    if (Array.isArray(obj.oneOf) || Array.isArray(obj.anyOf)) {
+      const variants = (obj.oneOf ?? obj.anyOf) as Array<
+        Record<string, unknown>
+      >;
+      return flattenUnion(variants.map((v) => strip(v) as Record<string, unknown>));
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = strip(v);
+    }
+    return out;
+  }
+  return strip(schema) as Record<string, unknown>;
 }

@@ -19,6 +19,7 @@ import type {
   AiProviderStructuredResult,
   AiStructuredCallSchema
 } from '../broker';
+import { toAnthropicSchema } from '../schema-json';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -62,7 +63,7 @@ export const anthropicProvider: AiProvider = {
         {
           name: schema.name,
           description: `Emit the response as a structured ${schema.name} payload.`,
-          input_schema: schema.schema,
+          input_schema: toAnthropicSchema(schema.schema),
           // Anthropic strict tool use: grammar-constrained decoding.
           // Claude's decoder cannot emit tokens that violate the
           // schema; mis-shaped responses become impossible.
