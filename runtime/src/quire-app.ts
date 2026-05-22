@@ -313,13 +313,14 @@ export class QuireApp extends LitElement {
     const campaign = this.getCurrentCampaign();
     if (!campaign) return;
     this.pcCharacterInFlight.add(pcId);
+    // `loadCharacter` rejects on missing/invalid; on resolve the
+    // record is always a non-null `LoadedCharacter` (see
+    // `character-loader.ts`).  No defensive null-check needed.
     void loadCharacter(campaign.base.source, 'pc', pcId)
       .then((character) => {
         this.pcCharacterInFlight.delete(pcId);
-        if (character) {
-          this.pcCharacterCache.set(pcId, character);
-          this.requestUpdate();
-        }
+        this.pcCharacterCache.set(pcId, character);
+        this.requestUpdate();
       })
       .catch(() => {
         this.pcCharacterInFlight.delete(pcId);

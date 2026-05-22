@@ -135,16 +135,22 @@ export class ChargenController implements ReactiveController {
   /**
    * Per-slot AI synthesis result map.  Populated by
    * `synthesizeForSlot`; consumed by the `<chargen-dm-review>`
-   * region.  The result shape is the load-bearing frozen contract
-   * `SynthesizeBackstoryResult`.
+   * region via the public accessor methods.  The result shape is
+   * the load-bearing frozen contract `SynthesizeBackstoryResult`.
+   *
+   * Private + accessor-gated (Engine M1, c91ac1f post-review): a
+   * consumer mutating the Map directly would silently skip the
+   * `host.requestUpdate()` call.  Read via `getSynthResult(slot)`;
+   * write via the controller's own paths (`synthesizeForSlot`,
+   * `clearSynth`).
    */
-  readonly synthResults = new Map<number, SynthesizeBackstoryResult>();
+  private readonly _synthResults = new Map<number, SynthesizeBackstoryResult>();
 
   /** Slots whose synthesis is currently in-flight (for UI dim/spinner). */
-  readonly synthInFlight = new Set<number>();
+  private readonly _synthInFlight = new Set<number>();
 
   /** Slots the DM has accepted (CC-24).  Used by the region for the accept-gate dim. */
-  readonly acceptedSlots = new Set<number>();
+  private readonly _acceptedSlots = new Set<number>();
 
   /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
@@ -152,7 +158,6 @@ export class ChargenController implements ReactiveController {
    * never imports these.
    */
   private chargenRegionLoaded: Promise<void> | null = null;
-  private dmReviewRegionLoaded: Promise<void> | null = null;
   private synthesizerLoaded: Promise<
     typeof import('../ai/backstory-synthesizer')
   > | null = null;
@@ -174,14 +179,18 @@ export class ChargenController implements ReactiveController {
 
   hostDisconnected(): void {
     // Flush any pending persist timers so a tab close mid-typing
-    // doesn't lose the last <300 ms.  Same discipline as
+    // doesn't lose the last <300 ms of edits.  Same discipline as
     // AiKeyStore.hostDisconnected.
-    for (const timer of this.persistTimers.values()) clearTimeout(timer);
-    this.persistTimers.clear();
+    this.flushPending();
     if (this.packFeedbackTimer) {
       clearTimeout(this.packFeedbackTimer);
       this.packFeedbackTimer = null;
     }
+    // Engine M3 (defer-followup): in-flight synthesis aborts when
+    // a real AbortSignal is plumbed through; until then, just clear
+    // the inflight flag so an HMR reconnect doesn't see a wedged
+    // spinner.
+    this._synthInFlight.clear();
   }
 
   // ---- setters that re-render the host ----
@@ -207,6 +216,61 @@ export class ChargenController implements ReactiveController {
     this.host.requestUpdate();
   }
 
+  // ---- read accessors for the DM-review region (Engine M1) ----
+
+  /** Latest synthesis result for the slot, or undefined. */
+  getSynthResult(slot: number): SynthesizeBackstoryResult | undefined {
+    return this._synthResults.get(slot);
+  }
+
+  /** True when synthesis is in-flight for the slot. */
+  isSynthInFlight(slot: number): boolean {
+    return this._synthInFlight.has(slot);
+  }
+
+  /** True when the DM has accepted the slot's current synth result. */
+  isAccepted(slot: number): boolean {
+    return this._acceptedSlots.has(slot);
+  }
+
+  /**
+   * Iterate over slots that have a synth result OR an accept flag.
+   * Used by the DM-review region to render per-seat cards.
+   */
+  slotsWithSynthState(): number[] {
+    const slots = new Set<number>();
+    for (const s of this._synthResults.keys()) slots.add(s);
+    for (const s of this._acceptedSlots) slots.add(s);
+    return [...slots].sort((a, b) => a - b);
+  }
+
+  // ---- write accessors (step 4 wires accept/revise; step 1 stubs them out) ----
+
+  /**
+   * CC-24 accept (step 4 lands the event emission via the host).
+   * Step 1 only flips the local flag so the controller's state
+   * machine is testable; step 4 adds the host call that emits the
+   * scratch-note audit event.
+   */
+  acceptSlot(slot: number): void {
+    if (this._acceptedSlots.has(slot)) return;
+    if (!this._synthResults.has(slot)) return; // can't accept without a result
+    this._acceptedSlots.add(slot);
+    this.host.requestUpdate();
+  }
+
+  /**
+   * P3T-19 revise (step 4 lands the host's event emission).  Drops
+   * the cached synth result for the slot so the region's seat shows
+   * "no result yet, ask the player to revise then re-synthesize."
+   */
+  requestReviseSlot(slot: number): void {
+    if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
+    this._synthResults.delete(slot);
+    this._acceptedSlots.delete(slot);
+    this.host.requestUpdate();
+  }
+
   // ---- chargen-route seeding ----
 
   /**
@@ -229,6 +293,23 @@ export class ChargenController implements ReactiveController {
   }
 
   /**
+   * Per-slot pending values awaiting their debounce flush.  Kept
+   * separately from the timer map so `flushPending` can write them
+   * synchronously without re-reading mutable `this.chosenPath` /
+   * `this.answers` (avoids a race when multiple slots are in
+   * flight).
+   */
+  private persistPendingValues = new Map<
+    string,
+    {
+      slug: string;
+      slot: number;
+      chosenPath: CreationPath | '';
+      answers: CharCreationAnswers;
+    }
+  >();
+
+  /**
    * Debounced persist of the current chargen state.  Per-slot
    * (slug+slot) timer so concurrent edits to different slots don't
    * stomp each other.
@@ -238,16 +319,46 @@ export class ChargenController implements ReactiveController {
     const key = `${slug}:${slot}`;
     const existing = this.persistTimers.get(key);
     if (existing) clearTimeout(existing);
+    // Snapshot the current state into pending; flush will write it.
+    this.persistPendingValues.set(key, {
+      slug,
+      slot,
+      chosenPath: this.chosenPath,
+      answers: { ...this.answers }
+    });
     this.persistTimers.set(
       key,
       setTimeout(() => {
-        this.persistTimers.delete(key);
-        saveChargenState(slug, slot, {
-          chosenPath: this.chosenPath,
-          answers: this.answers
-        });
+        this.flushPendingPersistForKey(key);
       }, CHARGEN_PERSIST_DEBOUNCE_MS)
     );
+  }
+
+  private flushPendingPersistForKey(key: string): void {
+    const pending = this.persistPendingValues.get(key);
+    const timer = this.persistTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.persistTimers.delete(key);
+    }
+    if (!pending) return;
+    this.persistPendingValues.delete(key);
+    saveChargenState(pending.slug, pending.slot, {
+      chosenPath: pending.chosenPath,
+      answers: pending.answers
+    });
+  }
+
+  /**
+   * Force any pending debounced persists to flush immediately.
+   * Mirrors AiKeyStore.flushPending — used at known checkpoints
+   * (chargen-route exit) and by tests so they don't need fake
+   * timers.
+   */
+  flushPending(): void {
+    for (const key of [...this.persistPendingValues.keys()]) {
+      this.flushPendingPersistForKey(key);
+    }
   }
 
   // ---- pack + download (CC-10) ----
@@ -341,13 +452,9 @@ export class ChargenController implements ReactiveController {
     return this.chargenRegionLoaded;
   }
 
-  loadDmReviewRegion(): Promise<void> {
-    // Step 2 of Cluster E adds the actual `<chargen-dm-review>`
-    // region module; stub the import for the step-1 commit so the
-    // type checker has a load-bearing signature.  Replaced with a
-    // real dynamic import in step 2.
-    return this.dmReviewRegionLoaded ?? Promise.resolve();
-  }
+  // loadDmReviewRegion is intentionally not declared here yet — the
+  // step-2 commit adds it together with the actual region module so
+  // a caller can't `await` a silent no-op (Engine B2 / Adv F-CC-E1).
 
   private loadSynthesizerModule(): Promise<
     typeof import('../ai/backstory-synthesizer')
@@ -439,7 +546,7 @@ export class ChargenController implements ReactiveController {
     const aiBackstory = campaign.base.manifest.aiBackstory;
     const spoilerTokens = aiBackstory?.spoilerTokens;
     const placeAllowlist = aiBackstory?.placeAllowlist;
-    this.synthInFlight.add(slot);
+    this._synthInFlight.add(slot);
     this.host.requestUpdate();
     try {
       const mod = await this.loadSynthesizerModule();
@@ -459,23 +566,23 @@ export class ChargenController implements ReactiveController {
           }
         }
       );
-      this.synthResults.set(slot, result);
+      this._synthResults.set(slot, result);
       // Re-synthesizing clears any prior accept for the same slot —
       // accepting the OLD result and then re-synthesizing would
       // otherwise leave the accept stale.
-      this.acceptedSlots.delete(slot);
+      this._acceptedSlots.delete(slot);
       return result;
     } finally {
-      this.synthInFlight.delete(slot);
+      this._synthInFlight.delete(slot);
       this.host.requestUpdate();
     }
   }
 
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */
   clearSynth(slot: number): void {
-    const had = this.synthResults.has(slot) || this.acceptedSlots.has(slot);
-    this.synthResults.delete(slot);
-    this.acceptedSlots.delete(slot);
+    const had = this._synthResults.has(slot) || this._acceptedSlots.has(slot);
+    this._synthResults.delete(slot);
+    this._acceptedSlots.delete(slot);
     if (had) this.host.requestUpdate();
   }
 
