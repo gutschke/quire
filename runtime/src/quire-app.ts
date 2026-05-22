@@ -22,27 +22,17 @@ import './ui/regions/seat-strip';
 // outside the main bundle to keep the play-time path lean; users in
 // a regular play session don't pay the JS cost of chargen UI.
 import {
-  encodeInviteToken,
   decodeInviteToken,
   campaignFingerprint,
   InviteTokenError
 } from './invite-token';
-import {
-  packChargen,
-  stringifyChargenPack,
-  suggestedPackFilename,
-  ChargenPackError
-} from './chargen-pack';
-import {
-  loadChargenState,
-  saveChargenState
-} from './chargen-persistence';
 // Code-split: `backstory-synthesizer` + its dep chain (prompt
 // assembler, spoiler-check, validator) only load when the DM
 // invokes synthesis at session 1.  Playtime never touches it.
+// Phase 3a Cluster E step 1: the orchestration moved into
+// ChargenController; QuireApp only re-exports the result type for
+// the legacy invite-manager surface shim.
 import type { SynthesizeBackstoryResult } from './ai/backstory-synthesizer';
-import { buildPlayerFacingContext } from './ai/campaign-context';
-import type { AnsweredQuestion } from './ai/backstory-synthesis-prompt';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -89,6 +79,7 @@ import {
   wrapCampaignContext
 } from './ai/campaign-context';
 import { AiWriteController } from './controllers/ai-write-controller';
+import { ChargenController } from './controllers/chargen-controller';
 import type { AiWriteBatchView } from './ui/regions/ai-panel';
 import { anthropicProvider } from './ai/providers/anthropic';
 import { geminiProvider } from './ai/providers/gemini';
@@ -284,68 +275,67 @@ export class QuireApp extends LitElement {
   @state() private _appState: AppState = { kind: 'idle' };
 
   /**
-   * CC-5: chosen-path state for the chargen region.  Local-only
-   * today; IndexedDB persistence lands in CC-4 + CC-11.  Empty
-   * string means "not chosen yet" (step 3 picker is unselected).
+   * Phase 3a Cluster E step 1: chargen state + lifecycle lifted into
+   * a dedicated Lit ReactiveController.  Render code reads
+   * `this.chargen.chosenPath` / `.answers` / `.packFeedback` etc.
+   * The previous 4-6 @state fields + 4+ methods moved to
+   * `src/controllers/chargen-controller.ts` so the unified DM-review
+   * region (forthcoming Cluster E step 2) consumes a single seam.
    */
-  @state() private chargenChosenPath: 'qa' | 'free-write' | 'pre-gen' | '' =
-    '';
+  private chargen = new ChargenController(this, {
+    getCurrentCampaign: () => this.getCurrentCampaign(),
+    getCampaignSlug: (c) => this.slugFor(c as LoadedCampaign),
+    getAiProvider: () => this.aiProvider,
+    getAiApiKey: () =>
+      this.aiKeys.apiKeys[this.aiProvider] ?? '',
+    getAiModel: () => this.aiModel,
+    getAiProviders: () => this.aiProviders,
+    getDmDisplayName: () => this.displayNameDraft,
+    isCoordinator: () => this.isCoordinator(),
+    getBoundCharacter: (pcId) => this.pcCharacterCache.get(pcId) ?? null,
+    loadCharacterByPcId: (pcId) => this.loadCharacterByPcId(pcId)
+  });
 
   /**
-   * CC-6: captured Q&A answers keyed by question id.  Local-only
-   * today; IndexedDB persistence + per-PC SaveDocument variant land
-   * in CC-4 + CC-11.  Empty object means "no answers yet."
+   * Per-pcId character cache for the DM-review name-resolution path
+   * (P3U-12).  Distinct from `boundCharacter` (which is the LOCAL
+   * peer's bound PC); this cache holds any pcId a DM-side surface
+   * needs to display by name.  Lazy-populated by
+   * `loadCharacterByPcId`; consumed via the controller's
+   * `displayNameForBound`.
    */
-  @state() private chargenAnswers: Record<string, string> = {};
+  private pcCharacterCache = new Map<string, LoadedCharacter>();
+  private pcCharacterInFlight = new Set<string>();
 
-  /**
-   * CC-10: transient feedback on the "Pack my character" download.
-   * The chargen region surfaces "Packed!" / "Couldn't pack" copy
-   * keyed on this value; auto-clears after a few seconds via
-   * setTimeout.
-   */
-  @state() private chargenPackFeedback: '' | 'packed' | 'pack-failed' = '';
-
-  /**
-   * Code-split: track which chargen surfaces have been dynamically
-   * loaded so subsequent invocations skip the import().
-   *
-   * Both `<character-creation>` (player-side chargen flow) and
-   * `<invite-manager>` (DM-side invite generator) live outside the
-   * main bundle.  A user in a regular play session never imports
-   * them; a DM only imports invite-manager once they're coord; a
-   * player only imports character-creation once they hit a
-   * `?invite=` URL.  Saves ~3-4 KB gzip from the play-time bundle.
-   */
-  private chargenRegionLoaded: Promise<void> | null = null;
-  private inviteManagerLoaded: Promise<void> | null = null;
-  /**
-   * `<invite-manager>` is rendered lazily — the render-time helper
-   * gates on this flag so we don't emit an inert custom-element tag
-   * before the module has been imported and the class registered.
-   * Flipped to true inside the import resolver in
-   * `loadInviteManagerRegion`.
-   */
-  @state() private inviteManagerDefined: boolean = false;
-
-  /**
-   * Idempotently dynamic-import `<character-creation>`.  Returns the
-   * in-flight promise so concurrent callers share one fetch.
-   */
-  private loadChargenRegion(): Promise<void> {
-    if (this.chargenRegionLoaded) return this.chargenRegionLoaded;
-    this.chargenRegionLoaded = import('./ui/regions/character-creation').then(
-      () => undefined
-    );
-    return this.chargenRegionLoaded;
+  private loadCharacterByPcId(pcId: string): void {
+    if (pcId === '' || this.pcCharacterCache.has(pcId)) return;
+    if (this.pcCharacterInFlight.has(pcId)) return;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return;
+    this.pcCharacterInFlight.add(pcId);
+    void loadCharacter(campaign.base.source, 'pc', pcId)
+      .then((character) => {
+        this.pcCharacterInFlight.delete(pcId);
+        if (character) {
+          this.pcCharacterCache.set(pcId, character);
+          this.requestUpdate();
+        }
+      })
+      .catch(() => {
+        this.pcCharacterInFlight.delete(pcId);
+      });
   }
 
   /**
-   * Idempotently dynamic-import `<invite-manager>`.  Returns the
-   * in-flight promise so concurrent callers share one fetch.  Sets
-   * `inviteManagerDefined` on resolution so `renderInviteManagerLazy`
-   * can swap in the real element.
+   * `<invite-manager>` lazy-render gate.  Flipped true once the
+   * dynamic import resolves; kept on the host (not the controller)
+   * because Lit's render-time conditional needs an @state read.
+   * Cluster E step 6 removes this when `<invite-manager>` is fully
+   * subsumed by `<chargen-dm-review>`.
    */
+  @state() private inviteManagerDefined: boolean = false;
+  private inviteManagerLoaded: Promise<void> | null = null;
+
   private loadInviteManagerRegion(): Promise<void> {
     if (this.inviteManagerLoaded) return this.inviteManagerLoaded;
     this.inviteManagerLoaded = import('./ui/regions/invite-manager').then(
@@ -863,7 +853,7 @@ export class QuireApp extends LitElement {
         // finds the custom element already defined.  Without this
         // the first paint shows an inert `<character-creation>`
         // tag until the import lands.
-        await this.loadChargenRegion();
+        await this.chargen.loadChargenRegion();
         if (signal.aborted || !this.isConnected) return;
         const expectedFp = campaignFingerprint(campaign.base.source);
         try {
@@ -871,23 +861,15 @@ export class QuireApp extends LitElement {
             expectedFingerprint: expectedFp
           });
           // CC-11: resume — load any in-progress chargen state
-          // for this campaign + slot from localStorage and seed
-          // the @state fields.  Per F3 critique, key is slug+slot
-          // not token, so token regeneration doesn't orphan data.
+          // for this campaign + slot.  Per F3 critique, key is
+          // slug+slot not token, so token regeneration doesn't
+          // orphan data.  First-visit (or different device) seeds
+          // an empty state — this is also the "wrong-device empty"
+          // case: no banner needed because the player sees a clean
+          // flow; the Pack-my-character export (CC-10) is the
+          // cross-device recovery affordance.
           const slug = this.slugFor(campaign);
-          const resumed = loadChargenState(slug, payload.slot);
-          if (resumed) {
-            this.chargenChosenPath = resumed.chosenPath;
-            this.chargenAnswers = resumed.answers;
-          } else {
-            // First visit (or different device): start fresh.
-            // This is also the "wrong-device empty state" — no
-            // banner needed because the player sees a clean
-            // chargen flow.  The Pack-my-character export (CC-10)
-            // is the cross-device recovery affordance.
-            this.chargenChosenPath = '';
-            this.chargenAnswers = {};
-          }
+          this.chargen.seedFromStorage(slug, payload.slot);
           this._appState = {
             kind: 'character-creation',
             campaign,
@@ -1219,10 +1201,12 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * CC-23: adapter — calls the full `synthesizeBackstoryForSlot` and
-   * maps the result into the UI-facing `SynthSurfaceResult` shape the
-   * invite-manager expects.  Keeps the region oblivious to the typed
-   * union of synth result codes.
+   * CC-23 adapter (Cluster E step 1 shim): the legacy
+   * `<invite-manager>` mount still consumes the lossy
+   * `SynthSurfaceResult` shape.  Cluster E step 6 deletes both this
+   * adapter and the legacy mount in favor of the new region
+   * consuming `SynthesizeBackstoryResult` directly.  Keep the shim
+   * in place until then so the migration is per-step reviewable.
    */
   private async synthesizeBackstoryForSlotSurface(
     slot: number
@@ -1233,7 +1217,7 @@ export class QuireApp extends LitElement {
     warningCount?: number;
     spoilerHit?: boolean;
   }> {
-    const result = await this.synthesizeBackstoryForSlot(slot, {
+    const result = await this.chargen.synthesizeForSlot(slot, {
       playerDisplayName: this.displayNameDraft || undefined
     });
     if (result.ok) {
@@ -1295,263 +1279,19 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * CC-23: end-to-end backstory synthesis for one slot.  Reads the
-   * in-progress chargen state from localStorage (the player wrote
-   * it; the DM sees it on the same machine in Mode A, or after
-   * importing a pack via CC-13 in Mode B), assembles the full
-   * synthesis request, and runs it through the AI provider.
-   *
-   * Coord-only.  Returns a typed `SynthesizeBackstoryResult` for the
-   * UI to surface — `ok: true` means the DM approval gate gets a
-   * candidate; an `ok: false` code drives the appropriate retry /
-   * banner UI in `<invite-manager>` (CC-24).
-   *
-   * Per the prompt-engineering recommendation, synthesis happens on
-   * the DM's machine at session 1 — the API key is the DM's and
-   * never leaves their device.  See `project-quire-ai-player-facing-scope`
-   * memory for the threat-model layer.
+   * Public delegate retained so a few off-path callers continue to
+   * compile.  All real work lives in ChargenController.synthesizeForSlot.
    */
   async synthesizeBackstoryForSlot(
     slot: number,
     options: { playerDisplayName?: string; dmConstraints?: string } = {}
   ): Promise<SynthesizeBackstoryResult> {
-    const campaign = this.getCurrentCampaign();
-    if (!campaign) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message: 'No campaign loaded; cannot synthesize.'
-      };
-    }
-    if (!Number.isInteger(slot) || slot < 1 || slot > 9) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message: `Slot ${slot} is out of range [1, 9].`
-      };
-    }
-    const slug = this.slugFor(campaign);
-    const persisted = loadChargenState(slug, slot);
-    if (!persisted) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message:
-          `No chargen answers for slot ${slot} on this device.  ` +
-          `Ask the player to send you their packed character file ` +
-          `from the end of their invite flow (or load the pack from ` +
-          `disk if they already sent it), then try again.`
-      };
-    }
-    const provider = this.aiProvider;
-    const apiKey = this.aiKeys.apiKeys[provider];
-    if (!apiKey) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message: `No API key configured for provider "${provider}".`
-      };
-    }
-    // Map chargen-persisted answers (id → string) into the
-    // AnsweredQuestion[] shape the prompt assembler wants.  Skip
-    // ids that don't appear in the campaign's declared questions
-    // (graceful when the campaign migrated its question set after
-    // the player completed chargen).
-    const declared =
-      campaign.base.manifest.characterCreation?.questions ?? [];
-    const answers: AnsweredQuestion[] = [];
-    for (const q of declared) {
-      const a = persisted.answers[q.id];
-      if (a !== undefined && a !== '') {
-        answers.push({ question: q, answer: a });
-      }
-    }
-    // Build player-facing context (CC-18 — hardcoded scope=public so
-    // dm-only files don't reach the synthesis prompt).
-    let context;
-    try {
-      context = await buildPlayerFacingContext({
-        source: campaign.base.source,
-        episodes: (campaign.base.manifest.episodes ?? []).map((slug) => ({
-          slug
-        })),
-        characters: campaign.base.manifest.characters
-      });
-    } catch (e) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message: `Failed to build campaign context: ${(e as Error).message}`
-      };
-    }
-    // P3D-1 hybrid seam: campaign-declared spoiler tokens + place
-    // allowlist flow from `aiBackstory` in the manifest through to
-    // the synthesizer.  When the manifest omits these fields the
-    // synthesizer falls back to engine defaults (today: Underleaf-
-    // tuned `DEFAULT_SPOILER_TOKENS`); any new campaign should
-    // declare its own list so it isn't relying on Underleaf's
-    // hidden-system vocabulary.
-    const aiBackstory = campaign.base.manifest.aiBackstory;
-    const spoilerTokens = aiBackstory?.spoilerTokens;
-    const placeAllowlist = aiBackstory?.placeAllowlist;
-    // Code-split: dynamic-import the synthesizer module on first
-    // call.  Subsequent calls share the cached module (idempotent
-    // import).  Saves ~4 KB gzip from the play-time bundle.
-    const mod = await this.loadSynthesizerModule();
-    return mod.synthesizeBackstory(this.aiProviders[provider], {
-      campaignContext: context,
-      dmConstraints: options.dmConstraints ?? '',
-      playerDisplayName: options.playerDisplayName ?? '',
-      answers,
-      apiKey,
-      model: this.aiModel,
-      spoilerTokens,
-      validatorOptions: {
-        playerDisplayName: options.playerDisplayName,
-        placeAllowlist
-      }
-    });
+    return this.chargen.synthesizeForSlot(slot, options);
   }
 
-  /**
-   * Idempotent dynamic-import of the synthesizer module.  Cached
-   * promise so concurrent callers share one fetch.
-   */
-  private synthesizerLoaded: Promise<
-    typeof import('./ai/backstory-synthesizer')
-  > | null = null;
-
-  private loadSynthesizerModule(): Promise<
-    typeof import('./ai/backstory-synthesizer')
-  > {
-    if (!this.synthesizerLoaded) {
-      this.synthesizerLoaded = import('./ai/backstory-synthesizer');
-    }
-    return this.synthesizerLoaded;
-  }
-
-  /**
-   * CC-11: debounced save of in-progress chargen state to
-   * localStorage.  Called from the chargen region's onPickPath and
-   * onAnswerChange callbacks.  Per F3 critique, the key is
-   * slug+slot not invite-token UUID — token regeneration doesn't
-   * orphan the player's data.
-   *
-   * Debounce window is shorter than the play-time autosave (300 ms
-   * vs 1500 ms) because the chargen flow has fewer state changes
-   * per unit time and the player will close the tab without
-   * realizing the autosave is debounced; saving aggressively gives
-   * a stronger "your work is safe" guarantee.
-   */
-  private chargenSaveTimer: ReturnType<typeof setTimeout> | null = null;
-
-  private persistChargen(campaign: LoadedCampaign, slot: number): void {
-    if (this.chargenSaveTimer) clearTimeout(this.chargenSaveTimer);
-    this.chargenSaveTimer = setTimeout(() => {
-      this.chargenSaveTimer = null;
-      const slug = this.slugFor(campaign);
-      saveChargenState(slug, slot, {
-        chosenPath: this.chargenChosenPath,
-        answers: this.chargenAnswers
-      });
-    }, 300);
-  }
-
-  /**
-   * CC-10: serialize the in-progress chargen state for the given
-   * campaign+slot and trigger a browser download.  Surfaces
-   * "packed!" / "couldn't pack" feedback through
-   * `chargenPackFeedback` for ~3 seconds.
-   *
-   * Pure-DOM download via Blob URL + anchor click — works in any
-   * modern browser; no clipboard / filesystem APIs.  When the page
-   * is served over `file://` or in a sandboxed iframe where Blob
-   * URLs are disabled, the trigger surfaces a 'pack-failed' state
-   * (the player can copy the answers manually as a fallback).
-   */
-  private packChargenAndDownload(
-    campaign: LoadedCampaign,
-    slot: number
-  ): void {
-    try {
-      const fingerprint = campaignFingerprint(campaign.base.source);
-      const doc = packChargen({
-        campaignFingerprint: fingerprint,
-        slot,
-        chosenPath: this.chargenChosenPath,
-        answers: this.chargenAnswers
-      });
-      const json = stringifyChargenPack(doc);
-      const filename = suggestedPackFilename(doc, this.slugFor(campaign));
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      this.chargenPackFeedback = 'packed';
-    } catch (e) {
-      if (
-        e instanceof ChargenPackError ||
-        e instanceof Error // includes URL.createObjectURL failures in sandboxed envs
-      ) {
-        this.chargenPackFeedback = 'pack-failed';
-      } else {
-        throw e;
-      }
-    }
-    // Auto-clear feedback after 3 seconds so the next interaction
-    // doesn't see stale text.
-    setTimeout(() => {
-      if (
-        this.chargenPackFeedback === 'packed' ||
-        this.chargenPackFeedback === 'pack-failed'
-      ) {
-        this.chargenPackFeedback = '';
-      }
-    }, 3000);
-  }
-
-  /**
-   * CC-12: generate an invite-URL for the given slot.  Coord-only
-   * (the `<invite-manager>` region is only mounted in DM views, but
-   * defense-in-depth check here too).  Returns the full URL on
-   * success, null on failure (slot out of range, no campaign loaded,
-   * encode failed).  The DM hands the URL to the intended player
-   * out-of-band (email / chat); the player visits and lands on the
-   * chargen route (CC-3).
-   */
+  /** CC-12 (Cluster E step 1): delegated to ChargenController. */
   generateInviteUrl(slot: number): Promise<string | null> {
-    if (!this.isCoordinator()) return Promise.resolve(null);
-    const campaign = this.getCurrentCampaign();
-    if (!campaign) return Promise.resolve(null);
-    if (!Number.isInteger(slot) || slot < 1 || slot > 9) {
-      return Promise.resolve(null);
-    }
-    try {
-      const fingerprint = campaignFingerprint(campaign.base.source);
-      const token = encodeInviteToken({
-        slot,
-        issuedAt: Date.now(),
-        campaignFingerprint: fingerprint
-      });
-      const search = routeToSearch({
-        kind: 'character-creation',
-        slug: this.slugFor(campaign),
-        inviteToken: token
-      });
-      const url = `${window.location.origin}${window.location.pathname}${search}`;
-      return Promise.resolve(url);
-    } catch {
-      // encodeInviteToken throws InviteTokenError for invalid input;
-      // the slot range check above should catch all cases, but a
-      // defensive null-return keeps the UI's "generation failed"
-      // path honest if a future bug slips a bad payload through.
-      return Promise.resolve(null);
-    }
+    return this.chargen.generateInviteUrl(slot);
   }
 
   /**
@@ -1905,19 +1645,19 @@ export class QuireApp extends LitElement {
         .slotNumber=${slot}
         .campaignName=${campaign.base.manifest.name}
         .tokenError=${tokenError}
-        .chosenPath=${this.chargenChosenPath}
+        .chosenPath=${this.chargen.chosenPath}
         .questions=${campaign.base.manifest.characterCreation?.questions ?? []}
-        .answers=${this.chargenAnswers}
-        .packFeedback=${this.chargenPackFeedback}
+        .answers=${this.chargen.answers}
+        .packFeedback=${this.chargen.packFeedback}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
-          this.chargenChosenPath = p;
-          this.persistChargen(campaign, slot);
+          this.chargen.setChosenPath(p);
+          this.chargen.persistDebounced(campaign, slot);
         }}
         .onAnswerChange=${(id: string, value: string) => {
-          this.chargenAnswers = { ...this.chargenAnswers, [id]: value };
-          this.persistChargen(campaign, slot);
+          this.chargen.setAnswer(id, value);
+          this.chargen.persistDebounced(campaign, slot);
         }}
-        .onPack=${() => this.packChargenAndDownload(campaign, slot)}
+        .onPack=${() => this.chargen.packAndDownload(campaign, slot)}
       ></character-creation>
     `;
   }
