@@ -1153,6 +1153,47 @@ export const quireAppStyles = css`
       font-size: 0.85em;
       color: light-dark(#16803d, #4ade80);
     }
+    /* CC-23: synthesize-backstory button + result surface. */
+    .invite-manager-synthesize {
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#3b82f6, #93c5fd);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e3a8a, #93c5fd);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .invite-manager-synthesize:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .invite-manager-synth-result {
+      margin-top: 0.7rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#f8fafc, #1e293b);
+    }
+    .invite-manager-synth-ok {
+      border-color: light-dark(#16803d, #4ade80);
+      background: light-dark(#dcfce7, #14532d);
+    }
+    .invite-manager-synth-err {
+      border-color: light-dark(#dc2626, #ef4444);
+      background: light-dark(#fee2e2, #3a1010);
+    }
+    .invite-manager-synth-spoiler {
+      border-color: light-dark(#d97706, #fbbf24);
+      background: light-dark(#fef3c7, #3a2a04);
+    }
+    .invite-manager-synth-label {
+      font-weight: 600;
+    }
+    .invite-manager-synth-warnings,
+    .invite-manager-synth-message {
+      font-size: 0.88em;
+      margin-top: 0.3rem;
+    }
 
     /* CC-5: <character-creation> region (skeleton).  Renders as a
        Stage takeover — once F8 polish lands it'll get a wider grid

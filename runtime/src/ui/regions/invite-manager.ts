@@ -30,6 +30,26 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 export type GenerateInviteCallback = (slot: number) => Promise<string | null>;
 
+/**
+ * CC-23: synth result surfaced back to the manager.  `ok` carries
+ * the parsed PC name + the warnings; `code` + `message` describe
+ * each failure category so the manager can pick the right banner
+ * copy.
+ */
+export interface SynthSurfaceResult {
+  ok: boolean;
+  name?: string;
+  message: string;
+  /** Validator warnings (non-blocking) to surface as a hint. */
+  warningCount?: number;
+  /** Spoiler-leak persistent? Different copy + emphasis. */
+  spoilerHit?: boolean;
+}
+
+export type SynthesizeCallback = (
+  slot: number
+) => Promise<SynthSurfaceResult>;
+
 const ALL_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 @customElement('invite-manager')
@@ -57,12 +77,25 @@ export class InviteManager extends LitElement {
   @property({ attribute: false }) onGenerate: GenerateInviteCallback | null =
     null;
 
+  /**
+   * CC-23: synthesize-backstory callback.  When wired, the manager
+   * surfaces a "Synthesize" button for the selected slot.  Disabled
+   * when there's no saved chargen state for the slot — surfaced as
+   * "no data yet" by the host's failure-message string.
+   */
+  @property({ attribute: false }) onSynthesize: SynthesizeCallback | null =
+    null;
+
   @state() private selectedSlot: number = 1;
   @state() private lastGeneratedSlot: number | null = null;
   @state() private lastGeneratedUrl: string | null = null;
   @state() private feedback: 'idle' | 'copied' | 'copy-failed' | 'gen-failed' =
     'idle';
   @state() private generating: boolean = false;
+
+  /** CC-23: in-flight synth state for the selected slot. */
+  @state() private synthesizing: boolean = false;
+  @state() private synthResult: SynthSurfaceResult | null = null;
 
   override render(): TemplateResult {
     return html`
@@ -108,10 +141,71 @@ export class InviteManager extends LitElement {
           >
             ${this.generating ? 'Generating…' : 'Generate invite link'}
           </button>
+          ${this.onSynthesize
+            ? html`<button
+                type="button"
+                class="invite-manager-synthesize"
+                ?disabled=${this.synthesizing}
+                title="Synthesize backstory for slot ${this.selectedSlot} (uses API key)"
+                @click=${() => void this.handleSynthesize()}
+              >
+                ${this.synthesizing ? 'Synthesizing…' : 'Synthesize backstory'}
+              </button>`
+            : nothing}
         </div>
         ${this.renderResult()}
+        ${this.renderSynthResult()}
       </section>
     `;
+  }
+
+  private renderSynthResult(): TemplateResult | typeof nothing {
+    const r = this.synthResult;
+    if (!r) return nothing;
+    const cls = r.ok
+      ? 'invite-manager-synth-ok'
+      : r.spoilerHit
+        ? 'invite-manager-synth-spoiler'
+        : 'invite-manager-synth-err';
+    return html`
+      <div class="invite-manager-synth-result ${cls}" role="status">
+        ${r.ok
+          ? html`
+              <div class="invite-manager-synth-label">
+                ✓ Backstory ready: <strong>${r.name}</strong>
+              </div>
+              ${r.warningCount && r.warningCount > 0
+                ? html`<div class="invite-manager-synth-warnings">
+                    ${r.warningCount} warning(s) — review at the
+                    approval gate.
+                  </div>`
+                : nothing}
+            `
+          : html`
+              <div class="invite-manager-synth-label">
+                ${r.spoilerHit ? '⚠ Spoiler leak persisted' : '✗ Synthesis failed'}
+              </div>
+              <div class="invite-manager-synth-message">${r.message}</div>
+            `}
+      </div>
+    `;
+  }
+
+  private async handleSynthesize(): Promise<void> {
+    if (!this.onSynthesize) return;
+    this.synthesizing = true;
+    this.synthResult = null;
+    try {
+      const result = await this.onSynthesize(this.selectedSlot);
+      this.synthResult = result;
+    } catch (e) {
+      this.synthResult = {
+        ok: false,
+        message: `Unexpected error: ${(e as Error).message}`
+      };
+    } finally {
+      this.synthesizing = false;
+    }
   }
 
   private renderResult(): TemplateResult | typeof nothing {

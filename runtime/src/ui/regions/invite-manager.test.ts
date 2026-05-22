@@ -127,6 +127,132 @@ describe('<invite-manager>', () => {
     expect(btn.disabled).toBe(false);
   });
 
+  describe('CC-23 synthesize-backstory button', () => {
+    it('renders the synth button when onSynthesize is wired', async () => {
+      const el = mount();
+      el.onSynthesize = async () => ({ ok: true, message: '' });
+      await el.updateComplete;
+      expect(
+        el.querySelector('.invite-manager-synthesize')
+      ).not.toBeNull();
+    });
+
+    it('hides the synth button when onSynthesize is null', async () => {
+      const el = mount();
+      await el.updateComplete;
+      expect(el.querySelector('.invite-manager-synthesize')).toBeNull();
+    });
+
+    it('click invokes onSynthesize with the selected slot', async () => {
+      const el = mount();
+      let received = 0;
+      el.onSynthesize = async (slot) => {
+        received = slot;
+        return { ok: true, message: 'ok' };
+      };
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(received).toBe(1);
+    });
+
+    it('surfaces ok=true result with the PC name', async () => {
+      const el = mount();
+      el.onSynthesize = async () => ({
+        ok: true,
+        name: 'Mei Tanaka',
+        message: 'ok',
+        warningCount: 0
+      });
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(el.querySelector('.invite-manager-synth-ok')).not.toBeNull();
+      expect(el.textContent).toContain('Mei Tanaka');
+    });
+
+    it('shows warning count when ok=true and warnings exist', async () => {
+      const el = mount();
+      el.onSynthesize = async () => ({
+        ok: true,
+        name: 'Mei',
+        message: 'ok',
+        warningCount: 2
+      });
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(el.textContent).toContain('2 warning');
+    });
+
+    it('surfaces ok=false with the failure message', async () => {
+      const el = mount();
+      el.onSynthesize = async () => ({
+        ok: false,
+        message: 'No saved chargen state for slot 1.'
+      });
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(el.querySelector('.invite-manager-synth-err')).not.toBeNull();
+      expect(el.textContent).toContain('No saved chargen state');
+    });
+
+    it('uses the spoiler class on spoilerHit results', async () => {
+      const el = mount();
+      el.onSynthesize = async () => ({
+        ok: false,
+        message: 'AI repeated forbidden tokens after retry.',
+        spoilerHit: true
+      });
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(
+        el.querySelector('.invite-manager-synth-spoiler')
+      ).not.toBeNull();
+      expect(el.textContent).toContain('Spoiler leak persisted');
+    });
+
+    it('disables the synth button while in-flight', async () => {
+      const el = mount();
+      let resolver!: (value: { ok: boolean; message: string }) => void;
+      el.onSynthesize = () =>
+        new Promise((res) => {
+          resolver = res;
+        });
+      await el.updateComplete;
+      const btn = el.querySelector<HTMLButtonElement>(
+        '.invite-manager-synthesize'
+      )!;
+      btn.click();
+      await el.updateComplete;
+      expect(btn.disabled).toBe(true);
+      expect(btn.textContent?.trim()).toBe('Synthesizing…');
+      resolver({ ok: true, message: 'done' });
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(btn.disabled).toBe(false);
+    });
+
+    it('surfaces an unexpected exception as a failure result', async () => {
+      const el = mount();
+      el.onSynthesize = async () => {
+        throw new Error('something blew up');
+      };
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.invite-manager-synthesize')!.click();
+      await new Promise((r) => setTimeout(r, 10));
+      await el.updateComplete;
+      expect(el.querySelector('.invite-manager-synth-err')).not.toBeNull();
+      expect(el.textContent).toContain('something blew up');
+    });
+  });
+
   it('copy button invokes navigator.clipboard.writeText', async () => {
     const el = mount();
     el.onGenerate = async () => 'https://example.com/?invite=abc';

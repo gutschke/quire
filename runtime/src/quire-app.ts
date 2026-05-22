@@ -37,6 +37,12 @@ import {
   loadChargenState,
   saveChargenState
 } from './chargen-persistence';
+// Code-split: `backstory-synthesizer` + its dep chain (prompt
+// assembler, spoiler-check, validator) only load when the DM
+// invokes synthesis at session 1.  Playtime never touches it.
+import type { SynthesizeBackstoryResult } from './ai/backstory-synthesizer';
+import { buildPlayerFacingContext } from './ai/campaign-context';
+import type { AnsweredQuestion } from './ai/backstory-synthesis-prompt';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -1193,8 +1199,43 @@ export class QuireApp extends LitElement {
       <invite-manager
         .pcSlots=${pcSlots}
         .onGenerate=${(slot: number) => this.generateInviteUrl(slot)}
+        .onSynthesize=${(slot: number) =>
+          this.synthesizeBackstoryForSlotSurface(slot)}
       ></invite-manager>
     `;
+  }
+
+  /**
+   * CC-23: adapter — calls the full `synthesizeBackstoryForSlot` and
+   * maps the result into the UI-facing `SynthSurfaceResult` shape the
+   * invite-manager expects.  Keeps the region oblivious to the typed
+   * union of synth result codes.
+   */
+  private async synthesizeBackstoryForSlotSurface(
+    slot: number
+  ): Promise<{
+    ok: boolean;
+    name?: string;
+    message: string;
+    warningCount?: number;
+    spoilerHit?: boolean;
+  }> {
+    const result = await this.synthesizeBackstoryForSlot(slot, {
+      playerDisplayName: this.displayNameDraft || undefined
+    });
+    if (result.ok) {
+      return {
+        ok: true,
+        name: result.response.name,
+        message: `Backstory ready (${result.response.tokensOut} tokens).`,
+        warningCount: result.warnings.length
+      };
+    }
+    return {
+      ok: false,
+      message: result.message,
+      spoilerHit: result.code === 'spoiler-leak-persistent'
+    };
   }
 
   /**
@@ -1238,6 +1279,126 @@ export class QuireApp extends LitElement {
     if (!Number.isInteger(slot) || slot < 1 || slot > 9) return false;
     this.session.append('pc-slot-bind', { v: 1, slot, pcId });
     return true;
+  }
+
+  /**
+   * CC-23: end-to-end backstory synthesis for one slot.  Reads the
+   * in-progress chargen state from localStorage (the player wrote
+   * it; the DM sees it on the same machine in Mode A, or after
+   * importing a pack via CC-13 in Mode B), assembles the full
+   * synthesis request, and runs it through the AI provider.
+   *
+   * Coord-only.  Returns a typed `SynthesizeBackstoryResult` for the
+   * UI to surface — `ok: true` means the DM approval gate gets a
+   * candidate; an `ok: false` code drives the appropriate retry /
+   * banner UI in `<invite-manager>` (CC-24).
+   *
+   * Per the prompt-engineering recommendation, synthesis happens on
+   * the DM's machine at session 1 — the API key is the DM's and
+   * never leaves their device.  See `project-quire-ai-player-facing-scope`
+   * memory for the threat-model layer.
+   */
+  async synthesizeBackstoryForSlot(
+    slot: number,
+    options: { playerDisplayName?: string; dmConstraints?: string } = {}
+  ): Promise<SynthesizeBackstoryResult> {
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: 'No campaign loaded; cannot synthesize.'
+      };
+    }
+    if (!Number.isInteger(slot) || slot < 1 || slot > 9) {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `Slot ${slot} is out of range [1, 9].`
+      };
+    }
+    const slug = this.slugFor(campaign);
+    const persisted = loadChargenState(slug, slot);
+    if (!persisted) {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `No saved chargen state for slot ${slot}.  Import the player's pack first (CC-13).`
+      };
+    }
+    const provider = this.aiProvider;
+    const apiKey = this.aiKeys.apiKeys[provider];
+    if (!apiKey) {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `No API key configured for provider "${provider}".`
+      };
+    }
+    // Map chargen-persisted answers (id → string) into the
+    // AnsweredQuestion[] shape the prompt assembler wants.  Skip
+    // ids that don't appear in the campaign's declared questions
+    // (graceful when the campaign migrated its question set after
+    // the player completed chargen).
+    const declared =
+      campaign.base.manifest.characterCreation?.questions ?? [];
+    const answers: AnsweredQuestion[] = [];
+    for (const q of declared) {
+      const a = persisted.answers[q.id];
+      if (a !== undefined && a !== '') {
+        answers.push({ question: q, answer: a });
+      }
+    }
+    // Build player-facing context (CC-18 — hardcoded scope=public so
+    // dm-only files don't reach the synthesis prompt).
+    let context;
+    try {
+      context = await buildPlayerFacingContext({
+        source: campaign.base.source,
+        episodes: (campaign.base.manifest.episodes ?? []).map((slug) => ({
+          slug
+        })),
+        characters: campaign.base.manifest.characters
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `Failed to build campaign context: ${(e as Error).message}`
+      };
+    }
+    // Code-split: dynamic-import the synthesizer module on first
+    // call.  Subsequent calls share the cached module (idempotent
+    // import).  Saves ~4 KB gzip from the play-time bundle.
+    const mod = await this.loadSynthesizerModule();
+    return mod.synthesizeBackstory(this.aiProviders[provider], {
+      campaignContext: context,
+      dmConstraints: options.dmConstraints ?? '',
+      playerDisplayName: options.playerDisplayName ?? '',
+      answers,
+      apiKey,
+      model: this.aiModel,
+      validatorOptions: {
+        playerDisplayName: options.playerDisplayName
+      }
+    });
+  }
+
+  /**
+   * Idempotent dynamic-import of the synthesizer module.  Cached
+   * promise so concurrent callers share one fetch.
+   */
+  private synthesizerLoaded: Promise<
+    typeof import('./ai/backstory-synthesizer')
+  > | null = null;
+
+  private loadSynthesizerModule(): Promise<
+    typeof import('./ai/backstory-synthesizer')
+  > {
+    if (!this.synthesizerLoaded) {
+      this.synthesizerLoaded = import('./ai/backstory-synthesizer');
+    }
+    return this.synthesizerLoaded;
   }
 
   /**
