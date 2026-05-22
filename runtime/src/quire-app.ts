@@ -2397,6 +2397,10 @@ export class QuireApp extends LitElement {
             source: campaign.base.source,
             scope,
             episodes: this.orderedCampaignEpisodes(campaign, episode?.slug),
+            characters: {
+              pcs: campaign.base.manifest.characters?.pcs ?? [],
+              npcs: campaign.base.manifest.characters?.npcs ?? []
+            },
             signal: ac.signal
           })
         : [];

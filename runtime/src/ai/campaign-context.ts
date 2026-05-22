@@ -57,6 +57,17 @@ export interface CampaignContextRequest {
     slug: string;
     scenes?: string[];
   }>;
+  /**
+   * PC + NPC ids from `campaign.json`'s `characters` field.  We
+   * fetch every character file the manifest lists so the AI
+   * knows Yui by name + motivation + stats — not just by scene
+   * mentions.  Each id resolves to `characters/pcs/<id>.json` or
+   * `characters/npcs/<id>.json`; missing files 404 silently.
+   */
+  characters?: {
+    pcs?: string[];
+    npcs?: string[];
+  };
   scope: ContextScope;
   signal?: AbortSignal;
 }
@@ -139,6 +150,12 @@ export async function buildCampaignContext(
         refs.push(`episodes/${ep.slug}/dm/${dmFile}`);
       }
     }
+  }
+  for (const pcId of req.characters?.pcs ?? []) {
+    refs.push(`characters/pcs/${pcId}.json`);
+  }
+  for (const npcId of req.characters?.npcs ?? []) {
+    refs.push(`characters/npcs/${npcId}.json`);
   }
   if (req.scope === 'dm') {
     for (const ref of CAMPAIGN_DM_ONLY_FILES) refs.push(ref);

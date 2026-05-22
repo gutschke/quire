@@ -137,6 +137,44 @@ describe('buildCampaignContext — selection', () => {
       expect(u).not.toMatch(/^[a-z]+:\/\/[a-z]+:/i); // no embedded scheme
     }
   });
+
+  it('fetches PC + NPC character files when characters param is set', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '',
+      'characters/pcs/yui.json':
+        '{"name":"Yui","motivation":"climbing-driven"}',
+      'characters/npcs/hadrian.json':
+        '{"name":"Hadrian","role":"antagonist"}'
+    });
+    const ctx = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'public',
+      characters: { pcs: ['yui'], npcs: ['hadrian'] }
+    });
+    const concat = ctx.map((c) => c.content).join('\n');
+    expect(concat).toContain('Yui');
+    expect(concat).toContain('climbing-driven');
+    expect(concat).toContain('Hadrian');
+    expect(concat).toContain('antagonist');
+  });
+
+  it('character fetches survive a missing file (404)', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '',
+      'characters/pcs/extant.json': '{"name":"E"}'
+      // characters/pcs/missing.json → 404
+    });
+    const ctx = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'public',
+      characters: { pcs: ['extant', 'missing'] }
+    });
+    const paths = ctx.map((c) => c.path);
+    expect(paths).toContain('characters/pcs/extant.json');
+    expect(paths).not.toContain('characters/pcs/missing.json');
+  });
 });
 
 describe('wrapCampaignContext', () => {
