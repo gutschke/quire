@@ -17,8 +17,10 @@ import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/seat-strip';
-import './ui/regions/invite-manager';
-import './ui/regions/character-creation';
+// CC-3 / CC-5 / CC-12: chargen regions are dynamically imported
+// (see `loadChargenRegion` / `loadInviteManagerRegion`).  They live
+// outside the main bundle to keep the play-time path lean; users in
+// a regular play session don't pay the JS cost of chargen UI.
 import {
   encodeInviteToken,
   decodeInviteToken,
@@ -272,6 +274,56 @@ export class QuireApp extends LitElement {
    */
   @state() private chargenChosenPath: 'qa' | 'free-write' | 'pre-gen' | '' =
     '';
+
+  /**
+   * Code-split: track which chargen surfaces have been dynamically
+   * loaded so subsequent invocations skip the import().
+   *
+   * Both `<character-creation>` (player-side chargen flow) and
+   * `<invite-manager>` (DM-side invite generator) live outside the
+   * main bundle.  A user in a regular play session never imports
+   * them; a DM only imports invite-manager once they're coord; a
+   * player only imports character-creation once they hit a
+   * `?invite=` URL.  Saves ~3-4 KB gzip from the play-time bundle.
+   */
+  private chargenRegionLoaded: Promise<void> | null = null;
+  private inviteManagerLoaded: Promise<void> | null = null;
+  /**
+   * `<invite-manager>` is rendered lazily — the render-time helper
+   * gates on this flag so we don't emit an inert custom-element tag
+   * before the module has been imported and the class registered.
+   * Flipped to true inside the import resolver in
+   * `loadInviteManagerRegion`.
+   */
+  @state() private inviteManagerDefined: boolean = false;
+
+  /**
+   * Idempotently dynamic-import `<character-creation>`.  Returns the
+   * in-flight promise so concurrent callers share one fetch.
+   */
+  private loadChargenRegion(): Promise<void> {
+    if (this.chargenRegionLoaded) return this.chargenRegionLoaded;
+    this.chargenRegionLoaded = import('./ui/regions/character-creation').then(
+      () => undefined
+    );
+    return this.chargenRegionLoaded;
+  }
+
+  /**
+   * Idempotently dynamic-import `<invite-manager>`.  Returns the
+   * in-flight promise so concurrent callers share one fetch.  Sets
+   * `inviteManagerDefined` on resolution so `renderInviteManagerLazy`
+   * can swap in the real element.
+   */
+  private loadInviteManagerRegion(): Promise<void> {
+    if (this.inviteManagerLoaded) return this.inviteManagerLoaded;
+    this.inviteManagerLoaded = import('./ui/regions/invite-manager').then(
+      () => {
+        this.inviteManagerDefined = true;
+      }
+    );
+    return this.inviteManagerLoaded;
+  }
   get appState(): Readonly<AppState> {
     return this._appState;
   }
@@ -775,6 +827,13 @@ export class QuireApp extends LitElement {
       // region (which renders an error banner when validation
       // fails rather than booting the player back to home).
       if (route.kind === 'character-creation') {
+        // Code-split: dynamic-import the chargen region module
+        // BEFORE staging the appState so the render that follows
+        // finds the custom element already defined.  Without this
+        // the first paint shows an inert `<character-creation>`
+        // tag until the import lands.
+        await this.loadChargenRegion();
+        if (signal.aborted || !this.isConnected) return;
         const expectedFp = campaignFingerprint(campaign.base.source);
         try {
           const payload = decodeInviteToken(route.inviteToken, {
@@ -1063,8 +1122,33 @@ export class QuireApp extends LitElement {
         .pcSlots=${v.filteredShared.pcSlots}
         .onUnbind=${(slot: number) => this.bindPcSlot(slot, null)}
       ></seat-strip>
+      ${this.renderInviteManagerLazy(v.filteredShared.pcSlots)}
+    `;
+  }
+
+  /**
+   * Code-split: render the `<invite-manager>` region only after its
+   * module is dynamically loaded.  Triggers the load on first call
+   * (fire-and-forget; Lit re-renders once the import resolves and
+   * the custom element is defined).  Until then, renders nothing
+   * so the DM aside doesn't show a placeholder for an inert tag.
+   */
+  private renderInviteManagerLazy(
+    pcSlots: Record<number, string>
+  ): TemplateResult | typeof nothing {
+    void this.loadInviteManagerRegion();
+    // Lit gracefully renders an unknown custom element as a no-op
+    // until the class is defined; once defined, the upgrade swaps
+    // in the real element.  But to avoid even the empty-tag flicker
+    // (and to keep the DOM clean for screen readers), we hold off
+    // rendering until the import has resolved.  `inviteManagerLoaded`
+    // is the in-flight promise; we use its existence as a "ready
+    // soon" sentinel and re-render once it resolves (via the
+    // .then().requestUpdate() in loadInviteManagerRegion below).
+    if (!this.inviteManagerDefined) return nothing;
+    return html`
       <invite-manager
-        .pcSlots=${v.filteredShared.pcSlots}
+        .pcSlots=${pcSlots}
         .onGenerate=${(slot: number) => this.generateInviteUrl(slot)}
       ></invite-manager>
     `;
