@@ -24,7 +24,11 @@
  *   override per `campaign.json` later.
  */
 
-import type { PcBackstorySynthesisResponse } from './schema';
+import {
+  QUIRE_SKILL_CATEGORIES,
+  type PcBackstorySynthesisResponse,
+  type PcStats
+} from './schema';
 
 export interface BackstoryValidationIssue {
   /**
@@ -43,7 +47,12 @@ export interface BackstoryValidationIssue {
     | 'tag-too-long'
     | 'backstory-too-short'
     | 'backstory-too-long'
-    | 'place-token-missing';
+    | 'place-token-missing'
+    | 'stats-shape-invalid'
+    | 'stats-out-of-range'
+    | 'skill-mastery-too-few'
+    | 'skill-mastery-too-many'
+    | 'skill-mastery-unknown-category';
   /** Human-friendly description; used in the retry prompt + DM banner. */
   message: string;
 }
@@ -81,8 +90,26 @@ const DEFAULTS = {
   maxWords: 400,
   minTags: 3,
   maxTags: 5,
-  maxTagLength: 80
+  maxTagLength: 80,
+  /**
+   * P3T-2: starting skill-mastery picks.  Two to four picks based
+   * on archetype.  Below 2 leaves the sheet underspecified; above 4
+   * collides with the +2 modifier cap.
+   */
+  minSkillMastery: 2,
+  maxSkillMastery: 4
 } as const;
+
+/**
+ * P3T-2: the canonical quire-v0.1 starting stat distribution.  One
+ * +2, three +1s, two 0s.  Multiset, not order — validator counts
+ * occurrences.  Range bound is [-2, +3] per rules.md §Stats but the
+ * fixed starting array never reaches the edges; deviation by even
+ * one slot is a sign the AI ignored the constraint.
+ */
+const STARTING_STAT_DISTRIBUTION = [2, 1, 1, 1, 0, 0] as const;
+const STAT_VALUE_MIN = -2;
+const STAT_VALUE_MAX = 3;
 
 /**
  * Count words in a string.  Splits on whitespace; trims edges.
@@ -222,7 +249,112 @@ export function validatePcBackstory(
     }
   }
 
+  // --- P3T-2: stats shape (quire-v0.1 fixed starting array) ---
+  validateStats(response.stats, issues);
+
+  // --- P3T-2: skill mastery ---
+  validateSkillMastery(response.skillMastery, issues);
+
   return issues;
+}
+
+/**
+ * P3T-2: enforce the quire-v0.1 fixed starting array (one +2, three
+ * +1s, two 0s) and the -2..+3 range bound from rules.md §Stats.
+ * Distribution mismatch is an ERROR (auto-retry); out-of-range is
+ * also ERROR.  Helper takes the issues array so the caller batches.
+ */
+function validateStats(
+  stats: PcStats | undefined,
+  issues: BackstoryValidationIssue[]
+): void {
+  // Defensive: in production the type guard runs first and rejects
+  // missing/malformed stats outright, but the validator may be
+  // called directly in tests (or by future call sites that skip the
+  // guard) — so treat undefined / non-numeric values as a shape
+  // error rather than throwing.
+  if (!stats || typeof stats !== 'object') {
+    issues.push({
+      severity: 'error',
+      code: 'stats-shape-invalid',
+      message: 'Stats object is missing or malformed.'
+    });
+    return;
+  }
+  const values = [stats.STR, stats.DEX, stats.CON, stats.INT, stats.WIS, stats.CHA];
+  if (!values.every((v) => typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v))) {
+    issues.push({
+      severity: 'error',
+      code: 'stats-shape-invalid',
+      message: 'Stats object has missing or non-integer values.'
+    });
+    return;
+  }
+  for (const v of values) {
+    if (v < STAT_VALUE_MIN || v > STAT_VALUE_MAX) {
+      issues.push({
+        severity: 'error',
+        code: 'stats-out-of-range',
+        message: `Stat value ${v} is outside the allowed range [${STAT_VALUE_MIN}, ${STAT_VALUE_MAX}].`
+      });
+      return;
+    }
+  }
+  // Multiset check: sort + compare to canonical distribution.
+  const sorted = [...values].sort((a, b) => b - a);
+  const canonical = [...STARTING_STAT_DISTRIBUTION].sort((a, b) => b - a);
+  for (let i = 0; i < canonical.length; i++) {
+    if (sorted[i] !== canonical[i]) {
+      issues.push({
+        severity: 'error',
+        code: 'stats-shape-invalid',
+        message: `Stat distribution must be one +2, three +1s, two 0s (got [${sorted.join(', ')}] in descending order).`
+      });
+      return;
+    }
+  }
+}
+
+/**
+ * P3T-2: enforce skillMastery is a 2-4 subset of the quire-v0.1
+ * 8-category list.  Unknown categories are an ERROR (auto-retry);
+ * too-few / too-many are warnings (DM can hand-tune at the gate).
+ */
+function validateSkillMastery(
+  skills: readonly string[] | undefined,
+  issues: BackstoryValidationIssue[]
+): void {
+  if (!Array.isArray(skills)) {
+    issues.push({
+      severity: 'error',
+      code: 'skill-mastery-unknown-category',
+      message: 'skillMastery is missing or not an array.'
+    });
+    return;
+  }
+  const allowed = new Set<string>(QUIRE_SKILL_CATEGORIES);
+  const unknown = skills.filter((s) => !allowed.has(s));
+  if (unknown.length > 0) {
+    issues.push({
+      severity: 'error',
+      code: 'skill-mastery-unknown-category',
+      message: `Unknown skill categor${unknown.length === 1 ? 'y' : 'ies'}: ${unknown.map((u) => `"${u}"`).join(', ')}.  Allowed: ${QUIRE_SKILL_CATEGORIES.join(', ')}.`
+    });
+    return;
+  }
+  if (skills.length < DEFAULTS.minSkillMastery) {
+    issues.push({
+      severity: 'warning',
+      code: 'skill-mastery-too-few',
+      message: `Only ${skills.length} skill categor${skills.length === 1 ? 'y' : 'ies'} picked; ${DEFAULTS.minSkillMastery}-${DEFAULTS.maxSkillMastery} is the recommended starting range.`
+    });
+  } else if (skills.length > DEFAULTS.maxSkillMastery) {
+    issues.push({
+      severity: 'warning',
+      code: 'skill-mastery-too-many',
+      message: `${skills.length} skill categories picked; ${DEFAULTS.minSkillMastery}-${DEFAULTS.maxSkillMastery} is the recommended starting range.  DM may want to trim.`
+    });
+  }
 }
 
 /**

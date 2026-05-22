@@ -206,12 +206,6 @@ export function isSourceRef(value: unknown): value is SourceRef {
  * session 1 from the player's MC + short-answer questionnaire
  * responses (see runtime/design/m4-character-creation.md §AI synthesis).
  *
- * Schema scaffold only.  The full prompt content (CC-19), forbidden-
- * token validators (CC-20/CC-21), and DM approval gate (CC-24) ship
- * with their respective items in subsequent commits.  This file
- * defines just the on-the-wire response shape + type guard so the
- * downstream code has a stable contract to lean on.
- *
  * Field rationale (per prompt-engineering expert recommendation):
  * - `name` MUST differ from the player's display name; the broker
  *   validator at CC-21 cross-checks against the inviting peer's
@@ -225,6 +219,13 @@ export function isSourceRef(value: unknown): value is SourceRef {
  *   in the type guard — the guard only checks non-empty.
  * - `pronouns` is a free-form short string; no allowlist (would
  *   exclude players who use non-canonical pronouns).
+ * - `stats` carries the quire-v0.1 fixed starting array (one +2,
+ *   three +1s, two 0s; see `underleaf/world/rules.md` §Stats).
+ *   Added P3T-2 — without this, synthesized PCs aren't sheet-ready
+ *   and the DM does the distribution by hand at the table.
+ * - `skillMastery` carries the player's chosen quire-v0.1 skill
+ *   categories (subset of the 8-category list).  Added P3T-2 — same
+ *   sheet-ready rationale.  Open free-text "tags" remain separate.
  *
  * Forbidden-token enforcement (Quiet / magic / premonition / fate /
  * chosen — see [[project-quire-ai-player-facing-scope]]) runs on
@@ -244,6 +245,19 @@ export interface PcBackstorySynthesisResponse {
    * by the structural validator at CC-21.
    */
   tags: string[];
+  /**
+   * P3T-2: quire-v0.1 starting stat array.  Six keys exactly:
+   * STR/DEX/CON/INT/WIS/CHA.  Distribution per rules.md §Stats —
+   * one +2, three +1s, two 0s.  Validator enforces the shape so an
+   * AI that ignores the constraint is auto-retried.
+   */
+  stats: PcStats;
+  /**
+   * P3T-2: quire-v0.1 starting skill mastery.  Subset of the 8-category
+   * list.  Today's archetype-based picks land 2-3 categories at +1.
+   * Validator enforces the subset constraint + the count range.
+   */
+  skillMastery: string[];
   /**
    * Markdown body, ~250-400 words, 3-4 paragraphs.  Tone-anchored
    * to "ordinary people in the present-day Bay Area" (Underleaf
@@ -268,6 +282,52 @@ export interface PcBackstorySynthesisResponse {
 }
 
 /**
+ * P3T-2: quire-v0.1 stat array shape.  Keys + range hardcoded
+ * because they're the engine ruleset (locked decision V-4 — campaign-
+ * declared stat keys wait until a second campaign exists with a
+ * different stat list).  Range -2..+3 per rules.md §Stats.
+ */
+export interface PcStats {
+  STR: number;
+  DEX: number;
+  CON: number;
+  INT: number;
+  WIS: number;
+  CHA: number;
+}
+
+/**
+ * P3T-2: the 8 quire-v0.1 skill categories.  See rules.md §Skills.
+ * Engine-default canonical list; campaigns inherit unless they
+ * declare an override (V-2 — same locked-deferred posture as V-4).
+ */
+export const QUIRE_SKILL_CATEGORIES = [
+  'Action',
+  'Subterfuge',
+  'Knowledge',
+  'Insight',
+  'Influence',
+  'Tech',
+  'Craft',
+  'Medic'
+] as const;
+export type QuireSkillCategory = (typeof QUIRE_SKILL_CATEGORIES)[number];
+
+/**
+ * Type guard for the stat shape.  Exported for the validator + tests.
+ */
+export function isPcStats(value: unknown): value is PcStats {
+  if (!value || typeof value !== 'object') return false;
+  const s = value as Record<string, unknown>;
+  for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']) {
+    const v = s[k];
+    if (typeof v !== 'number') return false;
+    if (!Number.isFinite(v) || !Number.isInteger(v)) return false;
+  }
+  return true;
+}
+
+/**
  * Type guard for a backstory-synthesis response.  Tight enough that
  * downstream rendering code can consume the result without further
  * defensive coding, loose enough that out-of-band field additions
@@ -284,6 +344,11 @@ export function isPcBackstorySynthesisResponse(
   if (!Array.isArray(r.tags)) return false;
   if (r.tags.length === 0) return false;
   if (!r.tags.every((t) => typeof t === 'string' && t.length > 0)) return false;
+  // P3T-2: stats + skillMastery are required for sheet-ready PCs.
+  if (!isPcStats(r.stats)) return false;
+  if (!Array.isArray(r.skillMastery)) return false;
+  if (!r.skillMastery.every((s) => typeof s === 'string' && s.length > 0))
+    return false;
   // raw / tokens / responseId are broker-filled; tolerate absence here
   // so a pre-normalization provider parse can still satisfy the shape.
   return true;

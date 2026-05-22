@@ -249,6 +249,8 @@ describe('isPcBackstorySynthesisResponse (CC-17)', () => {
     name: 'Mei Tanaka',
     pronouns: 'she/her',
     tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+    stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+    skillMastery: ['Tech', 'Knowledge'],
     backstory: 'Mei grew up watching ferries.',
     raw: '{}',
     tokensIn: 100,
@@ -326,5 +328,52 @@ describe('isPcBackstorySynthesisResponse (CC-17)', () => {
     expect(isPcBackstorySynthesisResponse(undefined)).toBe(false);
     expect(isPcBackstorySynthesisResponse('string')).toBe(false);
     expect(isPcBackstorySynthesisResponse(42)).toBe(false);
+  });
+
+  it('P3T-2: rejects when stats is missing', () => {
+    const { stats: _s, ...withoutStats } = valid;
+    void _s;
+    expect(isPcBackstorySynthesisResponse(withoutStats)).toBe(false);
+  });
+
+  it('P3T-2: rejects stats with wrong-typed value', () => {
+    expect(
+      isPcBackstorySynthesisResponse({
+        ...valid,
+        stats: { ...valid.stats, WIS: 'high' }
+      })
+    ).toBe(false);
+  });
+
+  it('P3T-2: rejects stats with missing key', () => {
+    const { WIS: _w, ...incompleteStats } = valid.stats;
+    void _w;
+    expect(
+      isPcBackstorySynthesisResponse({ ...valid, stats: incompleteStats })
+    ).toBe(false);
+  });
+
+  it('P3T-2: rejects non-integer stat values', () => {
+    expect(
+      isPcBackstorySynthesisResponse({
+        ...valid,
+        stats: { ...valid.stats, INT: 1.5 }
+      })
+    ).toBe(false);
+  });
+
+  it('P3T-2: rejects when skillMastery is missing', () => {
+    const { skillMastery: _s, ...withoutSkills } = valid;
+    void _s;
+    expect(isPcBackstorySynthesisResponse(withoutSkills)).toBe(false);
+  });
+
+  it('P3T-2: rejects skillMastery containing non-string', () => {
+    expect(
+      isPcBackstorySynthesisResponse({
+        ...valid,
+        skillMastery: ['Tech', 42]
+      })
+    ).toBe(false);
   });
 });

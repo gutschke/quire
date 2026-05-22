@@ -56,7 +56,7 @@ export const UNDERLEAF_BACKSTORY_SYSTEM_PROMPT = `You are a co-author helping a 
 # Tone (load-bearing)
 Underleaf is about ordinary people in the present-day Bay Area who will, over many sessions, slowly notice that the world is stranger than it seems. At character creation the PC does NOT know this. Write their backstory as if you, too, do not know it. No prophecy, no chosen-one framing, no foreshadowing of magic, no "they always felt different." The reader should close the backstory thinking "this is a real person living a real life" — not "this is a hero in waiting."
 
-Avoid: high-fantasy register, grimdark, melodrama, trauma-as-origin, mystical hints, second-person address, present-tense vignette prose.
+Avoid: high-fantasy register, grimdark, melodrama, trauma-as-origin, mystical hints, second-person address, present-tense vignette prose, "main character" framing, early-life foreshadowing, self-conscious narration of the PC's specialness, synonyms for magic (the Hush, the Stillness, the Veil, thaumaturgy, sorcery, prophecy, destiny, foreseen).
 Prefer: specific nouns, concrete places, named small objects, the texture of an ordinary week. Sentences of varied length. One vivid sensory detail per paragraph at most.
 
 # Output format
@@ -64,6 +64,17 @@ Return ONLY a JSON object with these fields:
   "name": string — a plausible name for the PC (NOT the player's name)
   "pronouns": string
   "tags": array of 3-5 strings (concrete, fiction-relevant)
+  "stats": object with EXACTLY these keys: STR, DEX, CON, INT, WIS, CHA
+      Each value is an integer.  Distribute the fixed starting array:
+      one stat at +2, three stats at +1, two stats at 0.  No 7th stat,
+      no point-buy, no negatives.  Respect the player's "where the +2
+      lives" answer if they gave one.  Otherwise pick the +2 to match
+      the archetype + temperament.
+  "skillMastery": array of 2-3 strings drawn from EXACTLY this list:
+      Action, Subterfuge, Knowledge, Insight, Influence, Tech, Craft, Medic.
+      Respect the player's "top skill category" answer if they gave one;
+      then add 1-2 more that fit the archetype.  Do not invent new
+      categories — open free-text expertise belongs in "tags".
   "backstory": string — 250-400 words of markdown, 3-4 short paragraphs
 
 # Hard constraints
@@ -72,6 +83,7 @@ Return ONLY a JSON object with these fields:
 - The backstory MUST NOT reference magic, The Quiet, retrocausality, premonition, fate, "being chosen," or any cosmological hint. The player will discover those in play.
 - The PC's name MUST differ from the player's name.
 - Do not invent a "dark secret" the player did not ask for. Leave at least one relationship vague (e.g. "a sibling you don't talk to anymore") rather than fully specifying every named relation.
+- "tags" are open free-text expertise (e.g. "ICU nurse", "competition climber", "fluent in Mandarin").  "skillMastery" is the closed-list categorical that maps to the mechanical sheet.  Don't conflate them.
 `;
 
 /**
@@ -205,19 +217,49 @@ function formatAnsweredQuestion(
 
   const labelLine = `**${question.prompt}**`;
 
+  // P3T-5: honor aiRole per-question.  The hint guides the AI's
+  // weight on the answer:
+  //   - voice-sample (player's prose): preserve their wording.
+  //   - grounder (a small concrete detail): incorporate verbatim.
+  //   - skeleton (categorical closed-form): treat as a hard fact
+  //     to build the backstory around.
+  // Default is skeleton when the campaign doesn't declare aiRole.
+  const role = question.aiRole ?? 'skeleton';
+  const roleHint = aiRoleHint(role);
+
   if (question.kind === 'short-answer') {
     // Wrap the player's verbatim text in the wrapper-safety sentinel
     // so close-tag injection is escaped.  Source label includes the
     // question id so the model has provenance even if multiple
     // short-answers land back-to-back.
-    return `${labelLine}\n\n${wrapUntrusted(
+    return `${labelLine}\n${roleHint}\n\n${wrapUntrusted(
       answer,
       `player-answer-${question.id}`
     )}`;
   }
 
   // MC: present as a fact.
-  return `${labelLine}\n\nAnswer: ${displayAnswer}`;
+  return `${labelLine}\n${roleHint}\n\nAnswer: ${displayAnswer}`;
+}
+
+/**
+ * P3T-5: human-friendly one-liner that tells the AI how to use the
+ * answer below.  Kept short so the prompt doesn't bloat per
+ * question — the prompt-engineering recommendation is "one line
+ * per answer is enough; more bloats the prompt without helping."
+ */
+function aiRoleHint(
+  role: 'skeleton' | 'voice-sample' | 'grounder'
+): string {
+  switch (role) {
+    case 'voice-sample':
+      return '_(Use as a VOICE SAMPLE — preserve the player\'s wording; paraphrase tightly, do not reinterpret.)_';
+    case 'grounder':
+      return '_(Use as a GROUNDER — work this exact concrete detail into the backstory verbatim.)_';
+    case 'skeleton':
+    default:
+      return '_(Use as a SKELETON — closed-form fact; build the backstory consistent with it.)_';
+  }
 }
 
 /**

@@ -48,10 +48,18 @@ const VALID_BACKSTORY_300 = Array.from({ length: 300 }, () => 'lorem').join(
   ' '
 );
 
+// P3T-2: synthesizer responses now MUST include stats + skillMastery.
+// Default canonical sheet-ready values used by most tests.
+const SHEET_READY = {
+  stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+  skillMastery: ['Tech', 'Knowledge']
+};
+
 const VALID_JSON_BODY = JSON.stringify({
   name: 'Mei Tanaka',
   pronouns: 'she/her',
   tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+  ...SHEET_READY,
   backstory: `Mei grew up in the Mission. ${VALID_BACKSTORY_300}`
 });
 
@@ -133,6 +141,7 @@ describe('synthesizeBackstory — happy path', () => {
       // produce a warning instead.
       pronouns: 'she/her',
       tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], // 7 tags → warning.
+      ...SHEET_READY,
       backstory:
         `Mei grew up in San Francisco. ${VALID_BACKSTORY_300}`
     });
@@ -184,6 +193,7 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       name: 'Mei',
       pronouns: 'she/her',
       tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
       backstory:
         `She felt the magic was real. ${VALID_BACKSTORY_300}`
     });
@@ -191,6 +201,7 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       name: 'Mei',
       pronouns: 'she/her',
       tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
       backstory:
         `She grew up in the Mission. ${VALID_BACKSTORY_300}`
     });
@@ -213,6 +224,7 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       name: 'Mei',
       pronouns: 'she/her',
       tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
       backstory:
         `She felt the magic was real. ${VALID_BACKSTORY_300}`
     });
@@ -234,6 +246,7 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       name: 'Mei',
       pronouns: 'she/her',
       tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
       backstory:
         `She had been recruited by the cabal. ${VALID_BACKSTORY_300}`
     });
@@ -257,6 +270,7 @@ describe('synthesizeBackstory — validation failure', () => {
       name: 'Mei',
       pronouns: 'she/her',
       tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
       backstory: 'too short'
     });
     const { provider } = mockProvider([short]);
@@ -276,6 +290,7 @@ describe('synthesizeBackstory — validation failure', () => {
       name: 'Markus',
       pronouns: 'they/them',
       tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
       backstory: `${VALID_BACKSTORY_300}`
     });
     const { provider } = mockProvider([body]);

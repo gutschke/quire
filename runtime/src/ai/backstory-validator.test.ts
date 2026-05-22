@@ -31,6 +31,8 @@ function valid(
       'reluctant insomniac',
       'sister of a pilot'
     ],
+    stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+    skillMastery: ['Tech', 'Knowledge'],
     backstory: makeBackstory(300),
     raw: '{}',
     tokensIn: 100,
@@ -282,16 +284,11 @@ describe('validatePcBackstory', () => {
     // Synthetic worst-case: name empty, tags too few, backstory too short,
     // place missing.  All four should appear.
     const issues = validatePcBackstory(
-      {
+      valid({
         name: '',
-        pronouns: 'they/them',
         tags: ['only-one'],
-        backstory: 'too short',
-        raw: '',
-        tokensIn: 0,
-        tokensOut: 0,
-        responseId: ''
-      },
+        backstory: 'too short'
+      }),
       { placeAllowlist: ['Mission'] }
     );
     const codes = issues.map((i) => i.code);
@@ -299,6 +296,73 @@ describe('validatePcBackstory', () => {
     expect(codes).toContain('tags-too-few');
     expect(codes).toContain('backstory-too-short');
     expect(codes).toContain('place-token-missing');
+  });
+
+  // ---- P3T-2: stats + skillMastery ----
+
+  it('P3T-2: accepts the canonical starting array (one +2, three +1s, two 0s)', () => {
+    const issues = validatePcBackstory(
+      valid({ stats: { STR: 2, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 0 } })
+    );
+    const codes = issues.map((i) => i.code);
+    expect(codes).not.toContain('stats-shape-invalid');
+    expect(codes).not.toContain('stats-out-of-range');
+  });
+
+  it('P3T-2: rejects when the AI distributes wrong totals', () => {
+    // Two +2s — violates the fixed array.
+    const issues = validatePcBackstory(
+      valid({ stats: { STR: 2, DEX: 2, CON: 1, INT: 0, WIS: 0, CHA: 0 } })
+    );
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain('stats-shape-invalid');
+  });
+
+  it('P3T-2: rejects out-of-range stat values', () => {
+    const issues = validatePcBackstory(
+      valid({ stats: { STR: 4, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: -1 } })
+    );
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain('stats-out-of-range');
+  });
+
+  it('P3T-2: skill-mastery picks must be subset of the 8 categories', () => {
+    const issues = validatePcBackstory(
+      valid({ skillMastery: ['Tech', 'Hacking'] }) // "Hacking" isn't a category
+    );
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain('skill-mastery-unknown-category');
+  });
+
+  it('P3T-2: skill-mastery warns when below 2 picks', () => {
+    const issues = validatePcBackstory(valid({ skillMastery: ['Tech'] }));
+    const issue = issues.find((i) => i.code === 'skill-mastery-too-few');
+    expect(issue).toBeDefined();
+    expect(issue?.severity).toBe('warning');
+  });
+
+  it('P3T-2: skill-mastery warns when above 4 picks', () => {
+    const issues = validatePcBackstory(
+      valid({
+        skillMastery: ['Tech', 'Knowledge', 'Insight', 'Influence', 'Craft']
+      })
+    );
+    const issue = issues.find((i) => i.code === 'skill-mastery-too-many');
+    expect(issue).toBeDefined();
+    expect(issue?.severity).toBe('warning');
+  });
+
+  it('P3T-2: accepts an exemplar response cleanly', () => {
+    const issues = validatePcBackstory(
+      valid({
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge']
+      })
+    );
+    const errorCodes = issues
+      .filter((i) => i.severity === 'error')
+      .map((i) => i.code);
+    expect(errorCodes).toEqual([]);
   });
 });
 
