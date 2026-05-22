@@ -51,7 +51,12 @@ export type PickPathCallback = (path: CreationPath) => void;
 export type CharCreationAnswers = Record<string, string>;
 export type AnswerChangeCallback = (id: string, value: string) => void;
 
-const TOTAL_STEPS = 6;
+// P3-sanity UX B1 / backlog P3U-1: dropped step 6 "Resume" — it
+// was a placeholder card that landed players in a dead state right
+// after the Required-pack moment.  Resume-on-revisit (CC-11) will
+// surface as a banner on step 1 when it lands, not as its own
+// step in the strip.
+const TOTAL_STEPS = 5;
 
 @customElement('character-creation')
 export class CharacterCreation extends LitElement {
@@ -181,8 +186,7 @@ export class CharacterCreation extends LitElement {
       { n: 2, label: 'Read this' },
       { n: 3, label: 'Pick path' },
       { n: 4, label: 'Build' },
-      { n: 5, label: 'Done' },
-      { n: 6, label: 'Resume' }
+      { n: 5, label: 'Done' }
     ];
     return html`
       <ol
@@ -222,8 +226,6 @@ export class CharacterCreation extends LitElement {
         return this.renderWork();
       case 5:
         return this.renderDone();
-      case 6:
-        return this.renderResume();
       default:
         return html`<p>Unknown step.</p>`;
     }
@@ -237,7 +239,7 @@ export class CharacterCreation extends LitElement {
       <h2>Welcome to ${campaign}</h2>
       <p>
         You're <strong>${slotLabel}</strong> for this campaign.  Over
-        the next few minutes you'll set up your character.  When
+        the next 10–15 minutes you'll set up your character.  When
         you're done, save your work and see you at session 1.
       </p>
       <p class="muted">
@@ -395,8 +397,8 @@ export class CharacterCreation extends LitElement {
     return html`
       <h2>Answer questions</h2>
       <p class="muted">
-        Take your time — about five minutes.  Required questions are
-        marked; optional ones can be left blank.
+        Take your time — about 10–15 minutes for the full set.
+        Required questions are marked; optional ones can be left blank.
       </p>
       <ol class="character-creation-qa">
         ${qs.map((q, i) => this.renderQuestion(q, i + 1))}
@@ -539,18 +541,6 @@ export class CharacterCreation extends LitElement {
             </div>
           `
         : nothing}
-    `;
-  }
-
-  private renderResume(): TemplateResult {
-    return html`
-      <h2>Resume</h2>
-      <p class="muted">
-        This screen renders when you visit your invite URL again
-        before session 1.  Your in-progress answers from this device
-        are picked up automatically.  (The resume UX lands in a
-        later commit — CC-11.)
-      </p>
     `;
   }
 

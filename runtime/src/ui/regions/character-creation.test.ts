@@ -46,11 +46,15 @@ describe('<character-creation>', () => {
     expect(el.innerHTML).toContain('this campaign');
   });
 
-  it('renders a 6-step progress strip with the current step marked', async () => {
+  it('renders a 5-step progress strip with the current step marked', async () => {
+    // P3-sanity UX B1 / P3U-1: step 6 "Resume" dropped — was a
+    // placeholder that landed players in a dead state right after
+    // the Required-pack moment.  Resume-on-revisit (CC-11) will
+    // surface as a banner on step 1 when it lands.
     const el = mount();
     await el.updateComplete;
     const steps = el.querySelectorAll('.character-creation-progress-step');
-    expect(steps.length).toBe(6);
+    expect(steps.length).toBe(5);
     expect(
       el.querySelector('.character-creation-progress-step-current')
     ).not.toBeNull();

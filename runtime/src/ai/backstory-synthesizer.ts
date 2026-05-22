@@ -72,6 +72,20 @@ export interface SynthesizeBackstoryRequest {
   validatorOptions?: BackstoryValidationOptions;
 }
 
+/**
+ * **STABLE CONTRACT** — load-bearing for the chargen flow and
+ * downstream UI surfaces.  Pre-Cluster-E freeze (Engine reviewer
+ * recommendation): the discriminated union's variants + their `code`
+ * strings are part of the public contract; the unified DM-review
+ * surface (Cluster E) will consume this shape, as will the
+ * ChargenController extraction.  Do NOT widen or rename without
+ * touching every consumer (currently `quire-app.ts:synthesizeBackstoryForSlot`
+ * + `invite-manager.ts` adapter).
+ *
+ * Adding a new failure code is safe because consumers use the
+ * discriminated `code` as a switch discriminant; removing or
+ * renaming a code is a breaking change.
+ */
 export type SynthesizeBackstoryResult =
   | {
       ok: true;

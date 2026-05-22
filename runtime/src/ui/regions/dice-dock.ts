@@ -245,7 +245,7 @@ export class DiceDock extends LitElement {
           ? html`<button
               type="button"
               class="dice-primary-cast dice-primary-cast-costly"
-              title=${`Costly cast (2d6 + WIS ${formatMod(wis!)}${offset === 0 ? '' : ` + ${formatMod(offset)}`}; auto-marks 1 stress per rules.md)`}
+              title=${`Costly cast (2d6 + WIS ${formatMod(wis!)}${offset === 0 ? '' : ` + ${formatMod(offset)}`}; rules.md says it marks 1 stress — mark by hand on the sheet)`}
               aria-label=${`Cast Costly: roll ${castCostlyExpr}`}
               @click=${() => {
                 this.onSubmitRoll?.(castCostlyExpr);
@@ -259,14 +259,14 @@ export class DiceDock extends LitElement {
           ? html`<button
               type="button"
               class="dice-primary-cast dice-primary-cast-hard"
-              title=${`Hard cast (2d6 + WIS ${formatMod(wis!)} − 2 penalty${offset === 0 ? '' : ` + ${formatMod(offset)}`}; auto-marks 2 stress per rules.md)`}
-              aria-label=${`Cast Hard: roll ${castHardExpr}`}
+              title=${`Hard cast at worst case −2 (rules.md L122: "-1 to -2 penalty", DM may waive 1).  2d6 + WIS ${formatMod(wis!)} − 2${offset === 0 ? '' : ` + ${formatMod(offset)}`}.  Rules.md says it marks 2 stress — mark by hand on the sheet.`}
+              aria-label=${`Cast Hard at −2 penalty: roll ${castHardExpr}`}
               @click=${() => {
                 this.onSubmitRoll?.(castHardExpr);
                 this.resetOffset();
               }}
             >
-              Cast (Hard)
+              Cast (Hard, −2)
             </button>`
           : nothing}
       </div>

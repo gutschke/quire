@@ -2111,13 +2111,19 @@ export const quireAppStyles = css`
     .dice-primary-cast:hover {
       background: light-dark(#ddd6fe, #5b21b6);
     }
+    /* P3-sanity UX M5: re-skinned away from amber (which ui.md
+       reserves for DM-only material — --dm-amber is the caution-
+       rail / DM-aside hue).  Cast (Hard) is a high-stakes player
+       action that auto-marks 2 stress per rules.md; red/orange
+       signals "higher stakes" without colliding with the DM-amber
+       semantic. */
     .dice-primary-cast-hard {
-      border-color: light-dark(#a16207, #fbbf24);
-      background: light-dark(#fef3c7, #78350f);
-      color: light-dark(#78350f, #fef3c7);
+      border-color: light-dark(#b91c1c, #f87171);
+      background: light-dark(#fee2e2, #5f1d1d);
+      color: light-dark(#7f1d1d, #fee2e2);
     }
     .dice-primary-cast-hard:hover {
-      background: light-dark(#fde68a, #92400e);
+      background: light-dark(#fecaca, #7f1d1d);
     }
 
     /* M3D-4b: last-3 pills — compact glance-able recent-roll row
