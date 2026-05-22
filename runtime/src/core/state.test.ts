@@ -865,8 +865,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     expect(m1.length).toBe(18);
   });
 
-  it('total kind count is 33 (13 legacy + 18 M1 + 1 M3c caster-state-set + 1 M3D-5 pc-slot-bind)', () => {
-    expect(KNOWN_EVENT_KINDS.size).toBe(33);
+  it('total kind count is 34 (13 legacy + 18 M1 + 1 M3c caster-state-set + 1 M3D-5 pc-slot-bind + 1 Phase 3b-1 pc-create)', () => {
+    expect(KNOWN_EVENT_KINDS.size).toBe(34);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -1715,5 +1715,257 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
     const state = materialize(log.events());
     const filtered = filterForViewer(state, 'bob');
     expect(filtered.pcSlots[1]).toBe('mei');
+  });
+});
+
+describe('materialize — pc-create (Phase 3b-1)', () => {
+  // Helper: minimal valid pc-create payload.
+  function validPayload(overrides: Record<string, unknown> = {}): unknown {
+    return {
+      v: 1,
+      pcId: 'slot-1-a3f8b2c1',
+      name: 'Mei Tanaka',
+      pronouns: 'she/her',
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      backstory: 'Mei grew up in the Mission, listening to ferries leave.',
+      causedByResponseId: 'syn-abc',
+      ...overrides
+    };
+  }
+
+  it('coord can materialize a synthesized PC', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload());
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record).toBeDefined();
+    expect(record.name).toBe('Mei Tanaka');
+    expect(record.pronouns).toBe('she/her');
+    expect(record.stats).toEqual({
+      str: 0,
+      dex: 1,
+      con: 1,
+      int: 2,
+      wis: 1,
+      cha: 0
+    });
+    expect(record.skills).toEqual(['Tech', 'Knowledge']);
+    expect(record.tags?.length).toBe(3);
+    expect(record.harm).toBe(0);
+    expect(record.stress).toBe(0);
+    expect(record.foci).toEqual([]);
+    expect(record.advancements).toBe(0);
+    expect(record.marks).toBe(0);
+    expect(record.$schemaVersion).toBe('0.1.0');
+  });
+
+  it('emptyState starts with no synthesized PCs', () => {
+    expect(emptyState().synthesizedPcs).toEqual({});
+  });
+
+  it('non-coord pc-create is dropped', () => {
+    const log = new EventLog('bob');
+    log.append('pc-create', validPayload());
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+  });
+
+  it('rejects payload missing v:1 (forward-compat)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ v: undefined }));
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects invalid pcId (path-traversal, empty, too long)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ pcId: '../escape' }));
+    log.append('pc-create', validPayload({ pcId: '' }));
+    log.append('pc-create', validPayload({ pcId: 42 as unknown as string }));
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('first-write-wins on pcId collision', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ name: 'Mei Tanaka' }));
+    log.append('pc-create', validPayload({ name: 'Different Name' }));
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs['slot-1-a3f8b2c1'].name).toBe('Mei Tanaka');
+  });
+
+  it('rejects name empty or too long', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ pcId: 'a1', name: '' }));
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'a2', name: 'x'.repeat(81) })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects pronouns too long', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ pronouns: 'x'.repeat(41) }));
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects tags array out of [3, 5] range', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'a1', tags: ['a', 'b'] }) // too few
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'a2',
+        tags: ['a', 'b', 'c', 'd', 'e', 'f'] // too many
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects empty or oversize tag entries', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'a1', tags: ['valid', '', 'valid'] })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'a2',
+        tags: ['x'.repeat(81), 'b', 'c']
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects out-of-range or non-integer stat values', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'a1',
+        stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 4 }
+      })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'a2',
+        stats: { str: 1.5, dex: 1, con: 1, int: 2, wis: 1, cha: 0 }
+      })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'a3',
+        stats: {
+          str: NaN,
+          dex: 1,
+          con: 1,
+          int: 2,
+          wis: 1,
+          cha: 0
+        }
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects missing-stat-key payload', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({
+        stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1 } // no cha
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects backstory empty or > 8000 chars', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ pcId: 'a1', backstory: '' }));
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'a2', backstory: 'x'.repeat(8001) })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects too-many skills (max 4)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({
+        skills: ['Tech', 'Knowledge', 'Insight', 'Influence', 'Craft']
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('accepts empty skills array (boundary)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ skills: [] }));
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs['slot-1-a3f8b2c1'].skills).toEqual([]);
+  });
+
+  it('rejects oversize causedByResponseId', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ causedByResponseId: 'x'.repeat(201) })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('survives filterForViewer (synthesizedPcs is PLAYER-visible)', () => {
+    // The player MUST see their own synthesized PC; the filter
+    // must pass synthesizedPcs through untouched.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload());
+    log.append('peer-join', { name: 'Bob' });
+    const state = materialize(log.events());
+    const filtered = filterForViewer(state, 'bob');
+    expect(filtered.synthesizedPcs['slot-1-a3f8b2c1'].name).toBe('Mei Tanaka');
+  });
+
+  it('replay produces the same shared state (idempotency)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload());
+    const a = materialize(log.events());
+    const b = materialize(log.events());
+    expect(a.synthesizedPcs).toEqual(b.synthesizedPcs);
   });
 });

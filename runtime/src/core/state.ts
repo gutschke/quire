@@ -9,6 +9,7 @@
  */
 
 import type { PeerId, QuireEvent } from './event-log';
+import type { CharacterRecord } from '../character-loader';
 
 export interface PeerPresence {
   peerId: PeerId;
@@ -296,6 +297,26 @@ export interface SessionState {
    * `pc-slot-bind` events.
    */
   pcSlots: Record<number, string>;
+  /**
+   * Phase 3b-1: PC records materialized from AI chargen synthesis.
+   * Cluster-E `acceptSlot()` emits a `pc-create` event that lands a
+   * full `CharacterRecord` here, keyed by the derived pcId.  The
+   * loader-overlay (in `quire-app.ts:resolvePcFromOverlay`) consults
+   * this map before falling through to the read-only GitHub-raw
+   * fetch, so a synthesized PC behaves identically to a
+   * campaign-shipped one at every read site (bound-character render,
+   * dice-Dock stat chips, display-name resolution).
+   *
+   * First-write-wins on pcId collision (cheap protection against
+   * replay double-creates).  Re-synth produces a fresh pcId so
+   * orphan records accumulate harmlessly in this map — orphan
+   * cleanup is a Phase 3b+ hygiene concern, not a blocker.
+   *
+   * Player-visible: synthesized PCs flow through `filterForViewer`
+   * untouched because the player MUST see their own PC.  Coord-only
+   * authorship via `pc-create` events.
+   */
+  synthesizedPcs: Record<string /*pcId*/, CharacterRecord>;
 }
 
 export function emptyState(): SessionState {
@@ -317,7 +338,8 @@ export function emptyState(): SessionState {
     scratchNotes: [],
     aiAudit: [],
     casterState: {},
-    pcSlots: {}
+    pcSlots: {},
+    synthesizedPcs: {}
   };
 }
 
@@ -533,6 +555,79 @@ interface PcSlotBindPayload {
   v: 1;
   slot: number;
   pcId: string | null;
+}
+
+/**
+ * Phase 3b-1: payload for the `pc-create` event.  Materializes a
+ * synthesized PC into `state.synthesizedPcs[pcId]` so the
+ * loader-overlay can resolve it without a GitHub-raw fetch.
+ *
+ * Field naming matches `CharacterRecord` (lowercase stat keys,
+ * `skills` not `skillMastery`) so the materializer writes the
+ * record directly — translation from the synthesizer's uppercase
+ * `PcStats` happens in the controller (`acceptSlot`) before the
+ * append.
+ *
+ * Coord-only authorship; per the threat model, peers receiving an
+ * event from a non-coord author drop it silently.
+ */
+interface PcCreatePayload {
+  v: 1;
+  pcId: string;
+  name: string;
+  pronouns: string;
+  tags: string[];
+  stats: {
+    str: number;
+    dex: number;
+    con: number;
+    int: number;
+    wis: number;
+    cha: number;
+  };
+  skills: string[];
+  backstory: string;
+  /**
+   * Set when the event was authored from an AI-proposed accept
+   * (Cluster E acceptSlot).  The DM-direct path doesn't set this
+   * (no AI involvement); future audit tooling can trace the chain.
+   */
+  causedByResponseId?: string;
+}
+
+const PC_CREATE_MAX_NAME = 80;
+const PC_CREATE_MAX_PRONOUNS = 40;
+const PC_CREATE_MAX_TAGS = 5;
+const PC_CREATE_MIN_TAGS = 3;
+const PC_CREATE_MAX_TAG_LEN = 80;
+const PC_CREATE_MAX_BACKSTORY = 8000;
+const PC_CREATE_STAT_MIN = -3;
+const PC_CREATE_STAT_MAX = 3;
+const PC_CREATE_MAX_SKILLS = 4;
+
+/**
+ * Phase 3b-1: shared schema-version constant for both
+ * `character-loader.ts` (validates campaign-shipped records) and
+ * the `pc-create` materializer (stamps synthesized records).  The
+ * runtime loader accepts any 0.x.y; synthesized PCs pin to the
+ * current version so future schema migrations apply uniformly.
+ */
+export const CHARACTER_SCHEMA_VERSION = '0.1.0';
+
+function isLowercaseStatNumber(n: unknown): n is number {
+  if (typeof n !== 'number') return false;
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return false;
+  if (n < PC_CREATE_STAT_MIN || n > PC_CREATE_STAT_MAX) return false;
+  return true;
+}
+
+function isPcCreateStats(value: unknown): value is PcCreatePayload['stats'] {
+  if (!value || typeof value !== 'object') return false;
+  const s = value as Record<string, unknown>;
+  for (const k of ['str', 'dex', 'con', 'int', 'wis', 'cha']) {
+    if (!isLowercaseStatNumber(s[k])) return false;
+  }
+  return true;
 }
 
 interface CasterStateSetPayload {
@@ -803,7 +898,12 @@ export const KNOWN_EVENT_KINDS = new Set([
   // M3D-5 / CC-2: PC-slot bindings (the `{{pc:N}}` placeholders in
   // campaign markdown).  Coord-only authorship; player-visible
   // state so the substitution renders identically across the table.
-  'pc-slot-bind'
+  'pc-slot-bind',
+  // Phase 3b-1: materialize a synthesized PC from chargen accept.
+  // Coord-only authorship; player-visible (the player MUST see
+  // their own PC).  Carries the full CharacterRecord shape; the
+  // materializer stores it in `state.synthesizedPcs[pcId]`.
+  'pc-create'
 ]);
 
 /**
@@ -1495,6 +1595,82 @@ function applyCasterStateSetEvent(
   state.casterState[p.pcId] = next;
 }
 
+function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
+  // Phase 3b-1: materialize a synthesized PC into shared state so
+  // the loader-overlay (quire-app.ts:resolvePcFromOverlay) can
+  // resolve it without a GitHub-raw fetch.  Coord-only authorship;
+  // player-visible because the player MUST see their own PC.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcCreatePayload>;
+
+  // ---- pcId ----
+  if (!isCharacterId(p.pcId)) return;
+
+  // First-write-wins: a replay or duplicate emission of the same
+  // pcId is a no-op.  Re-synth produces a different pcId, so this
+  // doesn't block legitimate re-create flows; it just protects
+  // against double-applied events on the same id.
+  if (Object.prototype.hasOwnProperty.call(state.synthesizedPcs, p.pcId)) {
+    return;
+  }
+
+  // ---- name / pronouns ----
+  if (typeof p.name !== 'string') return;
+  if (p.name.length === 0 || p.name.length > PC_CREATE_MAX_NAME) return;
+  if (typeof p.pronouns !== 'string') return;
+  if (p.pronouns.length > PC_CREATE_MAX_PRONOUNS) return;
+
+  // ---- tags ----
+  if (!Array.isArray(p.tags)) return;
+  if (p.tags.length < PC_CREATE_MIN_TAGS) return;
+  if (p.tags.length > PC_CREATE_MAX_TAGS) return;
+  for (const t of p.tags) {
+    if (typeof t !== 'string' || t.length === 0) return;
+    if (t.length > PC_CREATE_MAX_TAG_LEN) return;
+  }
+
+  // ---- stats ----
+  if (!isPcCreateStats(p.stats)) return;
+
+  // ---- skills ----
+  if (!Array.isArray(p.skills)) return;
+  if (p.skills.length > PC_CREATE_MAX_SKILLS) return;
+  for (const s of p.skills) {
+    if (typeof s !== 'string' || s.length === 0) return;
+    if (s.length > PC_CREATE_MAX_TAG_LEN) return;
+  }
+
+  // ---- backstory ----
+  if (typeof p.backstory !== 'string') return;
+  if (p.backstory.length === 0 || p.backstory.length > PC_CREATE_MAX_BACKSTORY) return;
+
+  // ---- causedByResponseId (optional) ----
+  if (p.causedByResponseId !== undefined) {
+    if (typeof p.causedByResponseId !== 'string') return;
+    if (p.causedByResponseId.length > 200) return;
+  }
+
+  // Build the CharacterRecord.  harm/stress/foci/advancements/marks
+  // default per the rules.md fresh-PC baseline; subsequent `pc-edit`
+  // events overlay normally via `state.pcEdits[pcId]`.
+  const record: CharacterRecord = {
+    $schemaVersion: CHARACTER_SCHEMA_VERSION,
+    name: p.name,
+    pronouns: p.pronouns,
+    stats: { ...p.stats },
+    skills: [...p.skills],
+    tags: [...p.tags],
+    backstory: p.backstory,
+    harm: 0,
+    stress: 0,
+    foci: [],
+    advancements: 0,
+    marks: 0
+  };
+  state.synthesizedPcs[p.pcId] = record;
+}
+
 function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
   // M3D-5 / CC-2: coord-only binding of a `{{pc:N}}` slot to a
   // character id.  Player-visible (NOT DM-only) so the substitution
@@ -1568,6 +1744,7 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'ai-reject': applyAiVerdictEvent,
   'caster-state-set': applyCasterStateSetEvent,
   'pc-slot-bind': applyPcSlotBindEvent,
+  'pc-create': applyPcCreateEvent,
   'map-blob-add': applyMapBlobEvent,
   'map-blob-move': applyMapBlobEvent,
   'map-blob-remove': applyMapBlobEvent,
