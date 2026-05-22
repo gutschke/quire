@@ -283,6 +283,19 @@ export interface SessionState {
    * ships in M3c.
    */
   casterState: Record<string /*pcId*/, CasterState>;
+  /**
+   * M3D-5 / CC-2: PC-slot bindings — maps slot numbers (1-9) to the
+   * character id occupying that slot in this session.  The renderer
+   * substitutes `{{pc:N}}` placeholders in campaign markdown with
+   * the bound character's display name (see `substitutePcSlots` in
+   * markdown.ts).  Per-session state; campaign-level defaults flow
+   * in from `campaign.json` at load time (M4 follow-on).
+   *
+   * Player-visible (NOT DM-only) so the substitution renders the
+   * same names for everyone at the table.  Coord-authored via
+   * `pc-slot-bind` events.
+   */
+  pcSlots: Record<number, string>;
 }
 
 export function emptyState(): SessionState {
@@ -303,7 +316,8 @@ export function emptyState(): SessionState {
     raisedHands: new Set(),
     scratchNotes: [],
     aiAudit: [],
-    casterState: {}
+    casterState: {},
+    pcSlots: {}
   };
 }
 
@@ -505,6 +519,20 @@ const THREAD_DEBT_LEVELS: ReadonlySet<ThreadDebtLevel> = new Set<ThreadDebtLevel
 
 function isThreadDebtLevel(s: unknown): s is ThreadDebtLevel {
   return typeof s === 'string' && THREAD_DEBT_LEVELS.has(s as ThreadDebtLevel);
+}
+
+/**
+ * M3D-5 / CC-2: payload for the `pc-slot-bind` event.  Binds slot
+ * `slot` (1-9) to character id `pcId`.  Passing `null` clears the
+ * binding (the renderer falls back to the literal `PC<N>` form).
+ *
+ * Coord-only.  Players see the resulting `state.pcSlots` changes
+ * because the substitution must render identically across the table.
+ */
+interface PcSlotBindPayload {
+  v: 1;
+  slot: number;
+  pcId: string | null;
 }
 
 interface CasterStateSetPayload {
@@ -771,7 +799,11 @@ export const KNOWN_EVENT_KINDS = new Set([
   'ai-response',
   'ai-accept',
   'ai-reject',
-  'caster-state-set'
+  'caster-state-set',
+  // M3D-5 / CC-2: PC-slot bindings (the `{{pc:N}}` placeholders in
+  // campaign markdown).  Coord-only authorship; player-visible
+  // state so the substitution renders identically across the table.
+  'pc-slot-bind'
 ]);
 
 /**
@@ -1463,6 +1495,33 @@ function applyCasterStateSetEvent(
   state.casterState[p.pcId] = next;
 }
 
+function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
+  // M3D-5 / CC-2: coord-only binding of a `{{pc:N}}` slot to a
+  // character id.  Player-visible (NOT DM-only) so the substitution
+  // renders identically for everyone — pcSlots flows through
+  // filterForViewer untouched.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcSlotBindPayload>;
+  // Slot must be a finite integer in [1, 9] — matches the
+  // `{{pc:N}}` regex range in `substitutePcSlots`.  Out-of-range
+  // slots are silently dropped (defensive against hostile peers /
+  // poisoned saves; a sane DM never produces them).
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  if (p.slot < 1 || p.slot > 9) return;
+  // `null` explicitly clears the binding; a valid character id sets
+  // it.  Anything else is dropped (no implicit unbind on string
+  // 'undefined' or empty string — those are payload errors).
+  if (p.pcId === null) {
+    delete state.pcSlots[p.slot];
+    return;
+  }
+  if (!isCharacterId(p.pcId)) return;
+  state.pcSlots[p.slot] = p.pcId;
+}
+
 function applyMapBlobEvent(_state: SessionState, event: QuireEvent): void {
   // Handles all 5 map-blob-* kinds.  Forward-compat guard: every
   // M1+ payload MUST carry { v: 1 }.  Until the per-kind
@@ -1508,6 +1567,7 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'ai-accept': applyAiVerdictEvent,
   'ai-reject': applyAiVerdictEvent,
   'caster-state-set': applyCasterStateSetEvent,
+  'pc-slot-bind': applyPcSlotBindEvent,
   'map-blob-add': applyMapBlobEvent,
   'map-blob-move': applyMapBlobEvent,
   'map-blob-remove': applyMapBlobEvent,

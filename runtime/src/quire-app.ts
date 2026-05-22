@@ -1018,6 +1018,25 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * M3D-5 / CC-2: bind a `{{pc:N}}` slot to a character id, or pass
+   * `null` to clear the binding (renderer falls back to literal
+   * `PC<N>`).  Coord-only; non-coords return false silently.
+   *
+   * Entry point for both the future click-to-bind UI (CC-2 phase 2)
+   * and the AI write tool (CC-36 / pc-slot-bind via stateUpdates).
+   * Slot range [1, 9] mirrors the `{{pc:N}}` regex in
+   * `substitutePcSlots`.
+   */
+  bindPcSlot(slot: number, pcId: string | null): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1 || slot > 9) return false;
+    this.session.append('pc-slot-bind', { v: 1, slot, pcId });
+    return true;
+  }
+
+  /**
    * M3a.8 P2-3: render the <dm-scratch> region in the Dock slot
    * when the local peer is the DM.  Hidden for players (the
    * scratchNotes field is also stripped from their view by
@@ -1065,6 +1084,7 @@ export class QuireApp extends LitElement {
         .editable=${editable}
         .claimState=${claim.state}
         .claimedBy=${claim.claimedBy}
+        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
@@ -1622,6 +1642,7 @@ export class QuireApp extends LitElement {
         .sceneFullyRevealed=${sceneFullyRevealed}
         .isCoordinator=${isCoord}
         .sceneFrontmatter=${scene.frontmatter}
+        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleBlock=${(blockHash: string) =>
@@ -3150,6 +3171,7 @@ export class QuireApp extends LitElement {
         .editable=${editable}
         .claimState=${claim.state}
         .claimedBy=${claim.claimedBy}
+        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',

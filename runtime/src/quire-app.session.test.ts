@@ -85,6 +85,32 @@ describe('QuireApp session wiring', () => {
     expect(app.sessionView?.shared.diceRolls).toEqual([]);
   });
 
+  it('M3D-5: coord can bind/clear PC slots; non-coord cannot', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST1'));
+    app.startHosting();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(app.sessionView?.status).toBe('active');
+    // Coord-direct bind.
+    expect(app.bindPcSlot(1, 'mei')).toBe(true);
+    expect(app.sessionView?.shared.pcSlots[1]).toBe('mei');
+    expect(app.bindPcSlot(2, 'bob')).toBe(true);
+    expect(app.sessionView?.shared.pcSlots).toEqual({ 1: 'mei', 2: 'bob' });
+    // Clear with null.
+    expect(app.bindPcSlot(1, null)).toBe(true);
+    expect(1 in (app.sessionView?.shared.pcSlots ?? {})).toBe(false);
+    // Invalid slot rejected at the API boundary.
+    expect(app.bindPcSlot(0, 'eve')).toBe(false);
+    expect(app.bindPcSlot(10, 'eve')).toBe(false);
+    expect(app.bindPcSlot(1.5, 'eve')).toBe(false);
+  });
+
+  it('M3D-5: bindPcSlot returns false when not coord', () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork()));
+    // Solo / not coord yet.
+    expect(app.bindPcSlot(1, 'mei')).toBe(false);
+  });
+
   it('M3D-3: SPA-navigating to home with an active session emits peer-leave and tears down', async () => {
     // The bug this guards against: when a SPA navigation to home
     // doesn't fire peer-leave + flush autosave, the next autosave

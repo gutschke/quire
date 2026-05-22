@@ -865,8 +865,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     expect(m1.length).toBe(18);
   });
 
-  it('total kind count is 32 (13 legacy + 18 M1 + 1 M3c caster-state-set)', () => {
-    expect(KNOWN_EVENT_KINDS.size).toBe(32);
+  it('total kind count is 33 (13 legacy + 18 M1 + 1 M3c caster-state-set + 1 M3D-5 pc-slot-bind)', () => {
+    expect(KNOWN_EVENT_KINDS.size).toBe(33);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -1598,5 +1598,122 @@ describe('materialize — full session smoke test', () => {
     expect(state.diceRolls[0].peerId).toBe('bob');
     expect(state.chat).toHaveLength(1);
     expect(state.chat[0].peerId).toBe('carol');
+  });
+});
+
+describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
+  it('coordinator can bind a slot to a character id', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBe('mei');
+  });
+
+  it('emptyState starts with no bindings', () => {
+    expect(emptyState().pcSlots).toEqual({});
+  });
+
+  it('non-coord pc-slot-bind is dropped', () => {
+    // The threat model (civilized players) doesn't strictly require
+    // this gate, but the engine-side guarantee matters for hostile
+    // saves + future modes-of-play where the DM hands out invite
+    // tokens to async-mode players.
+    const log = new EventLog('bob');
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBeUndefined();
+  });
+
+  it('rejects payload missing v:1 (forward-compat)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { slot: 1, pcId: 'mei' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBeUndefined();
+  });
+
+  it('rejects slot below 1 or above 9', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 0, pcId: 'mei' });
+    log.append('pc-slot-bind', { v: 1, slot: 10, pcId: 'bob' });
+    log.append('pc-slot-bind', { v: 1, slot: -1, pcId: 'eve' });
+    const state = materialize(log.events());
+    expect(state.pcSlots).toEqual({});
+  });
+
+  it('rejects non-integer slot', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1.5, pcId: 'mei' });
+    log.append('pc-slot-bind', { v: 1, slot: NaN, pcId: 'bob' });
+    log.append('pc-slot-bind', { v: 1, slot: Infinity, pcId: 'eve' });
+    const state = materialize(log.events());
+    expect(state.pcSlots).toEqual({});
+  });
+
+  it('rejects non-string pcId (except null)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 42 });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: undefined });
+    const state = materialize(log.events());
+    expect(state.pcSlots).toEqual({});
+  });
+
+  it('null pcId explicitly clears the binding', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: null });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBeUndefined();
+    expect(1 in state.pcSlots).toBe(false);
+  });
+
+  it('subsequent bind to the same slot overrides (LWW)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'lin' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBe('lin');
+  });
+
+  it('multiple slots can be bound independently', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 4, pcId: 'aiyana' });
+    const state = materialize(log.events());
+    expect(state.pcSlots).toEqual({ 1: 'mei', 2: 'bob', 4: 'aiyana' });
+  });
+
+  it('rejects invalid character id (defensive)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    // Character ids in Quire are bounded-length safe-key strings.
+    // A path-traversal or excessive-length attempt is dropped.
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: '../escape' });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: '' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]).toBeUndefined();
+    expect(state.pcSlots[2]).toBeUndefined();
+  });
+
+  it('survives filterForViewer (pcSlots is PLAYER-visible)', () => {
+    // Critically: the substitution must render identical names for
+    // every viewer at the table, so pcSlots flows through the
+    // filter untouched.  Differs from caster-state-set + threadDebt
+    // + pinnedNpcs which the filter wipes.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('peer-join', { name: 'Bob' }); // bob: player
+    const state = materialize(log.events());
+    const filtered = filterForViewer(state, 'bob');
+    expect(filtered.pcSlots[1]).toBe('mei');
   });
 });
