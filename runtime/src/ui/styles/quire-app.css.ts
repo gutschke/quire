@@ -1727,14 +1727,24 @@ export const quireAppStyles = css`
       gap: 0.6rem;
       margin-top: 0.7rem;
     }
+    /* UX M4 (Cluster E step 8a): pack-button is now a PRIMARY
+       action — the Required-pack callout above it makes the click
+       load-bearing for Mode B handoff.  Pre-fix it read as a
+       quiet bordered button; the chip-buttons above competed for
+       the eye.  Filled treatment (amber background + light text)
+       so the eye lands on it after reading the callout. */
     .character-creation-pack-button {
-      padding: 0.5rem 0.8rem;
+      padding: 0.55rem 1rem;
       border-radius: 0.3rem;
       border: 1px solid light-dark(#925a17, #d6a559);
-      background: light-dark(#fef3c7, #3a2a04);
-      color: light-dark(#683f10, #f0c477);
+      background: light-dark(#925a17, #d6a559);
+      color: light-dark(#fef3c7, #1a0f00);
       cursor: pointer;
-      font-weight: 500;
+      font-weight: 600;
+      font-size: 1rem;
+    }
+    .character-creation-pack-button:hover {
+      background: light-dark(#683f10, #f0c477);
     }
     .character-creation-pack-feedback {
       font-size: 0.88em;
@@ -2406,17 +2416,27 @@ export const quireAppStyles = css`
       background: light-dark(#fecaca, #7f1d1d);
     }
 
-    /* M3D-4b: last-3 pills — compact glance-able recent-roll row
-       above the form.  Tier coloring + doubles halo inherit from
-       the .roll-tier-* / .roll-doubles-* classes already used by the
-       full history list, so visual language stays consistent. */
+    /* UX M6 (Cluster E step 8b): pills repositioned to the RIGHT
+       of the form (per ui.md L156 spec) and the duplicate full
+       history list dropped.  Form + pills now share a flex row;
+       on narrow viewports the pills wrap below. */
+    .dice-form-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+    }
+    .dice-form-row > .roll-form {
+      flex: 1 1 18ch;
+    }
     .dice-recent-pills {
       display: flex;
       flex-wrap: wrap;
       gap: 0.3rem;
-      margin: 0 0 0.5rem;
+      margin: 0;
       padding: 0;
       list-style: none;
+      flex: 0 1 auto;
     }
     .dice-recent-pill {
       padding: 0.15rem 0.55rem;

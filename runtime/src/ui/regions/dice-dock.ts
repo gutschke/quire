@@ -127,67 +127,55 @@ export class DiceDock extends LitElement {
       <section class="card dice-dock">
         <h2>Dice</h2>
         ${this.renderPrimaryActions()}
-        ${this.renderRecentPills()}
         ${this.stats ? this.renderStatChips() : nothing}
-        <form
-          class="roll-form"
-          @submit=${(e: Event) => {
-            e.preventDefault();
-            this.onSubmitRoll?.(this.rollDraft);
-          }}
-        >
-          <label>
-            <span class="roll-label">/roll</span>
-            <input
-              type="text"
-              .value=${this.rollDraft}
-              placeholder="2d6+1"
-              aria-label="Dice expression"
-              @input=${(e: Event) =>
-                this.onRollDraftChange?.(
-                  (e.target as HTMLInputElement).value
-                )}
-            />
-          </label>
-          <button type="submit">Roll</button>
-          ${this.handAvailable
-            ? html`<button
-                type="button"
-                class="raise-hand ${this.handRaised
-                  ? 'raise-hand-active'
-                  : ''}"
-                aria-label=${this.handRaised
-                  ? 'Lower hand'
-                  : 'Raise hand'}
-                title=${this.handRaised
-                  ? 'Lower hand'
-                  : 'Raise hand'}
-                @click=${() => this.onToggleHand?.()}
-              >
-                ✋ ${this.handRaised ? 'Lower' : 'Raise'}
-              </button>`
-            : nothing}
-        </form>
+        <div class="dice-form-row">
+          <form
+            class="roll-form"
+            @submit=${(e: Event) => {
+              e.preventDefault();
+              this.onSubmitRoll?.(this.rollDraft);
+            }}
+          >
+            <label>
+              <span class="roll-label">/roll</span>
+              <input
+                type="text"
+                .value=${this.rollDraft}
+                placeholder="2d6+1"
+                aria-label="Dice expression"
+                @input=${(e: Event) =>
+                  this.onRollDraftChange?.(
+                    (e.target as HTMLInputElement).value
+                  )}
+              />
+            </label>
+            <button type="submit">Roll</button>
+            ${this.handAvailable
+              ? html`<button
+                  type="button"
+                  class="raise-hand ${this.handRaised
+                    ? 'raise-hand-active'
+                    : ''}"
+                  aria-label=${this.handRaised
+                    ? 'Lower hand'
+                    : 'Raise hand'}
+                  title=${this.handRaised
+                    ? 'Lower hand'
+                    : 'Raise hand'}
+                  @click=${() => this.onToggleHand?.()}
+                >
+                  ✋ ${this.handRaised ? 'Lower' : 'Raise'}
+                </button>`
+              : nothing}
+          </form>
+          ${this.renderRecentPills()}
+        </div>
         ${this.rollError
           ? html`<p class="roll-error">${this.rollError}</p>`
           : nothing}
-        ${this.entries.length
-          ? html`
-              <ul class="roll-history">
-                ${this.entries.map((e) => {
-                  const doublesClass =
-                    e.doubles === 'snake-eyes'
-                      ? ' roll-doubles-snake-eyes'
-                      : e.doubles === 'box-cars'
-                        ? ' roll-doubles-box-cars'
-                        : '';
-                  return html`<li>
-                    <code class="${e.tierClass}${doublesClass}">${e.label}</code>
-                  </li>`;
-                })}
-              </ul>
-            `
-          : html`<p class="muted">No rolls yet.</p>`}
+        ${this.entries.length === 0
+          ? html`<p class="muted">No rolls yet.</p>`
+          : nothing}
       </section>
     `;
   }

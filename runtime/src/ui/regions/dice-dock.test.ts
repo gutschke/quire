@@ -223,7 +223,7 @@ describe('<dice-dock> doubles halo (M3D-4)', () => {
     expect(el.querySelector('.roll-doubles-box-cars')).toBeNull();
   });
 
-  it('preserves the tierClass alongside the doubles class', async () => {
+  it('preserves the tierClass alongside the doubles class on the pill', async () => {
     const el = withEntries([
       {
         key: 'k1',
@@ -233,13 +233,13 @@ describe('<dice-dock> doubles halo (M3D-4)', () => {
       }
     ]);
     await el.updateComplete;
-    // M3D-4b added last-3 pills above the history list; both render
-    // the entry's label so the page now has two `<code>` matches.
-    // Scope to the history list (the canonical surface for tier
-    // + doubles classes on the `<code>` element).
-    const code = el.querySelector('.roll-history code');
-    expect(code?.classList.contains('roll-tier-hit')).toBe(true);
-    expect(code?.classList.contains('roll-doubles-box-cars')).toBe(true);
+    // UX M6 (Cluster E step 8b): the duplicate `.roll-history` ul
+    // was dropped; the pills are now the canonical recent-roll
+    // display.  The pill `<li>` carries the tier + doubles
+    // classes (not the inner `<code>`).
+    const pill = el.querySelector('.dice-recent-pill');
+    expect(pill?.classList.contains('roll-tier-hit')).toBe(true);
+    expect(pill?.classList.contains('roll-doubles-box-cars')).toBe(true);
   });
 });
 
