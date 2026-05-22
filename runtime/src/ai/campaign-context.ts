@@ -45,15 +45,18 @@ import {
 export interface CampaignContextRequest {
   source: CampaignSource;
   /**
-   * The current AppState's view, distilled to what affects
-   * context selection.  Pass `episode` when in any
-   * episode/scene/character view; leave undefined for idle/home.
+   * Episodes to include in the context, in the order they should
+   * appear (current episode first for the AI's locality bias).
+   * Each entry is either a slug (we'll discover scenes by
+   * fetching `episodes/<slug>/episode.json`) OR a slug+scenes
+   * pair (we'll skip the manifest fetch and use the given
+   * scenes — useful when the caller already has the loaded
+   * episode in memory).
    */
-  episode?: {
+  episodes?: Array<{
     slug: string;
-    /** All scene paths for this episode (from episode manifest). */
-    scenes: string[];
-  };
+    scenes?: string[];
+  }>;
   scope: ContextScope;
   signal?: AbortSignal;
 }
@@ -102,26 +105,60 @@ const EPISODE_DM_FILES_HINT = [
 export async function buildCampaignContext(
   req: CampaignContextRequest
 ): Promise<ContextFile[]> {
+  // Discover scene lists for any episode whose scenes weren't
+  // supplied inline.  This is an extra round-trip per episode
+  // but parallelizable; a 50-episode campaign at ~50 ms / fetch
+  // round-trip = ~50 ms total wall-clock (Promise.all).
+  const resolvedEpisodes = await Promise.all(
+    (req.episodes ?? []).map(async (ep) => {
+      if (ep.scenes) return ep;
+      const manifestPath = `episodes/${ep.slug}/episode.json`;
+      try {
+        const text = await fetchCampaignFile(req.source, manifestPath, {
+          signal: req.signal
+        });
+        if (!text) return { slug: ep.slug, scenes: [] };
+        const parsed = JSON.parse(text) as { scenes?: unknown };
+        const scenes = Array.isArray(parsed.scenes)
+          ? parsed.scenes.filter((s): s is string => typeof s === 'string')
+          : [];
+        return { slug: ep.slug, scenes };
+      } catch {
+        return { slug: ep.slug, scenes: [] };
+      }
+    })
+  );
   const refs: string[] = ['campaign.json', 'world/overview.md'];
-  if (req.episode) {
-    refs.push(`episodes/${req.episode.slug}/episode.json`);
-    for (const scenePath of req.episode.scenes) {
-      refs.push(`episodes/${req.episode.slug}/${scenePath}`);
+  for (const ep of resolvedEpisodes) {
+    refs.push(`episodes/${ep.slug}/episode.json`);
+    for (const scenePath of ep.scenes ?? []) {
+      refs.push(`episodes/${ep.slug}/${scenePath}`);
     }
     if (req.scope === 'dm') {
       for (const dmFile of EPISODE_DM_FILES_HINT) {
-        refs.push(`episodes/${req.episode.slug}/dm/${dmFile}`);
+        refs.push(`episodes/${ep.slug}/dm/${dmFile}`);
       }
     }
   }
   if (req.scope === 'dm') {
     for (const ref of CAMPAIGN_DM_ONLY_FILES) refs.push(ref);
   }
+  // De-dupe — the inline-scenes path may overlap with the
+  // discovery path when an episode was loaded in memory AND
+  // appears in the campaign manifest.
+  const seen = new Set<string>();
+  const dedupedRefs = refs.filter((r) => {
+    if (seen.has(r)) return false;
+    seen.add(r);
+    return true;
+  });
   // Validate every ref BEFORE fetching — keeps the fail-closed
   // story aligned with the broker's pre-flight check.  A
   // path-shape problem here means a build mistake in the caller,
   // not a network event.
-  const safeRefs = refs.filter((r) => validateContextRef(r, req.scope).ok);
+  const safeRefs = dedupedRefs.filter(
+    (r) => validateContextRef(r, req.scope).ok
+  );
   // Fetch in parallel; tolerate per-file 404 / network errors.
   const fetches = await Promise.all(
     safeRefs.map(async (path) => {

@@ -455,7 +455,11 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       campaign: {
         base: {
           source: { owner: 'g', repo: 'u', ref: 'main' },
-          manifest: { name: 'X', $schemaVersion: '0.1.0' }
+          manifest: {
+            name: 'X',
+            $schemaVersion: '0.1.0',
+            episodes: ['E1']
+          }
         }
       },
       episode: {
@@ -516,7 +520,11 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       campaign: {
         base: {
           source: { owner: 'g', repo: 'u', ref: 'main' },
-          manifest: { name: 'X', $schemaVersion: '0.1.0' }
+          manifest: {
+            name: 'X',
+            $schemaVersion: '0.1.0',
+            episodes: ['E1']
+          }
         }
       },
       episode: {

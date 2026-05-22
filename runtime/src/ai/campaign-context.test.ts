@@ -63,7 +63,7 @@ describe('buildCampaignContext — selection', () => {
     const ctx = await buildCampaignContext({
       source: SOURCE,
       scope: 'public',
-      episode: { slug: '001', scenes: ['scenes/01.md', 'scenes/02.md'] }
+      episodes: [{ slug: '001', scenes: ['scenes/01.md', 'scenes/02.md'] }]
     });
     const paths = ctx.map((c) => c.path);
     expect(paths).toContain('episodes/001/episode.json');
@@ -82,7 +82,7 @@ describe('buildCampaignContext — selection', () => {
     const ctx = await buildCampaignContext({
       source: SOURCE,
       scope: 'public',
-      episode: { slug: '001', scenes: [] }
+      episodes: [{ slug: '001', scenes: [] }]
     });
     const concat = ctx.map((c) => c.content).join('\n');
     expect(concat).not.toContain('SPOILER');
@@ -100,7 +100,7 @@ describe('buildCampaignContext — selection', () => {
     const ctx = await buildCampaignContext({
       source: SOURCE,
       scope: 'dm',
-      episode: { slug: '001', scenes: [] }
+      episodes: [{ slug: '001', scenes: [] }]
     });
     const concat = ctx.map((c) => c.content).join('\n');
     expect(concat).toContain('CABLE_IS_HERE');
@@ -115,7 +115,7 @@ describe('buildCampaignContext — selection', () => {
     const ctx = await buildCampaignContext({
       source: SOURCE,
       scope: 'public',
-      episode: { slug: '001', scenes: ['scenes/missing.md'] }
+      episodes: [{ slug: '001', scenes: ['scenes/missing.md'] }]
     });
     expect(ctx).toHaveLength(1);
     expect(ctx[0].path).toBe('campaign.json');

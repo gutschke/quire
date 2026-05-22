@@ -2379,23 +2379,24 @@ export class QuireApp extends LitElement {
     this.aiScope = 'public';
     const broker = this.brokerForProvider(this.aiProvider);
     try {
-      // M3b followup — campaign context.  Fetch the relevant
-      // files for the DM's current view + scope, wrap each in
-      // <untrusted_content>, and prepend to the user prompt so
-      // the model has the source material to answer from.
-      // Empty when no campaign is loaded; falls through cleanly.
+      // M3b followup — campaign context.  Fetch the WHOLE
+      // campaign (every episode listed in campaign.json) and
+      // prepend it to the prompt so the AI can reach across
+      // episodes — see [[project_quire_ai_context_scaling]].
+      // Current episode goes first for the AI's locality bias;
+      // prompt caching (Anthropic cache_control) on the static
+      // prefix makes the per-query cost ~10% of raw.
+      //
+      // For campaigns > ~50 episodes the summary-and-slice
+      // strategy needs to land (M3c+).  At v1's scale (≤20)
+      // this fits well under the token budget.
       const campaign = this.getCurrentCampaign();
       const episode = this.getCurrentEpisode();
       const contextFiles = campaign
         ? await buildCampaignContext({
             source: campaign.base.source,
             scope,
-            episode: episode
-              ? {
-                  slug: episode.slug,
-                  scenes: episode.manifest.scenes ?? []
-                }
-              : undefined,
+            episodes: this.orderedCampaignEpisodes(campaign, episode?.slug),
             signal: ac.signal
           })
         : [];
@@ -2466,6 +2467,37 @@ export class QuireApp extends LitElement {
       if (this.aiAbort === ac) this.aiAbort = null;
       this.aiLoading = false;
     }
+  }
+
+  /**
+   * Order the campaign's episodes so the currently-loaded one
+   * appears first.  buildCampaignContext sends them in this
+   * order; the AI's attention naturally falls on the prefix +
+   * the locality-bias hint matters for relevance.  When no
+   * current episode is set (idle / campaign view), the manifest
+   * order is preserved.
+   */
+  private orderedCampaignEpisodes(
+    campaign: LoadedCampaign,
+    currentSlug: string | undefined
+  ): Array<{ slug: string; scenes?: string[] }> {
+    const all = campaign.base.manifest.episodes ?? [];
+    const episodes: Array<{ slug: string; scenes?: string[] }> = [];
+    const currentEp = this.getCurrentEpisode();
+    if (
+      currentSlug &&
+      currentEp?.slug === currentSlug &&
+      all.includes(currentSlug)
+    ) {
+      episodes.push({
+        slug: currentSlug,
+        scenes: currentEp.manifest.scenes ?? []
+      });
+    }
+    for (const slug of all) {
+      if (slug !== currentSlug) episodes.push({ slug });
+    }
+    return episodes;
   }
 
   /**
