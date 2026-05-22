@@ -72,7 +72,20 @@ function makeEnv(
 function fakeView(
   opts: {
     pcEdits?: Record<string, { harm?: number; stress?: number }>;
-    casterState?: Record<string, { taxActive: boolean }>;
+    casterState?: Record<
+      string,
+      {
+        taxActive?: boolean;
+        ladderState?:
+          | 'clear'
+          | 'quiet'
+          | 'noticed'
+          | 'watched'
+          | 'pushing-back'
+          | 'hunted';
+        spamCount?: number;
+      }
+    >;
     peers?: Record<
       string,
       { peerId: string; pcId?: string; leftAt?: number; joinedAt?: number }
@@ -566,6 +579,93 @@ describe('AiWriteController — M3C-2 dice-roll dispatch', () => {
     expect((note!.payload as { text: string }).text).toMatch(/Double-1/);
     expect((note!.payload as { text: string }).text).toMatch(/owns the twist/);
     expect((note!.payload as { text: string }).text).toMatch(/climb/);
+  });
+
+  it('Engine B2: caster-state-set revert restores the exact prior snapshot, not clear', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // Prior state: noticed, no tax, spam 2.  AI proposes watched.
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(
+        fakeView({
+          casterState: {
+            yui: { ladderState: 'noticed', taxActive: false, spamCount: 2 }
+          }
+        }),
+        'yui',
+        session
+      )
+    );
+    ctrl.proposeBatch(
+      [
+        {
+          kind: 'caster-state-set',
+          pcId: 'yui',
+          ladderState: 'watched',
+          reason: 'two casts in this scene'
+        }
+      ],
+      'r1'
+    );
+    ctrl.applyAll();
+    // First append: the AI's proposed watched state.
+    const applied = appended.find(
+      (e) =>
+        e.kind === 'caster-state-set' &&
+        (e.payload as { ladderState?: string }).ladderState === 'watched'
+    );
+    expect(applied).toBeDefined();
+    // Now revert.  Pre-fix this would emit 'clear'; post-fix it
+    // restores 'noticed' with the prior tax + spam values.
+    const updateId = ctrl.currentBatch[0].id;
+    ctrl.revertOne(updateId);
+    const reverted = appended.find(
+      (e, i) =>
+        e.kind === 'caster-state-set' &&
+        i > appended.indexOf(applied!) &&
+        (e.payload as { ladderState?: string }).ladderState !== 'watched'
+    );
+    expect(reverted).toBeDefined();
+    const p = reverted!.payload as {
+      ladderState: string;
+      taxActive: boolean;
+      spamCount: number;
+    };
+    expect(p.ladderState).toBe('noticed');
+    expect(p.taxActive).toBe(false);
+    expect(p.spamCount).toBe(2);
+  });
+
+  it('Engine B2: caster-state revert restores clear when there was no prior state', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // No casterState entry for yui → prior is the default (clear/false/0).
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session)
+    );
+    ctrl.proposeBatch(
+      [
+        { kind: 'caster-state-set', pcId: 'yui', ladderState: 'noticed' }
+      ],
+      'r1'
+    );
+    ctrl.applyAll();
+    const updateId = ctrl.currentBatch[0].id;
+    ctrl.revertOne(updateId);
+    const reverted = [...appended]
+      .reverse()
+      .find((e) => e.kind === 'caster-state-set');
+    expect(reverted).toBeDefined();
+    const p = reverted!.payload as {
+      ladderState: string;
+      taxActive: boolean;
+      spamCount: number;
+    };
+    expect(p.ladderState).toBe('clear');
+    expect(p.taxActive).toBe(false);
+    expect(p.spamCount).toBe(0);
   });
 
   it('Engine M1: non-double-1 dice rolls do NOT trigger the wild-outcome note', () => {

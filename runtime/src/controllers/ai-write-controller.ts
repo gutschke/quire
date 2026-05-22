@@ -58,6 +58,26 @@ export interface PendingUpdate {
    * "Accept this change" button tooltip).  Empty when not gated.
    */
   hardGateReason: string;
+  /**
+   * Engine B2 (Cluster E step 7b): pre-apply caster-state snapshot
+   * captured at dispatch time.  Used by `dispatchCompensating` to
+   * restore the exact prior ladder state on revert, rather than
+   * the v1 "always emit clear" behavior that over-reverted (e.g.,
+   * noticed → watched apply + undo would land at clear, not
+   * noticed).  Populated only for `caster-state-set` updates; left
+   * undefined for pc-edit + dice-roll.
+   */
+  priorCasterState?: {
+    ladderState:
+      | 'clear'
+      | 'quiet'
+      | 'noticed'
+      | 'watched'
+      | 'pushing-back'
+      | 'hunted';
+    taxActive: boolean;
+    spamCount: number;
+  };
 }
 
 /** Default undo window (ms).  Public so tests can override. */
@@ -324,6 +344,32 @@ export class AiWriteController implements ReactiveController {
     return view.shared.casterState[pcId]?.taxActive ?? false;
   }
 
+  /**
+   * Engine B2 (Cluster E step 7b): full caster-state snapshot used
+   * at dispatch time so revert restores the exact prior values
+   * instead of clearing.  Returns the default (clear / inactive /
+   * count 0) when no entry exists for the pcId — matching the
+   * materializer's implicit-default behavior.
+   */
+  private currentCasterState(
+    view: SessionView | undefined,
+    pcId: string
+  ): NonNullable<PendingUpdate['priorCasterState']> {
+    const fallback: NonNullable<PendingUpdate['priorCasterState']> = {
+      ladderState: 'clear',
+      taxActive: false,
+      spamCount: 0
+    };
+    if (!view || view.status !== 'active') return fallback;
+    const cs = view.shared.casterState[pcId];
+    if (!cs) return fallback;
+    return {
+      ladderState: cs.ladderState ?? 'clear',
+      taxActive: cs.taxActive ?? false,
+      spamCount: cs.spamCount ?? 0
+    };
+  }
+
   private isCrossPc(
     view: SessionView | undefined,
     pcId: string
@@ -439,6 +485,14 @@ export class AiWriteController implements ReactiveController {
         break;
       }
       case 'caster-state-set': {
+        // Engine B2 (Cluster E step 7b): capture the pre-apply
+        // snapshot BEFORE appending the new state so undo can
+        // restore the exact prior ladder/tax/spam values.  The
+        // snapshot mutates the PendingUpdate the caller holds in
+        // `this.batch` — the controller calls dispatch with the
+        // same reference it stores, so mutation propagates without
+        // a separate write path.
+        u.priorCasterState = this.currentCasterState(view, u.update.pcId);
         s.append('caster-state-set', {
           v: 1,
           pcId: u.update.pcId,
@@ -497,13 +551,27 @@ export class AiWriteController implements ReactiveController {
         break;
       }
       case 'caster-state-set': {
-        // For now: re-emit clear() with the same pcId.  A v2 with
-        // snapshots would restore the prior state precisely; M3c
-        // minimum is "stop applying the proposed change."
+        // Engine B2 (Cluster E step 7b): restore the pre-apply
+        // snapshot captured at dispatch time.  Pre-fix this branch
+        // emitted `clear` unconditionally, which over-reverted
+        // (e.g., noticed → watched apply + undo would land at
+        // clear, not noticed).  Snapshot-driven revert restores
+        // the exact prior ladderState + taxActive + spamCount,
+        // matching the materializer's merge-semantic since we
+        // re-emit every field.
+        //
+        // When no snapshot exists (dispatch was skipped — e.g.,
+        // session went inactive between propose and apply), fall
+        // back to the prior 'clear' behavior so the revert still
+        // produces a deterministic event.
+        const snap = u.priorCasterState;
         s.append('caster-state-set', {
           v: 1,
           pcId: u.update.pcId,
-          ladderState: 'clear',
+          ladderState: snap?.ladderState ?? 'clear',
+          taxActive: snap?.taxActive ?? false,
+          spamCount: snap?.spamCount ?? 0,
+          reason: 'DM reverted within the undo window.',
           causedByResponseId: ''
         });
         break;
