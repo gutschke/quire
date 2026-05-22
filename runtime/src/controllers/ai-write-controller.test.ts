@@ -56,13 +56,15 @@ function makeEnv(
   view: SessionView | undefined,
   boundPcId: string | undefined,
   session: ReturnType<typeof makeSession>['session'] | null,
-  reviewEvery: boolean = false
+  reviewEvery: boolean = false,
+  rng?: () => number
 ): AiWriteHost {
   return {
     getSessionView: () => view,
     getSession: () => session as never,
     getBoundPcId: () => boundPcId,
-    getReviewEveryUpdate: () => reviewEvery
+    getReviewEveryUpdate: () => reviewEvery,
+    rng
   };
 }
 
@@ -492,5 +494,71 @@ describe('AiWriteController — undo', () => {
       'r2'
     );
     expect(ctrl.undoSecondsRemaining).toBe(0);
+  });
+});
+
+describe('AiWriteController — M3C-2 dice-roll dispatch', () => {
+  it('actually rolls the AI-proposed expression (no longer result:0 placeholder)', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // Deterministic RNG returning 0.5 — for a d6 floor(0.5*6)+1 = 4.
+    // Two dice → [4, 4], total 8 (a "partial" tier).
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, false, () => 0.5)
+    );
+    ctrl.proposeBatch(
+      [{ kind: 'dice-roll', purpose: 'climb', expression: '2d6' }],
+      'r1'
+    );
+    ctrl.applyAll();
+    const event = appended.find((e) => e.kind === 'dice-roll');
+    expect(event).toBeDefined();
+    const payload = event!.payload as {
+      expression: string;
+      result: number;
+      dice: number[];
+    };
+    expect(payload.expression).toBe('2d6');
+    expect(payload.result).toBe(8);
+    expect(payload.dice).toEqual([4, 4]);
+  });
+
+  it('falls back to result:0 + dice:[] on a malformed expression', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, false, () => 0.5)
+    );
+    ctrl.proposeBatch(
+      [{ kind: 'dice-roll', purpose: 'climb', expression: 'not a dice expr' }],
+      'r1'
+    );
+    ctrl.applyAll();
+    const event = appended.find((e) => e.kind === 'dice-roll');
+    expect(event).toBeDefined();
+    const payload = event!.payload as { result: number; dice: number[] };
+    expect(payload.result).toBe(0);
+    expect(payload.dice).toEqual([]);
+  });
+
+  it('honors the expression modifier in the rolled total', () => {
+    const { host } = makeHost();
+    const { session, appended } = makeSession();
+    // RNG → [4, 4] sum 8; expression 2d6+3 → total 11 (hit tier).
+    const ctrl = new AiWriteController(
+      host,
+      makeEnv(fakeView(), 'yui', session, false, () => 0.5)
+    );
+    ctrl.proposeBatch(
+      [{ kind: 'dice-roll', purpose: 'persuade', expression: '2d6+3' }],
+      'r1'
+    );
+    ctrl.applyAll();
+    const event = appended.find((e) => e.kind === 'dice-roll');
+    const payload = event!.payload as { result: number; dice: number[] };
+    expect(payload.result).toBe(11);
+    expect(payload.dice).toEqual([4, 4]);
   });
 });

@@ -37,6 +37,7 @@
 import type { ReactiveController, ReactiveControllerHost } from 'lit';
 import type { SessionController, SessionView } from '../session-controller';
 import type { StateUpdate } from '../ai/schema';
+import { parseDiceCommand, rollDice } from '../dice';
 
 export type PendingUpdateStatus =
   | 'pending'
@@ -79,6 +80,13 @@ export interface AiWriteHost {
    * approves each entry individually.  Defaults to false.
    */
   getReviewEveryUpdate?(): boolean;
+  /**
+   * M3C-2: source of randomness for AI-dispatched dice rolls.
+   * Optional — defaults to `Math.random` at the call site.  Tests
+   * inject a deterministic RNG so the dispatcher's roll result is
+   * predictable.
+   */
+  rng?: () => number;
 }
 
 export class AiWriteController implements ReactiveController {
@@ -380,16 +388,25 @@ export class AiWriteController implements ReactiveController {
         break;
       }
       case 'dice-roll': {
-        // The dice-roll proposal hands the expression + purpose to
-        // the existing roll dispatcher.  For v1 the broker submits a
-        // dice-roll event with the expression captured as text + a
-        // single-result placeholder; the DM can re-roll if they want
-        // physical dice.  AiWriteController doesn't compute the roll
-        // itself; that's the session-controller's job.
+        // M3C-2: actually execute the AI's proposed roll.  The prior
+        // implementation appended `result: 0, dice: []` as a
+        // placeholder, so the AI-proposed roll never produced a
+        // tier-classified outcome — the DM had to re-roll physically
+        // (or the materializer would render "rolled 0").  With the
+        // dispatcher computing the result here, the AI's proposed
+        // roll lands in history with a real total + dice + tier the
+        // same way a player-initiated roll does.
+        //
+        // Parse failures fall back to the original placeholder so a
+        // malformed expression doesn't crash the apply path; the DM
+        // sees `0 []` in history and can re-roll manually.
+        const rng = this.env.rng ?? Math.random;
+        const cmd = parseDiceCommand(u.update.expression);
+        const rolled = cmd ? rollDice(cmd, rng) : null;
         s.append('dice-roll', {
           expression: u.update.expression,
-          result: 0, // placeholder — broker may extend later to compute
-          dice: [],
+          result: rolled?.total ?? 0,
+          dice: rolled?.rolls ?? [],
           purpose: u.update.purpose,
           modifierBreakdown: u.update.modifierBreakdown,
           causedByResponseId: u.causedByResponseId

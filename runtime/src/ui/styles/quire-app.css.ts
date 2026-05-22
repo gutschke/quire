@@ -2068,6 +2068,87 @@ export const quireAppStyles = css`
       color: light-dark(#777, #999);
     }
 
+    /* M3D-4b: dice-Dock primary action row.  The Roll-2d6 button is
+       the most visually prominent control in the dock — table-friction
+       lowest path is "click one thing to roll the canonical 2d6."
+       Cast (Costly / Hard) macros sit beside it when stats are bound,
+       prefilling the WIS modifier. */
+    .dice-primary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin: 0.4rem 0 0.55rem;
+    }
+    .dice-primary-roll {
+      font-size: 1.05rem;
+      font-weight: 600;
+      padding: 0.55rem 1.1rem;
+      border: 1px solid light-dark(#1d4ed8, #6bb6ff);
+      border-radius: 6px;
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e3a8a, #dbeafe);
+      cursor: pointer;
+      letter-spacing: 0.02em;
+    }
+    .dice-primary-roll:hover {
+      background: light-dark(#bfdbfe, #1e40af);
+    }
+    .dice-primary-mod {
+      font-size: 0.85em;
+      font-variant-numeric: tabular-nums;
+      opacity: 0.85;
+      margin-left: 0.2rem;
+    }
+    .dice-primary-cast {
+      font-weight: 500;
+      padding: 0.5rem 0.85rem;
+      border: 1px solid light-dark(#7c3aed, #c4b5fd);
+      border-radius: 6px;
+      background: light-dark(#ede9fe, #4c1d95);
+      color: light-dark(#4c1d95, #ede9fe);
+      cursor: pointer;
+    }
+    .dice-primary-cast:hover {
+      background: light-dark(#ddd6fe, #5b21b6);
+    }
+    .dice-primary-cast-hard {
+      border-color: light-dark(#a16207, #fbbf24);
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fef3c7);
+    }
+    .dice-primary-cast-hard:hover {
+      background: light-dark(#fde68a, #92400e);
+    }
+
+    /* M3D-4b: last-3 pills — compact glance-able recent-roll row
+       above the form.  Tier coloring + doubles halo inherit from
+       the .roll-tier-* / .roll-doubles-* classes already used by the
+       full history list, so visual language stays consistent. */
+    .dice-recent-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin: 0 0 0.5rem;
+      padding: 0;
+      list-style: none;
+    }
+    .dice-recent-pill {
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: light-dark(#f1f5f9, #1e293b);
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      font-size: 0.85em;
+      max-width: 30ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dice-recent-pill code {
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+      background: transparent;
+      padding: 0;
+    }
+
     /* M3a.6a: dice stat chips. */
     .dice-stat-chips {
       display: flex;

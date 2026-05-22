@@ -124,8 +124,10 @@ export class DiceDock extends LitElement {
 
   override render(): TemplateResult {
     return html`
-      <section class="card">
+      <section class="card dice-dock">
         <h2>Dice</h2>
+        ${this.renderPrimaryActions()}
+        ${this.renderRecentPills()}
         ${this.stats ? this.renderStatChips() : nothing}
         <form
           class="roll-form"
@@ -187,6 +189,116 @@ export class DiceDock extends LitElement {
             `
           : html`<p class="muted">No rolls yet.</p>`}
       </section>
+    `;
+  }
+
+  /**
+   * M3D-4b: prominent primary actions.  Per the Phase 3 prioritization
+   * synthesis (TTRPG + UX both P0): rolling is "the ONE thing players
+   * do every turn"; it should be a one-click action, not a "compose
+   * an expression and submit" task.
+   *
+   * Layout:
+   *   - Big "Roll 2d6" button — always visible, always works.  The
+   *     primary affordance for any uncertain outcome.
+   *   - "Cast (Costly)" + "Cast (Hard)" — magic-tier macros.  Per
+   *     `underleaf/world/rules.md` §Magic, Costly = 2d6 + WIS,
+   *     Hard = 2d6 + WIS - 2.  Shown only when stats are available
+   *     (PC bound) so we can substitute WIS automatically.  Without
+   *     these, players must remember "what's my WIS mod" and type it.
+   *
+   * Modifier-stepper offset (if non-zero) is applied to all three
+   * macros and then reset, same convention as the stat chips.
+   */
+  private renderPrimaryActions(): TemplateResult {
+    const offset = this.modifierOffset;
+    const formatMod = (n: number): string => (n >= 0 ? `+${n}` : `${n}`);
+    const baseExpr = offset === 0 ? '2d6' : `2d6${formatMod(offset)}`;
+    const wis = this.stats?.wis ?? null;
+    const castCostlyExpr = (() => {
+      if (wis === null) return null;
+      const total = wis + offset;
+      return total === 0 ? '2d6' : `2d6${formatMod(total)}`;
+    })();
+    const castHardExpr = (() => {
+      if (wis === null) return null;
+      const total = wis + offset - 2;
+      return total === 0 ? '2d6' : `2d6${formatMod(total)}`;
+    })();
+    return html`
+      <div class="dice-primary" role="group" aria-label="Roll dice">
+        <button
+          type="button"
+          class="dice-primary-roll"
+          title=${offset === 0
+            ? 'Roll 2d6 (any uncertain outcome)'
+            : `Roll 2d6 with ${formatMod(offset)} situational modifier`}
+          aria-label=${`Roll ${baseExpr}`}
+          @click=${() => {
+            this.onSubmitRoll?.(baseExpr);
+            this.resetOffset();
+          }}
+        >
+          Roll 2d6${offset === 0 ? '' : html` <span class="dice-primary-mod">${formatMod(offset)}</span>`}
+        </button>
+        ${castCostlyExpr !== null
+          ? html`<button
+              type="button"
+              class="dice-primary-cast dice-primary-cast-costly"
+              title=${`Costly cast (2d6 + WIS ${formatMod(wis!)}${offset === 0 ? '' : ` + ${formatMod(offset)}`}; auto-marks 1 stress per rules.md)`}
+              aria-label=${`Cast Costly: roll ${castCostlyExpr}`}
+              @click=${() => {
+                this.onSubmitRoll?.(castCostlyExpr);
+                this.resetOffset();
+              }}
+            >
+              Cast (Costly)
+            </button>`
+          : nothing}
+        ${castHardExpr !== null
+          ? html`<button
+              type="button"
+              class="dice-primary-cast dice-primary-cast-hard"
+              title=${`Hard cast (2d6 + WIS ${formatMod(wis!)} − 2 penalty${offset === 0 ? '' : ` + ${formatMod(offset)}`}; auto-marks 2 stress per rules.md)`}
+              aria-label=${`Cast Hard: roll ${castHardExpr}`}
+              @click=${() => {
+                this.onSubmitRoll?.(castHardExpr);
+                this.resetOffset();
+              }}
+            >
+              Cast (Hard)
+            </button>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * M3D-4b: last-3 pills.  Compact glance-able row of the three
+   * most-recent rolls with tier coloring + doubles halo.  Lives
+   * above the form so a player can see "I just rolled" without
+   * scrolling the full history.
+   */
+  private renderRecentPills(): TemplateResult | typeof nothing {
+    if (this.entries.length === 0) return nothing;
+    const last3 = this.entries.slice(0, 3);
+    return html`
+      <ol class="dice-recent-pills" aria-label="Recent rolls">
+        ${last3.map((e) => {
+          const doublesClass =
+            e.doubles === 'snake-eyes'
+              ? ' roll-doubles-snake-eyes'
+              : e.doubles === 'box-cars'
+                ? ' roll-doubles-box-cars'
+                : '';
+          return html`<li
+            class="dice-recent-pill ${e.tierClass}${doublesClass}"
+            title=${e.label}
+          >
+            <code>${e.label}</code>
+          </li>`;
+        })}
+      </ol>
     `;
   }
 
