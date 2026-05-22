@@ -140,6 +140,34 @@ test.describe('M3b AI content safety — dual-card DOM separation', () => {
     }
   });
 
+  test('DM hotkeys (j/k/b/Cmd+Enter/quote) do NOT swallow keystrokes typed in the AI textarea', async ({
+    browser
+  }) => {
+    // Regression: window-level keydown handler retargets events
+    // crossing shadow boundaries to the shadow host (quire-app),
+    // so tagName !== 'TEXTAREA' from the handler's perspective
+    // and j/k/b/' would be eaten when the DM tries to type them
+    // into the AI prompt.  hotkeyTargetIsEditable now walks
+    // composedPath() + shadowRoot.activeElement to detect the
+    // real editable target.
+    const ctx = await browser.newContext();
+    try {
+      const host = await openCampaignPeer(ctx);
+      await hostSession(host, 'DM');
+      await setApiKey(host, 'sk-fake');
+      // Type a string containing every hotkey letter into the AI
+      // textarea.  All characters MUST appear in the value.
+      const probe = "DM hotkey probe: jkb' jkjk bbq Cmd-Enter";
+      const textarea = host.locator('ai-panel textarea').first();
+      await textarea.focus();
+      await host.keyboard.type(probe);
+      const got = await textarea.inputValue();
+      expect(got).toBe(probe);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('smuggled <dm-only> marker in safe text renders as literal text after sanitize', async ({
     browser
   }) => {

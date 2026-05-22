@@ -359,7 +359,7 @@ export class QuireApp extends LitElement {
    */
   private readonly hotkeyHandler = (e: KeyboardEvent): void => {
     if (!this.isCoordinator()) return;
-    if (this.hotkeyTargetIsEditable(e.target)) return;
+    if (this.hotkeyTargetIsEditable(e)) return;
     if (e.key === "'") {
       e.preventDefault();
       this.focusDmScratch();
@@ -389,14 +389,43 @@ export class QuireApp extends LitElement {
     }
   };
 
-  private hotkeyTargetIsEditable(target: EventTarget | null): boolean {
-    const el = target as Element | null;
-    const tag = el?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-    if (
-      el?.closest?.('[contenteditable=""], [contenteditable="true"]')
-    ) {
-      return true;
+  /**
+   * The keydown handler is attached to `window`, so events that
+   * originate inside a shadow root arrive RETARGETED to the shadow
+   * host — `event.target.tagName` reads as the host element
+   * (quire-app), not the focused INPUT/TEXTAREA inside.  Without
+   * walking `composedPath()`, a DM typing `j`/`k`/`b`/`'` into the
+   * AI prompt, chat input, scratch column, or any other in-shadow
+   * editable would have those keystrokes swallowed by the hotkey
+   * handler.  We probe BOTH the composedPath and the live
+   * `shadowRoot.activeElement` so the editable check works
+   * regardless of how the event was fired.
+   */
+  private hotkeyTargetIsEditable(event: KeyboardEvent): boolean {
+    const candidates: Element[] = [];
+    // composedPath() is the most accurate — gives every element
+    // from the actual focused leaf up through every shadow host
+    // to window.
+    for (const node of event.composedPath()) {
+      if (node instanceof Element) candidates.push(node);
+    }
+    // Also consider the actively-focused element, in case the
+    // keystroke was synthesized (programmatic dispatch) without a
+    // composedPath that reaches the leaf.
+    let active: Element | null = document.activeElement;
+    while (active) {
+      candidates.push(active);
+      const sr = (active as HTMLElement & { shadowRoot?: ShadowRoot | null })
+        .shadowRoot;
+      active = sr?.activeElement ?? null;
+    }
+    for (const el of candidates) {
+      const tag = el.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        return true;
+      }
+      const ce = el.getAttribute?.('contenteditable');
+      if (ce === '' || ce === 'true') return true;
     }
     return false;
   }
