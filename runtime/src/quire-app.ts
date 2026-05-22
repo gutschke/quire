@@ -74,8 +74,6 @@ import {
   STAT_MIN,
   STAT_MAX
 } from './character-edits';
-import { AnthropicProviderError } from './ai/providers/anthropic';
-import { GeminiProviderError } from './ai/providers/gemini';
 import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
 import {
   buildCampaignContext,
@@ -3004,16 +3002,12 @@ export class QuireApp extends LitElement {
       return result.safe;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
+      // Phase 3b-X: provider errors flow through AiBrokerError; the
+      // provider-specific error subclasses (AnthropicProviderError,
+      // GeminiProviderError) were retired alongside the legacy
+      // call()/parse() pair in step 9.
       if (e instanceof AiBrokerError) {
         this.aiError = e.message;
-      } else if (
-        e instanceof AnthropicProviderError ||
-        e instanceof GeminiProviderError
-      ) {
-        this.aiError =
-          e.status != null
-            ? `API ${e.status}: ${e.message}`
-            : e.message;
       } else {
         this.aiError = (e as Error).message ?? 'AI request failed.';
       }

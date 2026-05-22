@@ -8,11 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  AiBroker,
-  shimCallStructuredViaLegacy,
-  type AiProvider
-} from './broker';
+import { AiBroker, type AiProvider } from './broker';
 
 import type { AiAuditEntry } from '../core/state';
 
@@ -41,35 +37,39 @@ function makeBroker(
 
 const happyProvider: AiProvider = {
   id: 'claude',
-  call: async () => ({
-    raw: '{"safe":"Hello","dmOnly":"secret","sources":[]}',
-    tokensIn: 10,
-    tokensOut: 5,
-    responseId: 'resp-1'
-  }),
-  parse: (raw) => JSON.parse(raw),
-  callStructured: (req) => shimCallStructuredViaLegacy(happyProvider, req)
+  callStructured: async <T>() =>
+    ({
+      ok: true,
+      value: { safe: 'Hello', dmOnly: 'secret', sources: [] } as T,
+      raw: '{"safe":"Hello","dmOnly":"secret","sources":[]}',
+      tokensIn: 10,
+      tokensOut: 5,
+      responseId: 'resp-1'
+    } as const)
 };
 
 const malformedProvider: AiProvider = {
   id: 'claude',
-  call: async () => ({
+  callStructured: async () => ({
+    ok: false as const,
+    refusal: { kind: 'truncated' as const, message: 'simulated truncation' },
     raw: 'this is not JSON',
     tokensIn: 7,
     tokensOut: 3,
     responseId: 'resp-2'
-  }),
-  parse: () => null,
-  callStructured: (req) => shimCallStructuredViaLegacy(malformedProvider, req)
+  })
 };
 
 const networkErrorProvider: AiProvider = {
   id: 'claude',
-  call: async () => {
-    throw new Error('HTTP 500 from claude');
-  },
-  parse: () => null,
-  callStructured: (req) => shimCallStructuredViaLegacy(networkErrorProvider, req)
+  callStructured: async () => ({
+    ok: false as const,
+    refusal: { kind: 'provider-error' as const, message: 'HTTP 500 from claude' },
+    raw: '',
+    tokensIn: 0,
+    tokensOut: 0,
+    responseId: ''
+  })
 };
 
 describe('AiBroker.complete — guards', () => {
@@ -166,12 +166,11 @@ describe('AiBroker.complete — happy path', () => {
 });
 
 describe('AiBroker.complete — provider refusal → degraded response', () => {
-  it('returns a refusal-shaped AiResponse when callStructured cannot parse', async () => {
-    // Phase 3b-X step 8: callStructured is now the broker's path.
-    // The shim (used by this mock provider) maps a JSON.parse failure
-    // to `refusal.kind = 'truncated'`; broker.complete renders that
-    // as an empty `safe` + a `(AI truncated: ...)` dmOnly so the DM
-    // sees something concrete rather than a silent failure.
+  it('returns a refusal-shaped AiResponse when callStructured truncates', async () => {
+    // Phase 3b-X step 9: callStructured returns a typed refusal
+    // arm; broker.complete renders the non-provider-error kinds as
+    // empty `safe` + a `(AI <kind>: ...)` dmOnly so the DM sees
+    // something concrete and the audit chain still records it.
     const broker = makeBroker(malformedProvider);
     const r = await broker.complete({
       prompt: 'hi',
@@ -181,8 +180,6 @@ describe('AiBroker.complete — provider refusal → degraded response', () => {
     expect(r.safe).toBe('');
     expect(r.dmOnly).toMatch(/^\(AI truncated:/);
     expect(r.raw).toBe('this is not JSON');
-    // Tokens + responseId still come from the provider call result
-    // so the audit chain can still account for the failed exchange.
     expect(r.tokensIn).toBe(7);
     expect(r.tokensOut).toBe(3);
     expect(r.responseId).toBe('resp-2');

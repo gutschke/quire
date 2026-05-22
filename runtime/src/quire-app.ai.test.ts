@@ -8,11 +8,38 @@ import {
   InMemoryNetwork,
   InMemoryTransport
 } from './core/transports/in-memory';
-import {
-  shimCallStructuredViaLegacy,
-  type AiProvider,
-  type AiProviderCallRequest
-} from './ai/broker';
+import { type AiProviderStructuredResult } from './ai/broker';
+
+/**
+ * Phase 3b-X step 9: mock providers no longer have call()/parse() —
+ * callStructured is the sole interface.  These helpers build the
+ * typed result envelopes the tests need without repeating boilerplate.
+ */
+function structuredOk(
+  safe: string,
+  extras: { dmOnly?: string; tokensIn?: number; tokensOut?: number; responseId?: string } = {}
+): AiProviderStructuredResult<unknown> {
+  const value = { safe, dmOnly: extras.dmOnly ?? '', sources: [] };
+  return {
+    ok: true,
+    value,
+    raw: JSON.stringify(value),
+    tokensIn: extras.tokensIn ?? 0,
+    tokensOut: extras.tokensOut ?? 0,
+    responseId: extras.responseId ?? 'test-resp'
+  };
+}
+
+function structuredProviderError(message: string): AiProviderStructuredResult<unknown> {
+  return {
+    ok: false,
+    refusal: { kind: 'provider-error', message },
+    raw: '',
+    tokensIn: 0,
+    tokensOut: 0,
+    responseId: ''
+  };
+}
 
 function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
   return {
@@ -104,24 +131,7 @@ describe('QuireApp AI panel — submit flow', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockResolvedValue({
-          raw: JSON.stringify({
-            safe,
-            dmOnly: extras.dmOnly ?? '',
-            sources: []
-          }),
-          tokensIn: extras.tokensIn ?? 0,
-          tokensOut: extras.tokensOut ?? 0,
-          responseId: 'test-resp'
-        }),
-        parse: (raw: string) => {
-          try {
-            return JSON.parse(raw);
-          } catch {
-            return null;
-          }
-        },
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi.fn().mockResolvedValue(structuredOk(safe, extras))
       }
     };
   }
@@ -134,9 +144,7 @@ describe('QuireApp AI panel — submit flow', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockRejectedValue(err),
-        parse: () => null,
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi.fn().mockResolvedValue(structuredProviderError(err.message))
       }
     };
   }
@@ -170,27 +178,14 @@ describe('QuireApp AI panel — submit flow', () => {
     const app = mountApp();
     app.setAiApiKey('sk-test');
     let release: () => void = () => {};
-    const pending = new Promise<{
-      raw: string;
-      tokensIn: number;
-      tokensOut: number;
-      responseId: string;
-    }>((res) => {
-      release = () =>
-        res({
-          raw: JSON.stringify({ safe: 'late', dmOnly: '', sources: [] }),
-          tokensIn: 0,
-          tokensOut: 0,
-          responseId: 'late'
-        });
+    const pending = new Promise<AiProviderStructuredResult<unknown>>((res) => {
+      release = () => res(structuredOk('late', { responseId: 'late' }));
     });
     app.aiProviders = {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockReturnValue(pending),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi.fn().mockReturnValue(pending)
       }
     };
     const p = app.submitAiPrompt('hi');
@@ -213,14 +208,9 @@ describe('QuireApp AI panel — submit flow', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockResolvedValue({
-          raw: JSON.stringify({ safe: 'hi', dmOnly: '', sources: [] }),
-          tokensIn: 42,
-          tokensOut: 17,
-          responseId: 'r-1'
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi.fn().mockResolvedValue(
+          structuredOk('hi', { tokensIn: 42, tokensOut: 17, responseId: 'r-1' })
+        )
       }
     };
     await app.submitAiPrompt('hi');
@@ -259,14 +249,9 @@ describe('QuireApp AI panel — submit flow', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockResolvedValue({
-          raw: JSON.stringify({ safe: 'a', dmOnly: '', sources: [] }),
-          tokensIn: 0,
-          tokensOut: 0,
-          responseId: 'r-new'
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi.fn().mockResolvedValue(
+          structuredOk('a', { responseId: 'r-new' })
+        )
       }
     };
     app.acceptAiResponse('r-old');
@@ -356,40 +341,25 @@ describe('QuireApp AI panel — provider switching', () => {
 
   it('submitAiPrompt picks the provider matching aiProvider', async () => {
     const app = mountApp();
-    const stub = (safe: string) => ({
-      id: 'claude' as const,
-      call: vi.fn().mockResolvedValue({
-        raw: JSON.stringify({ safe, dmOnly: '', sources: [] }),
-        tokensIn: 0,
-        tokensOut: 0,
-        responseId: 'r'
-      }),
-      parse: (raw: string) => JSON.parse(raw),
-      callStructured(req: AiProviderCallRequest) {
-        return shimCallStructuredViaLegacy(this, req);
-      }
+    const stub = (safe: string, id: 'claude' | 'gemini') => ({
+      id,
+      callStructured: vi.fn().mockResolvedValue(structuredOk(safe, { responseId: 'r' }))
     });
-    const claudeStub = stub('claude says hi');
-    const geminiStub = { ...stub('gemini says hi'), id: 'gemini' as const };
-    // Cast: stub() returns a literal that's structurally compatible
-    // with AiProvider but TS can't infer the generic on
-    // callStructured from a non-AiProvider-typed literal.
-    app.aiProviders = {
-      claude: claudeStub as unknown as AiProvider,
-      gemini: geminiStub as unknown as AiProvider
-    };
+    const claudeStub = stub('claude says hi', 'claude');
+    const geminiStub = stub('gemini says hi', 'gemini');
+    app.aiProviders = { claude: claudeStub, gemini: geminiStub };
     app.setAiApiKey('sk-claude', 'claude');
     app.setAiApiKey('AIza', 'gemini');
 
     app.setAiProvider('claude');
     await app.submitAiPrompt('hello');
-    expect(claudeStub.call).toHaveBeenCalled();
-    expect(geminiStub.call).not.toHaveBeenCalled();
+    expect(claudeStub.callStructured).toHaveBeenCalled();
+    expect(geminiStub.callStructured).not.toHaveBeenCalled();
     expect(app.aiResponse).toBe('claude says hi');
 
     app.setAiProvider('gemini');
     await app.submitAiPrompt('hello again');
-    expect(geminiStub.call).toHaveBeenCalled();
+    expect(geminiStub.callStructured).toHaveBeenCalled();
     expect(app.aiResponse).toBe('gemini says hi');
   });
 
@@ -425,17 +395,10 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+        callStructured: vi.fn().mockImplementation((req: { prompt: string }) => {
           receivedPrompt = req.prompt;
-          return Promise.resolve({
-            raw: JSON.stringify({ safe: 'ok', dmOnly: '', sources: [] }),
-            tokensIn: 0,
-            tokensOut: 0,
-            responseId: 'r'
-          });
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+          return Promise.resolve(structuredOk('ok', { responseId: 'r' }));
+        })
       }
     };
     await app.submitAiPrompt('hello, no context');
@@ -492,17 +455,10 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+        callStructured: vi.fn().mockImplementation((req: { prompt: string }) => {
           receivedPrompt = req.prompt;
-          return Promise.resolve({
-            raw: JSON.stringify({ safe: 'ok', dmOnly: '', sources: [] }),
-            tokensIn: 0,
-            tokensOut: 0,
-            responseId: 'r'
-          });
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+          return Promise.resolve(structuredOk('ok', { responseId: 'r' }));
+        })
       }
     };
     await app.submitAiPrompt('what happens in scene 1?');
@@ -559,17 +515,18 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockImplementation((req: { prompt: string }) => {
+        callStructured: vi.fn().mockImplementation((req: { prompt: string }) => {
           receivedPrompt = req.prompt;
+          // dm-scope test wants `dmOnly` populated and `safe` empty.
           return Promise.resolve({
+            ok: true,
+            value: { safe: '', dmOnly: 'ok', sources: [] },
             raw: JSON.stringify({ safe: '', dmOnly: 'ok', sources: [] }),
             tokensIn: 0,
             tokensOut: 0,
             responseId: 'r'
-          });
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+          } satisfies AiProviderStructuredResult<unknown>);
+        })
       }
     };
     await app.submitAiPrompt('where is the cable?');
@@ -594,18 +551,11 @@ describe('QuireApp AI share-to-chat', () => {
       ...app.aiProviders,
       claude: {
         id: 'claude',
-        call: vi.fn().mockResolvedValue({
-          raw: JSON.stringify({
-            safe: 'the cabin smells like sleep.',
-            dmOnly: '',
-            sources: []
-          }),
-          tokensIn: 0,
-          tokensOut: 0,
-          responseId: 'r'
-        }),
-        parse: (raw: string) => JSON.parse(raw),
-        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
+        callStructured: vi
+          .fn()
+          .mockResolvedValue(
+            structuredOk('the cabin smells like sleep.', { responseId: 'r' })
+          )
       }
     };
     app.startHosting();

@@ -1,12 +1,19 @@
 /**
- * AiBroker — the single AI surface the UI calls (M3b.2, P2-6).
+ * AiBroker — the single AI surface the UI calls.
  *
- * Wraps the existing `callAnthropic` / `callGemini` text-in/text-out
- * functions with the AiResponse contract.  Provider impls (Anthropic
- * tool_use, Gemini response schema) parse to `{safe, dmOnly, sources}`;
- * the broker normalizes both, validates with `isAiResponse`, and
- * falls back to `parseFailureResponse(rawText)` if parsing fails
- * — never throws on a model-side parse error.
+ * Routes through provider-side constrained decoding (Phase 3b-X):
+ * the broker hands a JSON Schema to `provider.callStructured<T>`,
+ * which uses Anthropic strict tool use or Gemini responseSchema to
+ * coerce the model's decoder into emitting a schema-conforming
+ * payload.  The broker gets a typed parsed value (or a typed
+ * refusal arm) back — no regex extraction, no JSON.parse on prose.
+ *
+ * Refusal handling:
+ *   - `provider-error` (HTTP / network / SDK failure) throws as
+ *     AiBrokerError so the UI surfaces an error banner.
+ *   - `safety` / `model-unsupported` / `truncated` return a
+ *     degraded AiResponse (empty safe + "(AI <kind>: <msg>)"
+ *     dmOnly) so the audit chain still records the exchange.
  *
  * Coord-only enforcement (audit chain invariant): only the
  * currently-acting coordinator may call `complete()`.  A peer who
@@ -22,55 +29,31 @@ import { AI_RESPONSE_CALL_SCHEMA } from './schema-json';
 import type { AiAuditEntry } from '../core/state';
 
 /**
- * The shape an HTTP-callable provider impl must satisfy.  Returns
- * the raw provider text (or stringified JSON) so the broker can
- * audit it verbatim; parsing happens via the provider's `parse`.
+ * The shape an HTTP-callable provider impl must satisfy.  Drives
+ * provider-side constrained decoding (Anthropic strict tool use,
+ * Gemini responseSchema) — the caller hands over a JSON Schema and
+ * gets a typed parsed value back, or a typed refusal arm if the
+ * provider declined to emit a payload.
  */
 export interface AiProvider {
   /** Provider id, e.g. 'claude' or 'gemini' — for audit + UI. */
   id: 'claude' | 'gemini';
   /**
-   * Issue a structured request; return raw text + token counts.
-   *
-   * @deprecated Phase 3b-X: prefer `callStructured<T>` — constrained-
-   * decoding APIs (Anthropic strict tool use, Gemini responseSchema)
-   * eliminate the "AI returned prose I expected as JSON" failure
-   * mode that this method's downstream regex-extraction tries to
-   * paper over.  Will be removed in 3b-X step 9 after all callers
-   * migrate.
-   */
-  call(req: AiProviderCallRequest): Promise<AiProviderCallResult>;
-  /**
-   * Parse provider raw response to (best-effort) AiResponse shape.
-   *
-   * @deprecated Phase 3b-X: callStructured<T> returns typed parsed
-   * objects directly; this best-effort parser becomes redundant.
-   */
-  parse(raw: string): Partial<AiResponse> | null;
-  /**
-   * Phase 3b-X step 1 (seam): issue a constrained-decoding request
-   * and return the already-parsed typed object.  Provider-side
-   * structured-output APIs (Anthropic strict tool use; Gemini
-   * responseSchema) enforce the schema at decoding time — the
-   * caller gets a typed value or a typed refusal, never prose that
-   * needs regex-extraction.
-   *
-   * Default implementation in step 1 SHIMS to the legacy `call()` +
-   * `parse()` pair so the seam exists without behavior change;
-   * steps 3-4 (Anthropic) and 4 (Gemini) replace the shim with
-   * real constrained decoding.  Steps 5 + 8 migrate the chargen
-   * synthesizer + the DM-aide broker over.  Step 9 deletes the
-   * legacy pair.
+   * Issue a constrained-decoding request and return the already-
+   * parsed typed object.  Provider-side structured-output APIs
+   * enforce the schema at decoding time — the caller gets a typed
+   * value or a typed refusal, never prose that needs regex-
+   * extraction.
    *
    * @param req — the call envelope (apiKey, model, prompts, abort
-   *   signal) — same shape as `call()`.
+   *   signal).
    * @param schema — JSON Schema describing the expected output;
    *   provided by the caller from `src/ai/schema-json.ts`.
    * @returns the typed parsed value (on success) OR a typed
    *   refusal arm (when the provider declined to emit a payload).
    *   `raw` carries the serialized JSON (or the refusal message)
    *   for audit-log purposes.  `tokensIn`/`tokensOut`/`responseId`
-   *   carry the same metering as `call()`.
+   *   carry per-exchange metering.
    */
   callStructured<T>(
     req: AiProviderCallRequest,
@@ -84,14 +67,6 @@ export interface AiProviderCallRequest {
   systemPrompt: string;
   prompt: string;
   signal?: AbortSignal;
-}
-
-export interface AiProviderCallResult {
-  /** Raw response text or stringified-JSON tool output. */
-  raw: string;
-  tokensIn: number;
-  tokensOut: number;
-  responseId: string;
 }
 
 /**
@@ -127,65 +102,6 @@ export interface AiStructuredCallSchema {
  * STABLE CONTRACT discipline — additive new variants are safe;
  * removing/renaming is breaking.
  */
-/**
- * Phase 3b-X step 1: shared shim that delegates to the legacy
- * `call()` + a JSON.parse pass.  Steps 3 / 4 / 8 replace this with
- * real constrained decoding in each provider; until then, this
- * lets the new `callStructured<T>` seam exist without behavior
- * change.  Also reused by test-mock providers so the mocks don't
- * each re-implement the shim.
- */
-export async function shimCallStructuredViaLegacy<T>(
-  provider: AiProvider,
-  req: AiProviderCallRequest
-): Promise<AiProviderStructuredResult<T>> {
-  let result: AiProviderCallResult;
-  try {
-    result = await provider.call(req);
-  } catch (e) {
-    // AbortError must propagate up — the synthesizer's outer try/
-    // catch checks `(e as Error).name === 'AbortError'` to set
-    // `code: 'aborted'`.  If the shim swallows it as a refusal,
-    // cancellation looks like a network failure.
-    if ((e as Error).name === 'AbortError') throw e;
-    return {
-      ok: false,
-      refusal: {
-        kind: 'provider-error',
-        message: (e as Error).message
-      },
-      raw: '',
-      tokensIn: 0,
-      tokensOut: 0,
-      responseId: ''
-    };
-  }
-  try {
-    const value = JSON.parse(result.raw) as T;
-    return {
-      ok: true,
-      value,
-      raw: result.raw,
-      tokensIn: result.tokensIn,
-      tokensOut: result.tokensOut,
-      responseId: result.responseId
-    };
-  } catch {
-    return {
-      ok: false,
-      refusal: {
-        kind: 'truncated',
-        message:
-          'Provider returned unparseable text; shim cannot recover.  Constrained decoding (steps 3/4) replaces this path.'
-      },
-      raw: result.raw,
-      tokensIn: result.tokensIn,
-      tokensOut: result.tokensOut,
-      responseId: result.responseId
-    };
-  }
-}
-
 export type AiProviderStructuredResult<T> =
   | {
       ok: true;

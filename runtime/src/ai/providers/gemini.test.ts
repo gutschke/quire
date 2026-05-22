@@ -1,47 +1,15 @@
 /**
- * Gemini provider parser tests (M3b.2).
+ * Gemini provider tests.
  *
- * Same contract as anthropicProvider.parse: well-formed JSON →
- * Partial<AiResponse>; everything else → null.
+ * Phase 3b-X step 9 deleted the legacy `parse()` method (along
+ * with `call()`); coverage now centers on the `callStructured`
+ * responseSchema path.  Schema-level shape enforcement lives in
+ * `src/ai/schema-json.test.ts`; this file exercises wire shape +
+ * refusal handling + error mapping.
  */
 
 import { describe, it, expect } from 'vitest';
 import { geminiProvider } from './gemini';
-
-describe('geminiProvider.parse', () => {
-  it('parses a well-formed JSON response', () => {
-    const raw = JSON.stringify({
-      safe: 'Hello',
-      dmOnly: 'spoiler',
-      sources: [{ label: 'src' }]
-    });
-    expect(geminiProvider.parse(raw)).toEqual({
-      safe: 'Hello',
-      dmOnly: 'spoiler',
-      sources: [{ label: 'src' }]
-    });
-  });
-
-  it('returns null for empty input', () => {
-    expect(geminiProvider.parse('')).toBeNull();
-  });
-
-  it('returns null for non-JSON', () => {
-    expect(geminiProvider.parse('plain prose')).toBeNull();
-  });
-
-  it('returns null when fields are missing or wrong-typed', () => {
-    expect(geminiProvider.parse(JSON.stringify({ safe: 'x' }))).toBeNull();
-    expect(
-      geminiProvider.parse(JSON.stringify({ safe: 1, dmOnly: '', sources: [] }))
-    ).toBeNull();
-    expect(
-      geminiProvider.parse(
-        JSON.stringify({ safe: 'x', dmOnly: '', sources: {} })
-      )
-    ).toBeNull();
-  });
-});
 
 // Phase 3b-X step 4: responseSchema callStructured tests.
 

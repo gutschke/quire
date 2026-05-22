@@ -1,99 +1,31 @@
 /**
- * Gemini provider impl for AiBroker (M3b.2).
+ * Gemini provider impl for AiBroker.
  *
- * Uses Gemini's `generationConfig.responseSchema` to coerce
- * structured `{safe, dmOnly, sources}` output.  Per redesign-plan.md
- * L159: Gemini structured output doesn't support oneOf/anyOf for
- * the root, so AiResponse maps cleanly (every field has a single
- * type).
+ * Uses Gemini's `generationConfig.responseSchema` for provider-side
+ * constrained decoding (Phase 3b-X): the caller hands in a JSON
+ * Schema via `callStructured`, and Gemini emits a JSON payload
+ * matching it.  Returns a typed parsed value directly — refusals
+ * (safety / model-unsupported / truncated) surface as typed
+ * `refusal` arms instead of throwing.
  *
- * Gemini quirks (preserved from src/ai/gemini.ts):
+ * Gemini quirks:
  *   - safety filters return 200 OK with empty candidates +
- *     finishReason of SAFETY / RECITATION / OTHER → treated as
- *     declined response.
+ *     finishReason of SAFETY / RECITATION / OTHER.
  *   - prompt-level blocks land in promptFeedback.blockReason.
+ *   - schema dialect follows OpenAPI 3.0 (no $ref, no additional-
+ *     Properties, no oneOf at depth) — `toGeminiSchema` translates.
  *
- * Both shapes flow through to the broker as a parse failure (raw
- * text empty → broker degrades to parseFailureResponse).
+ * Step 9 (this commit) deleted the legacy `call()` / `parse()`
+ * pair; everything routes through `callStructured` now.
  */
 
 import type {
   AiProvider,
   AiProviderCallRequest,
-  AiProviderCallResult,
   AiProviderStructuredResult,
   AiStructuredCallSchema
 } from '../broker';
-import type { AiResponse } from '../schema';
 import { toGeminiSchema } from '../schema-json';
-
-const AI_RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    safe: { type: 'string' },
-    dmOnly: { type: 'string' },
-    sources: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          label: { type: 'string' },
-          path: { type: 'string' }
-        },
-        required: ['label']
-      }
-    },
-    // M3c.2: optional stateUpdates.  Gemini's responseSchema
-    // doesn't support oneOf for items, so we flatten — all fields
-    // are optional and the client-side validator (isStateUpdate)
-    // enforces the discriminated-union semantics per kind.
-    stateUpdates: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          kind: {
-            type: 'string',
-            enum: ['pc-edit', 'dice-roll', 'caster-state-set']
-          },
-          pcId: { type: 'string' },
-          field: { type: 'string', enum: ['harm', 'stress'] },
-          delta: { type: 'integer' },
-          reason: { type: 'string' },
-          purpose: { type: 'string' },
-          expression: { type: 'string' },
-          modifierBreakdown: { type: 'string' },
-          ladderState: {
-            type: 'string',
-            enum: [
-              'clear',
-              'quiet',
-              'noticed',
-              'watched',
-              'pushing-back',
-              'hunted'
-            ]
-          },
-          taxActive: { type: 'boolean' },
-          spamCount: { type: 'integer' }
-        },
-        required: ['kind']
-      }
-    }
-  },
-  required: ['safe', 'dmOnly', 'sources']
-};
-
-export class GeminiProviderError extends Error {
-  override readonly name = 'GeminiProviderError';
-  constructor(
-    message: string,
-    public readonly status?: number,
-    public readonly details?: string
-  ) {
-    super(message);
-  }
-}
 
 function endpointFor(model: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
@@ -103,103 +35,6 @@ function endpointFor(model: string): string {
 
 export const geminiProvider: AiProvider = {
   id: 'gemini',
-  async call(req: AiProviderCallRequest): Promise<AiProviderCallResult> {
-    if (!req.prompt.trim()) {
-      throw new GeminiProviderError('Empty prompt.');
-    }
-    const body: Record<string, unknown> = {
-      contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 1024,
-        responseMimeType: 'application/json',
-        responseSchema: AI_RESPONSE_SCHEMA
-      }
-    };
-    if (req.systemPrompt) {
-      body.systemInstruction = { parts: [{ text: req.systemPrompt }] };
-    }
-    let response: Response;
-    try {
-      response = await fetch(endpointFor(req.model), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-goog-api-key': req.apiKey
-        },
-        body: JSON.stringify(body),
-        signal: req.signal
-      });
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') throw e;
-      throw new GeminiProviderError(
-        'Network error contacting Gemini API.',
-        undefined,
-        (e as Error).message
-      );
-    }
-    if (!response.ok) {
-      let detail: string | undefined;
-      try {
-        detail = (await response.text()).slice(0, 500);
-      } catch {
-        /* ignore */
-      }
-      throw new GeminiProviderError(
-        `Gemini API returned ${response.status}.`,
-        response.status,
-        detail
-      );
-    }
-    let json: unknown;
-    try {
-      json = await response.json();
-    } catch (e) {
-      throw new GeminiProviderError(
-        'Gemini API returned non-JSON.',
-        response.status,
-        (e as Error).message
-      );
-    }
-    const blockReason = extractBlockReason(json);
-    if (blockReason) {
-      throw new GeminiProviderError(
-        `Gemini declined to respond (${blockReason}).`,
-        response.status
-      );
-    }
-    const raw = extractRawText(json);
-    const usage = extractUsage(json);
-    const responseId = extractResponseId(json);
-    return {
-      raw,
-      tokensIn: usage.tokensIn,
-      tokensOut: usage.tokensOut,
-      responseId
-    };
-  },
-  parse(raw: string): Partial<AiResponse> | null {
-    if (!raw) return null;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-    if (!parsed || typeof parsed !== 'object') return null;
-    const p = parsed as Record<string, unknown>;
-    if (typeof p.safe !== 'string') return null;
-    if (typeof p.dmOnly !== 'string') return null;
-    if (!Array.isArray(p.sources)) return null;
-    const stateUpdates = Array.isArray(p.stateUpdates)
-      ? (p.stateUpdates as Array<Record<string, unknown>>)
-      : undefined;
-    return {
-      safe: p.safe,
-      dmOnly: p.dmOnly,
-      sources: p.sources as Array<{ label: string; path?: string }>,
-      ...(stateUpdates !== undefined && { stateUpdates: stateUpdates as never })
-    };
-  },
   /**
    * Phase 3b-X step 4: Gemini responseSchema for constrained
    * decoding.  Sends `responseMimeType: 'application/json'` plus

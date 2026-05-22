@@ -7,11 +7,7 @@ import {
   synthesizeBackstory,
   type SynthesizeBackstoryRequest
 } from './backstory-synthesizer';
-import {
-  shimCallStructuredViaLegacy,
-  type AiProvider,
-  type AiProviderCallResult
-} from './broker';
+import { type AiProvider } from './broker';
 import type { CampaignCharCreationQuestion } from '../campaign-loader';
 
 function sa(id: string, prompt: string): CampaignCharCreationQuestion {
@@ -20,9 +16,12 @@ function sa(id: string, prompt: string): CampaignCharCreationQuestion {
 
 /**
  * Build a mock provider that returns each of the given raw
- * responses in order.  `calls` array captures every request the
- * synthesizer made so tests can assert on retry behavior + prompt
- * contents.
+ * responses in order.  Each raw is parsed as JSON for the
+ * `value` field of the structured result; if parsing fails, the
+ * mock surfaces it as a `truncated` refusal (matching production
+ * behavior for malformed payloads under constrained decoding).
+ * `calls` array captures every request the synthesizer made so
+ * tests can assert on retry behavior + prompt contents.
  */
 function mockProvider(rawResponses: string[]): {
   provider: AiProvider;
@@ -32,18 +31,26 @@ function mockProvider(rawResponses: string[]): {
   const calls: Array<{ system: string; user: string }> = [];
   const provider: AiProvider = {
     id: 'claude',
-    call: vi.fn(async (req): Promise<AiProviderCallResult> => {
+    callStructured: vi.fn(async <T>(req: { systemPrompt: string; prompt: string }) => {
       calls.push({ system: req.systemPrompt, user: req.prompt });
       const raw = rawResponses[i++] ?? rawResponses[rawResponses.length - 1];
-      return {
-        raw,
+      const meta = {
         tokensIn: 100,
         tokensOut: 200,
         responseId: `mock-${i}`
       };
-    }),
-    parse: () => null,
-    callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
+      try {
+        const value = JSON.parse(raw) as T;
+        return { ok: true as const, value, raw, ...meta };
+      } catch {
+        return {
+          ok: false as const,
+          refusal: { kind: 'truncated' as const, message: 'mock: unparseable raw' },
+          raw,
+          ...meta
+        };
+      }
+    }) as AiProvider['callStructured']
   };
   return { provider, calls };
 }
@@ -308,14 +315,21 @@ describe('synthesizeBackstory — validation failure', () => {
 });
 
 describe('synthesizeBackstory — provider errors', () => {
-  it('returns provider-error on a thrown call', async () => {
+  it('returns provider-error when callStructured surfaces a network failure', async () => {
+    // Phase 3b-X step 9: callStructured surfaces provider HTTP /
+    // network failures as a refusal arm with `kind: 'provider-error'`.
+    // The synthesizer maps that to its own `code: 'provider-error'`
+    // (additive — same code, different upstream path).
     const provider: AiProvider = {
       id: 'claude',
-      call: vi.fn(async () => {
-        throw new Error('network down');
-      }),
-      parse: () => null,
-      callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
+      callStructured: vi.fn(async () => ({
+        ok: false as const,
+        refusal: { kind: 'provider-error' as const, message: 'network down' },
+        raw: '',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: ''
+      })) as AiProvider['callStructured']
     };
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);
@@ -325,16 +339,14 @@ describe('synthesizeBackstory — provider errors', () => {
     }
   });
 
-  it('returns aborted on AbortError', async () => {
+  it('returns aborted when callStructured throws AbortError', async () => {
     const provider: AiProvider = {
       id: 'claude',
-      call: vi.fn(async () => {
+      callStructured: vi.fn(async () => {
         const e = new Error('Aborted');
         e.name = 'AbortError';
         throw e;
-      }),
-      parse: () => null,
-      callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
+      }) as AiProvider['callStructured']
     };
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);
