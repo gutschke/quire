@@ -229,6 +229,49 @@ describe('ChargenController — synthesizeForSlot wiring', () => {
   });
 });
 
+describe('ChargenController — loadPersistedAnswers (P3T-16)', () => {
+  beforeEach(() => {
+    if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  it('returns null when no chargen state exists for the slot', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.loadPersistedAnswers(1)).toBeNull();
+  });
+
+  it('returns null when no campaign is loaded', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(undefined));
+    expect(ctrl.loadPersistedAnswers(1)).toBeNull();
+  });
+
+  it('returns null for out-of-range slot', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.loadPersistedAnswers(0)).toBeNull();
+    expect(ctrl.loadPersistedAnswers(10)).toBeNull();
+    expect(ctrl.loadPersistedAnswers(1.5)).toBeNull();
+  });
+
+  it('returns the saved answers when chargen state exists', () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: {
+        archetype: 'hacker',
+        'intent-moment': 'I held the line.'
+      }
+    });
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const answers = ctrl.loadPersistedAnswers(1);
+    expect(answers).toEqual({
+      archetype: 'hacker',
+      'intent-moment': 'I held the line.'
+    });
+  });
+});
+
 describe('ChargenController — displayNameForBound (P3U-12)', () => {
   beforeEach(() => {
     if (typeof localStorage !== 'undefined') localStorage.clear();

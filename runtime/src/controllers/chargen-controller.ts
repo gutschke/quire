@@ -253,6 +253,27 @@ export class ChargenController implements ReactiveController {
     return [...slots].sort((a, b) => a - b);
   }
 
+  /**
+   * P3T-16: return the saved short-answer-key answers for a slot,
+   * read from localStorage on demand.  Returns null when no
+   * chargen state exists yet (player hasn't reached the chargen
+   * flow or the data lives on a different device).  Used by the
+   * DM-review SA-vs-backstory diff to render the player's answers
+   * alongside the synthesized backstory.
+   *
+   * Reads localStorage on every call — cheap (small JSON parse) and
+   * keeps the call site simple.  Future caching can land if the
+   * cost ever shows up.
+   */
+  loadPersistedAnswers(slot: number): CharCreationAnswers | null {
+    const campaign = this.env.getCurrentCampaign();
+    if (!campaign) return null;
+    if (!Number.isInteger(slot) || slot < 1 || slot > 9) return null;
+    const slug = this.env.getCampaignSlug(campaign);
+    const persisted = loadChargenState(slug, slot);
+    return persisted?.answers ?? null;
+  }
+
   // ---- write accessors (step 4 wires accept/revise; step 1 stubs them out) ----
 
   /**

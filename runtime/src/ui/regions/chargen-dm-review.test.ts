@@ -357,6 +357,184 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 });
 
+describe('<chargen-dm-review> — full review card (Step 5)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders stats grid + skill chips + tag chips on an ok result', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    expect(el.querySelectorAll('.chargen-dm-review-stat-cell').length).toBe(6);
+    const skills = el.querySelectorAll('.chargen-dm-review-chip-skill');
+    expect(skills.length).toBe(2);
+    expect(skills[0].textContent).toBe('Tech');
+    expect(skills[1].textContent).toBe('Knowledge');
+    const tags = el.querySelectorAll(
+      '.chargen-dm-review-tags .chargen-dm-review-chip'
+    );
+    expect(tags.length).toBe(3);
+  });
+
+  it('formats stat modifiers with signs (+2, +0, etc.)', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, okResult()]]);
+    await el.updateComplete;
+    const mods = Array.from(
+      el.querySelectorAll('.chargen-dm-review-stat-mod')
+    ).map((n) => n.textContent);
+    // Default okResult stats: STR 0 DEX 1 CON 1 INT 2 WIS 1 CHA 0.
+    expect(mods).toEqual(['+0', '+1', '+1', '+2', '+1', '+0']);
+  });
+
+  it('renders the warning list inline when warnings are present', async () => {
+    const r: SynthesizeBackstoryResult = {
+      ...okResult(),
+      warnings: [
+        {
+          severity: 'warning',
+          code: 'tags-too-many',
+          message: 'too many tags'
+        },
+        {
+          severity: 'warning',
+          code: 'place-token-missing',
+          message: 'no Bay Area place'
+        }
+      ]
+    } as SynthesizeBackstoryResult;
+    const el = mount();
+    el.synthResults = new Map([[1, r]]);
+    await el.updateComplete;
+    const items = el.querySelectorAll('.chargen-dm-review-warning-list li');
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toMatch(/tags-too-many/);
+    expect(items[1].textContent).toMatch(/no Bay Area place/);
+  });
+
+  it('expands and collapses the review on the toggle button', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.answersLookup = () => ({
+      'intent-moment': 'I held the line when my dad lost his job.',
+      'meaningful-item':
+        "My dad's old leather wallet from his time in Taipei.",
+      'prior-connection': 'work',
+      'flight-reason': 'work'
+    });
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-diff')).not.toBeNull();
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
+  });
+
+  it('renders SA answers on the left and backstory on the right when expanded', async () => {
+    const el = mount();
+    el.synthResults = new Map([
+      [
+        1,
+        {
+          ...okResult(),
+          response: {
+            ...okResult().response!,
+            backstory: 'Mei worked at the Marina.\n\nShe held the line.'
+          }
+        } as SynthesizeBackstoryResult
+      ]
+    ]);
+    el.answersLookup = () => ({
+      'intent-moment': 'I held the line when my dad lost his job.',
+      'meaningful-item': "My dad's leather wallet from Taipei.",
+      'prior-connection': 'work',
+      'flight-reason': 'work'
+    });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    const answers = el.querySelector('.chargen-dm-review-diff-answers');
+    const backstory = el.querySelector('.chargen-dm-review-diff-backstory');
+    expect(answers?.textContent).toMatch(/held the line/);
+    expect(backstory?.textContent).toMatch(/Marina/);
+    expect(backstory?.textContent).toMatch(/held the line/);
+  });
+
+  it('highlights anchor phrases inside the backstory body', async () => {
+    const el = mount();
+    el.synthResults = new Map([
+      [
+        1,
+        {
+          ...okResult(),
+          response: {
+            ...okResult().response!,
+            backstory: 'She walked the Marina at dusk.'
+          }
+        } as SynthesizeBackstoryResult
+      ]
+    ]);
+    el.answersLookup = () => ({
+      'intent-moment': 'I learned to hold a line at the marina.',
+      'meaningful-item': 'a marina pass',
+      'prior-connection': 'none',
+      'flight-reason': 'work'
+    });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    const marks = el.querySelectorAll('.chargen-dm-review-mark');
+    expect(marks.length).toBeGreaterThan(0);
+    expect([...marks].some((m) => /marina/i.test(m.textContent ?? ''))).toBe(
+      true
+    );
+  });
+
+  it('shows "no saved answers" copy when answersLookup returns null', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.answersLookup = () => null;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    const answers = el.querySelector('.chargen-dm-review-diff-answers');
+    expect(answers?.textContent).toMatch(/No saved answers/);
+  });
+
+  it('P3T-16: Lit auto-escapes hostile content from player answers + backstory', async () => {
+    const el = mount();
+    el.synthResults = new Map([
+      [
+        1,
+        {
+          ...okResult(),
+          response: {
+            ...okResult().response!,
+            backstory: 'A line <script>alert(1)</script> here.'
+          }
+        } as SynthesizeBackstoryResult
+      ]
+    ]);
+    el.answersLookup = () => ({
+      'intent-moment': '<img onerror=alert(1) src=x>',
+      'meaningful-item': 'item',
+      'prior-connection': 'none',
+      'flight-reason': 'work'
+    });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    // Auto-escape means no real <script> / <img> nodes get created.
+    expect(el.querySelector('script')).toBeNull();
+    expect(el.querySelector('img')).toBeNull();
+  });
+});
+
 describe('<chargen-dm-review> — clipboard copy', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

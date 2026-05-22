@@ -53,6 +53,12 @@ export type DisplayNameLookup = (pcId: string) => string | null;
 export type AcceptCallback = (slot: number) => void;
 /** P3T-19: DM asks the player to revise. */
 export type ReviseCallback = (slot: number, reason: string) => void;
+/**
+ * P3T-16: load the player's saved chargen answers for a slot.
+ * Used by the SA-vs-backstory diff view.  Returns null when no
+ * answers are saved on this device.
+ */
+export type AnswersLookup = (slot: number) => Record<string, string> | null;
 
 @customElement('chargen-dm-review')
 export class ChargenDmReview extends LitElement {
@@ -103,6 +109,22 @@ export class ChargenDmReview extends LitElement {
 
   /** P3T-19 revise.  Host wires to controller.requestReviseSlot. */
   @property({ attribute: false }) onRevise: ReviseCallback | null = null;
+
+  /**
+   * P3T-16: lookup for the player's saved short-answer answers.
+   * Host wires to ChargenController.loadPersistedAnswers.  Used by
+   * the SA-vs-backstory diff view inside each ok result card.
+   */
+  @property({ attribute: false })
+  answersLookup: AnswersLookup | null = null;
+
+  /**
+   * Per-seat "expand the full review" toggle.  Lives on the region
+   * (not the controller) because it's purely UI state — the DM
+   * expanding a card to inspect the stats grid + diff doesn't need
+   * to propagate to other peers.
+   */
+  @state() private expandedSeats: Set<number> = new Set();
 
   /**
    * Generate an invite URL for a slot.  Host wires to
@@ -272,18 +294,26 @@ export class ChargenDmReview extends LitElement {
       const r = synth.response;
       const warningCount = synth.warnings.length;
       const accepted = this.acceptedSlots.has(slot);
+      const expanded = this.expandedSeats.has(slot);
       return html`
         <div class="chargen-dm-review-synth chargen-dm-review-synth-ok">
           <div class="chargen-dm-review-synth-name">
             ✓ <strong>${r.name}</strong>
             <span class="muted">— ${r.pronouns}</span>
           </div>
+          ${this.renderTagChips(r.tags)}
+          ${this.renderStatGrid(r.stats)}
+          ${this.renderSkillChips(r.skillMastery)}
           ${warningCount > 0
             ? html`<div class="chargen-dm-review-synth-warnings">
                 ${warningCount} validator warning${warningCount === 1
                   ? ''
-                  : 's'}
-                — review carefully.
+                  : 's'} — review carefully.
+                <ul class="chargen-dm-review-warning-list">
+                  ${synth.warnings.map(
+                    (w) => html`<li><code>${w.code}</code>: ${w.message}</li>`
+                  )}
+                </ul>
               </div>`
             : nothing}
           ${accepted
@@ -291,6 +321,15 @@ export class ChargenDmReview extends LitElement {
                 Accepted by DM.
               </div>`
             : nothing}
+          <button
+            type="button"
+            class="chargen-dm-review-expand"
+            aria-expanded=${expanded ? 'true' : 'false'}
+            @click=${() => this.toggleExpand(slot)}
+          >
+            ${expanded ? 'Hide review' : 'Review backstory + answers'}
+          </button>
+          ${expanded ? this.renderExpandedDiff(slot, r.backstory) : nothing}
           ${this.renderAcceptReviseActions(slot, accepted)}
         </div>
       `;
@@ -349,6 +388,231 @@ export class ChargenDmReview extends LitElement {
           : nothing}
       </div>
     `;
+  }
+
+  private toggleExpand(slot: number): void {
+    const next = new Set(this.expandedSeats);
+    if (next.has(slot)) next.delete(slot);
+    else next.add(slot);
+    this.expandedSeats = next;
+  }
+
+  // ---- Step 5: full review card pieces ----
+
+  /** Tags chips — 3-5 free-text expertise items from the response. */
+  private renderTagChips(tags: readonly string[]): TemplateResult {
+    return html`
+      <div
+        class="chargen-dm-review-chips chargen-dm-review-tags"
+        aria-label="Tags"
+      >
+        ${tags.map(
+          (t) => html`<span class="chargen-dm-review-chip">${t}</span>`
+        )}
+      </div>
+    `;
+  }
+
+  /** Stats grid — 6 quire-v0.1 stats laid out as label + signed modifier. */
+  private renderStatGrid(stats: {
+    STR: number;
+    DEX: number;
+    CON: number;
+    INT: number;
+    WIS: number;
+    CHA: number;
+  }): TemplateResult {
+    const fmt = (n: number): string => (n >= 0 ? `+${n}` : `${n}`);
+    const cell = (
+      label: string,
+      key: keyof typeof stats
+    ): TemplateResult => html`
+      <div class="chargen-dm-review-stat-cell">
+        <span class="chargen-dm-review-stat-label">${label}</span>
+        <span class="chargen-dm-review-stat-mod">${fmt(stats[key])}</span>
+      </div>
+    `;
+    return html`
+      <div class="chargen-dm-review-stat-grid" aria-label="Starting stats">
+        ${cell('STR', 'STR')}${cell('DEX', 'DEX')}${cell('CON', 'CON')}
+        ${cell('INT', 'INT')}${cell('WIS', 'WIS')}${cell('CHA', 'CHA')}
+      </div>
+    `;
+  }
+
+  /** Skill mastery chips — 2-3 quire-v0.1 categories. */
+  private renderSkillChips(skills: readonly string[]): TemplateResult {
+    return html`
+      <div
+        class="chargen-dm-review-chips chargen-dm-review-skills"
+        aria-label="Skill mastery"
+      >
+        ${skills.map(
+          (s) =>
+            html`<span class="chargen-dm-review-chip chargen-dm-review-chip-skill"
+              >${s}</span
+            >`
+        )}
+      </div>
+    `;
+  }
+
+  /**
+   * P3T-16: SA-vs-backstory diff.  Renders the four load-bearing
+   * short-answer-key questions on the left + the full backstory on
+   * the right with substring-highlighting of key noun phrases from
+   * the answers.  v1 highlighting is simple substring match (no
+   * stemming, no semantic similarity); the F-V1/F-V2 semantic
+   * validator (P3T-12 backlog) is the proper layer for that.
+   *
+   * The DM scans both halves to verify the AI honored the player's
+   * answers.  When the diff shows no anchor highlights at all, the
+   * AI probably reinterpreted — the Revise button is the escape
+   * hatch.
+   */
+  private renderExpandedDiff(
+    slot: number,
+    backstory: string
+  ): TemplateResult {
+    const answers = this.answersLookup?.(slot) ?? null;
+    // Four anchor questions worth diffing.  Order matches the
+    // campaign questionnaire flow for DM scanning ergonomics.
+    const anchors: Array<{ id: string; label: string }> = [
+      { id: 'flight-reason', label: 'Why on Flight 887?' },
+      { id: 'prior-connection', label: 'Prior connection' },
+      { id: 'meaningful-item', label: 'Meaningful item' },
+      { id: 'intent-moment', label: 'Intent-moment' }
+    ];
+    const phrases = this.extractAnchorPhrases(answers, anchors);
+    return html`
+      <div class="chargen-dm-review-diff" role="group" aria-label="Backstory review">
+        <div class="chargen-dm-review-diff-answers">
+          <h4>Player's answers</h4>
+          ${answers === null
+            ? html`<p class="muted">
+                No saved answers on this device.  (Player on another
+                device, or pre-pack-intake.)
+              </p>`
+            : html`<dl>
+                ${anchors.map((a) => {
+                  const v = answers[a.id];
+                  if (v === undefined || v === '') {
+                    return html`<dt>${a.label}</dt>
+                      <dd class="muted">(not answered)</dd>`;
+                  }
+                  return html`<dt>${a.label}</dt>
+                    <dd>${v}</dd>`;
+                })}
+              </dl>`}
+        </div>
+        <div class="chargen-dm-review-diff-backstory">
+          <h4>AI backstory</h4>
+          <div class="chargen-dm-review-backstory-body">
+            ${this.renderBackstoryWithHighlights(backstory, phrases)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Pull a small set of distinguishing noun phrases out of each
+   * anchor answer.  v1: take the words longer than 4 characters,
+   * lowercased, deduped, capped per-answer.  This is the
+   * "highlight the words from the player's answers that appear in
+   * the AI's backstory" heuristic.  Doesn't catch paraphrase; the
+   * goal is "show the DM the anchors that DID land," not "prove
+   * semantic correctness."
+   */
+  private extractAnchorPhrases(
+    answers: Record<string, string> | null,
+    anchors: Array<{ id: string; label: string }>
+  ): string[] {
+    if (!answers) return [];
+    const out = new Set<string>();
+    for (const a of anchors) {
+      const text = answers[a.id];
+      if (!text) continue;
+      // Take long-enough word tokens; lower-case.
+      const tokens = text
+        .toLowerCase()
+        .split(/[\s.,;:!?()"'—–\-]+/u)
+        .filter((w) => w.length >= 5);
+      // Cap at the most-distinguishing few per anchor.
+      for (const t of tokens.slice(0, 8)) out.add(t);
+    }
+    return [...out];
+  }
+
+  /**
+   * Render the backstory body with each occurrence of a highlight
+   * phrase wrapped in a `<mark>` tag.  Lit's html interpolation
+   * auto-escapes the text content; the marks are static markup
+   * inserted around safely-interpolated child nodes.
+   */
+  private renderBackstoryWithHighlights(
+    backstory: string,
+    phrases: string[]
+  ): TemplateResult {
+    if (phrases.length === 0) {
+      return html`<p>${backstory}</p>`;
+    }
+    // Split the backstory into paragraphs (double newline OR single
+    // newline run); render each as a separate `<p>` with the
+    // highlight pass over its content.
+    const paragraphs = backstory.split(/\n\s*\n/).filter((p) => p.trim());
+    return html`
+      ${paragraphs.map(
+        (para) => html`<p>${this.highlightFragments(para, phrases)}</p>`
+      )}
+    `;
+  }
+
+  /**
+   * Break a paragraph into alternating plain-text / highlighted
+   * fragments based on case-insensitive substring matches.  Returns
+   * a TemplateResult array Lit renders as a single text node
+   * sequence with `<mark>` for hits.  Auto-escaping is preserved
+   * because each fragment goes through interpolation.
+   */
+  private highlightFragments(
+    text: string,
+    phrases: readonly string[]
+  ): TemplateResult[] {
+    if (phrases.length === 0) return [html`${text}`];
+    // Lowercase the text for searching; track the original casing.
+    const lower = text.toLowerCase();
+    // Collect all match ranges, then merge overlapping.
+    const ranges: Array<[number, number]> = [];
+    for (const p of phrases) {
+      let from = 0;
+      while (from < lower.length) {
+        const idx = lower.indexOf(p, from);
+        if (idx === -1) break;
+        ranges.push([idx, idx + p.length]);
+        from = idx + p.length;
+      }
+    }
+    if (ranges.length === 0) return [html`${text}`];
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged: Array<[number, number]> = [];
+    for (const [s, e] of ranges) {
+      const last = merged[merged.length - 1];
+      if (last && s <= last[1]) {
+        last[1] = Math.max(last[1], e);
+      } else {
+        merged.push([s, e]);
+      }
+    }
+    const fragments: TemplateResult[] = [];
+    let pos = 0;
+    for (const [s, e] of merged) {
+      if (s > pos) fragments.push(html`${text.slice(pos, s)}`);
+      fragments.push(html`<mark class="chargen-dm-review-mark">${text.slice(s, e)}</mark>`);
+      pos = e;
+    }
+    if (pos < text.length) fragments.push(html`${text.slice(pos)}`);
+    return fragments;
   }
 
   private handleRevise(slot: number): void {

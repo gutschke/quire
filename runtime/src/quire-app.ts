@@ -1193,6 +1193,8 @@ export class QuireApp extends LitElement {
         .acceptedSlots=${this.chargenAcceptedSlotsView()}
         .displayNameLookup=${(pcId: string) =>
           this.chargen.displayNameForBound(pcId)}
+        .answersLookup=${(slot: number) =>
+          this.chargen.loadPersistedAnswers(slot)}
         .onGenerate=${(slot: number) => this.chargen.generateInviteUrl(slot)}
         .onSynthesize=${(slot: number) =>
           this.chargen.synthesizeForSlot(slot, {

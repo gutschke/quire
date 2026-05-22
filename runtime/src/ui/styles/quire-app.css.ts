@@ -233,6 +233,120 @@ export const quireAppStyles = css`
       background: light-dark(#f3f4f6, #1f2937);
     }
 
+    /* Step 5: full review card pieces — chips, stat grid, expand
+       button, diff view. */
+    .chargen-dm-review-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin: 0.4rem 0;
+    }
+    .chargen-dm-review-chip {
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      background: light-dark(#e0e7ff, #1e1b4b);
+      color: light-dark(#3730a3, #c7d2fe);
+      font-size: 0.82em;
+    }
+    .chargen-dm-review-chip-skill {
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #bbf7d0);
+    }
+    .chargen-dm-review-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.25rem;
+      margin: 0.4rem 0;
+    }
+    .chargen-dm-review-stat-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0.25rem 0.3rem;
+      border: 1px solid light-dark(#d4d4d4, #3a3a3a);
+      border-radius: 4px;
+      background: light-dark(#ffffff, #1a1a1a);
+    }
+    .chargen-dm-review-stat-label {
+      font-size: 0.68em;
+      letter-spacing: 0.05em;
+      opacity: 0.7;
+    }
+    .chargen-dm-review-stat-mod {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .chargen-dm-review-warning-list {
+      margin: 0.3rem 0 0;
+      padding-left: 1.3rem;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-warning-list code {
+      background: light-dark(#fff7ed, #422006);
+      padding: 0.05rem 0.3rem;
+      border-radius: 3px;
+      font-size: 0.92em;
+    }
+    .chargen-dm-review-expand {
+      margin: 0.4rem 0;
+      padding: 0.25rem 0.6rem;
+      background: transparent;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      color: light-dark(#475569, #cbd5e1);
+      font-size: 0.85em;
+      cursor: pointer;
+    }
+    .chargen-dm-review-expand:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .chargen-dm-review-diff {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+      gap: 0.8rem;
+      margin: 0.4rem 0;
+      padding: 0.6rem;
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      background: light-dark(#f8fafc, #0f172a);
+    }
+    .chargen-dm-review-diff h4 {
+      margin: 0 0 0.4rem;
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      opacity: 0.7;
+    }
+    .chargen-dm-review-diff dl {
+      display: block;
+      margin: 0;
+      font-size: 0.88em;
+    }
+    .chargen-dm-review-diff dt {
+      font-weight: 500;
+      margin-top: 0.3rem;
+    }
+    .chargen-dm-review-diff dd {
+      margin: 0 0 0.3rem 0;
+      color: light-dark(#475569, #cbd5e1);
+    }
+    .chargen-dm-review-backstory-body p {
+      margin: 0 0 0.4rem;
+      font-size: 0.92em;
+      line-height: 1.5;
+    }
+    .chargen-dm-review-mark {
+      background: light-dark(#fef9c3, #422006);
+      color: inherit;
+      padding: 0 0.1rem;
+      border-radius: 2px;
+    }
+    @media (max-width: 900px) {
+      .chargen-dm-review-diff {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;
       padding: 0.6rem 0.9rem;
