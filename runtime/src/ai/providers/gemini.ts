@@ -39,6 +39,43 @@ const AI_RESPONSE_SCHEMA = {
         },
         required: ['label']
       }
+    },
+    // M3c.2: optional stateUpdates.  Gemini's responseSchema
+    // doesn't support oneOf for items, so we flatten — all fields
+    // are optional and the client-side validator (isStateUpdate)
+    // enforces the discriminated-union semantics per kind.
+    stateUpdates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['pc-edit', 'dice-roll', 'caster-state-set']
+          },
+          pcId: { type: 'string' },
+          field: { type: 'string', enum: ['harm', 'stress'] },
+          delta: { type: 'integer' },
+          reason: { type: 'string' },
+          purpose: { type: 'string' },
+          expression: { type: 'string' },
+          modifierBreakdown: { type: 'string' },
+          ladderState: {
+            type: 'string',
+            enum: [
+              'clear',
+              'quiet',
+              'noticed',
+              'watched',
+              'pushing-back',
+              'hunted'
+            ]
+          },
+          taxActive: { type: 'boolean' },
+          spamCount: { type: 'integer' }
+        },
+        required: ['kind']
+      }
     }
   },
   required: ['safe', 'dmOnly', 'sources']
@@ -150,10 +187,14 @@ export const geminiProvider: AiProvider = {
     if (typeof p.safe !== 'string') return null;
     if (typeof p.dmOnly !== 'string') return null;
     if (!Array.isArray(p.sources)) return null;
+    const stateUpdates = Array.isArray(p.stateUpdates)
+      ? (p.stateUpdates as Array<Record<string, unknown>>)
+      : undefined;
     return {
       safe: p.safe,
       dmOnly: p.dmOnly,
-      sources: p.sources as Array<{ label: string; path?: string }>
+      sources: p.sources as Array<{ label: string; path?: string }>,
+      ...(stateUpdates !== undefined && { stateUpdates: stateUpdates as never })
     };
   }
 };

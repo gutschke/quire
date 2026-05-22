@@ -168,11 +168,22 @@ export class AiBroker {
       );
     }
     const parsed = this.provider.parse(providerResult.raw);
-    if (parsed && isAiResponse({ ...parsed, raw: '', tokensIn: 0, tokensOut: 0, responseId: '' })) {
+    if (
+      parsed &&
+      isAiResponse({
+        ...parsed,
+        raw: '',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: ''
+      })
+    ) {
       return {
         safe: parsed.safe ?? '',
         dmOnly: parsed.dmOnly ?? '',
         sources: parsed.sources ?? [],
+        // M3c.2: providers MAY return stateUpdates; absent → [].
+        stateUpdates: parsed.stateUpdates ?? [],
         raw: providerResult.raw,
         tokensIn: providerResult.tokensIn,
         tokensOut: providerResult.tokensOut,

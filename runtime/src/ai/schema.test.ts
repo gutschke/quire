@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isAiResponse, parseFailureResponse } from './schema';
+import { isAiResponse, isStateUpdate, parseFailureResponse } from './schema';
 
 describe('isAiResponse', () => {
   it('accepts a minimal well-shaped response', () => {
@@ -80,5 +80,161 @@ describe('parseFailureResponse', () => {
 
   it('shape is itself a valid AiResponse', () => {
     expect(isAiResponse(parseFailureResponse('x'))).toBe(true);
+  });
+
+  it('parseFailureResponse sets stateUpdates to [] (no AI writes on parse failure)', () => {
+    expect(parseFailureResponse('x').stateUpdates).toEqual([]);
+  });
+});
+
+describe('isStateUpdate (M3c.2)', () => {
+  it('accepts a well-formed pc-edit', () => {
+    expect(
+      isStateUpdate({ kind: 'pc-edit', pcId: 'yui', field: 'harm', delta: 1 })
+    ).toBe(true);
+  });
+
+  it('accepts a well-formed dice-roll', () => {
+    expect(
+      isStateUpdate({
+        kind: 'dice-roll',
+        purpose: 'coin toss',
+        expression: '2d6+2',
+        modifierBreakdown: 'Yui DEX +1 + Costly cast +1'
+      })
+    ).toBe(true);
+  });
+
+  it('accepts a well-formed caster-state-set with the clear sentinel', () => {
+    expect(
+      isStateUpdate({
+        kind: 'caster-state-set',
+        pcId: 'timmy',
+        ladderState: 'clear'
+      })
+    ).toBe(true);
+  });
+
+  it('rejects null / non-object', () => {
+    expect(isStateUpdate(null)).toBe(false);
+    expect(isStateUpdate('not an object')).toBe(false);
+  });
+
+  it('rejects unknown kind', () => {
+    expect(isStateUpdate({ kind: 'something-else' })).toBe(false);
+  });
+
+  it('rejects pc-edit with missing required field', () => {
+    expect(
+      isStateUpdate({ kind: 'pc-edit', pcId: 'yui', delta: 1 })
+    ).toBe(false);
+    expect(
+      isStateUpdate({ kind: 'pc-edit', field: 'harm', delta: 1 })
+    ).toBe(false);
+  });
+
+  it('rejects pc-edit with wrong-type field (only harm/stress)', () => {
+    expect(
+      isStateUpdate({
+        kind: 'pc-edit',
+        pcId: 'yui',
+        field: 'cha',
+        delta: 1
+      })
+    ).toBe(false);
+  });
+
+  it('rejects pc-edit with non-finite or non-integer delta', () => {
+    for (const delta of [NaN, Infinity, 1.5, -Infinity]) {
+      expect(
+        isStateUpdate({ kind: 'pc-edit', pcId: 'yui', field: 'harm', delta })
+      ).toBe(false);
+    }
+  });
+
+  it('rejects dice-roll with empty purpose or expression', () => {
+    expect(
+      isStateUpdate({ kind: 'dice-roll', purpose: '', expression: '2d6' })
+    ).toBe(false);
+    expect(
+      isStateUpdate({ kind: 'dice-roll', purpose: 'climb', expression: '' })
+    ).toBe(false);
+  });
+
+  it('rejects caster-state-set with empty-string ladderState (the footgun)', () => {
+    expect(
+      isStateUpdate({
+        kind: 'caster-state-set',
+        pcId: 'yui',
+        ladderState: ''
+      })
+    ).toBe(false);
+  });
+
+  it('rejects caster-state-set with hostile spamCount (negative, NaN, float)', () => {
+    for (const spamCount of [-1, NaN, 1.5, Infinity]) {
+      expect(
+        isStateUpdate({
+          kind: 'caster-state-set',
+          pcId: 'yui',
+          ladderState: 'quiet',
+          spamCount
+        })
+      ).toBe(false);
+    }
+  });
+});
+
+describe('isAiResponse — M3c.2 stateUpdates field', () => {
+  it('accepts a response with no stateUpdates (back-compat)', () => {
+    expect(
+      isAiResponse({ safe: 'x', dmOnly: '', sources: [] })
+    ).toBe(true);
+  });
+
+  it('accepts a response with empty stateUpdates array', () => {
+    expect(
+      isAiResponse({ safe: 'x', dmOnly: '', sources: [], stateUpdates: [] })
+    ).toBe(true);
+  });
+
+  it('accepts a response with well-formed stateUpdates entries', () => {
+    expect(
+      isAiResponse({
+        safe: 'x',
+        dmOnly: '',
+        sources: [],
+        stateUpdates: [
+          { kind: 'pc-edit', pcId: 'yui', field: 'harm', delta: 1 },
+          {
+            kind: 'caster-state-set',
+            pcId: 'timmy',
+            ladderState: 'noticed'
+          }
+        ]
+      })
+    ).toBe(true);
+  });
+
+  it('rejects when stateUpdates is wrong-typed (string)', () => {
+    expect(
+      isAiResponse({
+        safe: 'x',
+        dmOnly: '',
+        sources: [],
+        stateUpdates: 'not an array'
+      })
+    ).toBe(false);
+  });
+
+  it('rejects when any stateUpdates entry is malformed', () => {
+    expect(
+      isAiResponse({
+        safe: 'x',
+        dmOnly: '',
+        sources: [],
+        stateUpdates: [{ kind: 'unknown' }]
+      })
+    ).toBe(false);
   });
 });

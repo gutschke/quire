@@ -27,17 +27,19 @@ const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const AI_RESPONSE_TOOL = {
   name: 'ai_response',
   description:
-    'Return your response as TWO parts: `safe` (text safe to read aloud at the table — no spoilers, no DM-only material) and `dmOnly` (DM-eyes-only notes, mechanics hints, spoilers).  Both must be strings.  `sources` is an array of {label, path?} citations into the campaign repo.',
+    'Return your response with `safe` (text safe to read aloud — no spoilers, no DM-only material), `dmOnly` (DM-eyes-only spoilers / mechanics / motivations), `sources` (campaign-repo citations), and OPTIONAL `stateUpdates` (typed bookkeeping the DM will accept-gate: pc-edit for harm/stress changes, dice-roll proposals, caster-state-set for the magic ladder / trying-too-hard tax / cast-spam counter).',
   input_schema: {
     type: 'object',
     properties: {
       safe: {
         type: 'string',
-        description: 'Player-safe text (read aloud).  Empty string if all of the answer is DM-only.'
+        description:
+          'Player-safe text (read aloud).  Empty string if all of the answer is DM-only.'
       },
       dmOnly: {
         type: 'string',
-        description: 'DM-eyes-only text (spoilers, mechanics, NPC motivations).  Empty string if all of the answer is player-safe.'
+        description:
+          'DM-eyes-only text (spoilers, mechanics, NPC motivations).  Empty string if all of the answer is player-safe.'
       },
       sources: {
         type: 'array',
@@ -48,6 +50,44 @@ const AI_RESPONSE_TOOL = {
             path: { type: 'string' }
           },
           required: ['label']
+        }
+      },
+      stateUpdates: {
+        type: 'array',
+        description:
+          'Optional typed bookkeeping the DM will accept before any event is appended.  Default to empty; only emit when the prose response clearly implies a state change.  HARD-GATED transitions (harm box 3 or 4, stress box 4, ladder advancing to hunted, trying-too-hard activation or release, dice double-1, cross-PC pc-edit) WILL require explicit DM click — surface them anyway, but expect the friction.',
+        items: {
+          type: 'object',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['pc-edit', 'dice-roll', 'caster-state-set']
+            },
+            // pc-edit
+            pcId: { type: 'string' },
+            field: { type: 'string', enum: ['harm', 'stress'] },
+            delta: { type: 'integer' },
+            reason: { type: 'string' },
+            // dice-roll
+            purpose: { type: 'string' },
+            expression: { type: 'string' },
+            modifierBreakdown: { type: 'string' },
+            // caster-state-set
+            ladderState: {
+              type: 'string',
+              enum: [
+                'clear',
+                'quiet',
+                'noticed',
+                'watched',
+                'pushing-back',
+                'hunted'
+              ]
+            },
+            taxActive: { type: 'boolean' },
+            spamCount: { type: 'integer' }
+          },
+          required: ['kind']
         }
       }
     },
@@ -147,10 +187,17 @@ export const anthropicProvider: AiProvider = {
     if (typeof p.safe !== 'string') return null;
     if (typeof p.dmOnly !== 'string') return null;
     if (!Array.isArray(p.sources)) return null;
+    // M3c.2: stateUpdates is OPTIONAL.  Absent or empty → broker
+    // defaults to [].  When present, hand it through; the broker's
+    // isAiResponse / isStateUpdate guard rejects malformed entries.
+    const stateUpdates = Array.isArray(p.stateUpdates)
+      ? (p.stateUpdates as Array<Record<string, unknown>>)
+      : undefined;
     return {
       safe: p.safe,
       dmOnly: p.dmOnly,
-      sources: p.sources as Array<{ label: string; path?: string }>
+      sources: p.sources as Array<{ label: string; path?: string }>,
+      ...(stateUpdates !== undefined && { stateUpdates: stateUpdates as never })
     };
   }
 };
