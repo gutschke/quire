@@ -1,6 +1,21 @@
 # STATUS
 
-Current milestone: **M3b — AI broker + dual-card (in flight)** — M3a closed 2026-05-21, tagged `milestone-M3a`
+Current milestone: **M3c — AI state-update write API (in flight)** — M3b closed 2026-05-21 (tagged `milestone-M3b` + `playtest-1`); M3b polish + UX-discovered gaps landed on `main` through 2026-05-22.
+
+## M3c acceptance criteria
+
+Plan: `design/m3c-ai-write-api.md` — 4-reviewer gate ran 2026-05-22, all `ship-with-followups`, 15 amendments folded into the plan at commit b758b0e.
+
+- [ ] M3c.0 — per-kind materializer extraction (slip-valve: split off as M3c.5 if it overruns) + STATUS open
+- [ ] M3c.1 — `caster-state-set` event kind + materializer + state.casterState DM-only field + strip-list
+- [ ] M3c.2 — AiResponse schema extends with `stateUpdates: StateUpdate[]` + provider parses updated
+- [ ] M3c.3 — AiWriteController extracted (pending-batch, undo timer, causedByResponseId stamping)
+- [ ] M3c.4 — DM accept-gate UI strip in `<ai-panel>` (apply-all-with-undo, hard-gate carve-outs, settings toggle)
+- [ ] M3c.5 — Hard-gate materializer enforcement (scan aiAudit for matching ai-accept; rejected-hard-gate audit + DM banner)
+- [ ] M3c.6 — System prompt updated for stateUpdates contract + spam-counter framing as DM-judgment cue + DM-direct reset button
+- [ ] M3c.7 — E2e suite (cast-spam, hard-gate, cross-pc-gate) + 4-reviewer gate + tag `milestone-M3c` on green
+
+## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 
 ## M3b acceptance criteria
 
