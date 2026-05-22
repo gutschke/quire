@@ -1,19 +1,42 @@
 # STATUS
 
-Current milestone: **M3c — AI state-update write API (in flight)** — M3b closed 2026-05-21 (tagged `milestone-M3b` + `playtest-1`); M3b polish + UX-discovered gaps landed on `main` through 2026-05-22.
+Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22.  Next: M3d (inventory primitive + content proposals) OR drain M3c followups per user pacing.
 
 ## M3c acceptance criteria
 
 Plan: `design/m3c-ai-write-api.md` — 4-reviewer gate ran 2026-05-22, all `ship-with-followups`, 15 amendments folded into the plan at commit b758b0e.
 
-- [ ] M3c.0 — per-kind materializer extraction (slip-valve: split off as M3c.5 if it overruns) + STATUS open
-- [ ] M3c.1 — `caster-state-set` event kind + materializer + state.casterState DM-only field + strip-list
-- [ ] M3c.2 — AiResponse schema extends with `stateUpdates: StateUpdate[]` + provider parses updated
-- [ ] M3c.3 — AiWriteController extracted (pending-batch, undo timer, causedByResponseId stamping)
-- [ ] M3c.4 — DM accept-gate UI strip in `<ai-panel>` (apply-all-with-undo, hard-gate carve-outs, settings toggle)
-- [ ] M3c.5 — Hard-gate materializer enforcement (scan aiAudit for matching ai-accept; rejected-hard-gate audit + DM banner)
-- [ ] M3c.6 — System prompt updated for stateUpdates contract + spam-counter framing as DM-judgment cue + DM-direct reset button
-- [ ] M3c.7 — E2e suite (cast-spam, hard-gate, cross-pc-gate) + 4-reviewer gate + tag `milestone-M3c` on green
+- [x] M3c.0 — STATUS open + per-kind materializer extraction (USED SLIP-VALVE: deferred; commit 0ca2e3c)
+- [x] M3c.1 — `caster-state-set` event kind + materializer + state.casterState DM-only field + strip-list (commit 7585c7f)
+- [x] M3c.2 — AiResponse schema extends with `stateUpdates: StateUpdate[]` + provider parses updated (commit 362a273)
+- [x] M3c.3 — AiWriteController extracted (pending-batch, undo timer, causedByResponseId stamping) (commit; 19 tests)
+- [x] M3c.4 — DM accept-gate UI strip in `<ai-panel>` (apply-all-with-undo, hard-gate carve-outs) (commit f90ffc6)
+- [x] M3c.5 — Hard-gate materializer enforcement (scan aiAudit for matching ai-accept; rejected-hard-gate audit kind) (commit 13703c6)
+- [x] M3c.6 — System prompt updated for stateUpdates contract + spam-counter framing as DM-judgment cue (commit d10494a)
+- [x] M3c.7 — E2e suite (cast-spam, hard-gate, cross-pc-gate) + 4-reviewer gate (commits 65524ec + this) → tag
+
+## M3c implementation gate verdict (2026-05-22)
+
+4-reviewer pass: Security `pass`; TTRPG-craft, Engine, Adversarial `ship-with-followups`.  No severity-floor block.
+
+**Bug fixes folded in alongside gate-close** (this commit):
+- TTRPG F1: hardcoded "Yui" in harm hard-gate message → `${update.pcId}`.  Real table-trust harm if shipped.
+- Adversarial #8: system prompt now documents the caster-state-set merge semantic (omitted fields carry forward from prior state) so the AI doesn't emit partial updates expecting reset semantics.
+
+**Followups carried out of M3c** (honestly tracked, not silently slipped):
+- **Per-kind materializer extraction** — slip-valve USED at M3c.0.  state.ts retains the inline switch; 32 case arms.  Land as a separate cleanup commit when budget allows.
+- **DM "Reset spam counter" button** — not shipped (Engine #3 + Adversarial silent-cut).  Today the only way to clear spamCount is via caster-state-set with explicit `spamCount: 0`.  Small UI affordance; M3c polish.
+- **Settings toggle "Review every state update individually"** — not shipped (Adversarial A8).  Apply-All-with-hard-gate-carve-out covers the safety properties; the per-entry mode is first-session-trust polish.
+- **Apply-All keyboard shortcut (Enter)** — not wired (TTRPG F2).  Today the DM must click the Apply-All button.  Polish; mirrors the existing hotkeyHandler pattern.
+- **DM-banner UI for `rejected-hard-gate` audit rows** — Security: the materializer logs the rejection; no UI consumer reads it yet.
+- **Dice-roll dispatch placeholder** — controller sends `result: 0, dice: []`.  Broker may extend later to compute the actual roll; today the DM re-rolls if they want physical dice.
+- **Cast-spam e2e bootstrap weakness** — Adversarial #4: the test injects `spamCount: 3` directly in the stub rather than seeding via prior cast events.  Real provider behavior would require the bootstrap; not exercised end-to-end yet.
+- **pc-edit stale-read window** — Adversarial #9: controller computes `value = currentHarm + delta` at dispatch time, not propose time.  Concurrent peer edits in the apply-all window are overwritten LWW.  Real but small risk; revisit if it bites at the table.
+- **Engine #1 hostile test is single-peer** — Adversarial #10: the test verifies the correct outcome (rejection) but uses a single-peer log, not the multi-peer arbitration the commit message describes.  Adequate but oversold.
+- **`pushing-back` ladder transition gating** — defer post-playtest per the plan.
+- **Prompt-cache hit-rate verification** (Engine #5) — measure once a real session runs.
+
+## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 
 ## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 

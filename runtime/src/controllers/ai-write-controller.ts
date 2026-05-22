@@ -229,7 +229,7 @@ export class AiWriteController implements ReactiveController {
           const current = this.currentHarm(view, update.pcId);
           const next = current + update.delta;
           if (next >= 3) {
-            return `Yui's harm reaching box ${Math.min(4, next)} is out-of-action territory — confirm to apply.`;
+            return `${update.pcId}'s harm reaching box ${Math.min(4, next)} is out-of-action territory — confirm to apply.`;
           }
         }
         if (update.field === 'stress') {

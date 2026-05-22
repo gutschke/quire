@@ -98,6 +98,15 @@ put the narration in 'reason' — a single sentence the DM can speak or rewrite
 ("the lights flicker again, but only Yui notices").  The ladder label is the
 mechanical side; the DM never reads it aloud.
 
+CASTER-STATE-SET MERGE SEMANTIC: fields you OMIT from a caster-state-set
+update are CARRIED FORWARD from the PC's prior caster state.  If a PC has
+taxActive=true and spamCount=3, and you emit caster-state-set with only
+{pcId, ladderState, reason} (no taxActive, no spamCount), the materializer
+keeps taxActive=true and spamCount=3.  To reset a field, emit it
+explicitly: taxActive=false to release the tax, spamCount=0 to clear the
+counter.  Partial updates that "expected" reset semantics will silently
+preserve prior values.
+
 CAST-SPAM-COUNTER FRAMING (rules-reference.md L141 — "after the 3rd or 4th Free
 or Cheap cast in a single scene"): this is a DM-JUDGMENT cue, not a deterministic
 trigger.  When spamCount reaches 3, do NOT auto-emit a stress check; instead,
