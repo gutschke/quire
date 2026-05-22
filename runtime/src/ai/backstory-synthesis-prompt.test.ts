@@ -42,11 +42,23 @@ describe('UNDERLEAF_BACKSTORY_SYSTEM_PROMPT', () => {
     expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('Prefer:');
   });
 
-  it('lists the JSON output fields', () => {
-    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('"name"');
-    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('"pronouns"');
-    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('"tags"');
-    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('"backstory"');
+  it('Phase 3b-X step 7: prompt no longer declares JSON output shape (schema enforces it)', () => {
+    // Under constrained decoding (Anthropic strict tool use; Gemini
+    // responseSchema), the schema enforces the wire shape — name,
+    // pronouns, tags, stats, skillMastery, backstory.  The system
+    // prompt focuses on tone + content constraints; declaring the
+    // shape redundantly would waste tokens and risk drift between
+    // prompt and schema.  This test pins the new posture.
+    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).not.toContain('Return ONLY a JSON');
+    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).not.toContain('# Output format');
+    // Schema-enforced field NAMES are still mentioned BY NAME in
+    // the content guidance ("the tags field is for…", "for
+    // skillMastery, respect…") so the AI knows which slot to put
+    // content into — but the shape (string vs array, exact keys,
+    // value type) is enforced by the schema.
+    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('tags');
+    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('skillMastery');
+    expect(UNDERLEAF_BACKSTORY_SYSTEM_PROMPT).toContain('backstory');
   });
 
   it('includes the magic-realization-arc hard constraint', () => {

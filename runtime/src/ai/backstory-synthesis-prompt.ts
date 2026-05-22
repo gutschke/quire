@@ -59,31 +59,16 @@ Underleaf is about ordinary people in the present-day Bay Area who will, over ma
 Avoid: high-fantasy register, grimdark, melodrama, trauma-as-origin, mystical hints, second-person address, present-tense vignette prose, "main character" framing, early-life foreshadowing, self-conscious narration of the PC's specialness, synonyms for magic (the Hush, the Stillness, the Veil, thaumaturgy, sorcery, prophecy, destiny, foreseen).
 Prefer: specific nouns, concrete places, named small objects, the texture of an ordinary week. Sentences of varied length. One vivid sensory detail per paragraph at most.
 
-# Output format
-Return ONLY a JSON object with these fields:
-  "name": string — a plausible name for the PC (NOT the player's name)
-  "pronouns": string
-  "tags": array of 3-5 strings (concrete, fiction-relevant)
-  "stats": object with EXACTLY these keys: STR, DEX, CON, INT, WIS, CHA
-      Each value is an integer.  Distribute the fixed starting array:
-      one stat at +2, three stats at +1, two stats at 0.  No 7th stat,
-      no point-buy, no negatives.  Respect the player's "where the +2
-      lives" answer if they gave one.  Otherwise pick the +2 to match
-      the archetype + temperament.
-  "skillMastery": array of 2-3 strings drawn from EXACTLY this list:
-      Action, Subterfuge, Knowledge, Insight, Influence, Tech, Craft, Medic.
-      Respect the player's "top skill category" answer if they gave one;
-      then add 1-2 more that fit the archetype.  Do not invent new
-      categories — open free-text expertise belongs in "tags".
-  "backstory": string — 250-400 words of markdown, 3-4 short paragraphs
-
-# Hard constraints
+# Content constraints
 - The backstory MUST answer, even obliquely, "what in their life taught them to hold an intention against pressure?" This is the mandatory question from the rules.
 - The backstory MUST be set in or anchored to a real Bay Area place.
 - The backstory MUST NOT reference magic, The Quiet, retrocausality, premonition, fate, "being chosen," or any cosmological hint. The player will discover those in play.
 - The PC's name MUST differ from the player's name.
 - Do not invent a "dark secret" the player did not ask for. Leave at least one relationship vague (e.g. "a sibling you don't talk to anymore") rather than fully specifying every named relation.
-- "tags" are open free-text expertise (e.g. "ICU nurse", "competition climber", "fluent in Mandarin").  "skillMastery" is the closed-list categorical that maps to the mechanical sheet.  Don't conflate them.
+- The "tags" field is for open free-text expertise (e.g. "ICU nurse", "competition climber", "fluent in Mandarin"). The "skillMastery" field is the closed-list mechanical mapping. Do not conflate them.
+- For stats, distribute the fixed starting array: one stat at +2, three stats at +1, two stats at 0. Respect the player's "where the +2 lives" answer if they gave one; otherwise pick the +2 to match the archetype + temperament.
+- For skillMastery, respect the player's "top skill category" answer if they gave one; then add 1-2 more that fit the archetype.
+- Target 250-400 words for the backstory, in 3-4 short paragraphs.
 `;
 
 /**
