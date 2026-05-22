@@ -8,7 +8,11 @@ import {
   extractJsonObject,
   type SynthesizeBackstoryRequest
 } from './backstory-synthesizer';
-import type { AiProvider, AiProviderCallResult } from './broker';
+import {
+  shimCallStructuredViaLegacy,
+  type AiProvider,
+  type AiProviderCallResult
+} from './broker';
 import type { CampaignCharCreationQuestion } from '../campaign-loader';
 
 function sa(id: string, prompt: string): CampaignCharCreationQuestion {
@@ -39,7 +43,8 @@ function mockProvider(rawResponses: string[]): {
         responseId: `mock-${i}`
       };
     }),
-    parse: () => null
+    parse: () => null,
+    callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
   };
   return { provider, calls };
 }
@@ -314,7 +319,8 @@ describe('synthesizeBackstory — provider errors', () => {
       call: vi.fn(async () => {
         throw new Error('network down');
       }),
-      parse: () => null
+      parse: () => null,
+      callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
     };
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);
@@ -332,7 +338,8 @@ describe('synthesizeBackstory — provider errors', () => {
         e.name = 'AbortError';
         throw e;
       }),
-      parse: () => null
+      parse: () => null,
+      callStructured: (req) => shimCallStructuredViaLegacy(provider, req)
     };
     const result = await synthesizeBackstory(provider, BASE_REQ);
     expect(result.ok).toBe(false);

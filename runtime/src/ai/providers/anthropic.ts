@@ -15,10 +15,13 @@
  * parse failure, NOT silently surfaced as safe-card content.
  */
 
-import type {
-  AiProvider,
-  AiProviderCallRequest,
-  AiProviderCallResult
+import {
+  shimCallStructuredViaLegacy,
+  type AiProvider,
+  type AiProviderCallRequest,
+  type AiProviderCallResult,
+  type AiProviderStructuredResult,
+  type AiStructuredCallSchema
 } from '../broker';
 import type { AiResponse } from '../schema';
 
@@ -199,6 +202,18 @@ export const anthropicProvider: AiProvider = {
       sources: p.sources as Array<{ label: string; path?: string }>,
       ...(stateUpdates !== undefined && { stateUpdates: stateUpdates as never })
     };
+  },
+  /**
+   * Phase 3b-X step 1: shim that delegates to the legacy `call()` +
+   * a JSON.parse pass.  Steps 3 (Anthropic strict tool use) and 4
+   * (Gemini responseSchema) replace this with real constrained
+   * decoding.  Behavior-neutral today.
+   */
+  async callStructured<T>(
+    req: AiProviderCallRequest,
+    _schema: AiStructuredCallSchema
+  ): Promise<AiProviderStructuredResult<T>> {
+    return shimCallStructuredViaLegacy<T>(this, req);
   }
 };
 

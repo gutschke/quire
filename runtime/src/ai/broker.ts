@@ -28,10 +28,53 @@ import type { AiAuditEntry } from '../core/state';
 export interface AiProvider {
   /** Provider id, e.g. 'claude' or 'gemini' — for audit + UI. */
   id: 'claude' | 'gemini';
-  /** Issue a structured request; return raw text + token counts. */
+  /**
+   * Issue a structured request; return raw text + token counts.
+   *
+   * @deprecated Phase 3b-X: prefer `callStructured<T>` — constrained-
+   * decoding APIs (Anthropic strict tool use, Gemini responseSchema)
+   * eliminate the "AI returned prose I expected as JSON" failure
+   * mode that this method's downstream regex-extraction tries to
+   * paper over.  Will be removed in 3b-X step 9 after all callers
+   * migrate.
+   */
   call(req: AiProviderCallRequest): Promise<AiProviderCallResult>;
-  /** Parse provider raw response to (best-effort) AiResponse shape. */
+  /**
+   * Parse provider raw response to (best-effort) AiResponse shape.
+   *
+   * @deprecated Phase 3b-X: callStructured<T> returns typed parsed
+   * objects directly; this best-effort parser becomes redundant.
+   */
   parse(raw: string): Partial<AiResponse> | null;
+  /**
+   * Phase 3b-X step 1 (seam): issue a constrained-decoding request
+   * and return the already-parsed typed object.  Provider-side
+   * structured-output APIs (Anthropic strict tool use; Gemini
+   * responseSchema) enforce the schema at decoding time — the
+   * caller gets a typed value or a typed refusal, never prose that
+   * needs regex-extraction.
+   *
+   * Default implementation in step 1 SHIMS to the legacy `call()` +
+   * `parse()` pair so the seam exists without behavior change;
+   * steps 3-4 (Anthropic) and 4 (Gemini) replace the shim with
+   * real constrained decoding.  Steps 5 + 8 migrate the chargen
+   * synthesizer + the DM-aide broker over.  Step 9 deletes the
+   * legacy pair.
+   *
+   * @param req — the call envelope (apiKey, model, prompts, abort
+   *   signal) — same shape as `call()`.
+   * @param schema — JSON Schema describing the expected output;
+   *   provided by the caller from `src/ai/schema-json.ts`.
+   * @returns the typed parsed value (on success) OR a typed
+   *   refusal arm (when the provider declined to emit a payload).
+   *   `raw` carries the serialized JSON (or the refusal message)
+   *   for audit-log purposes.  `tokensIn`/`tokensOut`/`responseId`
+   *   carry the same metering as `call()`.
+   */
+  callStructured<T>(
+    req: AiProviderCallRequest,
+    schema: AiStructuredCallSchema
+  ): Promise<AiProviderStructuredResult<T>>;
 }
 
 export interface AiProviderCallRequest {
@@ -49,6 +92,126 @@ export interface AiProviderCallResult {
   tokensOut: number;
   responseId: string;
 }
+
+/**
+ * Phase 3b-X: schema-side metadata the broker hands to a provider
+ * to drive constrained decoding.  Carries the canonical JSON
+ * Schema (the source of truth) + a `name` the provider uses to
+ * identify the tool/output (Anthropic strict tool use requires a
+ * tool name; Gemini doesn't but the field is harmless).
+ *
+ * Schemas live in `src/ai/schema-json.ts` colocated with their TS
+ * interfaces in `schema.ts`.  Hand-written `as const` literals
+ * with a sample-based mirror test that asserts a known-good
+ * object satisfies BOTH the schema AND the TS type guard.
+ */
+export interface AiStructuredCallSchema {
+  /** Stable identifier — used as Anthropic tool name; included in audit. */
+  name: string;
+  /**
+   * Canonical JSON Schema.  Per-provider adapters (`toAnthropicSchema`,
+   * `toGeminiSchema` in `src/ai/schema-json.ts`) translate to each
+   * provider's dialect.  Hand-rolled within Anthropic's strict-mode
+   * subset: no `$ref`, no `format`, no `additionalProperties: true`.
+   */
+  schema: Record<string, unknown>;
+}
+
+/**
+ * Phase 3b-X: result shape for `AiProvider.callStructured<T>`.
+ * Either the AI complied (`ok: true` + typed value) OR the provider
+ * surfaced a refusal/safety-block (`ok: false` + kind + message).
+ *
+ * The discriminated union mirrors `SynthesizeBackstoryResult`'s
+ * STABLE CONTRACT discipline — additive new variants are safe;
+ * removing/renaming is breaking.
+ */
+/**
+ * Phase 3b-X step 1: shared shim that delegates to the legacy
+ * `call()` + a JSON.parse pass.  Steps 3 / 4 / 8 replace this with
+ * real constrained decoding in each provider; until then, this
+ * lets the new `callStructured<T>` seam exist without behavior
+ * change.  Also reused by test-mock providers so the mocks don't
+ * each re-implement the shim.
+ */
+export async function shimCallStructuredViaLegacy<T>(
+  provider: AiProvider,
+  req: AiProviderCallRequest
+): Promise<AiProviderStructuredResult<T>> {
+  let result: AiProviderCallResult;
+  try {
+    result = await provider.call(req);
+  } catch (e) {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'provider-error',
+        message: (e as Error).message
+      },
+      raw: '',
+      tokensIn: 0,
+      tokensOut: 0,
+      responseId: ''
+    };
+  }
+  try {
+    const value = JSON.parse(result.raw) as T;
+    return {
+      ok: true,
+      value,
+      raw: result.raw,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      responseId: result.responseId
+    };
+  } catch {
+    return {
+      ok: false,
+      refusal: {
+        kind: 'truncated',
+        message:
+          'Provider returned unparseable text; shim cannot recover.  Constrained decoding (steps 3/4) replaces this path.'
+      },
+      raw: result.raw,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      responseId: result.responseId
+    };
+  }
+}
+
+export type AiProviderStructuredResult<T> =
+  | {
+      ok: true;
+      value: T;
+      /** Serialized JSON of `value` (for audit chain + raw card). */
+      raw: string;
+      tokensIn: number;
+      tokensOut: number;
+      responseId: string;
+    }
+  | {
+      ok: false;
+      refusal: {
+        /**
+         * `safety` — provider-side safety filter blocked the response
+         *   (Anthropic stop_reason='refusal'; Gemini finishReason
+         *   ∈ {SAFETY, RECITATION}).
+         * `model-unsupported` — the chosen model doesn't support
+         *   constrained decoding (Anthropic pre-3.5; Gemini pre-1.5).
+         * `provider-error` — HTTP/network/SDK failure; fall back path.
+         * `truncated` — the structured response was cut off; the
+         *   `raw` carries whatever the provider returned for forensics.
+         */
+        kind: 'safety' | 'model-unsupported' | 'provider-error' | 'truncated';
+        /** Human-friendly message; surfaced in the DM-facing UI. */
+        message: string;
+      };
+      raw: string;
+      tokensIn: number;
+      tokensOut: number;
+      responseId: string;
+    };
 
 export interface AiCompleteRequest {
   prompt: string;

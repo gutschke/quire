@@ -17,10 +17,13 @@
  * text empty → broker degrades to parseFailureResponse).
  */
 
-import type {
-  AiProvider,
-  AiProviderCallRequest,
-  AiProviderCallResult
+import {
+  shimCallStructuredViaLegacy,
+  type AiProvider,
+  type AiProviderCallRequest,
+  type AiProviderCallResult,
+  type AiProviderStructuredResult,
+  type AiStructuredCallSchema
 } from '../broker';
 import type { AiResponse } from '../schema';
 
@@ -196,6 +199,16 @@ export const geminiProvider: AiProvider = {
       sources: p.sources as Array<{ label: string; path?: string }>,
       ...(stateUpdates !== undefined && { stateUpdates: stateUpdates as never })
     };
+  },
+  /**
+   * Phase 3b-X step 1: shim — see broker.ts:shimCallStructuredViaLegacy.
+   * Step 4 replaces this with real Gemini responseSchema decoding.
+   */
+  async callStructured<T>(
+    req: AiProviderCallRequest,
+    _schema: AiStructuredCallSchema
+  ): Promise<AiProviderStructuredResult<T>> {
+    return shimCallStructuredViaLegacy<T>(this, req);
   }
 };
 

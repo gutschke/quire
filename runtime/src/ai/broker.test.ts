@@ -8,7 +8,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AiBroker, type AiProvider } from './broker';
+import {
+  AiBroker,
+  shimCallStructuredViaLegacy,
+  type AiProvider
+} from './broker';
 
 import type { AiAuditEntry } from '../core/state';
 
@@ -43,7 +47,8 @@ const happyProvider: AiProvider = {
     tokensOut: 5,
     responseId: 'resp-1'
   }),
-  parse: (raw) => JSON.parse(raw)
+  parse: (raw) => JSON.parse(raw),
+  callStructured: (req) => shimCallStructuredViaLegacy(happyProvider, req)
 };
 
 const malformedProvider: AiProvider = {
@@ -54,7 +59,8 @@ const malformedProvider: AiProvider = {
     tokensOut: 3,
     responseId: 'resp-2'
   }),
-  parse: () => null
+  parse: () => null,
+  callStructured: (req) => shimCallStructuredViaLegacy(malformedProvider, req)
 };
 
 const networkErrorProvider: AiProvider = {
@@ -62,7 +68,8 @@ const networkErrorProvider: AiProvider = {
   call: async () => {
     throw new Error('HTTP 500 from claude');
   },
-  parse: () => null
+  parse: () => null,
+  callStructured: (req) => shimCallStructuredViaLegacy(networkErrorProvider, req)
 };
 
 describe('AiBroker.complete — guards', () => {

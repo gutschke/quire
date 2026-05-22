@@ -115,7 +115,8 @@ describe('QuireApp AI panel — submit flow', () => {
           } catch {
             return null;
           }
-        }
+        },
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
   }
@@ -129,7 +130,8 @@ describe('QuireApp AI panel — submit flow', () => {
       claude: {
         id: 'claude',
         call: vi.fn().mockRejectedValue(err),
-        parse: () => null
+        parse: () => null,
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
   }
@@ -182,7 +184,8 @@ describe('QuireApp AI panel — submit flow', () => {
       claude: {
         id: 'claude',
         call: vi.fn().mockReturnValue(pending),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     const p = app.submitAiPrompt('hi');
@@ -211,7 +214,8 @@ describe('QuireApp AI panel — submit flow', () => {
           tokensOut: 17,
           responseId: 'r-1'
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     await app.submitAiPrompt('hi');
@@ -256,7 +260,8 @@ describe('QuireApp AI panel — submit flow', () => {
           tokensOut: 0,
           responseId: 'r-new'
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     app.acceptAiResponse('r-old');
@@ -354,7 +359,8 @@ describe('QuireApp AI panel — provider switching', () => {
         tokensOut: 0,
         responseId: 'r'
       }),
-      parse: (raw: string) => JSON.parse(raw)
+      parse: (raw: string) => JSON.parse(raw),
+      callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
     });
     const claudeStub = stub('claude says hi');
     const geminiStub = { ...stub('gemini says hi'), id: 'gemini' as const };
@@ -415,7 +421,8 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
             responseId: 'r'
           });
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     await app.submitAiPrompt('hello, no context');
@@ -481,7 +488,8 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
             responseId: 'r'
           });
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     await app.submitAiPrompt('what happens in scene 1?');
@@ -547,7 +555,8 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
             responseId: 'r'
           });
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     await app.submitAiPrompt('where is the cable?');
@@ -582,7 +591,8 @@ describe('QuireApp AI share-to-chat', () => {
           tokensOut: 0,
           responseId: 'r'
         }),
-        parse: (raw: string) => JSON.parse(raw)
+        parse: (raw: string) => JSON.parse(raw),
+        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
       }
     };
     app.startHosting();
