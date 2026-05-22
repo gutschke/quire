@@ -198,6 +198,97 @@ export function isSourceRef(value: unknown): value is SourceRef {
  * with a generated id so accept/reject events can still reference
  * the degraded response.
  */
+/**
+ * CC-17 (M4 char-creation): structured response shape for the AI
+ * backstory-synthesis call.  Distinct from `AiResponse` because the
+ * synthesis output is *the player's PC*, not a safe/dmOnly dual-card
+ * play exchange — there is no DM-private half.  Synthesized once at
+ * session 1 from the player's MC + short-answer questionnaire
+ * responses (see runtime/design/m4-character-creation.md §AI synthesis).
+ *
+ * Schema scaffold only.  The full prompt content (CC-19), forbidden-
+ * token validators (CC-20/CC-21), and DM approval gate (CC-24) ship
+ * with their respective items in subsequent commits.  This file
+ * defines just the on-the-wire response shape + type guard so the
+ * downstream code has a stable contract to lean on.
+ *
+ * Field rationale (per prompt-engineering expert recommendation):
+ * - `name` MUST differ from the player's display name; the broker
+ *   validator at CC-21 cross-checks against the inviting peer's
+ *   display name.
+ * - `tags` array bounded at 3-5 entries.  Below 3 makes the PC
+ *   feel undefined; above 5 is over-determination.
+ * - `backstory` bounded at 250-400 words (approx).  Below 250 is
+ *   too thin to anchor coincidence-seeding; above 400 the AI
+ *   tends to invent campaign-canon-contradicting detail.  Exact
+ *   range enforcement lives in CC-21 (structural validator), not
+ *   in the type guard — the guard only checks non-empty.
+ * - `pronouns` is a free-form short string; no allowlist (would
+ *   exclude players who use non-canonical pronouns).
+ *
+ * Forbidden-token enforcement (Quiet / magic / premonition / fate /
+ * chosen — see [[project-quire-ai-player-facing-scope]]) runs on
+ * `backstory` AFTER parsing; it's not encoded in the type.
+ */
+export interface PcBackstorySynthesisResponse {
+  /**
+   * Plausible character name.  MUST NOT match the player's display
+   * name (post-parse check; not enforced by the type guard).
+   */
+  name: string;
+  /** Pronoun set — free-form short string. */
+  pronouns: string;
+  /**
+   * 3-5 concrete, fiction-relevant tags.  Bounded by the type guard
+   * to a non-empty array of strings; the [3..5] range is enforced
+   * by the structural validator at CC-21.
+   */
+  tags: string[];
+  /**
+   * Markdown body, ~250-400 words, 3-4 paragraphs.  Tone-anchored
+   * to "ordinary people in the present-day Bay Area" (Underleaf
+   * default; campaign opt-out via the rules-schema tone field in
+   * a future hybrid landing).  Forbidden tokens scrubbed post-
+   * parse per [[project-quire-ai-player-facing-scope]].
+   */
+  backstory: string;
+  /** Raw provider text/JSON for the audit chain. */
+  raw: string;
+  /** Tokens consumed by the prompt half of this exchange. */
+  tokensIn: number;
+  /** Tokens consumed by the completion half of this exchange. */
+  tokensOut: number;
+  /**
+   * Stable provider-side id for the DM approval gate (CC-24).
+   * When the broker can't parse a structured response, a synthesized
+   * fingerprint id keeps the gate buttons working — same shape as
+   * the existing parseFailureResponse pattern.
+   */
+  responseId: string;
+}
+
+/**
+ * Type guard for a backstory-synthesis response.  Tight enough that
+ * downstream rendering code can consume the result without further
+ * defensive coding, loose enough that out-of-band field additions
+ * by a future provider don't break the parse.
+ */
+export function isPcBackstorySynthesisResponse(
+  value: unknown
+): value is PcBackstorySynthesisResponse {
+  if (!value || typeof value !== 'object') return false;
+  const r = value as Record<string, unknown>;
+  if (typeof r.name !== 'string' || r.name.length === 0) return false;
+  if (typeof r.pronouns !== 'string') return false;
+  if (typeof r.backstory !== 'string' || r.backstory.length === 0) return false;
+  if (!Array.isArray(r.tags)) return false;
+  if (r.tags.length === 0) return false;
+  if (!r.tags.every((t) => typeof t === 'string' && t.length > 0)) return false;
+  // raw / tokens / responseId are broker-filled; tolerate absence here
+  // so a pre-normalization provider parse can still satisfy the shape.
+  return true;
+}
+
 export function parseFailureResponse(rawText: string): AiResponse {
   // responseId synthesized from a content-hash-ish fingerprint so the
   // DM can still hit Accept / Reject on a degraded response (the UI

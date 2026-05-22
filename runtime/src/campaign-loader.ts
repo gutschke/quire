@@ -14,6 +14,44 @@ import { containsUcCloseSentinel } from './ai/context';
  * path prefix.
  */
 
+/**
+ * V-5 schema-half (engine-vs-campaign boundary doc): declared
+ * primary-resolution roll for the campaign.  The engine reads this
+ * field when rendering the dice surface (M3D-4) and falls back to
+ * a hardcoded `2d6+{stat}` default when absent — preserving today's
+ * Underleaf-only behavior with no campaign-side change required.
+ *
+ * `expression` accepts the standard dice expression grammar from
+ * `dice.ts` PLUS `{stat}` and `{mod}` placeholders.  The dice UI
+ * substitutes the bound PC's chosen stat modifier at click time.
+ *
+ * `statSource` is currently always `boundPc` (the PC bound to the
+ * roller's peer).  Reserved for future expansion (e.g. NPC-roll
+ * surfaces).
+ *
+ * `modifierCap` bounds the user-adjustable modifier in the stepper.
+ * The rules cap stacked tag/skill modifiers at +2 per
+ * `underleaf/world/rules.md`.
+ */
+export interface CampaignPrimaryRoll {
+  expression: string;
+  statSource?: 'boundPc';
+  modifierCap?: { min: number; max: number };
+}
+
+/**
+ * V-5 schema-half: the engine/campaign contract for rules-related
+ * policy.  Today only `primaryRoll` lives here; V-1..V-4 (caster
+ * ladder, hard-gates, tracks, stat keys) remain hardcoded in the
+ * engine until they're cheap to extract.  Adding the schema field
+ * upfront is the engine's "no-regret" position — declaring it now
+ * lets M3D-4 read it without retrofitting; campaigns that omit it
+ * inherit the hardcoded default.
+ */
+export interface CampaignRules {
+  primaryRoll?: CampaignPrimaryRoll;
+}
+
 export interface CampaignManifest {
   $schemaVersion: string;
   name: string;
@@ -24,12 +62,52 @@ export interface CampaignManifest {
   contentNotes?: string[];
   defaultAiProvider?: 'claude' | 'gemini' | 'none';
   ruleset?: string;
+  rules?: CampaignRules;
   authors?: string[];
   homepage?: string;
   episodes?: string[];
   characters?: {
     pcs?: string[];
     npcs?: string[];
+  };
+}
+
+/**
+ * Engine default for the primary roll when a campaign doesn't
+ * declare `rules.primaryRoll`.  Matches Underleaf's `2d6+stat`
+ * resolution (see `underleaf/world/rules.md` §Resolution).  When
+ * V-1..V-4 are eventually extracted to the campaign schema, this
+ * constant lives alongside the other engine defaults — but for now
+ * it serves both as the fallback AND as the documentation of the
+ * current hardcoded assumption.
+ *
+ * TODO(campaign-policy): once a second campaign exists, audit
+ * whether engine defaults should exist at all or whether every
+ * campaign should declare its own rules block explicitly.
+ */
+export const DEFAULT_PRIMARY_ROLL: CampaignPrimaryRoll = {
+  expression: '2d6+{stat}',
+  statSource: 'boundPc',
+  modifierCap: { min: -2, max: 2 }
+};
+
+/**
+ * Resolve the effective primary roll for a campaign, applying the
+ * engine default when the manifest omits `rules.primaryRoll`.  The
+ * dice UI (M3D-4) calls this rather than reading the manifest field
+ * directly so the default surfaces consistently across the codebase.
+ */
+export function getPrimaryRoll(
+  manifest: CampaignManifest
+): CampaignPrimaryRoll {
+  const declared = manifest.rules?.primaryRoll;
+  if (!declared) return DEFAULT_PRIMARY_ROLL;
+  // The declared field is partial — fall back per sub-field so
+  // campaigns can override only the parts they care about.
+  return {
+    expression: declared.expression || DEFAULT_PRIMARY_ROLL.expression,
+    statSource: declared.statSource ?? DEFAULT_PRIMARY_ROLL.statSource,
+    modifierCap: declared.modifierCap ?? DEFAULT_PRIMARY_ROLL.modifierCap
   };
 }
 

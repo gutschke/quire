@@ -4,7 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isAiResponse, isStateUpdate, parseFailureResponse } from './schema';
+import {
+  isAiResponse,
+  isStateUpdate,
+  isPcBackstorySynthesisResponse,
+  parseFailureResponse
+} from './schema';
 
 describe('isAiResponse', () => {
   it('accepts a minimal well-shaped response', () => {
@@ -236,5 +241,90 @@ describe('isAiResponse — M3c.2 stateUpdates field', () => {
         stateUpdates: [{ kind: 'unknown' }]
       })
     ).toBe(false);
+  });
+});
+
+describe('isPcBackstorySynthesisResponse (CC-17)', () => {
+  const valid = {
+    name: 'Mei Tanaka',
+    pronouns: 'she/her',
+    tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+    backstory: 'Mei grew up watching ferries.',
+    raw: '{}',
+    tokensIn: 100,
+    tokensOut: 250,
+    responseId: 'syn-1'
+  };
+
+  it('accepts a well-shaped response', () => {
+    expect(isPcBackstorySynthesisResponse(valid)).toBe(true);
+  });
+
+  it('rejects when name is empty', () => {
+    expect(isPcBackstorySynthesisResponse({ ...valid, name: '' })).toBe(false);
+  });
+
+  it('rejects when name is missing', () => {
+    const { name: _name, ...withoutName } = valid;
+    void _name;
+    expect(isPcBackstorySynthesisResponse(withoutName)).toBe(false);
+  });
+
+  it('rejects when pronouns is non-string', () => {
+    expect(isPcBackstorySynthesisResponse({ ...valid, pronouns: null })).toBe(
+      false
+    );
+  });
+
+  it('accepts empty-string pronouns', () => {
+    // Some players may decline to set pronouns; the guard accepts
+    // empty (the structural validator at CC-21 may treat this as a
+    // soft warning, not a hard reject).
+    expect(isPcBackstorySynthesisResponse({ ...valid, pronouns: '' })).toBe(
+      true
+    );
+  });
+
+  it('rejects when backstory is empty', () => {
+    expect(isPcBackstorySynthesisResponse({ ...valid, backstory: '' })).toBe(
+      false
+    );
+  });
+
+  it('rejects when tags is not an array', () => {
+    expect(isPcBackstorySynthesisResponse({ ...valid, tags: 'a,b,c' })).toBe(
+      false
+    );
+  });
+
+  it('rejects when tags array is empty', () => {
+    expect(isPcBackstorySynthesisResponse({ ...valid, tags: [] })).toBe(false);
+  });
+
+  it('rejects when any tag is non-string', () => {
+    expect(
+      isPcBackstorySynthesisResponse({ ...valid, tags: ['ok', 42, 'ok2'] })
+    ).toBe(false);
+  });
+
+  it('rejects when any tag is empty string', () => {
+    expect(
+      isPcBackstorySynthesisResponse({ ...valid, tags: ['ok', '', 'ok2'] })
+    ).toBe(false);
+  });
+
+  it('tolerates absence of broker-filled fields', () => {
+    // raw/tokens/responseId are filled by the broker AFTER parsing;
+    // a provider-side parse should satisfy the shape without them.
+    const { raw: _r, tokensIn: _i, tokensOut: _o, responseId: _id, ...providerSide } = valid;
+    void _r; void _i; void _o; void _id;
+    expect(isPcBackstorySynthesisResponse(providerSide)).toBe(true);
+  });
+
+  it('rejects non-object inputs', () => {
+    expect(isPcBackstorySynthesisResponse(null)).toBe(false);
+    expect(isPcBackstorySynthesisResponse(undefined)).toBe(false);
+    expect(isPcBackstorySynthesisResponse('string')).toBe(false);
+    expect(isPcBackstorySynthesisResponse(42)).toBe(false);
   });
 });
