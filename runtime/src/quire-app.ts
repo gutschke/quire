@@ -19,6 +19,12 @@ import './ui/regions/dm-aside';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
+
+/**
+ * M3D-4: doubles halo flag derived from a 2d6 result.  See
+ * `<dice-dock>` for the matching CSS classes.
+ */
+type DoublesFlag = 'snake-eyes' | 'box-cars' | null;
 import './ui/regions/chat-panel';
 import './ui/regions/session-bar';
 import './ui/regions/ai-panel';
@@ -1922,10 +1928,24 @@ export class QuireApp extends LitElement {
     const inSession = this.sessionView?.status === 'active';
     // M3a.1 — player-visible renderer reads filteredShared.
     const shared = inSession ? this.sessionView!.filteredShared.diceRolls : [];
+    // M3D-4: compute the doubles halo flag from the actual dice
+    // array.  Only 2d6 doubles get a colored halo per ui.md L156
+    // (red snake-eyes / gold box-cars).  Non-d6 doubles (e.g.
+    // 2d20 nat-20s) are intentionally left un-haloed — the halo
+    // belongs to the primary 2d6 resolution mechanic specifically.
+    const halo = (dice: readonly number[]): DoublesFlag => {
+      if (dice.length !== 2) return null;
+      const [a, b] = dice;
+      if (a !== b) return null;
+      if (a === 1) return 'snake-eyes';
+      if (a === 6) return 'box-cars';
+      return null;
+    };
     const entries: Array<{
       key: string;
       label: string;
       tierClass: string;
+      doubles?: DoublesFlag;
     }> = inSession
       ? shared
           .slice()
@@ -1934,12 +1954,17 @@ export class QuireApp extends LitElement {
           .map((r, i) => ({
             key: `s${r.ts}-${r.peerId}-${i}`,
             label: `${this.displayNameFor(r.peerId)}: ${r.expression} = ${r.result} [${r.dice.join(', ')}]`,
-            tierClass: ''
+            tierClass: '',
+            doubles: halo(r.dice)
           }))
       : this.rolls.map((r, i) => ({
           key: `l${i}`,
           label: formatRoll(r),
-          tierClass: r.tier ? `roll-tier-${r.tier}` : ''
+          tierClass: r.tier ? `roll-tier-${r.tier}` : '',
+          // Local-mode DiceRoll has `rolls: number[]` (the die
+          // results) where the shared/event shape has `dice: number[]`.
+          // Same data, different field name.
+          doubles: halo(r.rolls)
         }));
     // M2.8: raise-hand affordance.  Available to non-DM peers in an
     // active session (DMs reveal scenes; players raise hands).  DM

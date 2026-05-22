@@ -26,14 +26,33 @@
  */
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 
 export interface DiceHistoryEntry {
   key: string;
   label: string;
   /** CSS class like "roll-tier-hit" / "roll-tier-miss" for local rolls. */
   tierClass: string;
+  /**
+   * M3D-4: when the entry represents a 2d6 roll with doubles, the
+   * UI surfaces a colored halo (red double-1s, gold double-6s) so
+   * the DM doesn't miss the complication / positive beat.  The
+   * caller (`QuireApp.renderRollPanel`) computes the flag from the
+   * roll event's `dice: [a, b]` array.
+   */
+  doubles?: 'snake-eyes' | 'box-cars' | null;
 }
+
+/**
+ * M3D-4: bounds on the inline modifier stepper.  Matches the
+ * rules cap on stacked skill/tag bonuses
+ * (`underleaf/world/rules.md` §Resolution).  A future
+ * campaign-declared cap from `CampaignPrimaryRoll.modifierCap` will
+ * pass via prop once the dice-Dock consumes the campaign manifest
+ * (V-5 wire-through).  For now hardcoded to the engine default.
+ */
+const STEPPER_MIN = -2;
+const STEPPER_MAX = 2;
 
 @customElement('dice-dock')
 export class DiceDock extends LitElement {
@@ -83,6 +102,25 @@ export class DiceDock extends LitElement {
     wis: number;
     cha: number;
   } | null = null;
+
+  /**
+   * M3D-4: inline modifier offset applied to the next chip roll
+   * (skill/tag bonus, harm/stress penalty, situational modifier).
+   * Bounded [STEPPER_MIN, STEPPER_MAX] per the rules cap.  Resets
+   * to 0 after each roll so the offset doesn't carry forward by
+   * surprise; the DM/player re-applies it deliberately.
+   */
+  @state() private modifierOffset: number = 0;
+
+  private bumpOffset(delta: number): void {
+    const next = this.modifierOffset + delta;
+    if (next < STEPPER_MIN || next > STEPPER_MAX) return;
+    this.modifierOffset = next;
+  }
+
+  private resetOffset(): void {
+    this.modifierOffset = 0;
+  }
 
   override render(): TemplateResult {
     return html`
@@ -134,12 +172,17 @@ export class DiceDock extends LitElement {
         ${this.entries.length
           ? html`
               <ul class="roll-history">
-                ${this.entries.map(
-                  (e) =>
-                    html`<li>
-                      <code class="${e.tierClass}">${e.label}</code>
-                    </li>`
-                )}
+                ${this.entries.map((e) => {
+                  const doublesClass =
+                    e.doubles === 'snake-eyes'
+                      ? ' roll-doubles-snake-eyes'
+                      : e.doubles === 'box-cars'
+                        ? ' roll-doubles-box-cars'
+                        : '';
+                  return html`<li>
+                    <code class="${e.tierClass}${doublesClass}">${e.label}</code>
+                  </li>`;
+                })}
               </ul>
             `
           : html`<p class="muted">No rolls yet.</p>`}
@@ -150,20 +193,30 @@ export class DiceDock extends LitElement {
   private renderStatChips(): TemplateResult {
     const s = this.stats!;
     const formatMod = (n: number): string => (n >= 0 ? `+${n}` : `${n}`);
+    const offset = this.modifierOffset;
     const chip = (
       label: string,
       key: keyof NonNullable<typeof this.stats>
     ): TemplateResult => {
       const mod = s[key];
-      const expr = mod === 0 ? '2d6' : `2d6${formatMod(mod)}`;
+      const totalMod = mod + offset;
+      const expr = totalMod === 0 ? '2d6' : `2d6${formatMod(totalMod)}`;
+      const summary =
+        offset === 0
+          ? `Roll ${expr} (${label} check)`
+          : `Roll ${expr} (${label} ${formatMod(mod)} + ${formatMod(offset)} situational)`;
       return html`<button
         type="button"
         class="dice-stat-chip"
-        title="Roll ${expr} (${label} check)"
-        aria-label="Roll ${label} ${formatMod(mod)}"
+        title=${summary}
+        aria-label=${summary}
         @click=${() => {
           this.onRollDraftChange?.(expr);
           this.onSubmitRoll?.(expr);
+          // M3D-4: reset the offset after rolling so it doesn't
+          // silently carry into the next roll.  TTRPG-craft norm:
+          // situational modifiers are per-roll, not persistent.
+          this.resetOffset();
         }}
       >
         <span class="dice-stat-label">${label}</span>
@@ -174,6 +227,58 @@ export class DiceDock extends LitElement {
       <div class="dice-stat-chips">
         ${chip('STR', 'str')} ${chip('DEX', 'dex')} ${chip('CON', 'con')}
         ${chip('INT', 'int')} ${chip('WIS', 'wis')} ${chip('CHA', 'cha')}
+      </div>
+      ${this.renderModifierStepper(formatMod)}
+    `;
+  }
+
+  /**
+   * M3D-4: inline modifier stepper.  Bounded ±2 (engine default;
+   * future V-5 wire-through honors campaign-declared bounds).  The
+   * label shows the current offset; − / + buttons adjust.  Applied
+   * to the NEXT chip roll, then auto-resets.
+   *
+   * Per ui.md L156 + TTRPG-expert recommendation, the stepper is
+   * always visible so a DM/player who needs a +1 from a skill or
+   * tag (or a -1 from harm) can adjust before clicking a chip.
+   */
+  private renderModifierStepper(
+    formatMod: (n: number) => string
+  ): TemplateResult {
+    const offset = this.modifierOffset;
+    return html`
+      <div class="dice-modifier-stepper" role="group" aria-label="Roll modifier">
+        <button
+          type="button"
+          class="dice-modifier-step dice-modifier-step-minus"
+          ?disabled=${offset <= STEPPER_MIN}
+          aria-label="Decrease modifier"
+          title="Modifier −1 (current: ${formatMod(offset)})"
+          @click=${() => this.bumpOffset(-1)}
+        >
+          −
+        </button>
+        <span
+          class="dice-modifier-value ${offset !== 0
+            ? 'dice-modifier-value-active'
+            : ''}"
+          aria-live="polite"
+          title=${offset === 0
+            ? 'No situational modifier'
+            : `Situational modifier ${formatMod(offset)} (applied to next chip roll, then resets)`}
+        >
+          ${formatMod(offset)}
+        </span>
+        <button
+          type="button"
+          class="dice-modifier-step dice-modifier-step-plus"
+          ?disabled=${offset >= STEPPER_MAX}
+          aria-label="Increase modifier"
+          title="Modifier +1 (current: ${formatMod(offset)})"
+          @click=${() => this.bumpOffset(1)}
+        >
+          +
+        </button>
       </div>
     `;
   }

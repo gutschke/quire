@@ -1668,6 +1668,66 @@ export const quireAppStyles = css`
       font-variant-numeric: tabular-nums;
     }
 
+    /* M3D-4: inline modifier stepper next to the stat chip row.
+       Bounded ±2 per the rules cap (engine default; V-5
+       wire-through honors campaign-declared bounds later).
+       Sits BELOW the chip row in column flex so it's always
+       visible without competing for chip space. */
+    .dice-modifier-stepper {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin: 0.3rem 0 0.3rem 0.2rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .dice-modifier-step {
+      width: 1.6rem;
+      height: 1.6rem;
+      padding: 0;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      border-radius: 999px;
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+      font-weight: 600;
+      line-height: 1;
+    }
+    .dice-modifier-step:hover:not(:disabled) {
+      background: light-dark(#e2e8f0, #1e293b);
+    }
+    .dice-modifier-step:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .dice-modifier-value {
+      font-variant-numeric: tabular-nums;
+      min-width: 1.6rem;
+      text-align: center;
+      font-weight: 500;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .dice-modifier-value-active {
+      color: light-dark(#0b3d7f, #79b8f0);
+      font-weight: 700;
+    }
+
+    /* M3D-4: doubles halo on roll-history entries.  Red ring on
+       snake-eyes (double-1) so the DM doesn't miss the
+       complication beat; gold on box-cars (double-6) so the DM
+       doesn't miss the positive beat.  Per ui.md L156 +
+       TTRPG-craft expert recommendation. */
+    .roll-doubles-snake-eyes {
+      box-shadow: 0 0 0 2px light-dark(#dc2626, #ef4444);
+      border-radius: 0.25rem;
+      padding: 0 0.2rem;
+    }
+    .roll-doubles-box-cars {
+      box-shadow: 0 0 0 2px light-dark(#d97706, #fbbf24);
+      border-radius: 0.25rem;
+      padding: 0 0.2rem;
+    }
+
     /* ---- M2.5/M2.8/M2.9 affordances (gate-close minimum styling). ---- */
 
     /* M2.8: ✋ glyph on roster rows for peers with raised hand. */
