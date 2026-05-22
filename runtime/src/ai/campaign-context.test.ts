@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   buildCampaignContext,
+  buildPlayerFacingContext,
   wrapCampaignContext
 } from './campaign-context';
 
@@ -194,5 +195,81 @@ describe('wrapCampaignContext', () => {
     // Two open tags, two close tags.
     expect(out.match(/<untrusted_content/g)?.length).toBe(2);
     expect(out.match(/<\/untrusted_content>/g)?.length).toBe(2);
+  });
+});
+
+describe('buildPlayerFacingContext (CC-18) — spoiler firewall', () => {
+  it('NEVER returns dm/* files regardless of episode dm-hints', async () => {
+    // Mock every file the dm-scope build would fetch.  If
+    // buildPlayerFacingContext leaks any dm/* path into its
+    // result, the test fails — that would be a spoiler-firewall
+    // breach.
+    mockFetchByPath({
+      'campaign.json': '{"name":"X"}',
+      'world/overview.md': '# World',
+      'episodes/ep1/episode.json':
+        '{"name":"Ep1","scenes":["scenes/01.md"]}',
+      'episodes/ep1/scenes/01.md': 'scene body',
+      // These would be FETCHED under dm scope:
+      'design/DM-ONLY/antagonist.md': 'ANTAGONIST SECRETS',
+      'design/DM-ONLY/big-arc.md': 'BIG ARC SECRETS',
+      'episodes/ep1/dm/stakes.md': 'DM STAKES MENU',
+      'episodes/ep1/dm/the-cable.md': 'DM CABLE REVEAL'
+    });
+    const ctx = await buildPlayerFacingContext({
+      source: SOURCE,
+      episodes: [{ slug: 'ep1' }]
+    });
+    const paths = ctx.map((c) => c.path);
+    expect(paths).toContain('campaign.json');
+    expect(paths).toContain('world/overview.md');
+    expect(paths).toContain('episodes/ep1/scenes/01.md');
+    // The load-bearing assertions: NO dm-only path appears.
+    for (const path of paths) {
+      expect(path).not.toMatch(/(^|\/)dm\//);
+      expect(path).not.toContain('design/DM-ONLY/');
+    }
+    // Bodies don't smuggle secrets either (sanity check).
+    const bodies = ctx.map((c) => c.content);
+    expect(bodies.some((b) => b.includes('ANTAGONIST SECRETS'))).toBe(false);
+    expect(bodies.some((b) => b.includes('DM STAKES MENU'))).toBe(false);
+  });
+
+  it('matches buildCampaignContext({scope:public}) exactly', async () => {
+    // The wrapper is a pure hard-override; the result MUST equal
+    // an explicit public-scope build.  Any divergence is a bug.
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#',
+      'episodes/ep1/episode.json': '{"name":"E","scenes":["s.md"]}',
+      'episodes/ep1/s.md': 'body'
+    });
+    const playerFacing = await buildPlayerFacingContext({
+      source: SOURCE,
+      episodes: [{ slug: 'ep1' }]
+    });
+    const explicitPublic = await buildCampaignContext({
+      source: SOURCE,
+      episodes: [{ slug: 'ep1' }],
+      scope: 'public'
+    });
+    expect(playerFacing).toEqual(explicitPublic);
+  });
+
+  it('TypeScript invariant: caller cannot pass scope at all', () => {
+    // This is a documentation test (the value of the invariant is
+    // in the type signature: `Omit<CampaignContextRequest, "scope">`).
+    // A future commit that breaks this guarantee would fail at
+    // compile time, not at runtime — but the test pins the intent.
+    // The cast below would be flagged by `tsc --noEmit` if someone
+    // tried to pass scope as the wrapper's argument:
+    //   buildPlayerFacingContext({ source, scope: 'dm' as ContextScope })
+    //   //                                  ^^^^^ object literal may
+    //   //                                        only specify known
+    //   //                                        properties
+    // We don't actually invoke the bad form here (it wouldn't
+    // compile), but we assert the function exists with the right
+    // shape.
+    expect(typeof buildPlayerFacingContext).toBe('function');
   });
 });

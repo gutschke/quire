@@ -194,6 +194,30 @@ export async function buildCampaignContext(
 }
 
 /**
+ * CC-18 (M4 char-creation): build a campaign context guaranteed
+ * NEVER to include `dm/*.md` files.  The type signature physically
+ * prevents a caller from passing `scope: 'dm'` (the parameter is
+ * omitted from the request shape), so the player-facing AI synthesis
+ * path cannot leak DM-only material into a backstory or other
+ * player-facing output — even if the calling code is the DM and would
+ * be permitted DM scope in the play-time path.
+ *
+ * Load-bearing for the magic-realization arc in Underleaf and any
+ * other campaign whose design depends on gradual discovery.  See
+ * memory `project-quire-ai-player-facing-scope` for the full
+ * threat-model justification.
+ *
+ * This is the FIRST line of defense.  The forbidden-token post-check
+ * (CC-20) is the second, and the DM approval gate (CC-24) is the
+ * third.  Defense in depth.
+ */
+export function buildPlayerFacingContext(
+  req: Omit<CampaignContextRequest, 'scope'>
+): Promise<ContextFile[]> {
+  return buildCampaignContext({ ...req, scope: 'public' });
+}
+
+/**
  * Concatenate fetched files into a single wrapped-untrusted block
  * suitable for prepending to the user's prompt.  Empty input
  * returns the empty string so the caller can unconditionally
