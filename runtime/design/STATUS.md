@@ -77,6 +77,25 @@ Design doc + expert convergence point at three primitives:
 
 Recommended pre-implementation 4-reviewer gate on the design doc.
 
+## Phase 2 gate verdict (2026-05-22)
+
+4-reviewer pass (TTRPG-craft / UX / Engine / Adversarial) ran
+post-CC-23.  Verdict: `ship-with-followups`.  One BLOCKER (F-PI1
+prompt-injection bypass via player short-answer wrapper) fixed
+inline before the synthesis doc landed.  Full findings + Phase 3
+backlog in `design/phase2-gate-findings.md`.
+
+**Convergent findings → Phase 3 P0** (3 items, ~100 LOC + copy):
+- P0-1: Wire campaign-manifest spoiler/place hybrid seams.
+- P0-2: Scrub `CC-13` user-facing leak + add Mode B in-product warning.
+- P0-3: Strip play-app shell on chargen route (mobile-compatible).
+
+**Fixed inline at gate close** (commit before this verdict):
+- F-PI1 BLOCKER: triple-quote sentinel → wrapUntrusted in
+  `formatAnsweredQuestion`.
+- F-S2 partial: extended DEFAULT_SPOILER_TOKENS from 5 to 17
+  entries (synonyms an AI naturally reaches for).
+
 ## Backlog prioritization pass (2026-05-22)
 
 68-item backlog (see `design/backlog-catalog.md`) ranked by three
