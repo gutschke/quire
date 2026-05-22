@@ -165,8 +165,13 @@ describe('AiBroker.complete — happy path', () => {
   });
 });
 
-describe('AiBroker.complete — parse failure → fallback', () => {
-  it('returns parseFailureResponse when provider.parse returns null', async () => {
+describe('AiBroker.complete — provider refusal → degraded response', () => {
+  it('returns a refusal-shaped AiResponse when callStructured cannot parse', async () => {
+    // Phase 3b-X step 8: callStructured is now the broker's path.
+    // The shim (used by this mock provider) maps a JSON.parse failure
+    // to `refusal.kind = 'truncated'`; broker.complete renders that
+    // as an empty `safe` + a `(AI truncated: ...)` dmOnly so the DM
+    // sees something concrete rather than a silent failure.
     const broker = makeBroker(malformedProvider);
     const r = await broker.complete({
       prompt: 'hi',
@@ -174,7 +179,7 @@ describe('AiBroker.complete — parse failure → fallback', () => {
       model: 'sonnet'
     });
     expect(r.safe).toBe('');
-    expect(r.dmOnly).toMatch(/not in the expected format/);
+    expect(r.dmOnly).toMatch(/^\(AI truncated:/);
     expect(r.raw).toBe('this is not JSON');
     // Tokens + responseId still come from the provider call result
     // so the audit chain can still account for the failed exchange.
@@ -185,7 +190,13 @@ describe('AiBroker.complete — parse failure → fallback', () => {
 });
 
 describe('AiBroker.complete — provider HTTP error', () => {
-  it('wraps as AiBrokerError(provider-error) so callers can surface it', async () => {
+  it('wraps as AiBrokerError(provider-error) so the UI surfaces a banner', async () => {
+    // Phase 3b-X step 8: callStructured maps HTTP/network errors to
+    // `refusal.kind: 'provider-error'`; broker.complete throws that
+    // as AiBrokerError so the UI shows an error banner.  (Other
+    // refusal kinds — safety, truncated, model-unsupported — return
+    // a degraded AiResponse instead; see the corresponding tests in
+    // anthropic.test.ts / gemini.test.ts.)
     const broker = makeBroker(networkErrorProvider);
     await expect(
       broker.complete({ prompt: 'hi', scope: 'public', model: 'sonnet' })

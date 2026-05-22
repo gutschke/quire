@@ -137,6 +137,129 @@ export const PC_BACKSTORY_SYNTHESIS_CALL_SCHEMA: AiStructuredCallSchema = {
 };
 
 /**
+ * Phase 3b-X step 8: canonical JSON Schema for `AiResponse` (the
+ * DM-aide dual-card output).  Mirrors `AiResponse` in `schema.ts`
+ * MINUS the broker-filled fields (raw / tokensIn / tokensOut /
+ * responseId — the synthesizer attaches them post-call).
+ *
+ * `stateUpdates` is a discriminated union — Anthropic strict mode
+ * handles it via `oneOf` at item level; Gemini's responseSchema
+ * doesn't support `oneOf` at depth, so the Gemini adapter strips
+ * the union and emits a flat schema with all-fields-optional + a
+ * client-side `isStateUpdate` discriminator.  The flat-fields
+ * fallback today (pre-3b-X) is what Gemini already used.
+ *
+ * Schema-enforced:
+ *   - safe, dmOnly: strings (may be empty).
+ *   - sources: array of {label, path?} objects.
+ *   - stateUpdates: array; each item satisfies one of three union
+ *     shapes (pc-edit / dice-roll / caster-state-set).
+ *
+ * NOT schema-enforced (stays semantic / post-parse):
+ *   - safe vs dmOnly content classification (the AI's call;
+ *     spoiler-check + DM eyes are the guards).
+ *   - sources paths existing in the campaign repo (validated
+ *     elsewhere when the DM clicks a citation).
+ *   - StateUpdate hard-gate transitions (AiWriteController).
+ */
+export const AI_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    safe: {
+      type: 'string',
+      description:
+        'Text safe to read aloud at the table.  No spoilers, no DM-only material, no future-plot details.  Empty string if all of the answer is DM-only.'
+    },
+    dmOnly: {
+      type: 'string',
+      description:
+        "DM-eyes-only narrative / mechanics / spoilers.  Rendered in the amber-rail card with the 'copy (do not read aloud)' affordance.  Empty string if all of the answer is player-safe."
+    },
+    sources: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          label: { type: 'string' },
+          path: { type: 'string' }
+        },
+        required: ['label'],
+        additionalProperties: false
+      },
+      description:
+        'Citations into the campaign repo — { label, path? }.  Cite when the answer leans on a specific file.'
+    },
+    stateUpdates: {
+      type: 'array',
+      description:
+        'OPTIONAL typed bookkeeping the DM will accept-gate before any event lands.  Emit ONLY when your prose response clearly implies a state change.',
+      items: {
+        // Anthropic strict mode handles oneOf at item level via
+        // its discriminator semantics.  Gemini drops oneOf via
+        // `toGeminiSchema` (Gemini-side falls back to the
+        // flat-fields shape with `isStateUpdate` discriminating
+        // client-side; this is the pre-3b-X behavior).
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['pc-edit'] },
+              pcId: { type: 'string' },
+              field: { type: 'string', enum: ['harm', 'stress'] },
+              delta: { type: 'integer' },
+              reason: { type: 'string' }
+            },
+            required: ['kind', 'pcId', 'field', 'delta'],
+            additionalProperties: false
+          },
+          {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['dice-roll'] },
+              purpose: { type: 'string' },
+              expression: { type: 'string' },
+              modifierBreakdown: { type: 'string' }
+            },
+            required: ['kind', 'purpose', 'expression'],
+            additionalProperties: false
+          },
+          {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['caster-state-set'] },
+              pcId: { type: 'string' },
+              ladderState: {
+                type: 'string',
+                enum: [
+                  'clear',
+                  'quiet',
+                  'noticed',
+                  'watched',
+                  'pushing-back',
+                  'hunted'
+                ]
+              },
+              reason: { type: 'string' },
+              taxActive: { type: 'boolean' },
+              spamCount: { type: 'integer' }
+            },
+            required: ['kind', 'pcId', 'ladderState'],
+            additionalProperties: false
+          }
+        ]
+      }
+    }
+  },
+  required: ['safe', 'dmOnly', 'sources'],
+  additionalProperties: false
+} as const;
+
+export const AI_RESPONSE_CALL_SCHEMA: AiStructuredCallSchema = {
+  name: 'respond',
+  schema: AI_RESPONSE_SCHEMA as unknown as Record<string, unknown>
+};
+
+/**
  * Phase 3b-X step 4 (Gemini): translate the canonical schema to
  * Gemini's responseSchema dialect.  Gemini follows OpenAPI 3.0,
  * not JSON Schema 2020-12, so:
@@ -163,14 +286,63 @@ export function toGeminiSchema(
   function strip(node: unknown): unknown {
     if (Array.isArray(node)) return node.map(strip);
     if (!node || typeof node !== 'object') return node;
+    // Phase 3b-X step 8: Gemini doesn't support `oneOf`/`anyOf` at
+    // depth — flatten to a union object whose `required` is the
+    // intersection of all variants' `required` arrays.  The
+    // discriminator (`kind`) is required in every variant, so it
+    // survives the intersection; per-variant required fields
+    // become optional (client-side `isStateUpdate` re-enforces).
+    const obj = node as Record<string, unknown>;
+    if (Array.isArray(obj.oneOf) || Array.isArray(obj.anyOf)) {
+      const variants = (obj.oneOf ?? obj.anyOf) as Array<
+        Record<string, unknown>
+      >;
+      return flattenUnion(variants.map((v) => strip(v) as Record<string, unknown>));
+    }
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node)) {
+    for (const [k, v] of Object.entries(obj)) {
       if (drop.has(k)) continue;
       out[k] = strip(v);
     }
     return out;
   }
   return strip(schema) as Record<string, unknown>;
+}
+
+/**
+ * Merge a discriminated-union variant list into a single flat
+ * object schema for Gemini's responseSchema dialect.  Properties
+ * become the union (variants are expected to share identical
+ * shapes for shared keys); `required` becomes the intersection
+ * (only the discriminator survives).
+ */
+function flattenUnion(
+  variants: Array<Record<string, unknown>>
+): Record<string, unknown> {
+  const mergedProps: Record<string, unknown> = {};
+  const requiredSets: Set<string>[] = [];
+  for (const v of variants) {
+    const props = v.properties as Record<string, unknown> | undefined;
+    if (props) {
+      for (const [k, val] of Object.entries(props)) {
+        if (!(k in mergedProps)) mergedProps[k] = val;
+      }
+    }
+    if (Array.isArray(v.required)) {
+      requiredSets.push(new Set(v.required as string[]));
+    }
+  }
+  const required =
+    requiredSets.length === 0
+      ? []
+      : [...requiredSets[0]].filter((r) =>
+          requiredSets.every((s) => s.has(r))
+        );
+  return {
+    type: 'object',
+    properties: mergedProps,
+    ...(required.length > 0 && { required })
+  };
 }
 
 /**

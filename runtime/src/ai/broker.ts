@@ -15,9 +15,10 @@
  */
 
 import type { AiResponse } from './schema';
-import { isAiResponse, parseFailureResponse } from './schema';
+import { isAiResponse, isStateUpdate, parseFailureResponse } from './schema';
 import { validateContextRef, type ContextScope } from './context';
 import { assertWithinBudget } from './budget';
+import { AI_RESPONSE_CALL_SCHEMA } from './schema-json';
 import type { AiAuditEntry } from '../core/state';
 
 /**
@@ -318,26 +319,61 @@ export class AiBroker {
         'budget-exceeded'
       );
     }
-    let providerResult: AiProviderCallResult;
+    // Phase 3b-X step 8: route through callStructured (constrained
+    // decoding) instead of call() + parse().  Under strict tool use
+    // (Anthropic) / responseSchema (Gemini), the provider emits a
+    // schema-conforming AiResponse payload directly — parse-failure
+    // becomes nearly unreachable in the happy path.
+    let providerResult: AiProviderStructuredResult<Partial<AiResponse>>;
     try {
-      providerResult = await this.provider.call({
-        apiKey,
-        model: req.model,
-        systemPrompt: req.systemPrompt ?? '',
-        prompt: req.prompt,
-        signal: req.signal
-      });
+      providerResult = await this.provider.callStructured<Partial<AiResponse>>(
+        {
+          apiKey,
+          model: req.model,
+          systemPrompt: req.systemPrompt ?? '',
+          prompt: req.prompt,
+          signal: req.signal
+        },
+        AI_RESPONSE_CALL_SCHEMA
+      );
     } catch (e) {
-      // Re-throw network / HTTP errors with a typed wrapper so the
-      // UI distinguishes "provider down" from "parse failure."
+      // AbortError propagates up to the caller; other errors land
+      // as the typed wrapper.
+      if ((e as Error).name === 'AbortError') throw e;
       throw new AiBrokerError(
         e instanceof Error ? e.message : String(e),
         'provider-error'
       );
     }
-    const parsed = this.provider.parse(providerResult.raw);
+    if (!providerResult.ok) {
+      const reason = providerResult.refusal;
+      // `provider-error` (HTTP / network / SDK failure) throws as
+      // AiBrokerError so the UI surfaces a clear error banner —
+      // there's no partial outcome worth logging in dmOnly.  The
+      // other refusal kinds (safety / model-unsupported / truncated)
+      // represent a completed-but-degraded exchange: surface as a
+      // degraded AiResponse so the audit chain still records it
+      // and the DM sees a precise message in dmOnly.
+      if (reason.kind === 'provider-error') {
+        throw new AiBrokerError(reason.message, 'provider-error');
+      }
+      return {
+        safe: '',
+        dmOnly: `(AI ${reason.kind}: ${reason.message})`,
+        sources: [],
+        stateUpdates: [],
+        raw: providerResult.raw,
+        tokensIn: providerResult.tokensIn,
+        tokensOut: providerResult.tokensOut,
+        responseId:
+          providerResult.responseId ||
+          `provider-${reason.kind}-${Date.now().toString(36)}`
+      };
+    }
+    // Successful structured response.  Run isAiResponse as defense-
+    // in-depth (schema enforces shape; this catches drift).
+    const parsed = providerResult.value;
     if (
-      parsed &&
       isAiResponse({
         ...parsed,
         raw: '',
@@ -351,16 +387,19 @@ export class AiBroker {
         dmOnly: parsed.dmOnly ?? '',
         sources: parsed.sources ?? [],
         // M3c.2: providers MAY return stateUpdates; absent → [].
-        stateUpdates: parsed.stateUpdates ?? [],
+        // Filter out malformed entries defensively.
+        stateUpdates: (parsed.stateUpdates ?? []).filter((u) =>
+          isStateUpdate(u)
+        ),
         raw: providerResult.raw,
         tokensIn: providerResult.tokensIn,
         tokensOut: providerResult.tokensOut,
         responseId: providerResult.responseId
       };
     }
-    // Provider returned text that didn't match the AiResponse shape;
-    // degrade rather than throw so the DM at least sees what
-    // happened (raw text lands in the audit chain regardless).
+    // Defense-in-depth: schema-valid JSON that fails the TS guard.
+    // Under constrained decoding this is structurally near-impossible;
+    // surface as the legacy parseFailureResponse for forensics.
     const fallback = parseFailureResponse(providerResult.raw);
     return {
       ...fallback,

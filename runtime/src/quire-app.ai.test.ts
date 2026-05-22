@@ -8,6 +8,11 @@ import {
   InMemoryNetwork,
   InMemoryTransport
 } from './core/transports/in-memory';
+import {
+  shimCallStructuredViaLegacy,
+  type AiProvider,
+  type AiProviderCallRequest
+} from './ai/broker';
 
 function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
   return {
@@ -116,7 +121,7 @@ describe('QuireApp AI panel — submit flow', () => {
             return null;
           }
         },
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
   }
@@ -131,7 +136,7 @@ describe('QuireApp AI panel — submit flow', () => {
         id: 'claude',
         call: vi.fn().mockRejectedValue(err),
         parse: () => null,
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
   }
@@ -185,7 +190,7 @@ describe('QuireApp AI panel — submit flow', () => {
         id: 'claude',
         call: vi.fn().mockReturnValue(pending),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     const p = app.submitAiPrompt('hi');
@@ -215,7 +220,7 @@ describe('QuireApp AI panel — submit flow', () => {
           responseId: 'r-1'
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     await app.submitAiPrompt('hi');
@@ -261,7 +266,7 @@ describe('QuireApp AI panel — submit flow', () => {
           responseId: 'r-new'
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     app.acceptAiResponse('r-old');
@@ -360,11 +365,19 @@ describe('QuireApp AI panel — provider switching', () => {
         responseId: 'r'
       }),
       parse: (raw: string) => JSON.parse(raw),
-      callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+      callStructured(req: AiProviderCallRequest) {
+        return shimCallStructuredViaLegacy(this, req);
+      }
     });
     const claudeStub = stub('claude says hi');
     const geminiStub = { ...stub('gemini says hi'), id: 'gemini' as const };
-    app.aiProviders = { claude: claudeStub, gemini: geminiStub };
+    // Cast: stub() returns a literal that's structurally compatible
+    // with AiProvider but TS can't infer the generic on
+    // callStructured from a non-AiProvider-typed literal.
+    app.aiProviders = {
+      claude: claudeStub as unknown as AiProvider,
+      gemini: geminiStub as unknown as AiProvider
+    };
     app.setAiApiKey('sk-claude', 'claude');
     app.setAiApiKey('AIza', 'gemini');
 
@@ -422,7 +435,7 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
           });
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     await app.submitAiPrompt('hello, no context');
@@ -489,7 +502,7 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
           });
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     await app.submitAiPrompt('what happens in scene 1?');
@@ -556,7 +569,7 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
           });
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     await app.submitAiPrompt('where is the cable?');
@@ -592,7 +605,7 @@ describe('QuireApp AI share-to-chat', () => {
           responseId: 'r'
         }),
         parse: (raw: string) => JSON.parse(raw),
-        callStructured: () => { throw new Error("test mock: callStructured not invoked in step-1 paths; step 5 wires this up"); }
+        callStructured: function (req) { return shimCallStructuredViaLegacy(this, req); }
       }
     };
     app.startHosting();

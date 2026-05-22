@@ -30,12 +30,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   PC_BACKSTORY_SYNTHESIS_SCHEMA,
+  AI_RESPONSE_SCHEMA,
   toAnthropicSchema,
   toGeminiSchema
 } from './schema-json';
 import {
   QUIRE_SKILL_CATEGORIES,
-  isPcBackstorySynthesisResponse
+  isPcBackstorySynthesisResponse,
+  isAiResponse,
+  isStateUpdate
 } from './schema';
 
 /**
@@ -59,6 +62,20 @@ function validate(
   schema: Record<string, unknown>,
   path = '$'
 ): string | null {
+  // oneOf: succeed iff exactly one variant validates (we relax to
+  // "at least one" for test simplicity — Anthropic strict mode
+  // enforces oneOf-exclusivity at decode time; our mini-validator
+  // mirrors the more permissive anyOf semantics).
+  if (Array.isArray(schema.oneOf)) {
+    const variants = schema.oneOf as Array<Record<string, unknown>>;
+    let lastErr = '';
+    for (const v of variants) {
+      const err = validate(value, v, path);
+      if (err === null) return null;
+      lastErr = err;
+    }
+    return `${path}: no oneOf variant matched (last: ${lastErr})`;
+  }
   // enum
   if (Array.isArray(schema.enum)) {
     const ok = schema.enum.some((e) => e === value);
@@ -311,5 +328,191 @@ describe('toGeminiSchema (step 4 adapter)', () => {
     ).skillMastery;
     const items = skillMastery.items as Record<string, unknown>;
     expect(items.enum).toEqual([...QUIRE_SKILL_CATEGORIES]);
+  });
+});
+
+// =====================================================================
+// Phase 3b-X step 8: AI_RESPONSE_SCHEMA mirror tests.
+// =====================================================================
+
+function makeValidAiResponse(): Record<string, unknown> {
+  return {
+    safe: 'The corridor is dark; one fluorescent flickers near the stairs.',
+    dmOnly:
+      'Maya is here — she has the override key but will only show it if pressed about her sister.',
+    sources: [{ label: 'Scene 03 — Hospice', path: 'episodes/03/scene-3.md' }],
+    stateUpdates: [
+      {
+        kind: 'pc-edit',
+        pcId: 'pc-mei',
+        field: 'stress',
+        delta: 1,
+        reason: 'cast under pressure'
+      },
+      {
+        kind: 'dice-roll',
+        purpose: 'sneak past the night porter',
+        expression: '2d6+1'
+      },
+      {
+        kind: 'caster-state-set',
+        pcId: 'pc-mei',
+        ladderState: 'noticed',
+        reason: 'the lights flicker but only Yui sees',
+        taxActive: false,
+        spamCount: 2
+      }
+    ]
+  };
+}
+
+describe('AI_RESPONSE_SCHEMA — mirror tests', () => {
+  it('canonical sample satisfies the JSON Schema', () => {
+    const sample = makeValidAiResponse();
+    const err = validate(sample, AI_RESPONSE_SCHEMA);
+    expect(err).toBeNull();
+  });
+
+  it('canonical sample satisfies the TS guard isAiResponse', () => {
+    const sample = makeValidAiResponse();
+    expect(
+      isAiResponse({
+        ...sample,
+        raw: '',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: ''
+      })
+    ).toBe(true);
+  });
+
+  it('each stateUpdate satisfies isStateUpdate', () => {
+    const sample = makeValidAiResponse();
+    for (const u of sample.stateUpdates as unknown[]) {
+      expect(isStateUpdate(u)).toBe(true);
+    }
+  });
+
+  it('accepts an empty stateUpdates array (the common case)', () => {
+    const sample = makeValidAiResponse();
+    sample.stateUpdates = [];
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toBeNull();
+  });
+
+  it('accepts a missing stateUpdates field (optional)', () => {
+    const sample = makeValidAiResponse();
+    delete sample.stateUpdates;
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toBeNull();
+  });
+
+  it('accepts empty safe + non-empty dmOnly (DM-only-answer case)', () => {
+    const sample = makeValidAiResponse();
+    sample.safe = '';
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toBeNull();
+  });
+
+  // ---- negative mutations ----
+
+  it('rejects missing required safe', () => {
+    const sample = makeValidAiResponse();
+    delete sample.safe;
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/missing required/);
+  });
+
+  it('rejects missing required dmOnly', () => {
+    const sample = makeValidAiResponse();
+    delete sample.dmOnly;
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/missing required/);
+  });
+
+  it('rejects missing required sources', () => {
+    const sample = makeValidAiResponse();
+    delete sample.sources;
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/missing required/);
+  });
+
+  it('rejects non-string safe (number)', () => {
+    const sample = makeValidAiResponse();
+    sample.safe = 42;
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/not a string/);
+  });
+
+  it('rejects pc-edit with wrong field value (skill)', () => {
+    const sample = makeValidAiResponse();
+    sample.stateUpdates = [
+      {
+        kind: 'pc-edit',
+        pcId: 'pc-mei',
+        field: 'skill', // schema enum is 'harm' | 'stress' only
+        delta: 1
+      }
+    ];
+    // 'skill' fails the pc-edit variant (enum) but might still
+    // match a different variant if any field overlaps; the failure
+    // message names the last-tried variant.
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/no oneOf variant matched/);
+  });
+
+  it('rejects unknown stateUpdate kind', () => {
+    const sample = makeValidAiResponse();
+    sample.stateUpdates = [{ kind: 'unknown-kind', pcId: 'x' }];
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/no oneOf variant matched/);
+  });
+
+  it('rejects caster-state-set with bad ladderState enum value', () => {
+    const sample = makeValidAiResponse();
+    sample.stateUpdates = [
+      {
+        kind: 'caster-state-set',
+        pcId: 'pc-mei',
+        ladderState: 'enlightened' // not in the canonical 6-ladder list
+      }
+    ];
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/no oneOf variant matched/);
+  });
+
+  it('rejects pc-edit missing required delta', () => {
+    const sample = makeValidAiResponse();
+    sample.stateUpdates = [
+      { kind: 'pc-edit', pcId: 'pc-mei', field: 'harm' }
+    ];
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/no oneOf variant matched/);
+  });
+
+  it('rejects source missing required label', () => {
+    const sample = makeValidAiResponse();
+    sample.sources = [{ path: 'episodes/03/scene-3.md' }];
+    expect(validate(sample, AI_RESPONSE_SCHEMA)).toMatch(/missing required/);
+  });
+});
+
+describe('toGeminiSchema (step 8: oneOf flattening for AI_RESPONSE_SCHEMA)', () => {
+  it('flattens stateUpdates.items oneOf to a single object schema', () => {
+    const adapted = toGeminiSchema(
+      AI_RESPONSE_SCHEMA as unknown as Record<string, unknown>
+    );
+    const stateUpdates = (
+      adapted.properties as Record<string, Record<string, unknown>>
+    ).stateUpdates;
+    const items = stateUpdates.items as Record<string, unknown>;
+    expect(items.oneOf).toBeUndefined();
+    expect(items.type).toBe('object');
+    // The merged property set includes fields from all three variants.
+    const props = items.properties as Record<string, unknown>;
+    expect(props.kind).toBeDefined();
+    expect(props.field).toBeDefined(); // from pc-edit
+    expect(props.purpose).toBeDefined(); // from dice-roll
+    expect(props.ladderState).toBeDefined(); // from caster-state-set
+  });
+
+  it('flattened items.required is the intersection (only kind)', () => {
+    const adapted = toGeminiSchema(
+      AI_RESPONSE_SCHEMA as unknown as Record<string, unknown>
+    );
+    const stateUpdates = (
+      adapted.properties as Record<string, Record<string, unknown>>
+    ).stateUpdates;
+    const items = stateUpdates.items as Record<string, unknown>;
+    expect(items.required).toEqual(['kind']);
   });
 });

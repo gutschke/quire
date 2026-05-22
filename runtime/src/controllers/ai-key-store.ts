@@ -81,10 +81,11 @@ You are talking ONLY to the DM — never to players.  Your response returns:
 - sources — citations (label + optional path) into the campaign repo.
 
 - stateUpdates (OPTIONAL, default empty) — typed bookkeeping the DM will accept-
-  gate before any event lands.  Three kinds:
-    pc-edit         { pcId, field: 'harm'|'stress', delta, reason? }
-    dice-roll       { purpose, expression, modifierBreakdown? }
-    caster-state-set { pcId, ladderState, reason?, taxActive?, spamCount? }
+  gate before any event lands.  Three kinds you may emit:
+    pc-edit          — propose a delta to a PC's harm or stress track.
+    dice-roll        — propose a roll the DM should make (purpose + dice).
+    caster-state-set — propose advancing or resetting the caster ladder.
+  Schema enforces the field shape; you focus on WHEN to emit which kind.
   Emit stateUpdates ONLY when your prose response clearly implies a state change
   ("Yui takes 1 stress from a Frayed cast" → pc-edit; "Timmy's third cast in this
   scene" → caster-state-set with spamCount).  Hard-gated transitions (harm box 3
