@@ -35,11 +35,21 @@
  * Light-DOM rendering.  Player-facing — no coord gate.
  */
 
-import { LitElement, html, type TemplateResult } from 'lit';
+import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 
 export type CreationPath = 'qa' | 'free-write' | 'pre-gen';
 export type PickPathCallback = (path: CreationPath) => void;
+
+/**
+ * CC-6: map of question id → captured answer (the player's input).
+ * MC answers are option values; short-answer answers are the raw
+ * string the player typed.  Caller (QuireApp) holds the
+ * authoritative copy via `onAnswerChange`.
+ */
+export type CharCreationAnswers = Record<string, string>;
+export type AnswerChangeCallback = (id: string, value: string) => void;
 
 const TOTAL_STEPS = 6;
 
@@ -88,6 +98,25 @@ export class CharacterCreation extends LitElement {
    * (CC-11) returns the player to the right place.
    */
   @property({ attribute: false }) onPickPath: PickPathCallback | null = null;
+
+  /**
+   * CC-6: campaign-declared questionnaire.  When empty, the Q&A
+   * path renders an "ask your DM to declare questions" notice
+   * instead of an empty form — same engine-vs-campaign drift
+   * principle (engine renders whatever the campaign declares).
+   */
+  @property({ attribute: false })
+  questions: CampaignCharCreationQuestion[] = [];
+
+  /**
+   * CC-6: captured answers keyed by question id.  Controlled
+   * value — the caller passes the current snapshot and is notified
+   * on every change via `onAnswerChange`.
+   */
+  @property({ attribute: false }) answers: CharCreationAnswers = {};
+
+  @property({ attribute: false }) onAnswerChange: AnswerChangeCallback | null =
+    null;
 
   @state() private currentStep: number = 1;
 
@@ -292,25 +321,20 @@ export class CharacterCreation extends LitElement {
   }
 
   private renderWork(): TemplateResult {
-    // Step 4 content depends on the chosen path; CC-6 / CC-7 / CC-8
-    // ship the real content.  Today we surface a placeholder noting
-    // which path the player picked.
     if (this.chosenPath === '') {
       return html`
         <h2>Build your character</h2>
         <p>Go back to step 3 and pick a path first.</p>
       `;
     }
-    const label = (() => {
-      switch (this.chosenPath) {
-        case 'qa':
-          return 'Q&A questionnaire';
-        case 'free-write':
-          return 'free-write editor';
-        case 'pre-gen':
-          return 'pre-gen browser';
-      }
-    })();
+    if (this.chosenPath === 'qa') {
+      return this.renderQaForm();
+    }
+    // CC-7 / CC-8 placeholder text — these paths land in later commits.
+    const label =
+      this.chosenPath === 'free-write'
+        ? 'free-write editor'
+        : 'pre-gen browser';
     return html`
       <h2>Build your character</h2>
       <p class="muted">
@@ -320,6 +344,136 @@ export class CharacterCreation extends LitElement {
         (The ${label} input UI lands in a later commit.  For now,
         you can move to step 5 to see the "Done" affordances.)
       </p>
+    `;
+  }
+
+  /**
+   * CC-6: render the Q&A form from the campaign's declared question
+   * list.  Each question is one of two shapes:
+   *
+   *   - MC: rendered as a radio group with one button per option.
+   *   - short-answer: rendered as a textarea with min/max length
+   *     bounds enforced via the standard attributes plus a remaining-
+   *     chars hint.
+   *
+   * When the campaign declares zero questions, the form falls back
+   * to a friendly "ask your DM" notice — same defensive shape as
+   * the M3D-7 dm-rail when episode.dmDocs is undeclared.
+   */
+  private renderQaForm(): TemplateResult {
+    const qs = this.questions ?? [];
+    if (qs.length === 0) {
+      return html`
+        <h2>Answer questions</h2>
+        <p class="muted">
+          This campaign hasn't declared a question list yet.  Ask
+          your DM to add a <code>characterCreation.questions[]</code>
+          block to <code>campaign.json</code>, or switch to the
+          free-write path on step 3.
+        </p>
+      `;
+    }
+    return html`
+      <h2>Answer questions</h2>
+      <p class="muted">
+        Take your time — about five minutes.  Required questions are
+        marked; optional ones can be left blank.
+      </p>
+      <ol class="character-creation-qa">
+        ${qs.map((q, i) => this.renderQuestion(q, i + 1))}
+      </ol>
+    `;
+  }
+
+  private renderQuestion(
+    q: CampaignCharCreationQuestion,
+    n: number
+  ): TemplateResult {
+    const required = q.required !== false;
+    const answer = this.answers?.[q.id] ?? '';
+    return html`
+      <li class="character-creation-qa-item">
+        <label class="character-creation-qa-label">
+          <span class="character-creation-qa-num">${n}.</span>
+          <span class="character-creation-qa-prompt">${q.prompt}</span>
+          ${required
+            ? html`<span class="character-creation-qa-required" aria-label="required"
+                >*</span
+              >`
+            : nothing}
+        </label>
+        ${q.kind === 'mc'
+          ? this.renderMc(q, answer)
+          : this.renderShortAnswer(q, answer)}
+      </li>
+    `;
+  }
+
+  private renderMc(
+    q: CampaignCharCreationQuestion,
+    answer: string
+  ): TemplateResult {
+    const options = q.options ?? [];
+    return html`
+      <fieldset class="character-creation-qa-mc">
+        <legend class="character-creation-qa-sr-only">${q.prompt}</legend>
+        ${options.map(
+          (opt) => html`
+            <label
+              class="character-creation-qa-mc-option ${answer === opt.value
+                ? 'character-creation-qa-mc-option-chosen'
+                : ''}"
+            >
+              <input
+                type="radio"
+                name=${q.id}
+                .value=${opt.value}
+                .checked=${answer === opt.value}
+                @change=${(e: Event) => {
+                  const input = e.currentTarget as HTMLInputElement;
+                  if (input.checked) {
+                    this.onAnswerChange?.(q.id, opt.value);
+                  }
+                }}
+              />
+              <span>${opt.label}</span>
+            </label>
+          `
+        )}
+      </fieldset>
+    `;
+  }
+
+  private renderShortAnswer(
+    q: CampaignCharCreationQuestion,
+    answer: string
+  ): TemplateResult {
+    const minLen = q.minLength ?? 10;
+    const maxLen = q.maxLength ?? 400;
+    const remaining = maxLen - answer.length;
+    const tooShort = answer.length > 0 && answer.length < minLen;
+    return html`
+      <textarea
+        class="character-creation-qa-textarea"
+        name=${q.id}
+        rows="3"
+        minlength=${minLen}
+        maxlength=${maxLen}
+        .value=${answer}
+        @input=${(e: Event) => {
+          const ta = e.currentTarget as HTMLTextAreaElement;
+          this.onAnswerChange?.(q.id, ta.value);
+        }}
+      ></textarea>
+      <div class="character-creation-qa-meta">
+        ${tooShort
+          ? html`<span class="character-creation-qa-hint-warn"
+              >Aim for at least ${minLen} characters.</span
+            >`
+          : html`<span class="character-creation-qa-hint"
+              >${remaining} characters left</span
+            >`}
+      </div>
     `;
   }
 

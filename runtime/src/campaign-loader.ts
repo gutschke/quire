@@ -52,6 +52,53 @@ export interface CampaignRules {
   primaryRoll?: CampaignPrimaryRoll;
 }
 
+/**
+ * CC-6 (M4 char-creation): one question in the campaign's
+ * chargen questionnaire.  Campaign-declared via
+ * `characterCreation.questions[]` in `campaign.json` (per F5
+ * critique disposition: inline in campaign.json, not in a sibling
+ * file).
+ *
+ * Two kinds:
+ *   - `mc` (multiple choice) — `options[]` is required.  The
+ *     player picks exactly one; `value` is the canonical answer
+ *     stored in IndexedDB and fed to the AI synthesis prompt.
+ *   - `short-answer` — `minLength` / `maxLength` bound the text.
+ *     Required by default; toggle `required: false` for optional
+ *     items.
+ *
+ * `aiRole` is a hint to the prompt assembler (CC-19) about how to
+ * use the answer in the system prompt: `skeleton` (closed-form
+ * categorical anchor — the AI can't invert), `voice-sample` (the
+ * AI quotes verbatim or paraphrases tightly), `grounder` (single
+ * concrete detail for specificity).  Optional; the prompt
+ * assembler defaults to "skeleton" when missing.
+ */
+export interface CampaignCharCreationQuestion {
+  id: string;
+  kind: 'mc' | 'short-answer';
+  prompt: string;
+  /** MC questions only.  Each option has a stored `value` + display `label`. */
+  options?: Array<{ value: string; label: string }>;
+  /** short-answer only; defaults [10, 400]. */
+  minLength?: number;
+  maxLength?: number;
+  /** When omitted, defaults to true.  Optional questions stay un-answered with no warning. */
+  required?: boolean;
+  /** Hint to the AI synthesis prompt assembler. */
+  aiRole?: 'skeleton' | 'voice-sample' | 'grounder';
+}
+
+/**
+ * Campaign-declared character-creation block.  Today only
+ * `questions[]` is declared; future fields (per-archetype tag
+ * suggestions per CC-29, Bay Area place allowlist per CC-30 for
+ * Underleaf) slot in here.
+ */
+export interface CampaignCharacterCreation {
+  questions?: CampaignCharCreationQuestion[];
+}
+
 export interface CampaignManifest {
   $schemaVersion: string;
   name: string;
@@ -63,6 +110,7 @@ export interface CampaignManifest {
   defaultAiProvider?: 'claude' | 'gemini' | 'none';
   ruleset?: string;
   rules?: CampaignRules;
+  characterCreation?: CampaignCharacterCreation;
   authors?: string[];
   homepage?: string;
   episodes?: string[];

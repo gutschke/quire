@@ -133,11 +133,13 @@ describe('<character-creation>', () => {
     expect(chosen).toBe('free-write');
   });
 
-  it('step 4 reflects the chosen path label', async () => {
+  it('step 4 renders the free-write placeholder when chosenPath=free-write', async () => {
+    // The 'qa' branch now renders the real Q&A form (CC-6); the
+    // placeholder-label test moves to the 'free-write' path which
+    // still uses the placeholder pending CC-7.
     const el = mount();
-    el.chosenPath = 'qa';
+    el.chosenPath = 'free-write';
     await el.updateComplete;
-    // Jump to step 4 via Next×3.
     const next = el.querySelectorAll<HTMLButtonElement>(
       '.character-creation-stepnav button'
     )[1];
@@ -147,7 +149,8 @@ describe('<character-creation>', () => {
     await el.updateComplete;
     next.click();
     await el.updateComplete;
-    expect(el.innerHTML).toContain('Q&amp;A questionnaire');
+    expect(el.textContent).toContain('free-write editor');
+    expect(el.textContent).toContain('lands in a later commit');
   });
 
   it('step 4 prompts to pick a path when none chosen', async () => {
@@ -188,5 +191,230 @@ describe('<character-creation>', () => {
       await el.updateComplete;
       expect(el.innerHTML).toContain('Invite link invalid');
     }
+  });
+
+  describe('CC-6: Q&A form (chosenPath === "qa")', () => {
+    async function mountAtStep4WithPath(): Promise<CharacterCreation> {
+      const el = mount();
+      el.chosenPath = 'qa';
+      await el.updateComplete;
+      // Advance to step 4 via 3× Next.
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      next.click();
+      await el.updateComplete;
+      next.click();
+      await el.updateComplete;
+      next.click();
+      await el.updateComplete;
+      return el;
+    }
+
+    it('shows the friendly fallback when no questions are declared', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [];
+      await el.updateComplete;
+      expect(el.textContent).toContain("hasn't declared a question list");
+    });
+
+    it('renders an MC question as radio buttons', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'temperament',
+          kind: 'mc',
+          prompt: 'Under pressure?',
+          required: true,
+          options: [
+            { value: 'quiet', label: 'Goes quiet' },
+            { value: 'argues', label: 'Argues' }
+          ]
+        }
+      ];
+      await el.updateComplete;
+      const radios = el.querySelectorAll<HTMLInputElement>(
+        'input[type="radio"][name="temperament"]'
+      );
+      expect(radios.length).toBe(2);
+      expect(radios[0].value).toBe('quiet');
+      expect(radios[1].value).toBe('argues');
+    });
+
+    it('MC selection invokes onAnswerChange with id + value', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'temperament',
+          kind: 'mc',
+          prompt: 'Under pressure?',
+          options: [
+            { value: 'quiet', label: 'Goes quiet' },
+            { value: 'argues', label: 'Argues' }
+          ]
+        }
+      ];
+      let captured: { id: string; value: string } | null = null;
+      el.onAnswerChange = (id, value) => {
+        captured = { id, value };
+      };
+      await el.updateComplete;
+      const argues = el.querySelectorAll<HTMLInputElement>(
+        'input[type="radio"]'
+      )[1];
+      argues.click();
+      expect(captured).toEqual({ id: 'temperament', value: 'argues' });
+    });
+
+    it('renders a short-answer question as a textarea with bounds', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'item',
+          kind: 'short-answer',
+          prompt: 'Meaningful item',
+          minLength: 10,
+          maxLength: 200
+        }
+      ];
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.character-creation-qa-textarea'
+      );
+      expect(ta).not.toBeNull();
+      expect(ta?.name).toBe('item');
+      expect(ta?.minLength).toBe(10);
+      expect(ta?.maxLength).toBe(200);
+    });
+
+    it('short-answer input invokes onAnswerChange with the typed value', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'item',
+          kind: 'short-answer',
+          prompt: 'Meaningful item',
+          minLength: 10
+        }
+      ];
+      let captured = '';
+      el.onAnswerChange = (id, value) => {
+        if (id === 'item') captured = value;
+      };
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.character-creation-qa-textarea'
+      )!;
+      ta.value = 'a small brass key from grandma';
+      ta.dispatchEvent(new Event('input'));
+      expect(captured).toBe('a small brass key from grandma');
+    });
+
+    it('short-answer warns when answer is below minLength', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'item',
+          kind: 'short-answer',
+          prompt: 'Meaningful item',
+          minLength: 20
+        }
+      ];
+      el.answers = { item: 'too short' };
+      await el.updateComplete;
+      expect(el.querySelector('.character-creation-qa-hint-warn')).not.toBeNull();
+      expect(el.textContent).toContain('at least 20 characters');
+    });
+
+    it('short-answer remaining-chars hint counts down', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'item',
+          kind: 'short-answer',
+          prompt: 'Item',
+          minLength: 10,
+          maxLength: 100
+        }
+      ];
+      el.answers = { item: 'a small brass key from grandma' };
+      await el.updateComplete;
+      const hint = el.querySelector('.character-creation-qa-hint');
+      // 100 - 30 = 70 characters left.
+      expect(hint?.textContent).toContain('70 characters left');
+    });
+
+    it('required marker appears on required questions only', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'required-q',
+          kind: 'mc',
+          prompt: 'Required',
+          required: true,
+          options: [{ value: 'a', label: 'a' }]
+        },
+        {
+          id: 'optional-q',
+          kind: 'mc',
+          prompt: 'Optional',
+          required: false,
+          options: [{ value: 'b', label: 'b' }]
+        }
+      ];
+      await el.updateComplete;
+      const markers = el.querySelectorAll('.character-creation-qa-required');
+      expect(markers.length).toBe(1);
+    });
+
+    it('numbered questions render in declaration order', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'q1',
+          kind: 'mc',
+          prompt: 'First',
+          options: [{ value: 'a', label: 'a' }]
+        },
+        {
+          id: 'q2',
+          kind: 'short-answer',
+          prompt: 'Second'
+        },
+        {
+          id: 'q3',
+          kind: 'mc',
+          prompt: 'Third',
+          options: [{ value: 'c', label: 'c' }]
+        }
+      ];
+      await el.updateComplete;
+      const nums = Array.from(
+        el.querySelectorAll('.character-creation-qa-num')
+      ).map((n) => n.textContent?.trim());
+      expect(nums).toEqual(['1.', '2.', '3.']);
+    });
+
+    it('selected MC option gets the chosen-styling class', async () => {
+      const el = await mountAtStep4WithPath();
+      el.questions = [
+        {
+          id: 'q',
+          kind: 'mc',
+          prompt: 'q',
+          options: [
+            { value: 'a', label: 'A' },
+            { value: 'b', label: 'B' }
+          ]
+        }
+      ];
+      el.answers = { q: 'b' };
+      await el.updateComplete;
+      const chosen = el.querySelector(
+        '.character-creation-qa-mc-option-chosen'
+      );
+      expect(chosen).not.toBeNull();
+      expect(chosen?.textContent).toContain('B');
+    });
   });
 });

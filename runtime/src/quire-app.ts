@@ -276,6 +276,13 @@ export class QuireApp extends LitElement {
     '';
 
   /**
+   * CC-6: captured Q&A answers keyed by question id.  Local-only
+   * today; IndexedDB persistence + per-PC SaveDocument variant land
+   * in CC-4 + CC-11.  Empty object means "no answers yet."
+   */
+  @state() private chargenAnswers: Record<string, string> = {};
+
+  /**
    * Code-split: track which chargen surfaces have been dynamically
    * loaded so subsequent invocations skip the import().
    *
@@ -1588,8 +1595,13 @@ export class QuireApp extends LitElement {
         .campaignName=${campaign.base.manifest.name}
         .tokenError=${tokenError}
         .chosenPath=${this.chargenChosenPath}
+        .questions=${campaign.base.manifest.characterCreation?.questions ?? []}
+        .answers=${this.chargenAnswers}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
           this.chargenChosenPath = p;
+        }}
+        .onAnswerChange=${(id: string, value: string) => {
+          this.chargenAnswers = { ...this.chargenAnswers, [id]: value };
         }}
       ></character-creation>
     `;

@@ -1268,6 +1268,92 @@ export const quireAppStyles = css`
       font-size: 0.85em;
       color: light-dark(#64748b, #94a3b8);
     }
+
+    /* CC-6: Q&A form rendered in step 4 when chosenPath='qa'. */
+    .character-creation-qa {
+      list-style: none;
+      padding: 0;
+      counter-reset: qa-counter;
+    }
+    .character-creation-qa-item {
+      margin: 1.2rem 0;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+    .character-creation-qa-item:last-child {
+      border-bottom: none;
+    }
+    .character-creation-qa-label {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+      margin-bottom: 0.5rem;
+      font-weight: 500;
+    }
+    .character-creation-qa-num {
+      color: light-dark(#64748b, #94a3b8);
+      font-variant-numeric: tabular-nums;
+    }
+    .character-creation-qa-required {
+      color: light-dark(#dc2626, #ef4444);
+      font-weight: 700;
+    }
+    .character-creation-qa-sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .character-creation-qa-mc {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      border: none;
+      padding: 0;
+      margin: 0;
+    }
+    .character-creation-qa-mc-option {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#e2e8f0, #1e293b);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    .character-creation-qa-mc-option:hover {
+      background: light-dark(#f8fafc, #1e293b);
+    }
+    .character-creation-qa-mc-option-chosen {
+      border-color: light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+    }
+    .character-creation-qa-textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.5rem 0.6rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      font-family: inherit;
+      font-size: inherit;
+      resize: vertical;
+      min-height: 4rem;
+    }
+    .character-creation-qa-meta {
+      margin-top: 0.3rem;
+      font-size: 0.82em;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .character-creation-qa-hint-warn {
+      color: light-dark(#925a17, #d6a559);
+    }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×
        button at row end. */
