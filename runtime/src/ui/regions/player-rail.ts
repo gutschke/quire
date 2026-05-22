@@ -37,7 +37,11 @@ import {
   STAT_MIN,
   STAT_MAX
 } from '../../character-edits';
-import { renderMarkdown } from '../../markdown';
+import {
+  renderMarkdown,
+  substitutePcSlots,
+  type PcSlotBindings
+} from '../../markdown';
 import { routeToSearch, type AppRoute } from '../../routing';
 
 function formatStat(value: number): string {
@@ -107,6 +111,12 @@ export class PlayerRail extends LitElement {
   @property({ attribute: false }) onToggleClaim:
     | (() => void)
     | null = null;
+  /**
+   * M3c-polish: `{{pc:N}}` slot substitution map for the
+   * character's description + backstory.  Empty by default;
+   * unbound slots fall back to the literal `PC<N>` form.
+   */
+  @property({ attribute: false }) pcSlotBindings: PcSlotBindings = {};
 
   override render(): TemplateResult {
     const character = this.character;
@@ -221,7 +231,7 @@ export class PlayerRail extends LitElement {
             <section class="card">
               <h2>Description</h2>
               <div class="markdown">
-                ${unsafeHTML(renderMarkdown(r.description))}
+                ${unsafeHTML(substitutePcSlots(renderMarkdown(r.description), this.pcSlotBindings))}
               </div>
             </section>
           `
@@ -231,7 +241,7 @@ export class PlayerRail extends LitElement {
             <section class="card">
               <h2>Backstory</h2>
               <div class="markdown">
-                ${unsafeHTML(renderMarkdown(r.backstory))}
+                ${unsafeHTML(substitutePcSlots(renderMarkdown(r.backstory), this.pcSlotBindings))}
               </div>
             </section>
           `

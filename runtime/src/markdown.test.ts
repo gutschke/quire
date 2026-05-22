@@ -6,7 +6,8 @@ import {
   renderMarkdownParagraphs,
   blockHash,
   normalizeBlock,
-  CryptoUnavailableError
+  CryptoUnavailableError,
+  substitutePcSlots
 } from './markdown';
 
 describe('parseFrontmatter', () => {
@@ -389,5 +390,60 @@ describe('renderMarkdownParagraphs', () => {
     const r = await renderMarkdownParagraphs('');
     expect(r.blocks).toEqual([]);
     expect(r.frontmatter).toEqual({});
+  });
+});
+
+describe('substitutePcSlots', () => {
+  it('returns input unchanged when no slots are present', () => {
+    expect(substitutePcSlots('<p>plain text</p>')).toBe('<p>plain text</p>');
+  });
+
+  it('falls back to literal PC<N> when no bindings are provided', () => {
+    expect(substitutePcSlots('<p>{{pc:1}} sees {{pc:3}}.</p>')).toBe(
+      '<p>PC1 sees PC3.</p>'
+    );
+  });
+
+  it('falls back to literal PC<N> when bindings is empty', () => {
+    expect(substitutePcSlots('{{pc:2}}', {})).toBe('PC2');
+  });
+
+  it('substitutes bound slot names', () => {
+    expect(substitutePcSlots('{{pc:1}} and {{pc:2}}', { 1: 'Mei', 2: 'Bob' })).toBe(
+      'Mei and Bob'
+    );
+  });
+
+  it('falls back per-slot when only some are bound', () => {
+    expect(substitutePcSlots('{{pc:1}} / {{pc:2}}', { 1: 'Mei' })).toBe(
+      'Mei / PC2'
+    );
+  });
+
+  it('treats empty-string binding as unbound (falls back)', () => {
+    // An empty string binding (e.g. a peer with no display name yet)
+    // would otherwise produce an invisible substitution; fall back
+    // so the rendered text reads correctly.
+    expect(substitutePcSlots('{{pc:1}}', { 1: '' })).toBe('PC1');
+  });
+
+  it('only matches digits 1-9 (not 0, not multi-digit)', () => {
+    // Out-of-range slot numbers are left literal so a typo is visible.
+    expect(substitutePcSlots('{{pc:0}} {{pc:10}}')).toBe('{{pc:0}} {{pc:10}}');
+  });
+
+  it('substitutes every occurrence of the same slot', () => {
+    expect(
+      substitutePcSlots('{{pc:1}}, {{pc:1}}, and again {{pc:1}}', { 1: 'Mei' })
+    ).toBe('Mei, Mei, and again Mei');
+  });
+
+  it('does NOT alter surrounding HTML structure', () => {
+    expect(
+      substitutePcSlots(
+        '<p><strong>{{pc:4}}</strong>: across the cabin.</p>',
+        { 4: 'Aiyana' }
+      )
+    ).toBe('<p><strong>Aiyana</strong>: across the cabin.</p>');
   });
 });

@@ -26,7 +26,11 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { MarkdownBlock } from '../../markdown';
+import {
+  substitutePcSlots,
+  type MarkdownBlock,
+  type PcSlotBindings
+} from '../../markdown';
 import { routeToSearch, type AppRoute } from '../../routing';
 
 export type NavigateCallback = (e: Event, route: AppRoute) => void;
@@ -92,6 +96,13 @@ export class SceneStage extends LitElement {
    */
   @property({ attribute: false }) sceneFrontmatter: Record<string, unknown> = {};
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
+  /**
+   * M3c-polish (post-migration): mapping of `{{pc:N}}` slot numbers
+   * to character names.  Empty by default — placeholders then
+   * render as the literal `PC<N>` form, identical to the pre-
+   * migration appearance.  Click-to-bind UX lands in M3d.
+   */
+  @property({ attribute: false }) pcSlotBindings: PcSlotBindings = {};
   /**
    * Optional inline content rendered next to the scene title in the
    * header.  At M2 this carries the reveal-control (DM "Reveal /
@@ -300,7 +311,7 @@ export class SceneStage extends LitElement {
             >
               ${revealed ? '●' : '○'}
             </button>
-            <div class="scene-block-body">${unsafeHTML(block.html)}</div>
+            <div class="scene-block-body">${unsafeHTML(substitutePcSlots(block.html, this.pcSlotBindings))}</div>
           </div>
         `;
       });
@@ -338,7 +349,7 @@ export class SceneStage extends LitElement {
       ? blocks
       : blocks.filter((b) => revealedSet.has(b.blockHash));
     return visible.map(
-      (block) => html`<div class="scene-block">${unsafeHTML(block.html)}</div>`
+      (block) => html`<div class="scene-block">${unsafeHTML(substitutePcSlots(block.html, this.pcSlotBindings))}</div>`
     );
   }
 

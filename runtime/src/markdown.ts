@@ -373,3 +373,45 @@ export async function renderMarkdownParagraphs(
   );
   return { frontmatter: doc.frontmatter, blocks };
 }
+
+/**
+ * PC-slot bindings: maps a slot number (1-9) to the character name
+ * that fills it.  Today's M3c+ runtime does not yet populate this
+ * map — campaigns use `{{pc:N}}` placeholders in their markdown
+ * (see runtime/design/m3d-playtest-followups.md §5).  The renderer
+ * substitutes the bound name when one is provided and falls back
+ * to the literal `PC<N>` form otherwise, so existing campaigns
+ * still read the way they did before the migration.
+ */
+export type PcSlotBindings = Readonly<Record<number, string>>;
+
+const PC_SLOT_RE = /\{\{pc:([1-9])\}\}/g;
+
+/**
+ * Substitute `{{pc:N}}` placeholders in sanitized HTML.  Pure
+ * string-replace on the rendered HTML (placeholders are HTML-safe
+ * by construction — `{`, `}`, `:`, digits do not need escaping in
+ * HTML text nodes).  Hashes computed from `block.raw` are stable
+ * across bindings because the source-side `{{pc:N}}` token never
+ * changes; only the rendered output does.
+ *
+ * When a slot has no binding, falls back to the literal `PC<N>`
+ * so a campaign migrated from bare `PC1`/`PC2`/… tokens still
+ * renders identically until the binding feature ships.
+ *
+ * Returns a string (not branded SanitizedHtml) because the caller
+ * already holds a SanitizedHtml and this function preserves the
+ * invariant — but the type system can't express "subset of valid
+ * substitutions" cleanly, so the brand is dropped at the boundary
+ * and re-applied by the caller via `unsafeHTML`.
+ */
+export function substitutePcSlots(
+  html: string,
+  bindings?: PcSlotBindings
+): string {
+  return html.replace(PC_SLOT_RE, (_match, digit: string) => {
+    const slot = Number(digit);
+    const bound = bindings?.[slot];
+    return bound !== undefined && bound !== '' ? bound : `PC${slot}`;
+  });
+}

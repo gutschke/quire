@@ -62,6 +62,40 @@ Design doc + expert convergence point at three primitives:
 
 Recommended pre-implementation 4-reviewer gate on the design doc.
 
+## Character-creation design pass (2026-05-22)
+
+User play-test follow-up surfaced character creation as the next major
+design surface.  Three expert consultations ran (TTRPG-craft, UX,
+prompt-engineering).  Full synthesis lives in `design/m4-character-creation.md`
+with 31 numbered work items (CC-1 through CC-31).  The user has
+explicitly deferred prioritization — these are inputs for a later
+prioritization conversation that will reorder open items across M3d/M4.
+
+Highlights:
+- `{{pc:N}}` migration landed (this commit) — 76 substitutions across
+  15 underleaf files + `substitutePcSlots` renderer in markdown.ts
+  with fallback to literal `PC<N>`.  9 new unit tests.  997 vitest pass.
+- Three player paths (pre-gen / Q&A+AI / free-write) converge on one
+  PC schema.  Same edit screen after path choice.
+- Mode A (online) = Mode B (async) with sync + AI turned on.  Single
+  conditional: `if (sessionView.coordinator) liveMode else asyncMode`.
+- DM is the coordination layer in async mode — invite tokens with
+  pre-assigned archetype hints, paste-backup-tokens between days, NO
+  daemon, NO server.
+- AI synthesis runs ONCE at session 1 with DM's API key.  10 questions
+  (7 MC + 3 SA).  System prompt cached 1h; per-PC suffix parallel.
+  `includeDmNotes: false` is hardcoded for player-facing synthesis;
+  forbidden-token regex post-check; DM approval gate before lock-in.
+
+Carry into prioritization:
+- Confirm/refute the `{{pc:N}}` migration (landed).
+- Decide pcSlots scope (campaign vs session).
+- Decide async-deviation policy (soft hint vs hard).
+- Decide DM-approval-gate required vs skippable.
+- Scope: who writes Underleaf's pre-gen suite?
+- "Use same device" wording.
+- Print-friendly character sheet — M5 carry?
+
 ## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 
 ## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
