@@ -110,6 +110,15 @@ export interface ChargenHost {
    * host (the host caches in-flight imports).
    */
   loadCharacterByPcId(pcId: string): void;
+  /**
+   * Append a `scratch-note` event to the audit log.  CC-24 + P3T-19:
+   * accept and revise emit scratch-notes for v1 (per Cluster E
+   * planning Q2 — defer a dedicated `chargen-accept` event kind to
+   * Phase 3b when CC-4 per-PC SaveDocument is in scope).
+   * Returns true when the append succeeded; the controller uses
+   * this only for the local-flag update, not for control flow.
+   */
+  appendScratchNote(text: string): boolean;
 }
 
 /**
@@ -247,27 +256,41 @@ export class ChargenController implements ReactiveController {
   // ---- write accessors (step 4 wires accept/revise; step 1 stubs them out) ----
 
   /**
-   * CC-24 accept (step 4 lands the event emission via the host).
-   * Step 1 only flips the local flag so the controller's state
-   * machine is testable; step 4 adds the host call that emits the
-   * scratch-note audit event.
+   * CC-24 accept.  Flips the per-slot accept flag and appends an
+   * audit scratch-note ("DM accepted synthesized PC for slot N:
+   * name=X, responseId=Y").  Per the Cluster E plan's Q2, the
+   * scratch-note approach is the safe v1 — preserves the audit chain
+   * without inventing a new event kind.  No-ops when there's no
+   * synth result yet or the slot was already accepted.
    */
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
-    if (!this._synthResults.has(slot)) return; // can't accept without a result
+    const result = this._synthResults.get(slot);
+    if (!result || !result.ok) return; // can't accept failures
     this._acceptedSlots.add(slot);
+    const r = result.response;
+    this.env.appendScratchNote(
+      `DM accepted synthesized PC for slot ${slot}: name="${r.name}", responseId=${r.responseId}.`
+    );
     this.host.requestUpdate();
   }
 
   /**
-   * P3T-19 revise (step 4 lands the host's event emission).  Drops
-   * the cached synth result for the slot so the region's seat shows
-   * "no result yet, ask the player to revise then re-synthesize."
+   * P3T-19 revise.  Drops the cached synth result + accept flag so
+   * the region's seat shows the bare "ready to synthesize" state;
+   * appends an audit scratch-note carrying the optional reason the
+   * DM provides (the region's prompt asks for one).  Used when the
+   * DM wants the player to revise an answer before re-synthesizing.
    */
-  requestReviseSlot(slot: number): void {
+  requestReviseSlot(slot: number, reason?: string): void {
     if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
+    const trimmedReason = reason?.trim() ?? '';
+    const msg = trimmedReason
+      ? `DM asked player at slot ${slot} to revise.  Reason: ${trimmedReason}`
+      : `DM asked player at slot ${slot} to revise.`;
+    this.env.appendScratchNote(msg);
     this.host.requestUpdate();
   }
 

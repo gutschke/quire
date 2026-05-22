@@ -49,6 +49,10 @@ export type SynthesizeCallback = (
  * resolves will see the name.
  */
 export type DisplayNameLookup = (pcId: string) => string | null;
+/** CC-24: DM accepts the synthesized PC. */
+export type AcceptCallback = (slot: number) => void;
+/** P3T-19: DM asks the player to revise. */
+export type ReviseCallback = (slot: number, reason: string) => void;
 
 @customElement('chargen-dm-review')
 export class ChargenDmReview extends LitElement {
@@ -93,6 +97,12 @@ export class ChargenDmReview extends LitElement {
    */
   @property({ attribute: false })
   displayNameLookup: DisplayNameLookup | null = null;
+
+  /** CC-24 accept gate.  Host wires to controller.acceptSlot. */
+  @property({ attribute: false }) onAccept: AcceptCallback | null = null;
+
+  /** P3T-19 revise.  Host wires to controller.requestReviseSlot. */
+  @property({ attribute: false }) onRevise: ReviseCallback | null = null;
 
   /**
    * Generate an invite URL for a slot.  Host wires to
@@ -261,6 +271,7 @@ export class ChargenDmReview extends LitElement {
     if (synth.ok) {
       const r = synth.response;
       const warningCount = synth.warnings.length;
+      const accepted = this.acceptedSlots.has(slot);
       return html`
         <div class="chargen-dm-review-synth chargen-dm-review-synth-ok">
           <div class="chargen-dm-review-synth-name">
@@ -275,11 +286,12 @@ export class ChargenDmReview extends LitElement {
                 — review carefully.
               </div>`
             : nothing}
-          ${this.acceptedSlots.has(slot)
+          ${accepted
             ? html`<div class="chargen-dm-review-synth-accepted">
                 Accepted by DM.
               </div>`
             : nothing}
+          ${this.renderAcceptReviseActions(slot, accepted)}
         </div>
       `;
     }
@@ -294,8 +306,58 @@ export class ChargenDmReview extends LitElement {
           ${isSpoiler ? '⚠ Spoiler leak persisted' : '✗ Synthesis failed'}
         </div>
         <div class="chargen-dm-review-synth-message">${synth.message}</div>
+        ${this.renderAcceptReviseActions(slot, false)}
       </div>
     `;
+  }
+
+  /**
+   * CC-24 + P3T-19: DM-side accept / revise actions on the result
+   * card.  Accept is only enabled on `ok` results (the host's
+   * controller filters this too).  Revise is always available so
+   * the DM can clear a bad result and re-synthesize.
+   */
+  private renderAcceptReviseActions(
+    slot: number,
+    accepted: boolean
+  ): TemplateResult {
+    const synth = this.synthResults.get(slot);
+    const okResult = synth?.ok === true;
+    return html`
+      <div class="chargen-dm-review-synth-actions">
+        ${okResult
+          ? html`<button
+              type="button"
+              class="chargen-dm-review-accept"
+              ?disabled=${accepted || !this.onAccept}
+              title="Accept this synthesized PC; appends an audit note"
+              @click=${() => this.onAccept?.(slot)}
+            >
+              ${accepted ? 'Accepted' : 'Accept this PC'}
+            </button>`
+          : nothing}
+        ${synth
+          ? html`<button
+              type="button"
+              class="chargen-dm-review-revise"
+              ?disabled=${!this.onRevise}
+              title="Ask the player to revise an answer + clear this result"
+              @click=${() => this.handleRevise(slot)}
+            >
+              Ask player to revise
+            </button>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  private handleRevise(slot: number): void {
+    if (!this.onRevise) return;
+    const reason =
+      window.prompt(
+        `Ask player at PC${slot} to revise — note for the audit log (optional):`
+      ) ?? '';
+    this.onRevise(slot, reason);
   }
 
   private async handleGenerate(slot: number): Promise<void> {

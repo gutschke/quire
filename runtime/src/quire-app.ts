@@ -293,7 +293,8 @@ export class QuireApp extends LitElement {
     getDmDisplayName: () => this.displayNameDraft,
     isCoordinator: () => this.isCoordinator(),
     getBoundCharacter: (pcId) => this.pcCharacterCache.get(pcId) ?? null,
-    loadCharacterByPcId: (pcId) => this.loadCharacterByPcId(pcId)
+    loadCharacterByPcId: (pcId) => this.loadCharacterByPcId(pcId),
+    appendScratchNote: (text) => this.appendScratchNote(text)
   });
 
   /**
@@ -1197,6 +1198,9 @@ export class QuireApp extends LitElement {
           this.chargen.synthesizeForSlot(slot, {
             playerDisplayName: this.displayNameDraft || undefined
           })}
+        .onAccept=${(slot: number) => this.chargen.acceptSlot(slot)}
+        .onRevise=${(slot: number, reason: string) =>
+          this.chargen.requestReviseSlot(slot, reason)}
       ></chargen-dm-review>
     `;
   }

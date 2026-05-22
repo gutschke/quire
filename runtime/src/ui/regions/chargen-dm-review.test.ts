@@ -258,6 +258,105 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
   });
 });
 
+describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('shows Accept button only when synth result is ok', async () => {
+    const el = mount();
+    el.synthResults = new Map([
+      [
+        2,
+        { ok: false, code: 'parse-failed', message: 'bad' }
+      ],
+      [3, okResult()]
+    ]);
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    const acceptButtons = el.querySelectorAll('.chargen-dm-review-accept');
+    expect(acceptButtons.length).toBe(1);
+    // Should be inside seat 3 only.
+    const seat3 = el.querySelector('[data-slot="3"]');
+    expect(seat3?.querySelector('.chargen-dm-review-accept')).not.toBeNull();
+    const seat2 = el.querySelector('[data-slot="2"]');
+    expect(seat2?.querySelector('.chargen-dm-review-accept')).toBeNull();
+  });
+
+  it('Accept click calls onAccept with the seat slot', async () => {
+    const el = mount();
+    const calls: number[] = [];
+    el.synthResults = new Map([[4, okResult()]]);
+    el.onAccept = (slot) => calls.push(slot);
+    el.onRevise = () => {};
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-accept')!.click();
+    expect(calls).toEqual([4]);
+  });
+
+  it('Accept button is disabled (and labeled "Accepted") when slot is in acceptedSlots', async () => {
+    const el = mount();
+    el.synthResults = new Map([[5, okResult()]]);
+    el.acceptedSlots = new Set([5]);
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    const btn = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-accept'
+    );
+    expect(btn?.disabled).toBe(true);
+    expect(btn?.textContent?.trim()).toBe('Accepted');
+  });
+
+  it('Revise button appears on both ok and failure results', async () => {
+    const el = mount();
+    el.synthResults = new Map([
+      [2, { ok: false, code: 'parse-failed', message: 'bad' }],
+      [6, okResult()]
+    ]);
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    const revise = el.querySelectorAll('.chargen-dm-review-revise');
+    expect(revise.length).toBe(2);
+  });
+
+  it('Revise click prompts for a reason and forwards to onRevise', async () => {
+    const el = mount();
+    const calls: Array<[number, string]> = [];
+    el.synthResults = new Map([[1, okResult()]]);
+    el.onAccept = () => {};
+    el.onRevise = (slot, reason) => calls.push([slot, reason]);
+    const origPrompt = window.prompt;
+    window.prompt = () => 'Item is too vague';
+    try {
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
+      expect(calls).toEqual([[1, 'Item is too vague']]);
+    } finally {
+      window.prompt = origPrompt;
+    }
+  });
+
+  it('Revise with cancelled prompt forwards an empty reason', async () => {
+    const el = mount();
+    const calls: Array<[number, string]> = [];
+    el.synthResults = new Map([[2, okResult()]]);
+    el.onAccept = () => {};
+    el.onRevise = (slot, reason) => calls.push([slot, reason]);
+    const origPrompt = window.prompt;
+    window.prompt = () => null; // user cancelled the dialog
+    try {
+      await el.updateComplete;
+      el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
+      expect(calls).toEqual([[2, '']]);
+    } finally {
+      window.prompt = origPrompt;
+    }
+  });
+});
+
 describe('<chargen-dm-review> — clipboard copy', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

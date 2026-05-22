@@ -196,6 +196,42 @@ export const quireAppStyles = css`
       font-size: 0.88em;
       margin-top: 0.2rem;
     }
+    /* CC-24 + P3T-19: accept / revise action buttons under each
+       result card.  Accept is the primary action (filled green);
+       revise is secondary (bordered, neutral). */
+    .chargen-dm-review-synth-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
+    .chargen-dm-review-accept {
+      padding: 0.35rem 0.85rem;
+      border: 1px solid light-dark(#16a34a, #4ade80);
+      background: light-dark(#16a34a, #166534);
+      color: light-dark(#f0fdf4, #dcfce7);
+      font-weight: 500;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .chargen-dm-review-accept:hover:not(:disabled) {
+      background: light-dark(#15803d, #15803d);
+    }
+    .chargen-dm-review-accept:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+    .chargen-dm-review-revise {
+      padding: 0.35rem 0.85rem;
+      border: 1px solid light-dark(#9ca3af, #4b5563);
+      background: transparent;
+      color: light-dark(#374151, #d1d5db);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .chargen-dm-review-revise:hover:not(:disabled) {
+      background: light-dark(#f3f4f6, #1f2937);
+    }
 
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;

@@ -90,6 +90,7 @@ function makeEnv(
   }> = {}
 ) {
   const loaded = new Set<string>();
+  const scratchNotes: string[] = [];
   return {
     getCurrentCampaign: () => campaign,
     getCampaignSlug: () => 'o-r-main',
@@ -108,7 +109,12 @@ function makeEnv(
     loadCharacterByPcId: (pcId: string) => {
       loaded.add(pcId);
     },
-    loadedPcs: loaded
+    appendScratchNote: (text: string) => {
+      scratchNotes.push(text);
+      return true;
+    },
+    loadedPcs: loaded,
+    scratchNotes
   };
 }
 
@@ -620,14 +626,134 @@ describe('ChargenController — synthesizeForSlot end-to-end (Test-cov BLOCKER #
 
 // ---- Engine M1: accept/revise accessor encapsulation ----
 
-describe('ChargenController — accept/revise accessors (Engine M1)', () => {
+describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-19)', () => {
   it('acceptSlot rejects when no synth result exists', () => {
     const { host, updateCount } = makeHost();
-    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
     const before = updateCount();
     ctrl.acceptSlot(5);
     expect(ctrl.isAccepted(5)).toBe(false);
     expect(updateCount()).toBe(before);
+    expect(env.scratchNotes).toEqual([]);
+  });
+
+  it('acceptSlot appends a scratch-note carrying name + responseId', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Reggie Okeke',
+          pronouns: 'he/him',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 1, DEX: 1, CON: 1, INT: 2, WIS: 0, CHA: 0 },
+          skillMastery: ['Tech', 'Craft'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-abc'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    ctrl.acceptSlot(4);
+    expect(ctrl.isAccepted(4)).toBe(true);
+    expect(env.scratchNotes.length).toBe(1);
+    expect(env.scratchNotes[0]).toMatch(/slot 4/);
+    expect(env.scratchNotes[0]).toMatch(/Reggie Okeke/);
+    expect(env.scratchNotes[0]).toMatch(/syn-abc/);
+    synthSpy.mockRestore();
+  });
+
+  it('acceptSlot refuses to accept a failure result', async () => {
+    saveChargenState('o-r-main', 5, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: false,
+        code: 'parse-failed',
+        message: 'malformed'
+      });
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(5);
+    ctrl.acceptSlot(5);
+    expect(ctrl.isAccepted(5)).toBe(false);
+    expect(env.scratchNotes).toEqual([]);
+    synthSpy.mockRestore();
+  });
+
+  it('requestReviseSlot appends a scratch-note with the reason', async () => {
+    saveChargenState('o-r-main', 7, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(7);
+    ctrl.requestReviseSlot(7, 'Item is too vague, needs more detail');
+    expect(env.scratchNotes.length).toBe(1);
+    expect(env.scratchNotes[0]).toMatch(/slot 7/);
+    expect(env.scratchNotes[0]).toMatch(/Item is too vague/);
+    expect(ctrl.getSynthResult(7)).toBeUndefined();
+    synthSpy.mockRestore();
+  });
+
+  it('requestReviseSlot with no reason still appends a generic scratch-note', async () => {
+    saveChargenState('o-r-main', 8, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: false,
+        code: 'parse-failed',
+        message: 'bad'
+      });
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(8);
+    ctrl.requestReviseSlot(8);
+    expect(env.scratchNotes.length).toBe(1);
+    expect(env.scratchNotes[0]).toMatch(/slot 8/);
+    expect(env.scratchNotes[0]).not.toMatch(/Reason:/);
+    synthSpy.mockRestore();
   });
 
   it('requestReviseSlot clears synth result + accept flag', async () => {
