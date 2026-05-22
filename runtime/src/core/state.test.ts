@@ -798,6 +798,34 @@ describe('materialize — unknown event kinds', () => {
   });
 });
 
+describe('MATERIALIZERS registry (M3C-1)', () => {
+  it('has a registered materializer for every KNOWN_EVENT_KINDS entry', async () => {
+    // Regression guard: when a future commit adds a new event kind
+    // to KNOWN_EVENT_KINDS, the author MUST also register a
+    // materializer in MATERIALIZERS — otherwise the new kind is
+    // silently treated as unknown (forward-compat no-op), which is
+    // rarely the intended behavior.  Importing both sets through
+    // the module's public surface tests the invariant end-to-end.
+    const { KNOWN_EVENT_KINDS, MATERIALIZER_KINDS } = await import('./state');
+    const missing = [...KNOWN_EVENT_KINDS].filter(
+      (k) => !MATERIALIZER_KINDS.has(k)
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('does not register any materializer for an unknown event kind', async () => {
+    // The reverse parity: every materializer should be reachable
+    // from KNOWN_EVENT_KINDS.  A registration without a matching
+    // KNOWN_EVENT_KINDS entry would never fire (the kind would be
+    // rejected upstream by the version-mismatch banner).
+    const { KNOWN_EVENT_KINDS, MATERIALIZER_KINDS } = await import('./state');
+    const orphaned = [...MATERIALIZER_KINDS].filter(
+      (k) => !KNOWN_EVENT_KINDS.has(k)
+    );
+    expect(orphaned).toEqual([]);
+  });
+});
+
 describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
   it('contains all 13 legacy v0 kinds', () => {
     const legacy = [

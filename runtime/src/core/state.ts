@@ -806,639 +806,728 @@ export function isPayloadV1(payload: unknown): payload is { v: 1 } {
   );
 }
 
-function applyEventToState(state: SessionState, event: QuireEvent): void {
-  switch (event.kind) {
-    case 'peer-join': {
-      const p = event.payload as
-        | (PeerJoinPayload & {
-            campaign?: { owner?: unknown; repo?: unknown; ref?: unknown };
-            knownKindsCount?: unknown;
-          })
-        | undefined;
-      // P0-12: capture the joining peer's KNOWN_EVENT_KINDS count if
-      // it announced one.  Bounded sanity check (no negative, no
-      // larger than 10x current vocabulary) so a hostile payload
-      // can't bloat or confuse the version-mismatch banner.
-      let knownKindsCount: number | undefined;
-      if (
-        typeof p?.knownKindsCount === 'number' &&
-        Number.isFinite(p.knownKindsCount) &&
-        p.knownKindsCount >= 0 &&
-        p.knownKindsCount <= 10000
-      ) {
-        knownKindsCount = p.knownKindsCount;
-      }
-      state.peers[event.peerId] = {
-        peerId: event.peerId,
-        name: p?.name,
-        joinedAt: event.ts,
-        knownKindsCount
-      };
-      // R3-C: a host's peer-join may embed the campaign reference
-      // so guests who joined via a bare URL (play.quire.games +
-      // code, no `?campaign=`) can discover what to load.  First-
-      // write-wins: only the earliest peer-join with a campaign
-      // sets it; later joiners can't override.
-      if (
-        !state.campaign &&
-        p?.campaign &&
-        typeof p.campaign === 'object' &&
-        typeof p.campaign.owner === 'string' &&
-        typeof p.campaign.repo === 'string' &&
-        typeof p.campaign.ref === 'string' &&
-        p.campaign.owner.length > 0 &&
-        p.campaign.repo.length > 0 &&
-        p.campaign.ref.length > 0
-      ) {
-        state.campaign = {
-          owner: p.campaign.owner,
-          repo: p.campaign.repo,
-          ref: p.campaign.ref
-        };
-      }
-      break;
-    }
-    case 'peer-leave': {
-      const p = state.peers[event.peerId];
-      if (p) p.leftAt = event.ts;
-      // M2.8: a leaving peer's hand drops automatically — a stale
-      // raised hand after departure would clutter the roster.
-      state.raisedHands.delete(event.peerId);
-      break;
-    }
-    case 'peer-disconnect': {
-      // Coordinator-only: mark another peer as departed when the
-      // network detects their connection closing.  Distinct from
-      // self-authored 'peer-leave' (which is for clean exits).
-      // Without this, closing a browser tab without leaving
-      // cleanly leaves the peer permanently in the roster.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as { peerId?: unknown };
-      if (typeof p.peerId !== 'string' || p.peerId.length === 0) break;
-      const target = state.peers[p.peerId];
-      if (target && target.leftAt === undefined) {
-        target.leftAt = event.ts;
-      }
-      // M2.8: drop the disconnected peer's raised hand (same
-      // reasoning as peer-leave — a stale hand on a vanished peer
-      // is clutter).
-      state.raisedHands.delete(p.peerId);
-      break;
-    }
-    case 'peer-rename': {
-      // Self-rename only — the event.peerId IS the author (R2.1
-      // already enforces this on the wire).  A peer can update
-      // their display name, their character status string, and/or
-      // their PC binding (M3a.2 P-M3a-pc-binding).
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as {
-        name?: unknown;
-        character?: unknown;
-        pcId?: unknown;
-      };
-      const presence = state.peers[event.peerId];
-      if (!presence) break;
-      if (typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 80) {
-        presence.name = p.name;
-      }
-      if (typeof p.character === 'string' && p.character.length <= 80) {
-        // Empty string explicitly clears the character.
-        presence.character = p.character.length === 0 ? undefined : p.character;
-      }
-      // M3a.2: pcId follows the same set/clear semantics.  Empty
-      // string clears.  Non-string / invalid id is ignored (so a
-      // legacy peer that doesn't set pcId doesn't accidentally
-      // unbind a previously-bound one — that's an explicit clear,
-      // not an omission).
-      if (typeof p.pcId === 'string') {
-        if (p.pcId.length === 0) {
-          presence.pcId = undefined;
-        } else if (isCharacterId(p.pcId)) {
-          presence.pcId = p.pcId;
-        }
-        // else: invalid id, silently dropped (defensive).
-      }
-      break;
-    }
-    case 'coordinator-claim': {
-      // EXPRESSED claim — record the author in coordHolders even if
-      // first-wins gates the actual transition.  This matters across
-      // session boundaries: when a fresh-host loads a save authored
-      // by a prior DM, the prior DM's coord-claim sorts at sum=2
-      // tied with the fresh host's; first-wins on alphabetical
-      // peerId may or may not let the prior DM "win" — but their
-      // scene-reveals must still apply, which requires them to be
-      // in coordHolders.  Authority comes from "ever expressed a
-      // claim", not from "currently winning the claim race."
-      state.coordHolders.add(event.peerId);
-      if (!state.coordinator) {
-        state.coordinator = event.peerId;
-      }
-      break;
-    }
-    case 'coordinator-yield': {
-      if (state.coordinator === event.peerId) state.coordinator = undefined;
-      // coordHolders intentionally NOT cleared — historical
-      // authority is preserved for reveal-acceptance.
-      break;
-    }
-    case 'coordinator-reclaim': {
-      // Unlike coordinator-claim ("first claim wins"), reclaim is
-      // unconditional: the issuing peer becomes coordinator.  The
-      // R2.1 cross-check in Peer.handleMessage prevents non-DM
-      // forgery on the wire; here we trust that the event reached
-      // us legitimately.  Synthesizes a system chat entry as the
-      // audit trail so every peer sees "who took over from whom."
-      //
-      // SECURITY (M1 gate finding): the audit-string interpolates
-      // peerIds.  Today peerIds are opaque random codes (the
-      // pairing-code alphabet) — safe to put in player-visible
-      // chat.  If a future commit makes peerIds human-readable
-      // (e.g. display-name-prefixed), this synthesizes player-
-      // visible PII.  Keep peerIds opaque.
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as { fromPeerId?: unknown };
-      const fromPeerId =
-        typeof p.fromPeerId === 'string' && p.fromPeerId.length > 0
-          ? p.fromPeerId
-          : state.coordinator;
-      state.coordinator = event.peerId;
-      state.coordHolders.add(event.peerId);
-      const auditText = fromPeerId
-        ? `[system] ${event.peerId} took over as coordinator from ${fromPeerId}`
-        : `[system] ${event.peerId} took over as coordinator`;
-      state.chat.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        text: auditText
-      });
-      break;
-    }
-    case 'scene-reveal': {
-      // Authority check: the author must have been coordinator at
-      // SOME point in the event log, not necessarily now.  Without
-      // this, loaded reveals from a prior session would be dropped
-      // when the new host's coord-claim won the alphabetical
-      // peerId tiebreak.  See coordHolders comment in SessionState.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<SceneRevealPayload>;
-      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
-      if (!state.revealedScenes.includes(p.scenePath)) {
-        state.revealedScenes.push(p.scenePath);
-      }
-      break;
-    }
-    case 'scene-unreveal': {
-      // DM-revoke for an accidental reveal.  Same authority check
-      // as reveal.  Removes the scene path from revealedScenes;
-      // players who were viewing that scene will be navigated
-      // away by the UI layer on their next render.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<SceneRevealPayload>;
-      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
-      const idx = state.revealedScenes.indexOf(p.scenePath);
-      if (idx >= 0) state.revealedScenes.splice(idx, 1);
-      break;
-    }
-    case 'dice-roll': {
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<DiceRollPayload>;
-      if (!isBoundedString(p.expression, ID_CAP)) break;
-      if (typeof p.result !== 'number' || !Number.isFinite(p.result)) break;
-      if (!Array.isArray(p.dice)) break;
-      // Bound the dice array length and verify entries are numbers.
-      if (p.dice.length > 100) break;
-      if (!p.dice.every((d) => typeof d === 'number' && Number.isFinite(d))) {
-        break;
-      }
-      state.diceRolls.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        expression: p.expression,
-        result: p.result,
-        dice: p.dice
-      });
-      break;
-    }
-    case 'chat': {
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<ChatPayload>;
-      if (!isBoundedString(p.text, CHAT_CAP)) break;
-      state.chat.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        text: p.text
-      });
-      break;
-    }
-    case 'pc-edit': {
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<PcEditPayload> & {
-        causedByResponseId?: string;
-      };
-      if (!isCharacterId(p.pcId)) break;
-      if (!isSafeKey(p.field)) break;
-      // M3c.5: hard-gate enforcement for AI-proposed pc-edits.
-      // When causedByResponseId is set, the event is the result of
-      // the AiWriteController's dispatch path.  Hard-gated
-      // transitions (harm 3-4, stress 4, cross-PC) require a
-      // matching ai-accept already in state.aiAudit (the coord's
-      // ai-accept has a smaller seq → materializes first; see
-      // design/m3c-ai-write-api.md §Phase 3).  No match → reject
-      // and log the refusal.
-      if (
-        typeof p.causedByResponseId === 'string' &&
-        p.causedByResponseId.length > 0
-      ) {
-        const reason = pcEditHardGateReason(
-          state,
-          event,
-          p.pcId,
-          p.field,
-          p.value
-        );
-        if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
-          recordRejectedHardGate(state, event, p.causedByResponseId, reason);
-          break;
-        }
-      }
-      // value is intentionally unrestricted at this layer — the
-      // character-edits helper (applyCharacterEdits) clamps and
-      // type-checks on read so an unknown field is silently
-      // dropped at render time.  Storing the raw value preserves
-      // forward compatibility with future editable fields.
-      const pc = state.pcEdits[p.pcId] ?? {};
-      // DoS guard: bound the number of distinct fields stored per
-      // PC.  Existing fields are still updatable (LWW) once the cap
-      // is reached; only new keys get rejected.
-      if (
-        !Object.prototype.hasOwnProperty.call(pc, p.field) &&
-        Object.keys(pc).length >= PC_FIELD_COUNT_CAP
-      ) {
-        break;
-      }
-      pc[p.field] = p.value;
-      state.pcEdits[p.pcId] = pc;
-      break;
-    }
-    case 'note': {
-      if (!isPlainObjectPayload(event.payload)) break;
-      const p = event.payload as Partial<NotePayload>;
-      if (!isBoundedString(p.text, NOTE_CAP)) break;
-      // private must be a boolean if present (defaults to undefined
-      // when omitted, which is fine).  Drops non-boolean values like
-      // objects/strings rather than coercing.
-      const priv =
-        typeof p.private === 'boolean' ? p.private : undefined;
-      state.notes.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        text: p.text,
-        private: priv
-      });
-      break;
-    }
-    // -----------------------------------------------------------
-    // M1-registered kinds (P0-5).  Materializers ship per-feature
-    // in M3a/M3b/M4/M5/M6 — at M1 we only validate the payload
-    // version and break.  This makes the v:1 invariant a real
-    // contract: any future materializer that lands here MUST
-    // continue to call isPayloadV1 (or its successor for v:2+) and
-    // reject mismatched versions.  Tests in state.hostile.test.ts
-    // pin the rejection behavior on synthetic events.
-    // -----------------------------------------------------------
-    case 'raise-hand': {
-      // M2.8 (P1-7): the local peer raises their hand.  Self-only
-      // authorship — event.peerId IS the author per R2.1 wire-layer
-      // cross-check.  No DM gate; any peer can raise their own hand.
-      if (!isPayloadV1(event.payload)) break;
-      // Defensive: only track raised hands for known peers (a raise
-      // before peer-join shouldn't materialize).  This naturally
-      // dedupes — Set.add is idempotent.
-      if (state.peers[event.peerId]) {
-        state.raisedHands.add(event.peerId);
-      }
-      break;
-    }
-    case 'lower-hand': {
-      // Self-only lower of own hand.  Mirrors raise-hand.
-      if (!isPayloadV1(event.payload)) break;
-      state.raisedHands.delete(event.peerId);
-      break;
-    }
-    case 'scene-reveal-paragraph': {
-      // Coord-authored per-block reveal.  Block identity is the
-      // 16-hex-char content hash (`blockHash` in markdown.ts);
-      // see redesign-plan.md § "Event vocabulary additions" for
-      // the content-addressing rationale.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<SceneRevealParagraphPayload>;
-      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
-      if (!isBlockHash(p.blockHash)) break;
-      // paragraphIndex is a UI hint only — accept absence or any
-      // finite number, drop pathological values (huge floats, NaN,
-      // non-numbers) before they reach the (unused) field.
-      if (
-        p.paragraphIndex !== undefined &&
-        (typeof p.paragraphIndex !== 'number' ||
-          !Number.isFinite(p.paragraphIndex))
-      ) {
-        break;
-      }
-      let set = state.revealedParagraphs[p.scenePath];
-      if (!set) {
-        set = new Set<string>();
-        state.revealedParagraphs[p.scenePath] = set;
-      }
-      // Cap enforcement — protect against hostile peers or replayed
-      // logs from a compromised session.  Silently drops once the
-      // set is full; a sane DM never approaches the cap.
-      if (set.size >= REVEALED_BLOCKS_PER_SCENE_CAP && !set.has(p.blockHash)) {
-        break;
-      }
-      set.add(p.blockHash);
-      break;
-    }
-    case 'scene-unreveal-paragraph': {
-      // DM-revoke of a per-block reveal.  Symmetric to the reveal
-      // path above; deletes from the set and prunes the empty set
-      // so the keyed map doesn't grow unboundedly across sessions.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<SceneRevealParagraphPayload>;
-      if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) break;
-      if (!isBlockHash(p.blockHash)) break;
-      if (
-        p.paragraphIndex !== undefined &&
-        (typeof p.paragraphIndex !== 'number' ||
-          !Number.isFinite(p.paragraphIndex))
-      ) {
-        break;
-      }
-      const set = state.revealedParagraphs[p.scenePath];
-      if (!set) break;
-      set.delete(p.blockHash);
-      if (set.size === 0) {
-        delete state.revealedParagraphs[p.scenePath];
-      }
-      break;
-    }
-    case 'npc-pin': {
-      // Coord-only DM affordance — pin an NPC id to the dm-aside
-      // for quick reference.  Order preserved; the list acts like
-      // a manually-curated stack.  Idempotent.  DoS-capped at 50.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<NpcPinPayload>;
-      if (!isCharacterId(p.npcId)) break;
-      if (state.pinnedNpcs.includes(p.npcId)) break;
-      if (state.pinnedNpcs.length >= PINNED_NPC_CAP) break;
-      state.pinnedNpcs.push(p.npcId);
-      break;
-    }
-    case 'npc-unpin': {
-      // DM-revoke of a pin.  Removes by id; absent-id is a no-op.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<NpcPinPayload>;
-      if (!isCharacterId(p.npcId)) break;
-      const idx = state.pinnedNpcs.indexOf(p.npcId);
-      if (idx >= 0) state.pinnedNpcs.splice(idx, 1);
-      break;
-    }
-    case 'thread-debt-set': {
-      // Coord-only.  Sets the per-PC rung; level === '' clears
-      // the entry (LWW semantics — last DM write wins).
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<ThreadDebtSetPayload>;
-      if (!isCharacterId(p.pcId)) break;
-      if (p.level === '') {
-        delete state.threadDebt[p.pcId];
-        break;
-      }
-      if (!isThreadDebtLevel(p.level)) break;
-      state.threadDebt[p.pcId] = p.level;
-      break;
-    }
-    case 'scratch-note': {
-      // Coord-only quick-jot.  Append-only chronological log;
-      // ingested by the post-session living-document AI.  Capped
-      // at SCRATCH_NOTE_CAP entries to bound memory; once full,
-      // silently drops new notes (DM is warned via dm-only UI).
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<ScratchNotePayload>;
-      if (!isBoundedString(p.text, SCRATCH_NOTE_TEXT_CAP)) break;
-      if (
-        p.scenePath !== undefined &&
-        !isBoundedString(p.scenePath, SCENE_PATH_CAP)
-      ) {
-        break;
-      }
-      if (state.scratchNotes.length >= SCRATCH_NOTE_CAP) break;
-      state.scratchNotes.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        text: p.text,
-        scenePath: p.scenePath
-      });
-      break;
-    }
-    case 'broadcast-view': {
-      // Coord-only LWW single slot.  Players' Stage navigates to
-      // {stagePath, tab?} when the field changes.  Older events
-      // are ignored — the materializer keeps the newest by ts.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<BroadcastViewPayload>;
-      if (!isBoundedString(p.stagePath, SCENE_PATH_CAP)) break;
-      if (p.tab !== undefined && !isBoundedString(p.tab, ID_CAP)) break;
-      // Clamp event.ts to a plausible wall-clock window.  Without
-      // this guard a hostile coord (or a poisoned save file) could
-      // emit ts = Number.MAX_SAFE_INTEGER and permanently lock the
-      // LWW slot — every subsequent legitimate broadcast would
-      // lose the strict-greater comparison forever.  The cap is
-      // generous (a year past materialization start) so honest
-      // clock skew between peers never trips it.
-      const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-      if (event.ts > Date.now() + ONE_YEAR_MS) break;
-      // LWW with append-order tie-break: equal-ts events from the
-      // same materialization pass replace in log order.  Strict
-      // less-than means an older (lower ts) broadcast loses
-      // unconditionally; same ts → the later append wins because
-      // we never short-circuit when ts equals current.ts.
-      const current = state.broadcastView;
-      if (current && current.ts > event.ts) break;
-      state.broadcastView = {
-        stagePath: p.stagePath,
-        tab: p.tab,
-        ts: event.ts
-      };
-      break;
-    }
-    case 'ai-prompt': {
-      // Coord-only AI broker audit entry — prompt half.  Full
-      // prompt text lives in IndexedDB keyed by promptHash on the
-      // DM's machine; only the chain head + token count replicate
-      // via this event.  Render-gated DM-only + stripped from
-      // shareable saves.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<AiPromptPayload>;
-      if (!isHexHash(p.promptHash)) break;
-      if (!isBoundedString(p.model, ID_CAP)) break;
-      if (typeof p.tokenIn !== 'number' || !Number.isFinite(p.tokenIn)) break;
-      if (p.tokenIn < 0) break;
-      if (p.contextRefs !== undefined) {
-        if (!Array.isArray(p.contextRefs)) break;
-        if (p.contextRefs.length > 50) break;
-        if (
-          !p.contextRefs.every((r) => isBoundedString(r, SCENE_PATH_CAP))
-        ) {
-          break;
-        }
-      }
-      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
-      state.aiAudit.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        kind: 'prompt',
-        promptHash: p.promptHash,
-        tokensIn: p.tokenIn
-      });
-      break;
-    }
-    case 'ai-response': {
-      // Coord-only AI broker audit entry — response half.
-      // Hash-chained against the prior chain head (prevHash); the
-      // materializer doesn't enforce chain continuity (that's the
-      // broker's job at append time) but stores both hashes so a
-      // post-session audit can reconstruct the chain.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<AiResponsePayload>;
-      if (!isBoundedString(p.responseId, ID_CAP)) break;
-      if (typeof p.tokenOut !== 'number' || !Number.isFinite(p.tokenOut)) break;
-      if (p.tokenOut < 0) break;
-      if (!isHexHash(p.hash)) break;
-      // prevHash may be empty (very first response in a session has
-      // no predecessor); accept empty string OR a valid hash.
-      if (p.prevHash !== '' && !isHexHash(p.prevHash)) break;
-      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
-      state.aiAudit.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        kind: 'response',
-        responseId: p.responseId,
-        responseHash: p.hash,
-        prevHash: p.prevHash,
-        tokensOut: p.tokenOut
-      });
-      break;
-    }
-    case 'ai-accept':
-    case 'ai-reject': {
-      // Coord-only DM verdict on an AI response.  The verdict is
-      // a hint for future tuning — it doesn't change the audit
-      // chain's hash continuity.  Category is optional + bounded;
-      // when absent the audit row still lands.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<AiVerdictPayload>;
-      if (!isBoundedString(p.responseId, ID_CAP)) break;
-      if (
-        p.category !== undefined &&
-        !isBoundedString(p.category, ID_CAP)
-      ) {
-        break;
-      }
-      if (state.aiAudit.length >= AI_AUDIT_CAP) break;
-      state.aiAudit.push({
-        peerId: event.peerId,
-        ts: event.ts,
-        kind: event.kind === 'ai-accept' ? 'accept' : 'reject',
-        responseId: p.responseId,
-        category: p.category
-      });
-      break;
-    }
-    case 'caster-state-set': {
-      // Coord-only DM-side caster ladder + tax + spam-counter
-      // (underleaf/world/rules.md L125-141 + L179-186).  M3c.1
-      // materializer; M3c.5 wires hard-gate enforcement on
-      // causedByResponseId for the AI-write path.  Render-gated
-      // DM-only via filterForViewer + stripped from shareable saves.
-      if (!state.coordHolders.has(event.peerId)) break;
-      if (!isPayloadV1(event.payload)) break;
-      const p = event.payload as Partial<CasterStateSetPayload>;
-      if (!isCharacterId(p.pcId)) break;
-      if (!isCasterLadderState(p.ladderState)) break;
-      if (
-        p.reason !== undefined &&
-        !isBoundedString(p.reason, CASTER_REASON_CAP)
-      ) {
-        break;
-      }
-      if (p.taxActive !== undefined && typeof p.taxActive !== 'boolean') {
-        break;
-      }
-      if (p.spamCount !== undefined) {
-        if (typeof p.spamCount !== 'number') break;
-        if (!Number.isFinite(p.spamCount)) break;
-        if (!Number.isInteger(p.spamCount)) break;
-        if (p.spamCount < 0 || p.spamCount > SPAM_COUNT_CAP) break;
-      }
-      if (
-        p.causedByResponseId !== undefined &&
-        !isBoundedString(p.causedByResponseId, ID_CAP)
-      ) {
-        break;
-      }
-      // M3c.5: hard-gate enforcement.  Same shape as pc-edit.
-      if (
-        typeof p.causedByResponseId === 'string' &&
-        p.causedByResponseId.length > 0
-      ) {
-        const reason = casterStateHardGateReason(state, p.pcId, {
-          ladderState: p.ladderState,
-          taxActive: p.taxActive
-        });
-        if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
-          recordRejectedHardGate(state, event, p.causedByResponseId, reason);
-          break;
-        }
-      }
-      const prior = state.casterState[p.pcId];
-      const next: CasterState = {
-        ladderState: p.ladderState,
-        reason: p.reason,
-        taxActive:
-          p.taxActive !== undefined ? p.taxActive : (prior?.taxActive ?? false),
-        spamCount:
-          p.spamCount !== undefined ? p.spamCount : (prior?.spamCount ?? 0)
-      };
-      state.casterState[p.pcId] = next;
-      break;
-    }
-    case 'map-blob-add':
-    case 'map-blob-move':
-    case 'map-blob-remove':
-    case 'map-blob-reveal':
-    case 'map-blob-unreveal': {
-      // Forward-compat guard: every M1+ payload MUST carry { v: 1 }.
-      // Until the per-kind materializer lands in M3a/M3b/M4/M5/M6,
-      // we no-op — but the version check still runs, so a payload
-      // missing v or with a future v (say v:2) is rejected by the
-      // same code path that will reject it in production.
-      if (!isPayloadV1(event.payload)) break;
-      // TODO M3a/M3b/M4/M5/M6: per-kind state mutation goes here.
-      break;
-    }
-    // Unknown kinds are silently ignored to allow forward compatibility.
+/**
+ * M3C-1 (engine prioritization 2026-05-22): per-kind materializer
+ * dispatch.  Replaces the original 32-arm `switch (event.kind)` with
+ * a top-level function-per-kind + a registry map.  Each new event
+ * kind in M3D/M4 adds one function + one map entry — no growing
+ * switch.  Behavior is byte-identical to the original switch (the
+ * tests in state.test.ts + state.hostile.test.ts pin every case
+ * arm).
+ *
+ * `EventApplier` is the contract.  Functions mutate `state` in place
+ * and return void.  Each function is responsible for its own payload
+ * validation; the dispatcher does no type-narrowing.
+ */
+type EventApplier = (state: SessionState, event: QuireEvent) => void;
+
+function applyPeerJoinEvent(state: SessionState, event: QuireEvent): void {
+  const p = event.payload as
+    | (PeerJoinPayload & {
+        campaign?: { owner?: unknown; repo?: unknown; ref?: unknown };
+        knownKindsCount?: unknown;
+      })
+    | undefined;
+  // P0-12: capture the joining peer's KNOWN_EVENT_KINDS count if
+  // it announced one.  Bounded sanity check (no negative, no
+  // larger than 10x current vocabulary) so a hostile payload
+  // can't bloat or confuse the version-mismatch banner.
+  let knownKindsCount: number | undefined;
+  if (
+    typeof p?.knownKindsCount === 'number' &&
+    Number.isFinite(p.knownKindsCount) &&
+    p.knownKindsCount >= 0 &&
+    p.knownKindsCount <= 10000
+  ) {
+    knownKindsCount = p.knownKindsCount;
+  }
+  state.peers[event.peerId] = {
+    peerId: event.peerId,
+    name: p?.name,
+    joinedAt: event.ts,
+    knownKindsCount
+  };
+  // R3-C: a host's peer-join may embed the campaign reference
+  // so guests who joined via a bare URL (play.quire.games +
+  // code, no `?campaign=`) can discover what to load.  First-
+  // write-wins: only the earliest peer-join with a campaign
+  // sets it; later joiners can't override.
+  if (
+    !state.campaign &&
+    p?.campaign &&
+    typeof p.campaign === 'object' &&
+    typeof p.campaign.owner === 'string' &&
+    typeof p.campaign.repo === 'string' &&
+    typeof p.campaign.ref === 'string' &&
+    p.campaign.owner.length > 0 &&
+    p.campaign.repo.length > 0 &&
+    p.campaign.ref.length > 0
+  ) {
+    state.campaign = {
+      owner: p.campaign.owner,
+      repo: p.campaign.repo,
+      ref: p.campaign.ref
+    };
   }
 }
+
+function applyPeerLeaveEvent(state: SessionState, event: QuireEvent): void {
+  const p = state.peers[event.peerId];
+  if (p) p.leftAt = event.ts;
+  // M2.8: a leaving peer's hand drops automatically — a stale
+  // raised hand after departure would clutter the roster.
+  state.raisedHands.delete(event.peerId);
+}
+
+function applyPeerDisconnectEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coordinator-only: mark another peer as departed when the
+  // network detects their connection closing.  Distinct from
+  // self-authored 'peer-leave' (which is for clean exits).
+  // Without this, closing a browser tab without leaving
+  // cleanly leaves the peer permanently in the roster.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as { peerId?: unknown };
+  if (typeof p.peerId !== 'string' || p.peerId.length === 0) return;
+  const target = state.peers[p.peerId];
+  if (target && target.leftAt === undefined) {
+    target.leftAt = event.ts;
+  }
+  // M2.8: drop the disconnected peer's raised hand (same
+  // reasoning as peer-leave — a stale hand on a vanished peer
+  // is clutter).
+  state.raisedHands.delete(p.peerId);
+}
+
+function applyPeerRenameEvent(state: SessionState, event: QuireEvent): void {
+  // Self-rename only — the event.peerId IS the author (R2.1
+  // already enforces this on the wire).  A peer can update
+  // their display name, their character status string, and/or
+  // their PC binding (M3a.2 P-M3a-pc-binding).
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as {
+    name?: unknown;
+    character?: unknown;
+    pcId?: unknown;
+  };
+  const presence = state.peers[event.peerId];
+  if (!presence) return;
+  if (typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 80) {
+    presence.name = p.name;
+  }
+  if (typeof p.character === 'string' && p.character.length <= 80) {
+    // Empty string explicitly clears the character.
+    presence.character = p.character.length === 0 ? undefined : p.character;
+  }
+  // M3a.2: pcId follows the same set/clear semantics.  Empty
+  // string clears.  Non-string / invalid id is ignored (so a
+  // legacy peer that doesn't set pcId doesn't accidentally
+  // unbind a previously-bound one — that's an explicit clear,
+  // not an omission).
+  if (typeof p.pcId === 'string') {
+    if (p.pcId.length === 0) {
+      presence.pcId = undefined;
+    } else if (isCharacterId(p.pcId)) {
+      presence.pcId = p.pcId;
+    }
+    // else: invalid id, silently dropped (defensive).
+  }
+}
+
+function applyCoordinatorClaimEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // EXPRESSED claim — record the author in coordHolders even if
+  // first-wins gates the actual transition.  This matters across
+  // session boundaries: when a fresh-host loads a save authored
+  // by a prior DM, the prior DM's coord-claim sorts at sum=2
+  // tied with the fresh host's; first-wins on alphabetical
+  // peerId may or may not let the prior DM "win" — but their
+  // scene-reveals must still apply, which requires them to be
+  // in coordHolders.  Authority comes from "ever expressed a
+  // claim", not from "currently winning the claim race."
+  state.coordHolders.add(event.peerId);
+  if (!state.coordinator) {
+    state.coordinator = event.peerId;
+  }
+}
+
+function applyCoordinatorYieldEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (state.coordinator === event.peerId) state.coordinator = undefined;
+  // coordHolders intentionally NOT cleared — historical
+  // authority is preserved for reveal-acceptance.
+}
+
+function applyCoordinatorReclaimEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Unlike coordinator-claim ("first claim wins"), reclaim is
+  // unconditional: the issuing peer becomes coordinator.  The
+  // R2.1 cross-check in Peer.handleMessage prevents non-DM
+  // forgery on the wire; here we trust that the event reached
+  // us legitimately.  Synthesizes a system chat entry as the
+  // audit trail so every peer sees "who took over from whom."
+  //
+  // SECURITY (M1 gate finding): the audit-string interpolates
+  // peerIds.  Today peerIds are opaque random codes (the
+  // pairing-code alphabet) — safe to put in player-visible
+  // chat.  If a future commit makes peerIds human-readable
+  // (e.g. display-name-prefixed), this synthesizes player-
+  // visible PII.  Keep peerIds opaque.
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as { fromPeerId?: unknown };
+  const fromPeerId =
+    typeof p.fromPeerId === 'string' && p.fromPeerId.length > 0
+      ? p.fromPeerId
+      : state.coordinator;
+  state.coordinator = event.peerId;
+  state.coordHolders.add(event.peerId);
+  const auditText = fromPeerId
+    ? `[system] ${event.peerId} took over as coordinator from ${fromPeerId}`
+    : `[system] ${event.peerId} took over as coordinator`;
+  state.chat.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    text: auditText
+  });
+}
+
+function applySceneRevealEvent(state: SessionState, event: QuireEvent): void {
+  // Authority check: the author must have been coordinator at
+  // SOME point in the event log, not necessarily now.  Without
+  // this, loaded reveals from a prior session would be dropped
+  // when the new host's coord-claim won the alphabetical
+  // peerId tiebreak.  See coordHolders comment in SessionState.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<SceneRevealPayload>;
+  if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) return;
+  if (!state.revealedScenes.includes(p.scenePath)) {
+    state.revealedScenes.push(p.scenePath);
+  }
+}
+
+function applySceneUnrevealEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // DM-revoke for an accidental reveal.  Same authority check
+  // as reveal.  Removes the scene path from revealedScenes;
+  // players who were viewing that scene will be navigated
+  // away by the UI layer on their next render.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<SceneRevealPayload>;
+  if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) return;
+  const idx = state.revealedScenes.indexOf(p.scenePath);
+  if (idx >= 0) state.revealedScenes.splice(idx, 1);
+}
+
+function applyDiceRollEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<DiceRollPayload>;
+  if (!isBoundedString(p.expression, ID_CAP)) return;
+  if (typeof p.result !== 'number' || !Number.isFinite(p.result)) return;
+  if (!Array.isArray(p.dice)) return;
+  // Bound the dice array length and verify entries are numbers.
+  if (p.dice.length > 100) return;
+  if (!p.dice.every((d) => typeof d === 'number' && Number.isFinite(d))) {
+    return;
+  }
+  state.diceRolls.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    expression: p.expression,
+    result: p.result,
+    dice: p.dice
+  });
+}
+
+function applyChatEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<ChatPayload>;
+  if (!isBoundedString(p.text, CHAT_CAP)) return;
+  state.chat.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    text: p.text
+  });
+}
+
+function applyPcEditEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<PcEditPayload> & {
+    causedByResponseId?: string;
+  };
+  if (!isCharacterId(p.pcId)) return;
+  if (!isSafeKey(p.field)) return;
+  // M3c.5: hard-gate enforcement for AI-proposed pc-edits.
+  // When causedByResponseId is set, the event is the result of
+  // the AiWriteController's dispatch path.  Hard-gated
+  // transitions (harm 3-4, stress 4, cross-PC) require a
+  // matching ai-accept already in state.aiAudit (the coord's
+  // ai-accept has a smaller seq → materializes first; see
+  // design/m3c-ai-write-api.md §Phase 3).  No match → reject
+  // and log the refusal.
+  if (
+    typeof p.causedByResponseId === 'string' &&
+    p.causedByResponseId.length > 0
+  ) {
+    const reason = pcEditHardGateReason(
+      state,
+      event,
+      p.pcId,
+      p.field,
+      p.value
+    );
+    if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
+      recordRejectedHardGate(state, event, p.causedByResponseId, reason);
+      return;
+    }
+  }
+  // value is intentionally unrestricted at this layer — the
+  // character-edits helper (applyCharacterEdits) clamps and
+  // type-checks on read so an unknown field is silently
+  // dropped at render time.  Storing the raw value preserves
+  // forward compatibility with future editable fields.
+  const pc = state.pcEdits[p.pcId] ?? {};
+  // DoS guard: bound the number of distinct fields stored per
+  // PC.  Existing fields are still updatable (LWW) once the cap
+  // is reached; only new keys get rejected.
+  if (
+    !Object.prototype.hasOwnProperty.call(pc, p.field) &&
+    Object.keys(pc).length >= PC_FIELD_COUNT_CAP
+  ) {
+    return;
+  }
+  pc[p.field] = p.value;
+  state.pcEdits[p.pcId] = pc;
+}
+
+function applyNoteEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPlainObjectPayload(event.payload)) return;
+  const p = event.payload as Partial<NotePayload>;
+  if (!isBoundedString(p.text, NOTE_CAP)) return;
+  // private must be a boolean if present (defaults to undefined
+  // when omitted, which is fine).  Drops non-boolean values like
+  // objects/strings rather than coercing.
+  const priv = typeof p.private === 'boolean' ? p.private : undefined;
+  state.notes.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    text: p.text,
+    private: priv
+  });
+}
+
+// ---------------------------------------------------------------
+// M1-registered kinds (P0-5).  Materializers ship per-feature in
+// M3a/M3b/M4/M5/M6 — at M1 they only validate the payload version
+// and return.  This makes the v:1 invariant a real contract: any
+// future materializer that lands here MUST continue to call
+// isPayloadV1 (or its successor for v:2+) and reject mismatched
+// versions.  Tests in state.hostile.test.ts pin the rejection
+// behavior on synthetic events.
+// ---------------------------------------------------------------
+
+function applyRaiseHandEvent(state: SessionState, event: QuireEvent): void {
+  // M2.8 (P1-7): the local peer raises their hand.  Self-only
+  // authorship — event.peerId IS the author per R2.1 wire-layer
+  // cross-check.  No DM gate; any peer can raise their own hand.
+  if (!isPayloadV1(event.payload)) return;
+  // Defensive: only track raised hands for known peers (a raise
+  // before peer-join shouldn't materialize).  This naturally
+  // dedupes — Set.add is idempotent.
+  if (state.peers[event.peerId]) {
+    state.raisedHands.add(event.peerId);
+  }
+}
+
+function applyLowerHandEvent(state: SessionState, event: QuireEvent): void {
+  // Self-only lower of own hand.  Mirrors raise-hand.
+  if (!isPayloadV1(event.payload)) return;
+  state.raisedHands.delete(event.peerId);
+}
+
+function applySceneRevealParagraphEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord-authored per-block reveal.  Block identity is the
+  // 16-hex-char content hash (`blockHash` in markdown.ts);
+  // see redesign-plan.md § "Event vocabulary additions" for
+  // the content-addressing rationale.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SceneRevealParagraphPayload>;
+  if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) return;
+  if (!isBlockHash(p.blockHash)) return;
+  // paragraphIndex is a UI hint only — accept absence or any
+  // finite number, drop pathological values (huge floats, NaN,
+  // non-numbers) before they reach the (unused) field.
+  if (
+    p.paragraphIndex !== undefined &&
+    (typeof p.paragraphIndex !== 'number' ||
+      !Number.isFinite(p.paragraphIndex))
+  ) {
+    return;
+  }
+  let set = state.revealedParagraphs[p.scenePath];
+  if (!set) {
+    set = new Set<string>();
+    state.revealedParagraphs[p.scenePath] = set;
+  }
+  // Cap enforcement — protect against hostile peers or replayed
+  // logs from a compromised session.  Silently drops once the
+  // set is full; a sane DM never approaches the cap.
+  if (set.size >= REVEALED_BLOCKS_PER_SCENE_CAP && !set.has(p.blockHash)) {
+    return;
+  }
+  set.add(p.blockHash);
+}
+
+function applySceneUnrevealParagraphEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // DM-revoke of a per-block reveal.  Symmetric to the reveal
+  // path above; deletes from the set and prunes the empty set
+  // so the keyed map doesn't grow unboundedly across sessions.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SceneRevealParagraphPayload>;
+  if (!isBoundedString(p.scenePath, SCENE_PATH_CAP)) return;
+  if (!isBlockHash(p.blockHash)) return;
+  if (
+    p.paragraphIndex !== undefined &&
+    (typeof p.paragraphIndex !== 'number' ||
+      !Number.isFinite(p.paragraphIndex))
+  ) {
+    return;
+  }
+  const set = state.revealedParagraphs[p.scenePath];
+  if (!set) return;
+  set.delete(p.blockHash);
+  if (set.size === 0) {
+    delete state.revealedParagraphs[p.scenePath];
+  }
+}
+
+function applyNpcPinEvent(state: SessionState, event: QuireEvent): void {
+  // Coord-only DM affordance — pin an NPC id to the dm-aside
+  // for quick reference.  Order preserved; the list acts like
+  // a manually-curated stack.  Idempotent.  DoS-capped at 50.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<NpcPinPayload>;
+  if (!isCharacterId(p.npcId)) return;
+  if (state.pinnedNpcs.includes(p.npcId)) return;
+  if (state.pinnedNpcs.length >= PINNED_NPC_CAP) return;
+  state.pinnedNpcs.push(p.npcId);
+}
+
+function applyNpcUnpinEvent(state: SessionState, event: QuireEvent): void {
+  // DM-revoke of a pin.  Removes by id; absent-id is a no-op.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<NpcPinPayload>;
+  if (!isCharacterId(p.npcId)) return;
+  const idx = state.pinnedNpcs.indexOf(p.npcId);
+  if (idx >= 0) state.pinnedNpcs.splice(idx, 1);
+}
+
+function applyThreadDebtSetEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord-only.  Sets the per-PC rung; level === '' clears
+  // the entry (LWW semantics — last DM write wins).
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<ThreadDebtSetPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (p.level === '') {
+    delete state.threadDebt[p.pcId];
+    return;
+  }
+  if (!isThreadDebtLevel(p.level)) return;
+  state.threadDebt[p.pcId] = p.level;
+}
+
+function applyScratchNoteEvent(state: SessionState, event: QuireEvent): void {
+  // Coord-only quick-jot.  Append-only chronological log;
+  // ingested by the post-session living-document AI.  Capped
+  // at SCRATCH_NOTE_CAP entries to bound memory; once full,
+  // silently drops new notes (DM is warned via dm-only UI).
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<ScratchNotePayload>;
+  if (!isBoundedString(p.text, SCRATCH_NOTE_TEXT_CAP)) return;
+  if (
+    p.scenePath !== undefined &&
+    !isBoundedString(p.scenePath, SCENE_PATH_CAP)
+  ) {
+    return;
+  }
+  if (state.scratchNotes.length >= SCRATCH_NOTE_CAP) return;
+  state.scratchNotes.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    text: p.text,
+    scenePath: p.scenePath
+  });
+}
+
+function applyBroadcastViewEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord-only LWW single slot.  Players' Stage navigates to
+  // {stagePath, tab?} when the field changes.  Older events
+  // are ignored — the materializer keeps the newest by ts.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<BroadcastViewPayload>;
+  if (!isBoundedString(p.stagePath, SCENE_PATH_CAP)) return;
+  if (p.tab !== undefined && !isBoundedString(p.tab, ID_CAP)) return;
+  // Clamp event.ts to a plausible wall-clock window.  Without
+  // this guard a hostile coord (or a poisoned save file) could
+  // emit ts = Number.MAX_SAFE_INTEGER and permanently lock the
+  // LWW slot — every subsequent legitimate broadcast would
+  // lose the strict-greater comparison forever.  The cap is
+  // generous (a year past materialization start) so honest
+  // clock skew between peers never trips it.
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  if (event.ts > Date.now() + ONE_YEAR_MS) return;
+  // LWW with append-order tie-break: equal-ts events from the
+  // same materialization pass replace in log order.  Strict
+  // less-than means an older (lower ts) broadcast loses
+  // unconditionally; same ts → the later append wins because
+  // we never short-circuit when ts equals current.ts.
+  const current = state.broadcastView;
+  if (current && current.ts > event.ts) return;
+  state.broadcastView = {
+    stagePath: p.stagePath,
+    tab: p.tab,
+    ts: event.ts
+  };
+}
+
+function applyAiPromptEvent(state: SessionState, event: QuireEvent): void {
+  // Coord-only AI broker audit entry — prompt half.  Full
+  // prompt text lives in IndexedDB keyed by promptHash on the
+  // DM's machine; only the chain head + token count replicate
+  // via this event.  Render-gated DM-only + stripped from
+  // shareable saves.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<AiPromptPayload>;
+  if (!isHexHash(p.promptHash)) return;
+  if (!isBoundedString(p.model, ID_CAP)) return;
+  if (typeof p.tokenIn !== 'number' || !Number.isFinite(p.tokenIn)) return;
+  if (p.tokenIn < 0) return;
+  if (p.contextRefs !== undefined) {
+    if (!Array.isArray(p.contextRefs)) return;
+    if (p.contextRefs.length > 50) return;
+    if (!p.contextRefs.every((r) => isBoundedString(r, SCENE_PATH_CAP))) {
+      return;
+    }
+  }
+  if (state.aiAudit.length >= AI_AUDIT_CAP) return;
+  state.aiAudit.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    kind: 'prompt',
+    promptHash: p.promptHash,
+    tokensIn: p.tokenIn
+  });
+}
+
+function applyAiResponseEvent(state: SessionState, event: QuireEvent): void {
+  // Coord-only AI broker audit entry — response half.
+  // Hash-chained against the prior chain head (prevHash); the
+  // materializer doesn't enforce chain continuity (that's the
+  // broker's job at append time) but stores both hashes so a
+  // post-session audit can reconstruct the chain.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<AiResponsePayload>;
+  if (!isBoundedString(p.responseId, ID_CAP)) return;
+  if (typeof p.tokenOut !== 'number' || !Number.isFinite(p.tokenOut)) return;
+  if (p.tokenOut < 0) return;
+  if (!isHexHash(p.hash)) return;
+  // prevHash may be empty (very first response in a session has
+  // no predecessor); accept empty string OR a valid hash.
+  if (p.prevHash !== '' && !isHexHash(p.prevHash)) return;
+  if (state.aiAudit.length >= AI_AUDIT_CAP) return;
+  state.aiAudit.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    kind: 'response',
+    responseId: p.responseId,
+    responseHash: p.hash,
+    prevHash: p.prevHash,
+    tokensOut: p.tokenOut
+  });
+}
+
+function applyAiVerdictEvent(state: SessionState, event: QuireEvent): void {
+  // Handles both 'ai-accept' and 'ai-reject'.  Coord-only DM
+  // verdict on an AI response.  The verdict is a hint for future
+  // tuning — it doesn't change the audit chain's hash continuity.
+  // Category is optional + bounded; when absent the audit row
+  // still lands.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<AiVerdictPayload>;
+  if (!isBoundedString(p.responseId, ID_CAP)) return;
+  if (p.category !== undefined && !isBoundedString(p.category, ID_CAP)) {
+    return;
+  }
+  if (state.aiAudit.length >= AI_AUDIT_CAP) return;
+  state.aiAudit.push({
+    peerId: event.peerId,
+    ts: event.ts,
+    kind: event.kind === 'ai-accept' ? 'accept' : 'reject',
+    responseId: p.responseId,
+    category: p.category
+  });
+}
+
+function applyCasterStateSetEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord-only DM-side caster ladder + tax + spam-counter
+  // (underleaf/world/rules.md L125-141 + L179-186).  M3c.1
+  // materializer; M3c.5 wires hard-gate enforcement on
+  // causedByResponseId for the AI-write path.  Render-gated
+  // DM-only via filterForViewer + stripped from shareable saves.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<CasterStateSetPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (!isCasterLadderState(p.ladderState)) return;
+  if (
+    p.reason !== undefined &&
+    !isBoundedString(p.reason, CASTER_REASON_CAP)
+  ) {
+    return;
+  }
+  if (p.taxActive !== undefined && typeof p.taxActive !== 'boolean') {
+    return;
+  }
+  if (p.spamCount !== undefined) {
+    if (typeof p.spamCount !== 'number') return;
+    if (!Number.isFinite(p.spamCount)) return;
+    if (!Number.isInteger(p.spamCount)) return;
+    if (p.spamCount < 0 || p.spamCount > SPAM_COUNT_CAP) return;
+  }
+  if (
+    p.causedByResponseId !== undefined &&
+    !isBoundedString(p.causedByResponseId, ID_CAP)
+  ) {
+    return;
+  }
+  // M3c.5: hard-gate enforcement.  Same shape as pc-edit.
+  if (
+    typeof p.causedByResponseId === 'string' &&
+    p.causedByResponseId.length > 0
+  ) {
+    const reason = casterStateHardGateReason(state, p.pcId, {
+      ladderState: p.ladderState,
+      taxActive: p.taxActive
+    });
+    if (reason && !hasMatchingAiAccept(state, p.causedByResponseId)) {
+      recordRejectedHardGate(state, event, p.causedByResponseId, reason);
+      return;
+    }
+  }
+  const prior = state.casterState[p.pcId];
+  const next: CasterState = {
+    ladderState: p.ladderState,
+    reason: p.reason,
+    taxActive:
+      p.taxActive !== undefined ? p.taxActive : (prior?.taxActive ?? false),
+    spamCount:
+      p.spamCount !== undefined ? p.spamCount : (prior?.spamCount ?? 0)
+  };
+  state.casterState[p.pcId] = next;
+}
+
+function applyMapBlobEvent(_state: SessionState, event: QuireEvent): void {
+  // Handles all 5 map-blob-* kinds.  Forward-compat guard: every
+  // M1+ payload MUST carry { v: 1 }.  Until the per-kind
+  // materializer lands in M3a/M3b/M4/M5/M6, we no-op — but the
+  // version check still runs, so a payload missing v or with a
+  // future v (say v:2) is rejected by the same code path that
+  // will reject it in production.
+  if (!isPayloadV1(event.payload)) return;
+  // TODO M3a/M3b/M4/M5/M6: per-kind state mutation goes here.
+}
+
+/**
+ * MATERIALIZERS registry.  Add new event kinds here AND in
+ * REGISTERED_EVENT_KINDS.  Unknown kinds (no entry in this map)
+ * are silently ignored to allow forward compatibility — see the
+ * P0-5 / R-FUTURE comment thread.
+ */
+const MATERIALIZERS: Record<string, EventApplier> = {
+  'peer-join': applyPeerJoinEvent,
+  'peer-leave': applyPeerLeaveEvent,
+  'peer-disconnect': applyPeerDisconnectEvent,
+  'peer-rename': applyPeerRenameEvent,
+  'coordinator-claim': applyCoordinatorClaimEvent,
+  'coordinator-yield': applyCoordinatorYieldEvent,
+  'coordinator-reclaim': applyCoordinatorReclaimEvent,
+  'scene-reveal': applySceneRevealEvent,
+  'scene-unreveal': applySceneUnrevealEvent,
+  'dice-roll': applyDiceRollEvent,
+  'chat': applyChatEvent,
+  'pc-edit': applyPcEditEvent,
+  'note': applyNoteEvent,
+  'raise-hand': applyRaiseHandEvent,
+  'lower-hand': applyLowerHandEvent,
+  'scene-reveal-paragraph': applySceneRevealParagraphEvent,
+  'scene-unreveal-paragraph': applySceneUnrevealParagraphEvent,
+  'npc-pin': applyNpcPinEvent,
+  'npc-unpin': applyNpcUnpinEvent,
+  'thread-debt-set': applyThreadDebtSetEvent,
+  'scratch-note': applyScratchNoteEvent,
+  'broadcast-view': applyBroadcastViewEvent,
+  'ai-prompt': applyAiPromptEvent,
+  'ai-response': applyAiResponseEvent,
+  'ai-accept': applyAiVerdictEvent,
+  'ai-reject': applyAiVerdictEvent,
+  'caster-state-set': applyCasterStateSetEvent,
+  'map-blob-add': applyMapBlobEvent,
+  'map-blob-move': applyMapBlobEvent,
+  'map-blob-remove': applyMapBlobEvent,
+  'map-blob-reveal': applyMapBlobEvent,
+  'map-blob-unreveal': applyMapBlobEvent
+};
+
+function applyEventToState(state: SessionState, event: QuireEvent): void {
+  const fn = MATERIALIZERS[event.kind];
+  if (fn) fn(state, event);
+  // Unknown kinds are silently ignored to allow forward compat.
+}
+
+/**
+ * Test surface: kinds registered in the MATERIALIZERS map.  Exported
+ * so a regression test can assert parity with KNOWN_EVENT_KINDS — if
+ * a future kind is added to KNOWN_EVENT_KINDS but not to MATERIALIZERS,
+ * the new kind would be silently treated as unknown (forward-compat
+ * no-op), which is rarely what the author intended.
+ */
+export const MATERIALIZER_KINDS: ReadonlySet<string> = new Set(
+  Object.keys(MATERIALIZERS)
+);
