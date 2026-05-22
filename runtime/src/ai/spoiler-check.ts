@@ -92,30 +92,101 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * F-S6: format-control + zero-width character class used by
+ * `sanitizeForSpoilerScan`.  Built via `new RegExp` from string
+ * `\u` escapes because the included U+2028/U+2029 line separators
+ * are NOT permitted in a source-file regex literal (they terminate
+ * the regex token).  Same character set documented inline at the
+ * sanitize call site.
+ */
+const FORMAT_CONTROL_RE = new RegExp(
+  '[' +
+    '\\u00AD' + // soft hyphen
+    '\\u034F' + // combining grapheme joiner
+    '\\u061C' + // Arabic letter mark
+    '\\u17B4\\u17B5' + // Khmer inherent vowels
+    '\\u180E' + // Mongolian vowel separator
+    '\\u200B-\\u200F' + // ZWSP / ZWNJ / ZWJ / LRM / RLM
+    '\\u2028-\\u202F' + // line / para / various bidi
+    '\\u2060-\\u206F' + // word joiner + invisible separators
+    '\\uFEFF' + // BOM / zero-width no-break space
+    ']',
+  'g'
+);
+
+/**
  * Sanitize input before spoiler-token regex matching.  Defends
- * against bypass variants discovered in the Phase 2 gate's
- * adversarial pass:
+ * against bypass variants discovered in the Phase 2/3 adversarial
+ * reviews:
  *
- *   - **F-S3**: Unicode compatibility variants (full-width "ｍａｇｉｃ",
- *     bold-mathematical "𝐦𝐚𝐠𝐢𝐜", etc.) and zero-width breaks
- *     ("ma​gic") would slip past a literal regex.  NFKC
- *     normalization collapses compatibility variants to ASCII; an
- *     explicit zero-width strip handles the breaks.
- *   - **F-S5**: Markdown emphasis interior to a word ("ma*g*ic",
- *     "ma_g_ic", "*magic*") would split the token across the regex
- *     word-boundary lookarounds.  Stripping `*` and `_` before the
- *     match restores word integrity without touching ASCII letters.
+ *   - **F-S3 (Phase 2)**: Unicode compatibility variants (full-width
+ *     "ｍａｇｉｃ", bold-mathematical "𝐦𝐚𝐠𝐢𝐜", etc.) would slip past a
+ *     literal regex.  NFKC normalization collapses compatibility
+ *     variants to ASCII.
+ *   - **F-S5 (Phase 2)**: Markdown emphasis interior to a word
+ *     ("ma*g*ic", "ma_g_ic", "*magic*") would split the token across
+ *     the regex word-boundary lookarounds.
+ *   - **F-S5b (Phase 3a sanity)**: REGRESSION from F-S5's earlier fix —
+ *     stripping `*` / `_` / zero-widths *without* a placeholder
+ *     collapsed adjacent words.  `the_Quiet` → `theQuiet` defeated
+ *     BOTH the "the Quiet" multi-word token AND the bare "Quiet"
+ *     token (the `e` in `the` is a word-char, so the lookbehind
+ *     fails).  Same shape for `the*Quiet`, `the​Quiet`, etc.
+ *     Fix: replace strip chars with a single space, then collapse
+ *     whitespace runs so multi-word tokens still match cleanly.
+ *   - **F-S6 (Phase 3a sanity)**: zero-width format chars beyond
+ *     the originally-stripped ZWSP/ZWNJ/ZWJ/BOM also defeat the
+ *     scan — notably U+00AD (soft hyphen), U+2060 (word joiner),
+ *     and the broader Cf-category formatters that an over-helpful
+ *     AI may emit.  Strip the documented Unicode format-control
+ *     ranges.
  *
- * Both transforms are applied to the SCAN text only — the spoiler
+ * All transforms are applied to the SCAN text only — the spoiler
  * tokens themselves are passed verbatim.  This is correct because a
  * campaign-declared token like "the Network (closed)" is meant to be
  * matched literally; we're only canonicalizing the AI's output.
+ *
+ * Known gap (F-S7 deferred): homoglyphs (Cyrillic / Greek / Cherokee
+ * lookalikes — "mаgic" with Cyrillic а U+0430) are NOT canonicalized
+ * because NFKC doesn't fold them.  Defense for this class is the
+ * system prompt's "no synonyms" line + the auto-retry path; a
+ * confusables table is a follow-up.
  */
-function sanitizeForSpoilerScan(text: string): string {
-  return text
-    .normalize('NFKC')
-    .replace(/[​‌‍﻿]/g, '')
+/**
+ * F-S5b reconciliation: the strip-with-space discipline (so an
+ * external-glue attack like `the_Quiet` reads as `the Quiet`)
+ * conflicts with the F-S5 internal-split discipline (so an internal-
+ * split attack like `ma*g*ic` reads as `magic`).  Same characters
+ * serve as glue in one attack and splitter in the other; there is no
+ * single transformation that catches both.  Solution: produce TWO
+ * sanitized variants and scan each; the caller unions the hit sets.
+ *
+ * - `collapsed`: strip glue/format chars WITHOUT a placeholder.
+ *   Catches internal-split (`ma*g*ic` → `magic`, `Qu­iet` →
+ *   `Quiet`).
+ * - `spaced`: replace glue/format chars WITH a single space, then
+ *   collapse whitespace runs.  Catches external-glue
+ *   (`the_Quiet` → `the Quiet`, multi-word match succeeds; bare
+ *   "Quiet" also matches since `the ` ends in a non-word char).
+ *
+ * Both variants are applied to the SCAN text only — the spoiler
+ * tokens themselves are passed verbatim.  Campaign-declared
+ * multi-word tokens with embedded punctuation (e.g. "the Network
+ * (closed)") still match cleanly in either variant.
+ */
+function sanitizeForSpoilerScan(text: string): {
+  collapsed: string;
+  spaced: string;
+} {
+  const normalized = text.normalize('NFKC');
+  const collapsed = normalized
+    .replace(FORMAT_CONTROL_RE, '')
     .replace(/[*_]/g, '');
+  const spaced = normalized
+    .replace(FORMAT_CONTROL_RE, ' ')
+    .replace(/[*_]/g, ' ')
+    .replace(/\s+/g, ' ');
+  return { collapsed, spaced };
 }
 
 /**
@@ -146,8 +217,8 @@ export function containsSpoilerTokens(
 ): string[] {
   if (text.length === 0) return [];
   if (tokens.length === 0) return [];
-  const scan = sanitizeForSpoilerScan(text);
-  if (scan.length === 0) return [];
+  const { collapsed, spaced } = sanitizeForSpoilerScan(text);
+  if (collapsed.length === 0 && spaced.length === 0) return [];
   const pattern = tokens.map(escapeRegex).join('|');
   // Lookarounds instead of `\b` so multi-word tokens with embedded
   // punctuation (e.g., a future campaign-declared "the Network
@@ -156,20 +227,25 @@ export function containsSpoilerTokens(
   // adjacent character not be a word character, which is the
   // semantic we actually want: don't match inside another word,
   // but do match next to punctuation or end-of-string.
-  const re = new RegExp(`(?<!\\w)(${pattern})(?!\\w)`, 'gi');
   const seen = new Set<string>();
   const out: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(scan)) !== null) {
-    const lower = match[1].toLowerCase();
-    if (!seen.has(lower)) {
-      seen.add(lower);
-      out.push(lower);
+  // Two scans — each canonicalization catches a complementary attack
+  // shape (internal split vs external glue).  Union the hits in
+  // first-seen order across both scans so the caller's "do not use"
+  // retry message lists them deterministically.
+  for (const scan of [collapsed, spaced]) {
+    if (scan.length === 0) continue;
+    const re = new RegExp(`(?<!\\w)(${pattern})(?!\\w)`, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(scan)) !== null) {
+      const lower = match[1].toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        out.push(lower);
+      }
+      // Defensive against zero-width matches.
+      if (match.index === re.lastIndex) re.lastIndex++;
     }
-    // Defensive against zero-width matches (escapeRegex's tokens
-    // shouldn't produce these, but if a future caller passes "" as
-    // a token the regex would loop forever).
-    if (match.index === re.lastIndex) re.lastIndex++;
   }
   return out;
 }

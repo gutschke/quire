@@ -50,9 +50,11 @@ export interface BackstoryValidationIssue {
     | 'place-token-missing'
     | 'stats-shape-invalid'
     | 'stats-out-of-range'
+    | 'skill-mastery-shape-invalid'
     | 'skill-mastery-too-few'
     | 'skill-mastery-too-many'
-    | 'skill-mastery-unknown-category';
+    | 'skill-mastery-unknown-category'
+    | 'skill-mastery-duplicate';
   /** Human-friendly description; used in the retry prompt + DM banner. */
   message: string;
 }
@@ -327,8 +329,22 @@ function validateSkillMastery(
   if (!Array.isArray(skills)) {
     issues.push({
       severity: 'error',
-      code: 'skill-mastery-unknown-category',
+      code: 'skill-mastery-shape-invalid',
       message: 'skillMastery is missing or not an array.'
+    });
+    return;
+  }
+  // P3-sanity Adv B4: dedup check.  Without this, ["Tech","Tech","Tech"]
+  // passed validation — the AI could collapse to a single mastery
+  // category without the validator flagging the bug.  Treat as ERROR
+  // (auto-retry-worthy) since dedup is a content correctness issue,
+  // not a sheet-tuning preference.
+  const dupes = skills.filter((s, i) => skills.indexOf(s) !== i);
+  if (dupes.length > 0) {
+    issues.push({
+      severity: 'error',
+      code: 'skill-mastery-duplicate',
+      message: `skillMastery contains duplicate categor${dupes.length === 1 ? 'y' : 'ies'}: ${[...new Set(dupes)].map((d) => `"${d}"`).join(', ')}.  Each category may be listed at most once.`
     });
     return;
   }

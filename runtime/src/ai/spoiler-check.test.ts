@@ -231,4 +231,36 @@ describe('containsSpoilerTokens (CC-20)', () => {
       containsSpoilerTokens('he felt 𝐦*a*​𝐠𝐢𝐜 in the air')
     ).toContain('magic');
   });
+
+  it('F-S5b: glue-collapse bypass — strip chars replaced with space, not removed', () => {
+    // The earlier F-S5 fix stripped *, _, and ZWS WITHOUT a space.
+    // That let an attacker collapse adjacent words: "the_Quiet" →
+    // "theQuiet", which defeated both the "the Quiet" multi-word
+    // match AND the bare "Quiet" match (because the `e` in `the`
+    // is a word character and the (?<!\w) lookbehind fails).
+    // Sanity-check that the regression is fixed for the underscore,
+    // asterisk, and ZWS forms.
+    expect(
+      containsSpoilerTokens('she felt the_Quiet press back', ['the Quiet'])
+    ).toContain('the quiet');
+    expect(
+      containsSpoilerTokens('she felt the*Quiet press back', ['the Quiet'])
+    ).toContain('the quiet');
+    expect(
+      containsSpoilerTokens('she felt the​Quiet press back', ['the Quiet'])
+    ).toContain('the quiet');
+    // And the bare "Quiet" token still hits when the glue is between
+    // words ("the" + "Quiet" with anything between).
+    expect(
+      containsSpoilerTokens('she felt the_Quiet press back')
+    ).toContain('quiet');
+  });
+
+  it('F-S6: soft hyphen + word joiner bypass', () => {
+    // U+00AD soft hyphen and U+2060 word joiner are zero-width-ish
+    // formatters NOT in the original ZWS strip class.  An AI emitting
+    // either inside a forbidden token would slip past the scan.
+    expect(containsSpoilerTokens('she sensed mag­ic')).toContain('magic'); // U+00AD
+    expect(containsSpoilerTokens('she sensed mag⁠ic')).toContain('magic'); // U+2060
+  });
 });

@@ -334,6 +334,26 @@ describe('validatePcBackstory', () => {
     expect(codes).toContain('skill-mastery-unknown-category');
   });
 
+  it('Adv B4: skill-mastery rejects duplicates', () => {
+    const issues = validatePcBackstory(
+      valid({ skillMastery: ['Tech', 'Tech', 'Tech'] })
+    );
+    const issue = issues.find((i) => i.code === 'skill-mastery-duplicate');
+    expect(issue).toBeDefined();
+    expect(issue?.severity).toBe('error');
+  });
+
+  it('Engine N2: skill-mastery non-array reports shape-invalid, not unknown-category', () => {
+    // The defensive guard returns when skillMastery isn't an array.
+    // Pre-fix, this returned the misleading 'skill-mastery-unknown-category'.
+    const issues = validatePcBackstory(
+      valid({ skillMastery: 'Tech' as unknown as string[] })
+    );
+    const codes = issues.map((i) => i.code);
+    expect(codes).toContain('skill-mastery-shape-invalid');
+    expect(codes).not.toContain('skill-mastery-unknown-category');
+  });
+
   it('P3T-2: skill-mastery warns when below 2 picks', () => {
     const issues = validatePcBackstory(valid({ skillMastery: ['Tech'] }));
     const issue = issues.find((i) => i.code === 'skill-mastery-too-few');
