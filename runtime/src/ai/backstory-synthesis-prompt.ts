@@ -1,0 +1,217 @@
+/**
+ * CC-19 (M4 char-creation): assemble the AI synthesis prompt for
+ * backstory generation.  Pure string-building — no network, no
+ * Date.now, no random.  The broker glue (lands later) wraps this
+ * with `cache_control` for the 1h prompt cache (CC-22) before
+ * making the actual provider call.
+ *
+ * Output of `buildBackstorySynthesisPrompt` is `{system, user}` —
+ * two strings the caller passes to whatever provider (Anthropic or
+ * Gemini) is configured.  Both providers accept a system+user pair
+ * already; existing broker code reuses the same shape.
+ *
+ * Engine-vs-campaign positioning (V-7 alias of CC-19):
+ * - The system prompt template is CAMPAIGN POLICY today; hardcoded
+ *   for Underleaf with `// TODO(campaign-policy)` comments.  When
+ *   V-7 lands as a hybrid, the campaign manifest will declare
+ *   `aiBackstory.systemPromptOverride` and `aiBackstory.toneAnchors`;
+ *   the engine reads them.
+ * - The user-prompt assembler (`assembleUserPrompt`) is ENGINE —
+ *   it's a mechanical template: campaign context + DM constraints
+ *   + player answers + task line.  The CONTENT in each section is
+ *   campaign / DM / player data.
+ *
+ * Threat-model alignment:
+ * - The campaign-context block passed to `assembleUserPrompt` MUST
+ *   come from `buildPlayerFacingContext` (CC-18), NOT
+ *   `buildCampaignContext`.  Type signature can't enforce this; the
+ *   broker glue caller is responsible.
+ * - Player answers are wrapped in `untrusted_content` sentinels via
+ *   the existing `wrapUntrusted` helper (passed in as the wrapper).
+ */
+
+import type { CampaignCharCreationQuestion } from '../campaign-loader';
+import type { ContextFile } from './campaign-context';
+import { wrapCampaignContext } from './campaign-context';
+import { wrapUntrusted } from './context';
+
+/**
+ * The Underleaf-tuned system prompt.  Pinned at this layer until
+ * V-7 hybrid lands (campaign-declared override).  Captures the
+ * prompt-engineering expert's recommendation:
+ *   - Negative-tone list (the 'Avoid:' line).
+ *   - Hard constraints (intent-against-pressure, Bay Area, no
+ *     magic/Quiet/fate/etc., name uniqueness).
+ *   - Output format (JSON shape matching PcBackstorySynthesisResponse).
+ *   - "Do not invent a dark secret" line per the prompt-engineer's
+ *     §6 failure-modes list.
+ *
+ * TODO(campaign-policy): move to `campaign.json` under
+ * `aiBackstory.systemPromptOverride` once V-7 hybrid is wired.
+ * Engine default falls back to this constant when the campaign
+ * doesn't declare its own.
+ */
+export const UNDERLEAF_BACKSTORY_SYSTEM_PROMPT = `You are a co-author helping a player draft an opening backstory for a character in Underleaf, a contemporary-feeling tabletop story game.
+
+# Tone (load-bearing)
+Underleaf is about ordinary people in the present-day Bay Area who will, over many sessions, slowly notice that the world is stranger than it seems. At character creation the PC does NOT know this. Write their backstory as if you, too, do not know it. No prophecy, no chosen-one framing, no foreshadowing of magic, no "they always felt different." The reader should close the backstory thinking "this is a real person living a real life" — not "this is a hero in waiting."
+
+Avoid: high-fantasy register, grimdark, melodrama, trauma-as-origin, mystical hints, second-person address, present-tense vignette prose.
+Prefer: specific nouns, concrete places, named small objects, the texture of an ordinary week. Sentences of varied length. One vivid sensory detail per paragraph at most.
+
+# Output format
+Return ONLY a JSON object with these fields:
+  "name": string — a plausible name for the PC (NOT the player's name)
+  "pronouns": string
+  "tags": array of 3-5 strings (concrete, fiction-relevant)
+  "backstory": string — 250-400 words of markdown, 3-4 short paragraphs
+
+# Hard constraints
+- The backstory MUST answer, even obliquely, "what in their life taught them to hold an intention against pressure?" This is the mandatory question from the rules.
+- The backstory MUST be set in or anchored to a real Bay Area place.
+- The backstory MUST NOT reference magic, The Quiet, retrocausality, premonition, fate, "being chosen," or any cosmological hint. The player will discover those in play.
+- The PC's name MUST differ from the player's name.
+- Do not invent a "dark secret" the player did not ask for. Leave at least one relationship vague (e.g. "a sibling you don't talk to anymore") rather than fully specifying every named relation.
+`;
+
+/**
+ * One question + answer pair, formatted for inclusion in the user
+ * prompt.  `aiRole` modulates how the answer is presented to the AI:
+ *   - 'voice-sample' → answer quoted in triple-quoted block so the
+ *     AI knows to paraphrase tightly rather than reinterpret.
+ *   - 'grounder' → answer presented as "use this exact detail".
+ *   - 'skeleton' (default) → answer presented as a fact.
+ */
+export interface AnsweredQuestion {
+  question: CampaignCharCreationQuestion;
+  answer: string;
+}
+
+export interface SynthesisPromptInput {
+  /**
+   * Player-facing context (CC-18 `buildPlayerFacingContext` output).
+   * The campaign-policy MUST be `'public'`; the caller is
+   * responsible (no type-system enforcement at this layer).
+   */
+  campaignContext: ContextFile[];
+  /**
+   * DM-authored per-player constraints (free text).  E.g.,
+   * "must have a connection to Taipei", "play an Engineer or
+   * Hacker", etc.  Empty string when the DM has no special
+   * direction for this slot.
+   */
+  dmConstraints: string;
+  /** The player's display name — passed to the AI as a NEGATIVE constraint (don't reuse). */
+  playerDisplayName: string;
+  /**
+   * The player's answers to the campaign questionnaire, paired
+   * with the question that produced them.  Order matters — the
+   * AI reads top-to-bottom; the campaign-declared order (per
+   * `CampaignCharCreationQuestion[]`) is the canonical sequence.
+   */
+  answers: AnsweredQuestion[];
+}
+
+/**
+ * Build the user-side prompt for a backstory synthesis call.  Pure
+ * string assembly; the broker glue wraps in API-specific envelopes.
+ *
+ * Sections (in order):
+ *   1. Campaign canon — wrapped untrusted context.
+ *   2. Player display name (as a negative constraint anchor).
+ *   3. DM constraints (when non-empty).
+ *   4. Player answers — MC answers as facts, short-answer answers
+ *      quoted verbatim per the aiRole.
+ *   5. Task line.
+ */
+export function assembleUserPrompt(input: SynthesisPromptInput): string {
+  const parts: string[] = [];
+
+  // 1. Campaign canon.
+  if (input.campaignContext.length > 0) {
+    parts.push('# Campaign canon (do not contradict)');
+    parts.push(wrapCampaignContext(input.campaignContext));
+  }
+
+  // 2. Player display name as a hard NEGATIVE constraint.  The
+  //    system prompt already says "name MUST differ from player";
+  //    this is the binding for that rule.
+  parts.push('# Player\'s display name (DO NOT REUSE for the PC name)');
+  parts.push(
+    wrapUntrusted(input.playerDisplayName || '(none provided)', 'player-name')
+  );
+
+  // 3. DM constraints (optional).
+  if (input.dmConstraints && input.dmConstraints.trim().length > 0) {
+    parts.push('# DM constraints for this player');
+    parts.push(wrapUntrusted(input.dmConstraints, 'dm-constraints'));
+  }
+
+  // 4. Player answers, presented in declared order.
+  parts.push("# Player's answers");
+  for (const { question, answer } of input.answers) {
+    parts.push(formatAnsweredQuestion(question, answer));
+  }
+
+  // 5. Task line.  The "honor every answer" instruction is the
+  //    backstop for the AI tendency to "reinterpret" inputs into
+  //    a "better" story.
+  parts.push('# Your task');
+  parts.push(
+    'Synthesize a backstory that honors EVERY player answer above.  ' +
+      "Do not contradict any of them.  Where the player gave free text, " +
+      'treat their exact words as canonical — quote or paraphrase, but ' +
+      'never override.  Where the player gave a multiple-choice answer, ' +
+      'you have latitude to interpret it but not to invert it.\n\n' +
+      'Return the JSON object specified in the system prompt and nothing else.'
+  );
+
+  return parts.join('\n\n');
+}
+
+/**
+ * Format a single Q+A pair for the user prompt.  MC answers are
+ * presented as facts; short-answer answers are wrapped in
+ * triple-quoted blocks (preserving the player's exact words for the
+ * AI to imitate / paraphrase tightly per the `aiRole` hint).
+ */
+function formatAnsweredQuestion(
+  question: CampaignCharCreationQuestion,
+  answer: string
+): string {
+  // Lookup the MC option's label for friendlier prompt text.
+  let displayAnswer = answer;
+  if (question.kind === 'mc') {
+    const option = (question.options ?? []).find((o) => o.value === answer);
+    if (option) {
+      displayAnswer = option.label;
+    }
+  }
+
+  const labelLine = `**${question.prompt}**`;
+
+  if (question.kind === 'short-answer') {
+    // Quote verbatim so the AI knows to paraphrase tightly.  The
+    // triple-quote pattern signals "treat as untrusted player input"
+    // distinct from the wrapped <untrusted_content> blocks above.
+    return `${labelLine}\n\n"""\n${answer}\n"""`;
+  }
+
+  // MC: present as a fact.
+  return `${labelLine}\n\nAnswer: ${displayAnswer}`;
+}
+
+/**
+ * Build both halves of the synthesis prompt — system + user.  The
+ * system prompt is the Underleaf-tuned constant today; once V-7
+ * lands, the campaign manifest's `aiBackstory.systemPromptOverride`
+ * (or similar) flows through here.
+ */
+export function buildBackstorySynthesisPrompt(
+  input: SynthesisPromptInput
+): { system: string; user: string } {
+  return {
+    system: UNDERLEAF_BACKSTORY_SYSTEM_PROMPT,
+    user: assembleUserPrompt(input)
+  };
+}
