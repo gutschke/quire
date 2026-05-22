@@ -91,6 +91,8 @@ function makeEnv(
 ) {
   const loaded = new Set<string>();
   const scratchNotes: string[] = [];
+  const pcCreates: Array<Record<string, unknown>> = [];
+  const pcSlotBinds: Array<{ slot: number; pcId: string }> = [];
   return {
     getCurrentCampaign: () => campaign,
     getCampaignSlug: () => 'o-r-main',
@@ -113,8 +115,34 @@ function makeEnv(
       scratchNotes.push(text);
       return true;
     },
+    appendPcCreate: (payload: {
+      pcId: string;
+      name: string;
+      pronouns: string;
+      tags: string[];
+      stats: {
+        str: number;
+        dex: number;
+        con: number;
+        int: number;
+        wis: number;
+        cha: number;
+      };
+      skills: string[];
+      backstory: string;
+      causedByResponseId?: string;
+    }) => {
+      pcCreates.push(payload);
+      return true;
+    },
+    bindPcSlot: (slot: number, pcId: string) => {
+      pcSlotBinds.push({ slot, pcId });
+      return true;
+    },
     loadedPcs: loaded,
-    scratchNotes
+    scratchNotes,
+    pcCreates,
+    pcSlotBinds
   };
 }
 
@@ -679,6 +707,153 @@ describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-1
     expect(ctrl.isAccepted(5)).toBe(false);
     expect(updateCount()).toBe(before);
     expect(env.scratchNotes).toEqual([]);
+  });
+
+  it('Phase 3b-1: acceptSlot emits pc-create + pc-slot-bind + scratch-note in order', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei Tanaka',
+          pronouns: 'she/her',
+          tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei grew up in the Mission.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-a3f8b2c1e9d44'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    ctrl.acceptSlot(4);
+
+    // pc-create with translated stats (uppercase → lowercase) and
+    // skillMastery → skills + the derived pcId.
+    expect(env.pcCreates.length).toBe(1);
+    const created = env.pcCreates[0];
+    expect(created.pcId).toBe('slot-4-syn-a3f8');
+    expect(created.name).toBe('Mei Tanaka');
+    expect(created.pronouns).toBe('she/her');
+    expect(created.stats).toEqual({
+      str: 0,
+      dex: 1,
+      con: 1,
+      int: 2,
+      wis: 1,
+      cha: 0
+    });
+    expect(created.skills).toEqual(['Tech', 'Knowledge']);
+    expect(created.tags).toEqual([
+      'junior engineer',
+      'reluctant insomniac',
+      'sister of a pilot'
+    ]);
+    expect(created.backstory).toBe('Mei grew up in the Mission.');
+    expect(created.causedByResponseId).toBe('syn-a3f8b2c1e9d44');
+
+    // pc-slot-bind follows.
+    expect(env.pcSlotBinds.length).toBe(1);
+    expect(env.pcSlotBinds[0]).toEqual({
+      slot: 4,
+      pcId: 'slot-4-syn-a3f8'
+    });
+
+    // Audit scratch-note still emitted (v1 receipt preserved).
+    expect(env.scratchNotes.length).toBe(1);
+    expect(env.scratchNotes[0]).toMatch(/slot 4/);
+    expect(env.scratchNotes[0]).toMatch(/Mei Tanaka/);
+
+    expect(ctrl.isAccepted(4)).toBe(true);
+    synthSpy.mockRestore();
+  });
+
+  it('Phase 3b-1: acceptSlot bails if host refuses appendPcCreate (atomic invariant)', async () => {
+    saveChargenState('o-r-main', 5, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    // Simulate a non-coord refusal by overriding the appendPcCreate
+    // stub to return false.  bindPcSlot + scratch-note + accept-flag
+    // must NOT fire (atomic invariant: pc-create must succeed first).
+    env.appendPcCreate = () => false;
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(5);
+    ctrl.acceptSlot(5);
+    expect(env.pcSlotBinds).toEqual([]);
+    expect(env.scratchNotes).toEqual([]);
+    expect(ctrl.isAccepted(5)).toBe(false);
+    synthSpy.mockRestore();
+  });
+
+  it('Phase 3b-1: derivePcId is deterministic per (slot, responseId)', async () => {
+    // Two synthesizeForSlot calls with the same responseId produce
+    // the same pcId (the materializer's first-write-wins handles
+    // the duplicate cleanly).  Different responseIds produce
+    // different ids.
+    saveChargenState('o-r-main', 6, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const fixedResult = {
+      ok: true,
+      response: {
+        name: 'X',
+        pronouns: 'x',
+        tags: ['a', 'b', 'c'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech'],
+        backstory: 'x',
+        raw: '{}',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: 'syn-fixed-id'
+      },
+      warnings: [],
+      retried: false
+    } as SynthesizeBackstoryResult;
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue(fixedResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(6);
+    ctrl.acceptSlot(6);
+    expect(env.pcCreates[0].pcId).toBe('slot-6-syn-fixe');
+    synthSpy.mockRestore();
   });
 
   it('acceptSlot appends a scratch-note carrying name + responseId', async () => {

@@ -297,8 +297,41 @@ export class QuireApp extends LitElement {
     isCoordinator: () => this.isCoordinator(),
     getBoundCharacter: (pcId) => this.pcCharacterCache.get(pcId) ?? null,
     loadCharacterByPcId: (pcId) => this.loadCharacterByPcId(pcId),
-    appendScratchNote: (text) => this.appendScratchNote(text)
+    appendScratchNote: (text) => this.appendScratchNote(text),
+    appendPcCreate: (payload) => this.appendPcCreate(payload),
+    bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId)
   });
+
+  /**
+   * Phase 3b-1: append a `pc-create` event from the chargen accept
+   * path.  Coord-only (the materializer also enforces this, but
+   * defense-in-depth at the host); silent no-op outside an active
+   * session.  Returns true when the append succeeded so the
+   * controller can decide whether to chase with `bindPcSlot`.
+   */
+  private appendPcCreate(payload: {
+    pcId: string;
+    name: string;
+    pronouns: string;
+    tags: string[];
+    stats: {
+      str: number;
+      dex: number;
+      con: number;
+      int: number;
+      wis: number;
+      cha: number;
+    };
+    skills: string[];
+    backstory: string;
+    causedByResponseId?: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    this.session.append('pc-create', { v: 1, ...payload });
+    return true;
+  }
 
   /**
    * Per-pcId character cache for the DM-review name-resolution path

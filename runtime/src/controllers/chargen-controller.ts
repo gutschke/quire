@@ -119,6 +119,36 @@ export interface ChargenHost {
    * this only for the local-flag update, not for control flow.
    */
   appendScratchNote(text: string): boolean;
+  /**
+   * Phase 3b-1: append a `pc-create` event that materializes a
+   * synthesized PC into shared session state.  Called by
+   * `acceptSlot` together with `bindPcSlot` (atomic from the
+   * DM's POV) so the loop "DM clicks Accept → player has a sheet"
+   * closes in one click.
+   */
+  appendPcCreate(payload: {
+    pcId: string;
+    name: string;
+    pronouns: string;
+    tags: string[];
+    stats: {
+      str: number;
+      dex: number;
+      con: number;
+      int: number;
+      wis: number;
+      cha: number;
+    };
+    skills: string[];
+    backstory: string;
+    causedByResponseId?: string;
+  }): boolean;
+  /**
+   * Phase 3b-1: bind a slot to a pcId via the existing
+   * `pc-slot-bind` event.  Atomically paired with appendPcCreate
+   * on accept so the player sees their PC immediately.
+   */
+  bindPcSlot(slot: number, pcId: string): boolean;
 }
 
 /**
@@ -277,19 +307,72 @@ export class ChargenController implements ReactiveController {
   // ---- write accessors (step 4 wires accept/revise; step 1 stubs them out) ----
 
   /**
-   * CC-24 accept.  Flips the per-slot accept flag and appends an
-   * audit scratch-note ("DM accepted synthesized PC for slot N:
-   * name=X, responseId=Y").  Per the Cluster E plan's Q2, the
-   * scratch-note approach is the safe v1 — preserves the audit chain
-   * without inventing a new event kind.  No-ops when there's no
-   * synth result yet or the slot was already accepted.
+   * CC-24 accept.  Phase 3b-1 closes the loop: emits a `pc-create`
+   * event (materializes the synthesized PC into shared state) +
+   * `pc-slot-bind` (binds the slot to the new pcId) atomically, then
+   * appends the audit scratch-note that was the v1 acceptance
+   * receipt.  At session 1, one DM click takes the seat from "synth
+   * result ready" to "playable PC bound" — `boundCharacter` resolves
+   * via the loader-overlay (step 2), the player sees the sheet, the
+   * dice-Dock gets stats, Cast macros render.
+   *
+   * No-ops when there's no synth result yet OR the slot was already
+   * accepted OR the result is a failure.
+   *
+   * pcId derivation: `slot-${slot}-${first 8 chars of responseId}`.
+   * Stable per synth, unique per re-synth (different responseId →
+   * different hash), human-debuggable, fits `PC_ID_RE`.  Orphan
+   * records from prior re-syntheses accumulate harmlessly in
+   * `state.synthesizedPcs` — cleanup is a deferred-followup, not a
+   * blocker for civilized players.
    */
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return; // can't accept failures
-    this._acceptedSlots.add(slot);
     const r = result.response;
+
+    // Derive the pcId from slot + a short hash of responseId.
+    const pcId = derivePcId(slot, r.responseId);
+    if (!pcId) return; // defensive: bail if responseId was unusable
+
+    // Translate the synthesizer's uppercase PcStats → lowercase
+    // CharacterRecord stats.  The materializer validates lowercase
+    // only; this is the single translation point.
+    const statsLower = {
+      str: r.stats.STR,
+      dex: r.stats.DEX,
+      con: r.stats.CON,
+      int: r.stats.INT,
+      wis: r.stats.WIS,
+      cha: r.stats.CHA
+    };
+
+    // Emit the materialization event FIRST so that when the
+    // pc-slot-bind lands, the synthesizedPcs map already has the
+    // record — the loader-overlay resolves in one pass.  Both
+    // events come from the same peer in the same materialize call,
+    // so the per-peer monotonic seq guarantees ordering on replay.
+    const appended = this.env.appendPcCreate({
+      pcId,
+      name: r.name,
+      pronouns: r.pronouns,
+      tags: r.tags,
+      stats: statsLower,
+      skills: r.skillMastery,
+      backstory: r.backstory,
+      causedByResponseId: r.responseId
+    });
+    if (!appended) return; // host gated (non-coord, no session) — preserve invariant
+
+    // Bind the slot now that the PC exists.
+    this.env.bindPcSlot(slot, pcId);
+
+    // Audit-trail scratch-note retains the existing v1 shape — a
+    // future audit tool can parse "DM accepted synthesized PC for
+    // slot N: name=X, responseId=Y" without needing to know about
+    // the pc-create event kind.
+    this._acceptedSlots.add(slot);
     this.env.appendScratchNote(
       `DM accepted synthesized PC for slot ${slot}: name="${r.name}", responseId=${r.responseId}.`
     );
@@ -666,4 +749,29 @@ export class ChargenController implements ReactiveController {
     this.env.loadCharacterByPcId(pcId);
     return null;
   }
+}
+
+/**
+ * Phase 3b-1: derive a stable, unique pcId for a synthesized PC.
+ * Shape: `slot-${N}-${first 8 chars of responseId-stripped-of-non-safe-chars}`.
+ *
+ * Properties:
+ *   - Stable: same slot + same responseId → same pcId.  A retry of
+ *     the same logical synthesis reproduces the id (rare, but the
+ *     materializer's first-write-wins handles the duplicate.)
+ *   - Unique-per-resynth: re-synthesis produces a new responseId
+ *     (broker-side), so re-accept lands a new pcId.
+ *   - Human-debuggable: the slot number is visible in the id, and
+ *     the hash suffix is short enough to copy-paste.
+ *   - PC_ID_RE-safe: stripped to `[A-Za-z0-9._-]` before composition.
+ *
+ * Returns null when the responseId is empty or sanitizes to empty
+ * (defensive guard against future provider weirdness).
+ */
+function derivePcId(slot: number, responseId: string): string | null {
+  if (!Number.isInteger(slot) || slot < 1 || slot > 9) return null;
+  const safe = responseId.replace(/[^A-Za-z0-9_-]/g, '');
+  if (safe.length === 0) return null;
+  const short = safe.slice(0, 8);
+  return `slot-${slot}-${short}`;
 }
