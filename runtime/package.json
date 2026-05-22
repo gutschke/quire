@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check-bundle": "node scripts/check-bundle-size.mjs"
+    "check-bundle": "node scripts/check-bundle-size.mjs",
+    "lint-campaign-links": "node scripts/lint-campaign-links.mjs"
   },
   "dependencies": {
     "dompurify": "^3.4.5",
