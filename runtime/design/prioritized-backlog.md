@@ -1,5 +1,8 @@
 # Prioritized backlog — three-lens synthesis (2026-05-22)
 
+> **Status as of 2026-05-22 (end of Phase 1):** Phase 0 and Phase 1 P0 items are landed (at least first commit per item).  Critique pass surfaced one user-decision blocker (invite-token signing — resolved with a safer default; see "Phase 2 design notes" below) and ~10 medium gaps for the implementation to address inline.  Phase 2 (chargen workflow stack + seat-strip + constraint DSL) is the active scope.
+
+
 **Source:** the three parallel expert rankings against `backlog-catalog.md` (68 items).  Each item is rated by **TTRPG-craft / UX / Engine** lenses; this doc resolves their convergence into a single priority and surfaces the disagreements honestly.
 
 The raw expert rankings are preserved in this conversation's history.  Items aliased in the catalog (e.g. V-5 ≡ M3D-4) inherit the canonical item's priority.
@@ -34,9 +37,8 @@ Tier-1 lift.  Sorted approximately by load-bearingness inside the M4 character-c
 | ID | Item | Notes |
 |---|---|---|
 | **M3D-2** | Campaign-link linter (pre-commit). | All P1.  Cheap CI gate; prevents the exact bug that bit the first play-test. |
-| **M3D-6** | `tableSeats` + `<seat-strip>` region (modes-of-play); whisper event kind + print stylesheet later. *Alias CC-1 inherits.* | TTRPG P0; UX+Engine P1.  Elevated note: minimum-viable `tableSeats` IS effectively P0 because DM-only mode is broken today; the P1 framing is for the full polymorphism scope. |
-| **M3D-2's sibling**: |  | |
-| **CC-3** | New `AppMode = 'character-creation'` + invite-token route variant. | TTRPG P2 ("foundational once we commit to Mode B"); UX+Engine P1.  The route is the entry-point seam for every other CC item. |
+| **M3D-6** | `tableSeats` + `<seat-strip>` region (modes-of-play); whisper event kind + print stylesheet later. *Alias CC-1 inherits.*  **Critique upgrade C1**: M3D-6 is a load-bearing dependency for CC-3/CC-5/CC-12/CC-24 — the chargen flow needs a seat surface as its spine. | TTRPG P0; UX+Engine P1.  Elevated note: minimum-viable `tableSeats` IS effectively P0 because DM-only mode is broken today AND because Phase 2's chargen stack depends on it. |
+| **CC-3** | New `AppMode = 'character-creation'` + invite-token route variant. **Critique D1**: retag from [E] to [H] — the invite-token payload includes `archetypeHint` which is Underleaf-policy.  Engine ships the route + opaque-token plumbing; campaign declares the payload shape. | TTRPG P2 ("foundational once we commit to Mode B"); UX+Engine P1.  The route is the entry-point seam for every other CC item. |
 | **CC-5** | 6-step `<character-creation>` region (Landing → Read-first → Pick path → Work → Done → Resume). | TTRPG+UX P1. |
 | **CC-6** | Q&A form (7 MC + 3 SA) with conditional follow-ups. *Alias V-8 inherits.* | TTRPG+UX P1; Engine P2 (depends on V-8 schema OR Underleaf-hardcoded shortcut). |
 | **CC-10** | "Pack my character" file download + copy-as-token export. | All P1.  Mode B has no recovery path without this. |
@@ -185,3 +187,33 @@ The cross-expert pass effectively resolved most Q-CC items:
 - **Q-CC-5** (print sheet): M5+ carry.
 
 The user can accept these dispositions in passing or flag any for re-discussion.
+
+## Phase 2 design notes (post-critique 2026-05-22)
+
+A critique-agent pass against the Phase 2 scope surfaced one user-decision blocker (F1 — invite-token signing/expiry) and ~10 medium gaps.  The blocker was resolved with a documented default; the user can override at gate review.
+
+**F1 resolution (invite-token signing/expiry):**
+- Token shape: `?campaign=<slug>&invite=<base64url(JSON{slotIndex, issuedAt, campaignFingerprint})>`.
+- **NO** `archetypeHint` or `displayHint` in the token payload.  Those leak DM-intent if the URL is screenshot/forwarded.  The DM communicates them in the email body alongside the URL.
+- `issuedAt + maxAgeDays` (default 30) checked at redeem time; expired tokens show "ask your DM for a fresh link."
+- `campaignFingerprint` checked at redeem time prevents accidental cross-campaign redemption.
+- No HMAC signing — the threat model accepts "outsider redeems an expired/stolen URL" because all they can do is start a local chargen flow for a slot.  The DM physically imports each player's token at session 1, so impersonation at the table requires social-engineering not URL-discovery.
+
+**Other critique resolutions adopted inline** (no user ask):
+- **B1**: `<invite-manager>` lives in `<dm-aside>` as a collapsible panel, visible in pre-session mode.
+- **B5**: All AI calls + iteration happen on the DM's machine at session 1.  "Use same device for session 1" goes from optional to required-by-architecture.
+- **B6**: Per-PC DM-approval pill lives on each seat in `<seat-strip>` with an aggregated "N of M ready" in `<invite-manager>`.
+- **C3**: 1h cache `cache_control` header lands with CC-19; parallel suffix calls stay P2.
+- **D3**: dm-only path predicate (V-12) — engine hardcodes `dm/` + `design/DM-ONLY/` as the directory pattern; campaign-relative directory layout assumption noted in boundary doc.
+- **F3**: IndexedDB key is `{campaignSlug}:{slotIndex}`, not `{inviteToken}`.  Regenerating a token doesn't orphan data; slot-reassignment (CC-32) is the explicit clear path.
+- **F4**: `<invite-manager>` has an explicit "Add slot" button.
+- **F5**: `characterCreation.questions[]` lives inline in `campaign.json`.
+- **F6**: `campaign.json` declares `aiBackstory.fewShotPath`; engine reads.
+- **F7**: CC-3 URL parser detects in-progress IndexedDB state and offers resume.
+- **F8**: `AppMode='character-creation'` renders `<character-creation>` as a full-Stage takeover; Rail collapses to a step-progress strip; Aside + Dock hide.
+- **E1**: CC-1 ≡ M3D-6 *seat-strip subset* only.  Whisper + print stylesheet remain deferred to M3e.
+- **D2**: Q-CC-3 ("use same device" wording) — split out of CC-5 as a [C] copy item.
+
+**Critique items NOT adopted (deferred or unchanged):**
+- Critique requested CC-3 be tagged [H].  Accepted — see backlog-catalog tag column update.
+- Critique flagged C2 (M3D-3 hook covers all AppMode transitions, not just home↔campaign) — added as a smoke-test item for the M3D-6 commit.

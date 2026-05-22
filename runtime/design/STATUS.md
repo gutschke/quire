@@ -1,6 +1,6 @@
 # STATUS
 
-Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22; polish batches 1 + 2 landed 2026-05-22.  First real play-test 2026-05-22 surfaced seven concerns reshaping the M3d scope; see `design/m3d-playtest-followups.md`.  Inventory primitive deferred (was original M3d) until play-test feedback on dice-UI + nav settles.
+Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22.  First play-test 2026-05-22 surfaced 7 concerns; design synthesis + 3-lens prioritization in `design/prioritized-backlog.md`.  Phase 0 (foundations) + Phase 1 (P0 items) are now LANDED (each has a first-commit at minimum; some carry follow-ons noted below).  Phase 2 (chargen workflow stack + seat-strip + constraint DSL) is the active scope.
 
 ## M3c acceptance criteria
 
@@ -48,12 +48,27 @@ Plan: `design/m3c-ai-write-api.md` — 4-reviewer gate ran 2026-05-22, all `ship
 The user's first real DM-side play-test produced seven concerns documented in `design/m3d-playtest-followups.md`.  Two TTRPG-craft + UX expert consultations ran; the design doc synthesizes their recommendations.
 
 - [x] **Broken `../dm/stakes.md` markdown link** — fixed inline (batch 3).
-- [ ] **Campaign-link linter** — `scripts/lint-campaign-links.mjs` to catch broken intra-campaign markdown links pre-commit.  M3d.
-- [ ] **Stale-DM-peer on rejoin** — root-cause documented (autosave-restore rehydrates prior coord without matching leftAt).  M3d primary fix: route-change-fires-leave + heartbeat-based roster glyph.
-- [ ] **2d6-first dice UI** — TTRPG-expert confirms ~95% of rolls are 2d6+stat.  ui.md L154-160 spec is the target.  M3e.
-- [ ] **PC1/PC2 script variable binding** — `{{pc:N}}` markup + per-session `pcSlots` shared field + click-to-bind popover.  M3d.
-- [ ] **Modes-of-play polymorphism** — `tableTopology` + `tableSeats` shared field + `<seat-strip>` region.  Unblocks DM-only mode (no peers → no PCs).  M3d phase 1; M3e adds whisper + print.
-- [ ] **Scene-switching as dominant action** — `<dm-rail>` enumerates `dm/*.md` too; `[`/`]` hotkeys; AI `requestNav` tool.  M3d.
+- [ ] **Campaign-link linter** — `scripts/lint-campaign-links.mjs` to catch broken intra-campaign markdown links pre-commit.  P1 (not yet landed).
+- [x] **Stale-DM-peer on rejoin** — route-change-fires-leave landed (commit 57bb75f).  Heartbeat-based roster glyph deferred to follow-on.
+- [x] **2d6-first dice UI** — modifier stepper + doubles halo landed (commit a1f6dde).  Big "Roll 2d6" button + last-3 pills + animation + Cast macros deferred.
+- [x] **PC1/PC2 script variable binding** — `{{pc:N}}` markup migrated 2026-05-22; live `pcSlots` shared field + materializer + UI propagation landed (commit 775eab7).  Click-to-bind popover + AI write tool + display-name resolution deferred.
+- [ ] **Modes-of-play polymorphism** — `<seat-strip>` is the load-bearing dependency for chargen Phase 2 (critique C1).  In progress.
+- [x] **Scene-switching as dominant action** — `<dm-rail>` enumerates `dm/*.md` (commit f9cb4c5).  `[`/`]` hotkeys + AI `requestNav` tool + Cmd-K palette deferred.
+
+**Phase 0 foundations (all landed):**
+- M3C-1 per-kind materializer extraction (commit 46a9ba8) — 32-arm switch → dispatch map + 2 parity tests.
+- M3D-3 route-change-fires-leave (commit 57bb75f).
+- CC-17 PcBackstorySynthesisResponse schema (commit 3367b15).
+- V-5 primaryRoll campaign-schema field + DEFAULT_PRIMARY_ROLL helper (commit 3367b15).
+- CC-18 buildPlayerFacingContext spoiler-firewall wrapper (commit 8183005).
+
+**Phase 1 P0 (all landed at least first commit):**
+- M3D-3 — see above.
+- M3D-4 partial (commit a1f6dde) — modifier stepper + doubles halo on dice-Dock.
+- M3D-5 (commit 775eab7) — live pcSlots + pc-slot-bind event kind + UI propagation.
+- M3D-7 (commit f9cb4c5) — dm-rail enumeration of dm/*.md.
+- CC-18 — see above.
+- CC-20 (commit + spoiler-check.ts) — forbidden-token post-check.
 
 Design doc + expert convergence point at three primitives:
 - `navController` extraction (concerns 1, 5, 7 share this).
