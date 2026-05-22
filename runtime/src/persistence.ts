@@ -92,7 +92,8 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   'ai-prompt',
   'ai-response',
   'ai-accept',
-  'ai-reject'
+  'ai-reject',
+  'caster-state-set'
 ]);
 
 /**

@@ -837,8 +837,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     expect(m1.length).toBe(18);
   });
 
-  it('total kind count is 31 (13 legacy + 18 M1)', () => {
-    expect(KNOWN_EVENT_KINDS.size).toBe(31);
+  it('total kind count is 32 (13 legacy + 18 M1 + 1 M3c caster-state-set)', () => {
+    expect(KNOWN_EVENT_KINDS.size).toBe(32);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -1122,6 +1122,214 @@ describe('filterForViewer (P0-4)', () => {
     expect(filtered.peers).toEqual({});
     expect(filtered.scratchNotes).toEqual([]);
     expect(filtered.mapBlobs).toEqual({});
+  });
+});
+
+describe('materialize — caster-state-set (M3c.1)', () => {
+  it('coordinator can set a PC caster ladder + tax + spam-counter', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'noticed',
+      reason: 'the lights flicker',
+      taxActive: false,
+      spamCount: 1
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']).toEqual({
+      ladderState: 'noticed',
+      reason: 'the lights flicker',
+      taxActive: false,
+      spamCount: 1
+    });
+  });
+
+  it("ladderState: 'clear' is a valid sentinel (no empty-string fragility)", () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'clear'
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']?.ladderState).toBe('clear');
+  });
+
+  it('omitted fields default sensibly (taxActive=false, spamCount=0)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'quiet'
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']?.taxActive).toBe(false);
+    expect(state.casterState['yui']?.spamCount).toBe(0);
+  });
+
+  it('subsequent set carries forward prior tax/spamCount when omitted', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'noticed',
+      taxActive: true,
+      spamCount: 3
+    });
+    // Advance ladder without re-asserting tax/spam — should keep prior.
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'watched'
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']).toMatchObject({
+      ladderState: 'watched',
+      taxActive: true,
+      spamCount: 3
+    });
+  });
+
+  it('non-coordinator caster-state-set is ignored', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    alice.append('coordinator-claim', {});
+    bob.apply(alice.events()[0]);
+    const ev = bob.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'watched'
+    });
+    alice.apply(ev);
+    expect(materialize(alice.events()).casterState).toEqual({});
+  });
+
+  it('payload missing v:1 is rejected', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      pcId: 'yui',
+      ladderState: 'noticed'
+    } as unknown as { v: 1; pcId: string; ladderState: 'noticed' });
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('rejects an unknown ladderState (including the empty-string footgun)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: '' as unknown as 'clear'
+    });
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'on-fire' as unknown as 'clear'
+    });
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('rejects malformed pcId', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: '..',
+      ladderState: 'quiet'
+    });
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'has spaces',
+      ladderState: 'quiet'
+    });
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: '',
+      ladderState: 'quiet'
+    });
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('rejects hostile spamCount (negative, NaN, huge, non-int)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    for (const spamCount of [
+      -1,
+      NaN,
+      Infinity,
+      Number.MAX_SAFE_INTEGER,
+      3.5
+    ]) {
+      log.append('caster-state-set', {
+        v: 1,
+        pcId: 'yui',
+        ladderState: 'quiet',
+        spamCount
+      });
+    }
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('rejects oversized reason (over CASTER_REASON_CAP=500)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'quiet',
+      reason: 'x'.repeat(501)
+    });
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('rejects non-boolean taxActive', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'quiet',
+      taxActive: 'true' as unknown as boolean
+    });
+    expect(materialize(log.events()).casterState).toEqual({});
+  });
+
+  it('accepts a valid causedByResponseId (M3c.5 hard-gate plumbing)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'quiet',
+      causedByResponseId: 'resp-123'
+    });
+    expect(materialize(log.events()).casterState['yui']?.ladderState).toBe(
+      'quiet'
+    );
+  });
+
+  it('filterForViewer wipes casterState for non-coord viewers', async () => {
+    const { filterForViewer } = await import('./state');
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'noticed'
+    });
+    const state = materialize(log.events());
+    expect(state.casterState['yui']?.ladderState).toBe('noticed');
+    const wiped = filterForViewer(state, 'bob');
+    expect(wiped.casterState).toEqual({});
+    // Coord still sees it.
+    const dm = filterForViewer(state, 'alice');
+    expect(dm.casterState['yui']?.ladderState).toBe('noticed');
   });
 });
 

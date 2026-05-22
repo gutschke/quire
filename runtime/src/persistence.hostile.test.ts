@@ -83,6 +83,25 @@ describe('serializeSessionForViewer — DM-only event stripping', () => {
     expect(doc.events.some((e) => e.kind === 'thread-debt-set')).toBe(false);
   });
 
+  it('non-coord viewer save omits caster-state-set (M3c.1)', () => {
+    const log = logWithDmMaterial('alice');
+    log.append('caster-state-set', {
+      v: 1,
+      pcId: 'yui',
+      ladderState: 'noticed',
+      reason: 'the lights flicker — DM-narration spoiler',
+      taxActive: false,
+      spamCount: 1
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    expect(doc.events.some((e) => e.kind === 'caster-state-set')).toBe(false);
+  });
+
   it('non-coord viewer save omits ai-* audit kinds', () => {
     const log = logWithDmMaterial('alice');
     // ai-* materializers ship in M3b; payload shape unspecified

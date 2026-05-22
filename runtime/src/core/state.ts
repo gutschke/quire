@@ -88,6 +88,43 @@ export type ThreadDebtLevel =
   | 'hunted';
 
 /**
+ * Per-PC caster-ladder state — combines the magic-discovery
+ * ladder (rules-reference.md L125-135), the trying-too-hard tax
+ * (L179-186), and the Free/Cheap cast-spam counter (L141) into
+ * a single tier-2 record the AI write API can propose updates
+ * to.  Render-gated DM-only (the DM narrates the ladder in
+ * fiction; players hear consequences, not labels).
+ *
+ * `ladderState: 'clear'` is the sentinel for "no ladder pressure
+ * yet" (avoids the empty-string-as-sentinel fragility Engine
+ * flagged on the prior M3c plan draft).
+ */
+export type CasterLadderState =
+  | 'clear'
+  | 'quiet'
+  | 'noticed'
+  | 'watched'
+  | 'pushing-back'
+  | 'hunted';
+
+export interface CasterState {
+  ladderState: CasterLadderState;
+  /**
+   * AI's suggested narration line for the current rung — the DM
+   * reads or rewrites this rather than seeing the bare label.
+   */
+  reason?: string;
+  /** Trying-too-hard tax active (PC suffers -2 on rolls). */
+  taxActive: boolean;
+  /**
+   * Free/Cheap cast-spam counter for the current scene.  Reset
+   * via DM-direct button (no scene-transition event yet — see
+   * design/m3c-ai-write-api.md §Phase 1 "Reset emitter").
+   */
+  spamCount: number;
+}
+
+/**
  * DM scratch note — quick-jot during play, ingested by the
  * living-document AI post-session.  Render-gated DM-only AND
  * event-stripped from player save exports (see
@@ -229,6 +266,14 @@ export interface SessionState {
    * from player save exports.  Materializer ships in M3b (P2-7).
    */
   aiAudit: AiAuditEntry[];
+
+  /**
+   * Per-PC caster-ladder state.  DM-only (wiped by filterForViewer);
+   * stripped from shareable saves via PLAYER_SCOPE_STRIP_KINDS.
+   * Authored exclusively via `caster-state-set` events.  Materializer
+   * ships in M3c.
+   */
+  casterState: Record<string /*pcId*/, CasterState>;
 }
 
 export function emptyState(): SessionState {
@@ -248,7 +293,8 @@ export function emptyState(): SessionState {
     mapBlobReveals: {},
     raisedHands: new Set(),
     scratchNotes: [],
-    aiAudit: []
+    aiAudit: [],
+    casterState: {}
   };
 }
 
@@ -316,6 +362,7 @@ export function filterForViewer(
     pinnedNpcs: [],
     scratchNotes: [],
     aiAudit: [],
+    casterState: {},
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -451,6 +498,52 @@ function isThreadDebtLevel(s: unknown): s is ThreadDebtLevel {
   return typeof s === 'string' && THREAD_DEBT_LEVELS.has(s as ThreadDebtLevel);
 }
 
+interface CasterStateSetPayload {
+  v: 1;
+  pcId: string;
+  /**
+   * `'clear'` is the sentinel for "no ladder pressure" — see the
+   * CasterLadderState comment.  Explicit-enum avoids the empty-
+   * string-as-sentinel fragility.
+   */
+  ladderState: CasterLadderState;
+  reason?: string;
+  taxActive?: boolean;
+  spamCount?: number;
+  /**
+   * Set when the event was synthesized from an AI-proposed
+   * stateUpdate (M3c.5 hard-gate enforcement reads this).
+   */
+  causedByResponseId?: string;
+}
+
+const CASTER_LADDER_STATES: ReadonlySet<CasterLadderState> =
+  new Set<CasterLadderState>([
+    'clear',
+    'quiet',
+    'noticed',
+    'watched',
+    'pushing-back',
+    'hunted'
+  ]);
+
+function isCasterLadderState(s: unknown): s is CasterLadderState {
+  return (
+    typeof s === 'string' &&
+    CASTER_LADDER_STATES.has(s as CasterLadderState)
+  );
+}
+
+/**
+ * Cap on `casterState.spamCount`.  A defensive bound — the runtime
+ * never approaches this; the cap protects against a hostile-payload
+ * spamCount = Number.MAX_SAFE_INTEGER from corrupting the meter.
+ */
+const SPAM_COUNT_CAP = 100;
+
+/** Cap on `caster-state-set.reason` length. */
+const CASTER_REASON_CAP = 500;
+
 interface DiceRollPayload {
   expression: string;
   result: number;
@@ -569,7 +662,8 @@ export const KNOWN_EVENT_KINDS = new Set([
   'ai-prompt',
   'ai-response',
   'ai-accept',
-  'ai-reject'
+  'ai-reject',
+  'caster-state-set'
 ]);
 
 /**
@@ -1137,6 +1231,50 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
         responseId: p.responseId,
         category: p.category
       });
+      break;
+    }
+    case 'caster-state-set': {
+      // Coord-only DM-side caster ladder + tax + spam-counter
+      // (rules-reference.md L125-141 + L179-186).  M3c.1
+      // materializer; M3c.5 wires hard-gate enforcement on
+      // causedByResponseId for the AI-write path.  Render-gated
+      // DM-only via filterForViewer + stripped from shareable saves.
+      if (!state.coordHolders.has(event.peerId)) break;
+      if (!isPayloadV1(event.payload)) break;
+      const p = event.payload as Partial<CasterStateSetPayload>;
+      if (!isCharacterId(p.pcId)) break;
+      if (!isCasterLadderState(p.ladderState)) break;
+      if (
+        p.reason !== undefined &&
+        !isBoundedString(p.reason, CASTER_REASON_CAP)
+      ) {
+        break;
+      }
+      if (p.taxActive !== undefined && typeof p.taxActive !== 'boolean') {
+        break;
+      }
+      if (p.spamCount !== undefined) {
+        if (typeof p.spamCount !== 'number') break;
+        if (!Number.isFinite(p.spamCount)) break;
+        if (!Number.isInteger(p.spamCount)) break;
+        if (p.spamCount < 0 || p.spamCount > SPAM_COUNT_CAP) break;
+      }
+      if (
+        p.causedByResponseId !== undefined &&
+        !isBoundedString(p.causedByResponseId, ID_CAP)
+      ) {
+        break;
+      }
+      const prior = state.casterState[p.pcId];
+      const next: CasterState = {
+        ladderState: p.ladderState,
+        reason: p.reason,
+        taxActive:
+          p.taxActive !== undefined ? p.taxActive : (prior?.taxActive ?? false),
+        spamCount:
+          p.spamCount !== undefined ? p.spamCount : (prior?.spamCount ?? 0)
+      };
+      state.casterState[p.pcId] = next;
       break;
     }
     case 'map-blob-add':
