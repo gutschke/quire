@@ -92,6 +92,33 @@ function escapeRegex(s: string): string {
 }
 
 /**
+ * Sanitize input before spoiler-token regex matching.  Defends
+ * against bypass variants discovered in the Phase 2 gate's
+ * adversarial pass:
+ *
+ *   - **F-S3**: Unicode compatibility variants (full-width "ｍａｇｉｃ",
+ *     bold-mathematical "𝐦𝐚𝐠𝐢𝐜", etc.) and zero-width breaks
+ *     ("ma​gic") would slip past a literal regex.  NFKC
+ *     normalization collapses compatibility variants to ASCII; an
+ *     explicit zero-width strip handles the breaks.
+ *   - **F-S5**: Markdown emphasis interior to a word ("ma*g*ic",
+ *     "ma_g_ic", "*magic*") would split the token across the regex
+ *     word-boundary lookarounds.  Stripping `*` and `_` before the
+ *     match restores word integrity without touching ASCII letters.
+ *
+ * Both transforms are applied to the SCAN text only — the spoiler
+ * tokens themselves are passed verbatim.  This is correct because a
+ * campaign-declared token like "the Network (closed)" is meant to be
+ * matched literally; we're only canonicalizing the AI's output.
+ */
+function sanitizeForSpoilerScan(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/[​‌‍﻿]/g, '')
+    .replace(/[*_]/g, '');
+}
+
+/**
  * Scan `text` for any of `tokens` (default: Underleaf's list).
  * Returns the matched tokens in the order they appear, deduplicated
  * and normalized to lowercase.  Empty array means "clean — no
@@ -119,6 +146,8 @@ export function containsSpoilerTokens(
 ): string[] {
   if (text.length === 0) return [];
   if (tokens.length === 0) return [];
+  const scan = sanitizeForSpoilerScan(text);
+  if (scan.length === 0) return [];
   const pattern = tokens.map(escapeRegex).join('|');
   // Lookarounds instead of `\b` so multi-word tokens with embedded
   // punctuation (e.g., a future campaign-declared "the Network
@@ -131,7 +160,7 @@ export function containsSpoilerTokens(
   const seen = new Set<string>();
   const out: string[] = [];
   let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
+  while ((match = re.exec(scan)) !== null) {
     const lower = match[1].toLowerCase();
     if (!seen.has(lower)) {
       seen.add(lower);

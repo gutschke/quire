@@ -174,4 +174,61 @@ describe('containsSpoilerTokens (CC-20)', () => {
     const hits = containsSpoilerTokens(bad);
     expect(hits).toContain('quiet');
   });
+
+  it('F-S3: catches full-width Unicode bypass via NFKC normalize', () => {
+    // Full-width Latin variants (CJK-context typewriter output, or
+    // a deliberate bypass attempt) decompose to ASCII under NFKC.
+    // "ｍａｇｉｃ" should hit the magic token.
+    expect(containsSpoilerTokens('he sensed ｍａｇｉｃ in the room')).toContain(
+      'magic'
+    );
+  });
+
+  it('F-S3: catches mathematical-bold Unicode variants via NFKC', () => {
+    // U+1D400 block mathematical letters also normalize under NFKC.
+    expect(containsSpoilerTokens('he sensed 𝐦𝐚𝐠𝐢𝐜 in the room')).toContain(
+      'magic'
+    );
+  });
+
+  it('F-S3: catches zero-width-space splits ("ma​gic")', () => {
+    // U+200B (zero-width space), U+200C (zero-width non-joiner),
+    // U+200D (zero-width joiner), U+FEFF (BOM) are all stripped.
+    expect(
+      containsSpoilerTokens('the ma​gic flickered briefly')
+    ).toContain('magic');
+    expect(
+      containsSpoilerTokens('she feared the Q‌uiet')
+    ).toContain('quiet');
+    expect(
+      containsSpoilerTokens('only the chos‍en could see')
+    ).toContain('chosen');
+  });
+
+  it('F-S5: catches markdown-emphasis bypasses ("ma*g*ic", "_magic_")', () => {
+    // Asterisks and underscores interior to a word would split the
+    // token across the regex word-boundary lookarounds without the
+    // strip.
+    expect(containsSpoilerTokens('she felt ma*g*ic in the air')).toContain(
+      'magic'
+    );
+    expect(containsSpoilerTokens('the _magic_ pressed back')).toContain(
+      'magic'
+    );
+    expect(containsSpoilerTokens('only the ch_ose_n could hear')).toContain(
+      'chosen'
+    );
+    expect(containsSpoilerTokens('she felt her *destiny* calling')).toContain(
+      'destiny'
+    );
+  });
+
+  it('F-S3 + F-S5: combined sanitize handles layered bypasses', () => {
+    // Bold-mathematical ZWS-split with markdown emphasis interior —
+    // the kind of thing an adversarial AI could produce.  All three
+    // transforms must run.
+    expect(
+      containsSpoilerTokens('he felt 𝐦*a*​𝐠𝐢𝐜 in the air')
+    ).toContain('magic');
+  });
 });

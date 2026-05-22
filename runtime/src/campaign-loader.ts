@@ -99,6 +99,29 @@ export interface CampaignCharacterCreation {
   questions?: CampaignCharCreationQuestion[];
 }
 
+/**
+ * Phase 3a-2 (P3D-1 hybrid seam): campaign-declared AI-backstory
+ * policy.  The synthesis engine reads this block to scope spoiler
+ * detection and place-grounding to the campaign's actual setting,
+ * instead of relying on Underleaf-tuned engine defaults.
+ *
+ * `spoilerTokens` is the list of words a synthesized backstory must
+ * NOT contain — the campaign's hidden-system vocabulary.  Underleaf
+ * uses "Quiet", "magic", "premonition", etc. (the magic system is
+ * a discovery-arc reveal).  When the manifest omits this field, the
+ * engine falls back to `DEFAULT_SPOILER_TOKENS` for backward
+ * compatibility; any new campaign should declare its own list.
+ *
+ * `placeAllowlist` is the canonical-place vocabulary for the
+ * setting.  The validator emits a soft warning when a backstory
+ * mentions no allowlisted places (P3T-8 for Underleaf's Bay Area).
+ * Optional — campaigns with no place-specificity simply omit it.
+ */
+export interface CampaignAiBackstory {
+  spoilerTokens?: readonly string[];
+  placeAllowlist?: readonly string[];
+}
+
 export interface CampaignManifest {
   $schemaVersion: string;
   name: string;
@@ -111,6 +134,7 @@ export interface CampaignManifest {
   ruleset?: string;
   rules?: CampaignRules;
   characterCreation?: CampaignCharacterCreation;
+  aiBackstory?: CampaignAiBackstory;
   authors?: string[];
   homepage?: string;
   episodes?: string[];

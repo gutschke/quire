@@ -1367,6 +1367,16 @@ export class QuireApp extends LitElement {
         message: `Failed to build campaign context: ${(e as Error).message}`
       };
     }
+    // P3D-1 hybrid seam: campaign-declared spoiler tokens + place
+    // allowlist flow from `aiBackstory` in the manifest through to
+    // the synthesizer.  When the manifest omits these fields the
+    // synthesizer falls back to engine defaults (today: Underleaf-
+    // tuned `DEFAULT_SPOILER_TOKENS`); any new campaign should
+    // declare its own list so it isn't relying on Underleaf's
+    // hidden-system vocabulary.
+    const aiBackstory = campaign.base.manifest.aiBackstory;
+    const spoilerTokens = aiBackstory?.spoilerTokens;
+    const placeAllowlist = aiBackstory?.placeAllowlist;
     // Code-split: dynamic-import the synthesizer module on first
     // call.  Subsequent calls share the cached module (idempotent
     // import).  Saves ~4 KB gzip from the play-time bundle.
@@ -1378,8 +1388,10 @@ export class QuireApp extends LitElement {
       answers,
       apiKey,
       model: this.aiModel,
+      spoilerTokens,
       validatorOptions: {
-        playerDisplayName: options.playerDisplayName
+        playerDisplayName: options.playerDisplayName,
+        placeAllowlist
       }
     });
   }
