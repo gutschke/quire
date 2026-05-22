@@ -1,219 +1,242 @@
-# Prioritized backlog — three-lens synthesis (2026-05-22)
+# Prioritized backlog — Phase 3 synthesis (2026-05-22)
 
-> **Status as of 2026-05-22 (end of Phase 1):** Phase 0 and Phase 1 P0 items are landed (at least first commit per item).  Critique pass surfaced one user-decision blocker (invite-token signing — resolved with a safer default; see "Phase 2 design notes" below) and ~10 medium gaps for the implementation to address inline.  Phase 2 (chargen workflow stack + seat-strip + constraint DSL) is the active scope.
-
-
-**Source:** the three parallel expert rankings against `backlog-catalog.md` (68 items).  Each item is rated by **TTRPG-craft / UX / Engine** lenses; this doc resolves their convergence into a single priority and surfaces the disagreements honestly.
-
-The raw expert rankings are preserved in this conversation's history.  Items aliased in the catalog (e.g. V-5 ≡ M3D-4) inherit the canonical item's priority.
+> **Status:** REPLACES the previous Phase 2-era synthesis after the Phase 2 4-reviewer gate produced ~50 new items and the original backlog (M3D follow-ons, CC items, V-* tech debt) was reranked against the gate findings.  Three lenses (TTRPG-craft / UX / Engine) ran in parallel against the consolidated `phase3-catalog.md` (~105 items).
 
 ## Synthesis rules
 
-- **All three say P0/P1** → final P0/P1.
-- **TTRPG + UX say P0, Engine says lower** → P0 (table-bites trumps architectural caution; engine concern noted as sequencing).
-- **Engine says P1 for an unblocker, others say lower** → consider P1 (engine knows what foundations cost).
-- **Single-lens dissent** → settle with the majority; note the dissent inline.
-- **All three say P3** → defer indefinitely.
+- All three agree → final priority is the agreement.
+- TTRPG + UX P0, Engine lower → P0 (table-bites trumps architectural caution).
+- Engine P0 for security/foundation, others lower → P1 elevation (engine knows what foundations cost).
+- 2-of-3 P0 → P0 unless dissent is on a real cost concern.
+- Single-lens dissent → majority wins; dissent noted inline.
 
-## P0 — must land before next milestone ships
+## Three-way P0 (all three lenses agree)
 
-These six items are play-test-blocking, security-load-bearing, or both.  The next milestone scope is essentially "ship the P0 list."
-
-| ID | Item | Convergence |
-|---|---|---|
-| **M3D-3** | Stale-DM-peer cleanup (route-change-fires-leave + heartbeat tri-state roster glyph). | All three P0. |
-| **M3D-4** | 2d6-first dice-Dock (stat chips, modifier stepper, big Roll button, last-3 pills, doubles halo; `/roll <expr>` demoted). *Alias V-5 inherits.* | TTRPG+UX P0; Engine P2 with sequencing note (schema field can land first to avoid throwaway work). **Engine concern resolved by SPLIT** — see V-5 below. |
-| **M3D-5** | `pcSlots` live state + click-to-bind UI + `pc-slot-bind` AI write tool. Renderer already landed; live state is the gap. *Alias CC-2 inherits.* | All three P0. |
-| **M3D-7** | Scene-switching primary affordance: `<dm-rail>` enumerates `dm/*.md`, `[`/`]` hotkeys, AI `requestNav` tool, Cmd-K palette, recent-visited list. | TTRPG+UX P0; Engine P1 ("cheap once `navController` extracted"). Sequencing note, not a deprio. |
-| **CC-18** | Player-facing context builder hard-overrides `includeDmNotes: false` for chargen AI synthesis. | All three P0. Engine notes this is small and security-critical. |
-| **CC-20** | Forbidden-token post-check (Quiet/magic/premonition/fate/chosen) + single auto-retry on hit. *Alias V-6 inherits.* | TTRPG P0; UX+Engine P1. Settle P0 — TTRPG argues that if this ships *after* any other chargen AI call, the leak has already happened.  Pair with CC-18. |
-
-**P0 batch character:** these six are heterogeneous (stale-peer fix, dice UI, slot binding, navigation, two AI safety guards) but they share one property: **each one's absence breaks the next session in a different way.**  Ship them together as the next-milestone deliverable.
-
-## P1 — should land in next milestone
-
-Tier-1 lift.  Sorted approximately by load-bearingness inside the M4 character-creation workflow:
+These are the Mode-B-play-test gate; ship together before any async-mode invite leaves the building.
 
 | ID | Item | Notes |
 |---|---|---|
-| **M3D-2** | Campaign-link linter (pre-commit). | All P1.  Cheap CI gate; prevents the exact bug that bit the first play-test. |
-| **M3D-6** | `tableSeats` + `<seat-strip>` region (modes-of-play); whisper event kind + print stylesheet later. *Alias CC-1 inherits.*  **Critique upgrade C1**: M3D-6 is a load-bearing dependency for CC-3/CC-5/CC-12/CC-24 — the chargen flow needs a seat surface as its spine. | TTRPG P0; UX+Engine P1.  Elevated note: minimum-viable `tableSeats` IS effectively P0 because DM-only mode is broken today AND because Phase 2's chargen stack depends on it. |
-| **CC-3** | New `AppMode = 'character-creation'` + invite-token route variant. **Critique D1**: retag from [E] to [H] — the invite-token payload includes `archetypeHint` which is Underleaf-policy.  Engine ships the route + opaque-token plumbing; campaign declares the payload shape. | TTRPG P2 ("foundational once we commit to Mode B"); UX+Engine P1.  The route is the entry-point seam for every other CC item. |
-| **CC-5** | 6-step `<character-creation>` region (Landing → Read-first → Pick path → Work → Done → Resume). | TTRPG+UX P1. |
-| **CC-6** | Q&A form (7 MC + 3 SA) with conditional follow-ups. *Alias V-8 inherits.* | TTRPG+UX P1; Engine P2 (depends on V-8 schema OR Underleaf-hardcoded shortcut). |
-| **CC-10** | "Pack my character" file download + copy-as-token export. | All P1.  Mode B has no recovery path without this. |
-| **CC-12** | `<invite-manager>` panel: generate-link + paste-incoming-token. | TTRPG+UX P1.  Coordination surface for async chargen. |
-| **CC-13** | Session-1 intake: WebRTC pull / paste-token / collapse-to-Mode-A for unfinished players. | TTRPG+UX P1. |
-| **CC-14** | "Synthesize all backstories" DM button + per-PC review pills. | TTRPG+UX P1; Engine P3 ("trivial UI once stack is in"). |
-| **CC-15** | DM constraint DSL minimum: `party_requires` + `party_unique`. | TTRPG P1 (user named "no party of all bards" as a constraint); UX+Engine P2.  **TTRPG argues elevation** — the DM literally cannot run session 1 without this. |
-| **CC-17** | Backstory-synthesis schema variant in `src/ai/schema.ts`. | All P1.  Mechanical and blocks every other CC-AI item. |
-| **CC-19** | System prompt content (negative-tone + hard constraints + few-shot). *Alias V-7 inherits.* | TTRPG+UX P1. |
-| **CC-21** | Structural validator (word count, place token, name uniqueness). | TTRPG+UX P1. |
-| **CC-23** | Re-roll whole / regenerate-paragraph / edit-freely UX. | TTRPG+UX P1. |
-| **CC-24** | DM approval gate + per-PC pill. | UX P0 (visibility IS the trust anchor); TTRPG+Engine P1.  Resolve P1 — the gate exists; the *visibility* polish elevation is real but not session-blocking. |
-| **CC-25** | Required-fields + length validator (pre-API-key). | TTRPG+UX P1. |
-| **M3C-1** | Per-kind materializer extraction.  Today's `state.ts` switch has 32 case arms; M3D/M4 add ~6 more event kinds (`pc-slot-bind`, `whisper`, `table-topology-set`, `peer-reclaim`, etc.).  **Engine P1 + sequencing constraint** — land this BEFORE the new event kinds, not after. | TTRPG P2; UX P3; Engine P1.  Resolve P1 — engine's argument that "the marginal cost rises with every new event kind" is correct.  Schedule as M4 phase 0. |
-| **M3C-6** | Prompt-cache hit-rate verification (one-shot measurement). | TTRPG+Engine P1; UX P2.  Resolve P1 — runs during the first real AI-heavy session; tells us whether CC-22 will pay off. |
+| **P3D-1** | Wire campaign-manifest spoiler/place hybrid seams (`synthesizeBackstoryForSlot` reads `campaign.base.manifest.aiBackstory?`). | All P0.  Engine: ~30 LOC; unblocks the spoiler-wiring cluster. |
+| **P3D-2** | Scrub `CC-13` task-tracker leak from user-facing error + add Mode B in-product warning. | All P0.  UX: "the seams are showing" moment that erodes confidence at first contact. |
+| **P3D-3** | Strip play-app shell on chargen route; mobile-acceptable. | All P0.  UX: player on phone visits invite URL → 5-region cockpit instead of wizard. |
 
-## P2 — should land in next 2-3 milestones
+## Convergent P0 clusters (2+ lenses P0, treat as one body of work)
 
-Sorted by category:
+The reviewers independently flagged these clusters where one Phase 2 finding pulls in 3-5 catalog items.  Ship each as ONE commit, not separate.
 
-**Chargen flow polish:**
-- CC-4 (per-PC SaveDocument variant)
-- CC-7 (free-write markdown editor)
-- CC-9 (path toggle Q&A ↔ free-write)
-- CC-11 (resume-on-revisit + wrong-device empty state)
-- CC-16 (soft-warning surface for crystallization + engagement balance)
-- CC-22 (1h cache + parallel suffix calls) — engine wants P1 for cost discipline; UX P2 ("$0.20 a session is fine"). Resolve P2.
-- CC-28 (promote `pcs/README.md` 5-list to questionnaire schema)
-- CC-30 (curated Bay Area allowlist) — pairs with CC-26 deferral
-- CC-31 ("Two technical PCs" Episode 1 constraint default)
+### Cluster A — Spoiler-wiring (Mode-B safety guard)
+- **P3D-1** (engine wiring; above)
+- **P3A-2** (campaign-side spoiler list in `campaign.json` + system-prompt "don't use synonyms" line)
+- **P3T-8** (Bay Area place allowlist in `campaign.json`)
+- **P3A-16** (Unicode NFKC + strip ZWS before spoiler scan — F-S3 bypass)
+- **P3A-18** (Strip markdown emphasis before spoiler scan — F-S5 bypass)
 
-**Slot rebinding (Q2 user clarification):**
-- CC-32 (DM-triggered slot reassignment after PC death) — TTRPG P1 ("realistic in episodes 2-3"); resolve P2 with note that this lands soon after CC-2's live state.
-- CC-33 (player-temporarily-out via `present: boolean`)
-- CC-34 (player-permanently-leaves: reassign or retire as NPC)
-- CC-35 (mid-session rebinding affordance behind confirm)
-- CC-37 (session/chapter granularity independence — test, not feature)
+TTRPG: P0 cluster.  UX: P0 (without it, leak at session 1 is unrecoverable).  Engine: P0 (P3D-1) + P1 (rest).  Final: **P0 as one commit.**
 
-**DM-gate opt-out (Q3 user clarification):**
-- CC-38 (`aiBackstory.requiresDmApproval` field; default true)
-- CC-39 (post-gen validators still run on opt-out)
+### Cluster B — Mode-B works end-to-end
+- **P3D-2** (in-product warning + scrub `CC-13` leak; above)
+- **P3D-3** (strip shell; above)
+- **P3U-3** (Mode B "Recommended → Required" pack-download copy)
+- **CC-13** (DM-side pack intake — paste-token / WebRTC pull — the substantive fix behind the warning)
 
-**Open questions:**
-- Q-CC-1 (async-mode archetype-deviation policy) — TTRPG P1; engine P2 with proposed disposition "soft hint default."
-- Q-CC-2 (pre-gen library scope) — proposed disposition: not needed for v1; "edit example PC" works.
-- Q-CC-3 ("use same device" wording) — user owns; ship CC-5 with placeholder copy.
-- Q-CC-5 (print-friendly character sheet) — M5+ carry.
+TTRPG: P0 (P3D-2/3) + P3U-3 P0.  UX: all P0 ("anyone trying async play hits all four immediately").  Engine: P0 (P3D-2/3) + P2 (CC-13).  Final: **P0 cluster.**  Note: CC-13 may slip to Phase 3b if the in-product warning closes 80% of the user-facing breakage.
 
-**M3c followups still open:**
-- M3C-2 (dice-roll dispatch placeholder `result: 0, dice: []`) — promotes to P1 IF M3D-4 ships first (UX flagged: AI-proposed roll pills would all show `0`). Sequence with M3D-4.
-- M3C-5 (`pushing-back` ladder gating) — defer post-playtest per plan.
+### Cluster C — Sheet-ready PCs
+- **P3T-1** (campaign-side: add skill-mastery + stat-array questions)
+- **P3T-2** (engine: extend AI response schema with `skillMastery` + `stats`)
+- **P3T-3** (campaign-side: prior-connection question)
+- **P3T-4** (campaign-side: raise `meaningful-item` minLength)
 
-**M3b followups still open:**
-- M3B-2 (topbar budget widget) — *inline* meter landed at M3b.7; the topbar variant is polish. TTRPG ranking mistook the inline meter for this item; entry is NOT stale.
-- M3B-3 (tag `playtest-1` on green pass) — bookkeeping; do at next milestone close.
+TTRPG: P0 cluster (without these, synthesized PCs aren't playable).  UX: P1 (workflow works without sheet-ready, but barely).  Engine: P0 for P3T-2 (foundational schema), P3 for campaign-side items (not engine work).  Final: **P0 cluster** — TTRPG correctly observes that a synthesized PC who can't sit down to play means the DM does paperwork at the table.
+
+### Cluster D — M3D-4b dice-Dock primary action
+- **M3D-4b** (big "Roll 2d6" button + last-3 pills + result animation + R/1-6/+/-/Enter keyboard + Cast (Costly/Hard) macros)
+- **M3C-2** (dice-roll dispatch placeholder fix — `result: 0` today)
+
+TTRPG: M3D-4b P0 ("dice felt wrong" in first play-test; only stepper shipped).  UX: P0 ("ONE thing players do every turn").  Engine: P2 (stepper already shipped — incremental).  Final: **P0** — when 2 lenses say "table-friction highest", the engine's "we shipped some of it" doesn't override.  M3C-2 P1 follow-on.
+
+## Convergent P0 — DM review surface (the next-substantive-chargen-touch)
+
+The convergent finding from ALL FOUR Phase 2 reviewers: invite-manager + seat-strip + dm-aside should be one DM-review surface, not three stacked cards.  The same code change closes Engine §3 (ChargenController extraction), TTRPG #8 (SA-vs-backstory diff), and UX #15 (3-card merge).
+
+### Cluster E — Unified DM-review surface
+- **P3T-17** ≡ **CC-24** ≡ **P3U-12** ≡ **P3E-1** — same scope.
+- **P3T-16** (DM side-by-side SA-vs-backstory diff view) — landed inside this surface.
+- **P3U-11** (seat-strip resolve pcId → display name) — landed inside this surface.
+- **P3T-19** ("ask this player to revise" affordance) — landed inside this surface.
+
+TTRPG: P1 cluster (top-5 first-ship).  UX: **P0** ("the single biggest workflow item in the catalog").  Engine: P1 (the ChargenController extraction "next substantive chargen touch" lands here).  Final: **P0** — UX argues correctly that DMs rubber-stamp bad PCs without it; the size of the refactor doesn't change its impact.
+
+## P1 — should land in next sub-milestone
+
+### Synthesis-quality prompt cluster
+
+| ID | Item | Convergence |
+|---|---|---|
+| **P3T-5** | Honor `aiRole` in `formatAnsweredQuestion` (~20 LOC; highest single-leverage prompt fix). | TTRPG P1; UX P1; Engine **P0** (engine right that this is the foundation under P3T-2 sheet-ready story). Settle P1. |
+| **P3T-10** | Extend system prompt's `Avoid:` list with "main-character framing" + "early-life foreshadowing" + "self-conscious narration." | TTRPG P1; UX P1; Engine P3 (campaign-side). |
+| **P3T-11** | Per-slot sensory-anchor injection so 5 PCs synthesized off same prompt vary. | TTRPG P1; UX P1; Engine P1. |
+| **P3T-12** | Intent-moment paraphrase check (semantic validator extension). | TTRPG P0; UX P2 (DM gate covers); Engine P1 (also blocks CC-38/39 opt-out). Settle P1 — UX makes this conditional on Cluster E shipping with diff view; if Cluster E ships without diff, bump to P0. |
+
+### Defense-in-depth security batch
+
+| ID | Item | Notes |
+|---|---|---|
+| **P3A-1** | F-PI2 OPEN-tag escape in `wrapUntrusted`. | Engine **P0** ("same bug shape as the BLOCKER; gate should have escalated this too"). Settle P0-or-P1 — agreed-with-engine to P1 because the close-tag is the catastrophic case. |
+| **P3A-10** | F-P2 pack answer-key newline/control/sentinel rejection. | Engine P0; UX P1; TTRPG P2. Settle P1 — engine's "smuggle vector across trust boundary" trumps TTRPG's "rare attack." |
+| **P3A-12** | F-P4 1MB input cap on `parseChargenPack`. | Engine P0; UX P1; TTRPG P2. Settle P1. |
+| **P3A-13** | F-L1 chargen-persistence slug-sanitize collision (include fingerprint in key). | Engine P0; UX P2; TTRPG P2. Settle P1 — engine's "multi-campaign DMs hit this" is real. |
+| **P3A-19** | F-V3 hard tag-count upper bound as ERROR. | Engine P1; others P2. Settle P1. |
+| **P3A-20** | F-V5 pronouns sanitization (40-char cap + char class). | Engine P1; others P2. Settle P1. |
+| **P3A-21** | F-PI4 strip unknown fields from synthesis response. | Engine P1; others P2. Settle P1. |
+| **P3A-14** | F-L3 chargen-persistence 256 KB cap with visible warning. | Engine P1; others P2. Settle P1. |
+
+### Token codec hardening (smaller; bundle together)
+
+| ID | Item | Notes |
+|---|---|---|
+| **P3A-4** | F-T1 fingerprint upgrade OR comment-as-collision-detector. | Engine P1; others P2. Bundle. |
+| **P3A-5** | F-T2 4096-char input cap on `decodeInviteToken`. | Engine P1; others P2. Bundle. |
+| **P3A-7** | F-T4 issuedAt future-window 24h → 1h. | Engine P1; others P3. Bundle. |
+| **P3A-8** | F-T5 mirror decoder validation in encoder. | Engine P1; others P3. Bundle. |
+| **P3A-9** | F-P1 `$schemaVersion` allowlist regex. | Engine P1; others P3. Bundle. |
+| **P3A-11** | F-P3 reject pack `$schemaVersion` newer than current. | Engine P1; others P2. Bundle. |
+
+### Tag suggestions + per-archetype consistency
+
+| ID | Item | Notes |
+|---|---|---|
+| **P3T-6** | Per-archetype tag suggestion table in `campaign.json` (CC-29). | TTRPG P1; UX P2; Engine P3 (campaign-side). Settle P1. |
+| **P3T-7** | Tag-vs-archetype validator check. | TTRPG P2; UX P2; Engine P1 (engine half of P3T-6). DEP P3T-6. Settle P1. |
+
+### Player flow polish
+
+| ID | Item | Notes |
+|---|---|---|
+| **P3U-1** | Drop Step 6 Resume; surface resume as banner on Step 1. | TTRPG P2; UX P1; Engine P1. Conditional: P1 only IF CC-11 resume lands same sub-milestone (else P2). |
+| **P3U-5** | Hide / disable unimplemented chargen paths (free-write, pre-gen). | TTRPG P1; UX **P0**; Engine P1. Settle P1 — UX argues correctly that placeholder dev copy on a player-reached screen is a bad first impression. |
+| **P3U-6** | Failure-banner imperatives + scrub task-tracker leaks. | TTRPG P1; UX P1; Engine P1. |
+| **P3U-9** | Required-marker legend + soft-block validation on Next from Step 4. | TTRPG P1; UX P1; Engine P1. |
+| **P3U-7** | Token-error states: "go back" button + DM-contact hint. | All P1/P2. Settle P1. |
+
+### Nav + multi-peer
+
+| ID | Item | Notes |
+|---|---|---|
+| **M3D-3b** | Heartbeat-based tri-state roster glyph + `peer-reclaim` event kind. | TTRPG P2; UX P1; Engine P1. Settle P1. |
+| **M3D-5b** | Click-to-bind popover on `{{pc:N}}` + AI `pc-slot-bind` write tool. | TTRPG P1; UX P1; Engine P1. Foundational for CC-32..37 rebinding. |
+| **M3D-7b** | `[`/`]` keyboard nav + Cmd-K palette + AI `requestNav` tool. | TTRPG P1; UX P1; Engine P2. Settle P1 — Cmd-K is load-bearing for DM mid-scene navigation. |
+
+### AI cost discipline
+
+| ID | Item | Notes |
+|---|---|---|
+| **CC-22** | 1h `cache_control` on synthesis prefix + parallel suffix calls. | TTRPG P2; UX P2; Engine P1. Settle P1 — engine right that token spend accumulates; cheap to add now. |
+| **M3C-6** | Prompt-cache hit-rate verification (one-time measurement after first real session). | TTRPG P1; UX P2; Engine P2. Settle P1 — informs CC-22 priority. |
+| **CC-14** | "Synthesize all backstories" DM batch button. | TTRPG P1; UX P1; Engine P1. |
+
+## P2 — should land in next 2-3 sub-milestones
+
+| ID | Item | Notes |
+|---|---|---|
+| **P3T-9** | Recent-transplant softening on place-allowlist warning. | Pairs with P3T-8 (Cluster A). |
+| **P3T-13** | Reorder `campaign.json` questions (intent-moment higher). | Campaign-side; low-friction-when-touched. |
+| **P3T-15** | Cross-PC name uniqueness check. | Annoying once; easy in DM review. |
+| **P3T-18** | Regenerate-name / regenerate-tags finer-grained iteration. | Polish on CC-23b. |
+| **P3U-2** | Pack-button from Step 4 onward. | Mode-B mitigation; CC-13 covers most. |
+| **P3U-4** | Path-pick auto-advance or labeled-Next. | Workflow micro-polish. |
+| **P3U-8** | Progress-strip done-state visuals. | Polish. |
+| **P3U-10** | Q&A textarea: show character bound in placeholder. | Polish. |
+| **P3U-13** | Path buttons → radiogroup semantics for a11y. | Right thing to do; low blast radius. |
+| **P3U-14** | "Pack downloaded as quire-pc-…json — check Downloads" hint. | One-line. |
+| **P3U-15** | Path-switch indicator on later steps. | Polish; depends on CC-7/CC-8 which are P3. |
+| **P3U-16** | Returning-player welcome variant. | Depends on resume UX (P3U-1). |
+| **CC-23b** | Re-roll / regenerate-paragraph / edit-freely iteration UX. | DEP Cluster E. |
+| **CC-32 through CC-37** | Slot rebinding lifecycle. | SPLIT: PC-death rebind earlier than session-boundary independence. DEP M3D-5b. |
+| **CC-4** | Per-PC `SaveDocument` typed shape. | Engine cleanup; lands when CC-32..37 multiply consumers. |
+| **CC-16** | 72-hour crystallization soft-warning surface. | Engagement-layer polish. |
+| **M3C-5** | `pushing-back` ladder transition gating. | Post-playtest. |
+| **P3A-3** | F-V1/F-V2 generic semantic validator. | Subsumed by P3T-12 for the specific intent-moment case. |
+| **P3A-6** | F-T3 double-URL-encode detection hint. | Surfaces once; copy fix. |
+| **P3A-15** | F-L4 cross-tab `storage` event listener. | Rare lifecycle. |
+| **P3A-17** | F-S4 retry bumps temperature OR pinpoint instruction. | Quality, not safety. |
+| **P3A-22** | F-PI3 dmConstraints documentation + UI hint. | Civilized-DM assumption. |
+| **P3A-23** | U-* test gap backfill (~15 tests). | Engineering hygiene. |
+| **P3E-2** | `keyValueStore.ts` persistence abstraction. | TTRPG P3; UX P2; Engine P2 with caveat ("3 prefixes is fine; refactor when a 4th appears"). Settle P3 per tech-debt policy unless triggered by a new consumer. |
+| **P3E-3** | Demote `AiProvider.parse` off the interface. | Wait for third AI shape (per gate's own gating). |
+| **V-5** | `primaryRoll` UI wire-through. | Lands with M3D-4b (Cluster D). Embedded P1. |
+| **V-12** | DM-only path predicate hardcoded in `buildPlayerFacingContext`. | Engine: "low-friction cleanup while touching P3D-1's hybrid seam." Lands inside Cluster A. Effective P1. |
+| **Q-CC-1** | Async-mode archetype-deviation policy decision. | Needed before async-mode-at-scale. |
+| **Q-CC-3** | "Use same device" wording. | Copy decision; user owns. |
 
 ## P3 — defer indefinitely
 
-| ID | Item | Convergent reason |
-|---|---|---|
-| **CC-8** | Pre-gen browser. | "Edit the example PC file directly" works for v1. |
-| **CC-26** | Bay Area place allowlist. | Pure campaign content; trivial to add when CC-21 lands. |
-| **CC-27** | MC ↔ SA consistency cross-check. | DM eyeballing the answers is faster than the rules. |
-| **CC-29** | Per-archetype tag suggestions for AI. | AI-output garnish, not load-bearing. |
-| **CC-36** | AI-assisted slot rebinding. | DM clicks a menu; voice command is automation candy. |
-| **V-1** | CasterLadderState hardcode → campaign-declared. | Tech-debt invisible at the table. |
-| **V-2** | Hard-gate categories → `hardGateRules[]` schema. | Same. |
-| **V-3** | Harm/stress max + stat range → declared track shapes. | Same. |
-| **V-4** | Stat keys → declared stat block. | Same. |
-| **V-10** | Generic state-event kind. | Explicit long-term refactor. |
-| **Q-CC-4** | AI synthesis progress indicator at scale. | "DM can wait 30s" — over-engineered. |
-| **M3C-3** | pc-edit stale-read window (LWW race). | Tolerated per threat model. |
-| **M3C-4** | pc-edit universal-write trust gap. | Explicitly tolerated per threat model. |
-| **M3B-1** | IndexedDB full-text store keyed by AI hash. | Audit chain + in-memory broker is enough. |
+All three lenses agree these are non-impacting OR speculative.
 
-## Aliases (no separate priority)
+| Category | Items |
+|---|---|
+| **Three chargen paths (over-engineering)** | CC-7 (free-write editor), CC-8 (pre-gen browser), CC-9 (path toggle). Convergent finding: P3U-5 hides them; ship Q&A polished, defer the rest to v2 entirely. |
+| **DM-gate opt-out** | CC-38 (`aiBackstory.requiresDmApproval` flag), CC-39 (validator-still-runs path). Locked behind P3T-12 + P3A-3 landing; even then "feature that exists to be turned on and regretted." |
+| **Constraint DSL** | CC-15 (`party_requires` / `party_unique`). DMs read 5 PCs and notice; speculative without play-test demand. |
+| **Policy-in-engine refactors** | V-1, V-2, V-3, V-4, V-7, V-10. Locked decision: cross-campaign timeline is a good while out; zero user-visible improvement until campaign #2. |
+| **Speculative chargen polish** | P3T-14 (alignment label deflation), P3U-15 (path-switch indicator). |
+| **Engine hygiene without payoff** | P3E-4 (next-split candidates — 6-10 KB gzip recoverable but not where the bite is). |
+| **Already-resolved / explicit-defer** | M3B-1 (IndexedDB full-text store), M3B-2 (topbar budget widget), M3B-3 (`playtest-1` tag), M3C-1b (no current debt), M3C-3 / M3C-4 (tolerated per threat model), Q-CC-2, Q-CC-4, Q-CC-5. |
 
-- **CC-1** → M3D-6 (same `tableSeats` field).
-- **CC-2** → M3D-5 (same `pcSlots` field).
-- **V-5** → M3D-4 (engine SPLIT proposal: schema field `primaryRoll` can land independently before the UI; document the field as part of M3D-4 phase 0).
-- **V-6** → CC-20.
-- **V-7** → CC-19.
-- **V-8** → CC-6 (engine note: the schema half — engine accepts `characterCreation.questions[]` — worth doing concurrently with CC-17).
+## Recommended next-milestone scope (Phase 3a — ~1-2 weeks)
 
-## Most load-bearing dependency constraints (engine perspective)
+The P0 clusters fit cleanly into one sub-milestone targeting Mode-B safety + sheet-ready PCs.  Order them by dependency:
 
-Five sequencing facts that should govern the next milestone's plan:
+**Phase 3a-1 — Sheet-ready PCs (foundational schema):**
+- P3T-2 (engine: response schema extension for `skillMastery` + `stats`)
+- P3T-5 (engine: aiRole-aware `formatAnsweredQuestion`)
+- P3T-1 + P3T-3 + P3T-4 (campaign-side: skill/stat questions, prior-connection, raise `meaningful-item` min)
 
-1. **`navController` extraction (inside M3D-3)** must precede M3D-5, M3D-6, M3D-7, CC-3.  Single seam; one extraction unlocks five items.
-2. **M3D-5 (`pcSlots` live state)** precedes CC-32, CC-33, CC-34, CC-35, CC-36, CC-37, and the seat-strip portion of M3D-6.
-3. **CC-17 (synthesis schema)** precedes CC-19, CC-20, CC-22, CC-23, CC-24.  Whole AI synthesis stack assumes the schema.
-4. **M3C-1 (per-kind materializer extraction)** should precede the M3D/M4 event-kind additions.  Otherwise the 32-case switch grows to 38+.
-5. **CC-3 (`AppMode='character-creation'` + invite-token route)** precedes CC-5, CC-12, CC-13.  The `routing.ts` change is also the right place to slot the route-change-fires-leave hook from M3D-3.
+**Phase 3a-2 — Spoiler-wiring cluster:**
+- P3D-1 (engine wiring)
+- V-12 (`buildPlayerFacingContext` path-predicate hybridization — landed inside the wiring touch)
+- P3A-2 (campaign-side spoiler list + system-prompt synonyms line)
+- P3T-8 (campaign-side Bay Area allowlist)
+- P3A-16 (Unicode normalize before spoiler scan)
+- P3A-18 (markdown emphasis strip before spoiler scan)
 
-## Notable cross-lens disagreements
+**Phase 3a-3 — Mode-B safety:**
+- P3D-2 (in-product warning + scrub `CC-13` leak)
+- P3D-3 (strip play-app shell)
+- P3U-3 (escalate "Recommended → Required" copy)
 
-| Item | Disagreement | Resolution |
-|---|---|---|
-| **CC-15** (constraint DSL) | TTRPG P1 ("named DM constraint"); UX/Engine P2 (engine plumbing). | **P1.**  TTRPG-craft argues the DM cannot run session 1 without it — that argument trumps engine economy. |
-| **CC-24** (DM approval gate visibility) | UX P0; TTRPG/Engine P1. | **P1.**  Gate exists conceptually; the elevation is about *visibility* polish, not the gate itself. |
-| **CC-22** (1h prompt cache) | Engine P1 (cost discipline); UX/TTRPG P2. | **P2.**  UX wins — "DM doesn't notice $0.20 per session" at v1 scale.  Revisit when budget meter trips. |
-| **M3D-4** (dice UI) | TTRPG/UX P0; Engine P2 (with V-5 sequencing note). | **P0** with SPLIT: schema field lands in phase 0 (cheap V-5 hybrid), UI in phase 1.  Engine concern addressed by sequencing, not deprio. |
-| **CC-32** (PC-death rebind) | TTRPG P1 ("realistic in episodes 2-3"); UX/Engine P2. | **P2.**  Underleaf is one campaign and combat isn't lethal-by-default; revisit if first play-test mortality is higher than expected. |
-| **M3C-1** (per-kind extraction) | Engine P1 (debt grows with new event kinds); TTRPG P2; UX P3. | **P1.**  Engine's sequencing argument is correct; new event kinds in M4 would each add a case arm. |
+**Phase 3a-4 — Dice-Dock primary action:**
+- M3D-4b (big Roll 2d6 button + last-3 pills + Cast macros + keyboard)
+- V-5 (primaryRoll UI wire-through; embedded in M3D-4b)
+- M3C-2 (dice-roll dispatch placeholder fix)
 
-## Recommended next-milestone scope (M3d-or-M4-merged)
+**Phase 3a-5 — Unified DM review surface (the big refactor):**
+- Cluster E as one body of work
+- ChargenController extraction (P3E-1) lands as the vehicle, not standalone
+- Cluster opens the seam for CC-23b, P3T-18, P3T-19 polish in Phase 3b
 
-Based on the priority + dependency graph above, a coherent next-milestone scope:
+**Total estimated scope:** ~400-600 LOC + campaign-side `campaign.json` edits + tests.  Bundle budget under control via the lazy-loaded chargen chunks already in place.
 
-**Phase 0 (foundations, ~1 week):**
-1. M3C-1 (per-kind materializer extraction) — before any new event kinds.
-2. `navController` extraction (the seam inside M3D-3).
-3. CC-17 (synthesis schema variant).
-4. V-5 schema-half: declare `primaryRoll` in `campaign.json` (cheap; sets up M3D-4).
+## Phase 3b (the polish + nav phase, ~1-2 weeks)
 
-**Phase 1 (P0 items, ~2-3 weeks):**
-5. M3D-3 (stale-DM-peer + heartbeat).
-6. M3D-5 / CC-2 (live `pcSlots` + click-to-bind + `pc-slot-bind` AI tool).
-7. M3D-7 (scene + dm-doc navigation; `[`/`]` hotkeys; AI `requestNav`).
-8. M3D-4 (2d6 dice-Dock UI consuming `primaryRoll`).
-9. CC-18 (player-facing context override) + CC-20 (forbidden-token check).
+- Defense-in-depth security batch (P3A-1 + P3A-10 + P3A-12 + P3A-13 + P3A-14 + P3A-19 + P3A-20 + P3A-21).
+- Token codec hardening bundle (P3A-4 + P3A-5 + P3A-7 + P3A-8 + P3A-9 + P3A-11).
+- Tag + per-archetype consistency (P3T-6 + P3T-7).
+- Synthesis prompt polish (P3T-10 + P3T-11 + P3T-12).
+- Player flow polish (P3U-1 + P3U-5 + P3U-6 + P3U-9 + P3U-7).
+- Nav (M3D-3b heartbeat + M3D-5b click-to-bind + M3D-7b Cmd-K).
+- AI cost (CC-22 + M3C-6 + CC-14).
 
-**Phase 2 (P1 items, ~2-3 weeks):**
-10. M3D-6 (`tableSeats` minimum viable; seat-strip; full polymorphism deferred).
-11. CC-3 (chargen AppMode + invite tokens).
-12. CC-5 (6-step chargen region).
-13. CC-6 (Q&A form; Underleaf questions inline first; schema later).
-14. CC-19, CC-21, CC-23, CC-24, CC-25 (AI synthesis stack + DM gate).
-15. CC-10, CC-12, CC-13, CC-14 (DM/player intake flow).
+## Open questions for the user (carry forward)
 
-**Phase 3 (P1 polish + post-playtest, ~1 week):**
-16. M3D-2 (campaign-link linter).
-17. CC-15 (constraint DSL min subset).
-18. M3C-6 (prompt-cache hit-rate measurement).
+These are not engineering-blocking; surface as the next-session reprioritization conversation.
 
-**Out-of-milestone:** everything P2/P3, plus the V-* items handled opportunistically per the tech-debt policy.
+1. **Phase 3a/3b sequencing.**  Above proposes Phase 3a as the "Mode-B safety" tight focus, with the unified review surface (the biggest chunk) landed as the closing item.  Alternative: front-load the review surface, defer some 3a-1 sheet-ready work.  Either order works; pick by appetite.
 
-## Open questions, proposed dispositions (carry into next user conversation)
+2. **CC-13 in 3a or 3b?**  Three reviewers split: TTRPG P1, UX **P0** (without it Mode B can't actually work), Engine P2.  Recommendation: P3D-2's warning closes 80% of the user-facing breakage; CC-13 fits naturally in 3b.  But if the user expects async play in Phase 3, bump.
 
-The cross-expert pass effectively resolved most Q-CC items:
+3. **P3T-12 (intent-moment paraphrase) — P0 or P1?**  TTRPG insists P0 because it's the magic-discovery arc's anchor; UX P2 because the DM-review surface (Cluster E) is the human-eyes guard.  Recommendation: P1 — if Cluster E ships with the diff view by default, the validator is a belt-and-suspenders layer; if Cluster E ships without it, bump P3T-12 to P0.
 
-- **Q-CC-1** (archetype deviation): default to "soft hint" per engine recommendation; revisit only if first async play-test shows DM conflicts.
-- **Q-CC-2** (pre-gen library scope): not needed for v1; the existing five `characters/pcs/` files serve as direct-edit pre-gens.
-- **Q-CC-3** (use-same-device wording): user owns the copy; ship CC-5 with placeholder text first.
-- **Q-CC-4** (synthesis progress indicator): defer (P3).
-- **Q-CC-5** (print sheet): M5+ carry.
+4. **Three-paths question (CC-7/8/9).**  All three lenses converged on "hide and defer to v2."  This is a meaningful product-scope decision; user confirmation recommended.
 
-The user can accept these dispositions in passing or flag any for re-discussion.
-
-## Phase 2 design notes (post-critique 2026-05-22)
-
-A critique-agent pass against the Phase 2 scope surfaced one user-decision blocker (F1 — invite-token signing/expiry) and ~10 medium gaps.  The blocker was resolved with a documented default; the user can override at gate review.
-
-**F1 resolution (invite-token signing/expiry):**
-- Token shape: `?campaign=<slug>&invite=<base64url(JSON{slotIndex, issuedAt, campaignFingerprint})>`.
-- **NO** `archetypeHint` or `displayHint` in the token payload.  Those leak DM-intent if the URL is screenshot/forwarded.  The DM communicates them in the email body alongside the URL.
-- `issuedAt + maxAgeDays` (default 30) checked at redeem time; expired tokens show "ask your DM for a fresh link."
-- `campaignFingerprint` checked at redeem time prevents accidental cross-campaign redemption.
-- No HMAC signing — the threat model accepts "outsider redeems an expired/stolen URL" because all they can do is start a local chargen flow for a slot.  The DM physically imports each player's token at session 1, so impersonation at the table requires social-engineering not URL-discovery.
-
-**Other critique resolutions adopted inline** (no user ask):
-- **B1**: `<invite-manager>` lives in `<dm-aside>` as a collapsible panel, visible in pre-session mode.
-- **B5**: All AI calls + iteration happen on the DM's machine at session 1.  "Use same device for session 1" goes from optional to required-by-architecture.
-- **B6**: Per-PC DM-approval pill lives on each seat in `<seat-strip>` with an aggregated "N of M ready" in `<invite-manager>`.
-- **C3**: 1h cache `cache_control` header lands with CC-19; parallel suffix calls stay P2.
-- **D3**: dm-only path predicate (V-12) — engine hardcodes `dm/` + `design/DM-ONLY/` as the directory pattern; campaign-relative directory layout assumption noted in boundary doc.
-- **F3**: IndexedDB key is `{campaignSlug}:{slotIndex}`, not `{inviteToken}`.  Regenerating a token doesn't orphan data; slot-reassignment (CC-32) is the explicit clear path.
-- **F4**: `<invite-manager>` has an explicit "Add slot" button.
-- **F5**: `characterCreation.questions[]` lives inline in `campaign.json`.
-- **F6**: `campaign.json` declares `aiBackstory.fewShotPath`; engine reads.
-- **F7**: CC-3 URL parser detects in-progress IndexedDB state and offers resume.
-- **F8**: `AppMode='character-creation'` renders `<character-creation>` as a full-Stage takeover; Rail collapses to a step-progress strip; Aside + Dock hide.
-- **E1**: CC-1 ≡ M3D-6 *seat-strip subset* only.  Whisper + print stylesheet remain deferred to M3e.
-- **D2**: Q-CC-3 ("use same device" wording) — split out of CC-5 as a [C] copy item.
-
-**Critique items NOT adopted (deferred or unchanged):**
-- Critique requested CC-3 be tagged [H].  Accepted — see backlog-catalog tag column update.
-- Critique flagged C2 (M3D-3 hook covers all AppMode transitions, not just home↔campaign) — added as a smoke-test item for the M3D-6 commit.
+5. **DM-gate opt-out (CC-38/39).**  All three lenses recommend P3 (don't even design until P3T-12 + P3A-3 land).  TTRPG calls it "the feature that exists to be turned on and regretted."  Confirm: dropping the opt-out from the active backlog?

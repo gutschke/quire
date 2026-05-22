@@ -77,6 +77,36 @@ Design doc + expert convergence point at three primitives:
 
 Recommended pre-implementation 4-reviewer gate on the design doc.
 
+## Phase 3 prioritization pass (2026-05-22)
+
+3-lens reprioritization (TTRPG-craft / UX / Engine) of the full
+~105-item Phase 3 backlog (consolidated in `design/phase3-catalog.md`).
+Synthesis replaces `prioritized-backlog.md` with a Phase-3-shaped
+plan.
+
+**Convergent P0 (3-way agreement OR TTRPG+UX P0):** 5 clusters:
+- A. Spoiler-wiring (P3D-1 + P3A-2 + P3T-8 + P3A-16 + P3A-18).
+- B. Mode-B works end-to-end (P3D-2 + P3D-3 + P3U-3 + CC-13).
+- C. Sheet-ready PCs (P3T-1 + P3T-2 + P3T-3 + P3T-4).
+- D. Dice-Dock primary action (M3D-4b + M3C-2).
+- E. Unified DM review surface (P3T-17 ≡ CC-24 ≡ P3U-12 ≡ P3E-1).
+
+**Convergent P3 kills** (3-way agreement to defer):
+- CC-7 / CC-8 / CC-9 — three chargen paths over-engineered for v1.
+- CC-38 / CC-39 — DM-gate opt-out; locked behind semantic validator.
+- V-1 through V-4, V-7, V-10 — campaign-policy refactors; wait
+  until campaign #2.
+
+**Recommended next-milestone scope (Phase 3a):** the 5 P0 clusters
+above + Cluster E ChargenController extraction as vehicle.
+Estimated ~400-600 LOC + campaign-side edits.
+
+**5 carried questions for next conversation** (Phase 3a/3b
+sequencing; CC-13 phasing; P3T-12 priority; three-paths decision;
+opt-out drop).
+
+Full synthesis: `design/prioritized-backlog.md`.
+
 ## Phase 2 gate verdict (2026-05-22)
 
 4-reviewer pass (TTRPG-craft / UX / Engine / Adversarial) ran
