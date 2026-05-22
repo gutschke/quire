@@ -1168,7 +1168,68 @@ export class QuireApp extends LitElement {
         .onUnbind=${(slot: number) => this.bindPcSlot(slot, null)}
       ></seat-strip>
       ${this.renderInviteManagerLazy(v.filteredShared.pcSlots)}
+      ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
     `;
+  }
+
+  /**
+   * Phase 3a Cluster E step 2: lazy-mount the new unified DM-review
+   * region alongside the legacy `<seat-strip>` + `<invite-manager>`
+   * for this transitional commit.  Step 6 deletes the legacy mounts.
+   * Until then, both render — the DM sees two surfaces but no
+   * functionality is lost.
+   */
+  private renderChargenDmReviewLazy(
+    pcSlots: Record<number, string>
+  ): TemplateResult | typeof nothing {
+    void this.chargen.loadDmReviewRegion();
+    if (!this.chargen.dmReviewRegionDefined) return nothing;
+    return html`
+      <chargen-dm-review
+        .pcSlots=${pcSlots}
+        .synthResults=${this.chargenSynthResultsView()}
+        .synthInFlight=${this.chargenSynthInFlightView()}
+        .acceptedSlots=${this.chargenAcceptedSlotsView()}
+        .onGenerate=${(slot: number) => this.chargen.generateInviteUrl(slot)}
+        .onSynthesize=${(slot: number) =>
+          this.chargen.synthesizeForSlot(slot, {
+            playerDisplayName: this.displayNameDraft || undefined
+          })}
+      ></chargen-dm-review>
+    `;
+  }
+
+  /**
+   * Adapter that re-projects the controller's slot state into the
+   * Map/Set props the region @property accepts.  Lit treats props
+   * as identity-compared for change detection, so we build fresh
+   * objects on each render — the controller's mutations don't
+   * propagate through reference equality.  Cheap (≤ 9 slots).
+   */
+  private chargenSynthResultsView(): Map<
+    number,
+    ReturnType<ChargenController['getSynthResult']>
+  > {
+    const out = new Map();
+    for (const slot of this.chargen.slotsWithSynthState()) {
+      const r = this.chargen.getSynthResult(slot);
+      if (r) out.set(slot, r);
+    }
+    return out;
+  }
+  private chargenSynthInFlightView(): Set<number> {
+    const out = new Set<number>();
+    for (let slot = 1; slot <= 9; slot++) {
+      if (this.chargen.isSynthInFlight(slot)) out.add(slot);
+    }
+    return out;
+  }
+  private chargenAcceptedSlotsView(): Set<number> {
+    const out = new Set<number>();
+    for (const slot of this.chargen.slotsWithSynthState()) {
+      if (this.chargen.isAccepted(slot)) out.add(slot);
+    }
+    return out;
   }
 
   /**

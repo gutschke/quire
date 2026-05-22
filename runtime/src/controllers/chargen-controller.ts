@@ -452,9 +452,25 @@ export class ChargenController implements ReactiveController {
     return this.chargenRegionLoaded;
   }
 
-  // loadDmReviewRegion is intentionally not declared here yet — the
-  // step-2 commit adds it together with the actual region module so
-  // a caller can't `await` a silent no-op (Engine B2 / Adv F-CC-E1).
+  /**
+   * Step 2: lazy-load the `<chargen-dm-review>` region.  Idempotent
+   * — returns the in-flight promise so concurrent callers share one
+   * fetch.  Subsequent re-mounts hit the cache.
+   */
+  loadDmReviewRegion(): Promise<void> {
+    if (this.dmReviewRegionLoaded) return this.dmReviewRegionLoaded;
+    this.dmReviewRegionLoaded = import(
+      '../ui/regions/chargen-dm-review'
+    ).then(() => {
+      this.dmReviewRegionDefined = true;
+      this.host.requestUpdate();
+    });
+    return this.dmReviewRegionLoaded;
+  }
+
+  /** Set to true once `loadDmReviewRegion()` resolves. */
+  dmReviewRegionDefined: boolean = false;
+  private dmReviewRegionLoaded: Promise<void> | null = null;
 
   private loadSynthesizerModule(): Promise<
     typeof import('../ai/backstory-synthesizer')

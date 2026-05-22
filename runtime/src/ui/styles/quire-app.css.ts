@@ -67,6 +67,128 @@ export const quireAppStyles = css`
       max-height: 100dvh;
     }
 
+    /* Phase 3a Cluster E step 2: unified DM review surface.  Per-seat
+       card replacing the prior 3-card stack (invite-manager + seat-strip
+       + dm-aside).  Step 6 deletes the legacy mounts. */
+    .chargen-dm-review-intro {
+      margin: 0 0 0.6rem;
+    }
+    .chargen-dm-review-mode-b {
+      margin: 0.6rem 0;
+      padding: 0.6rem 0.9rem;
+      border-left: 3px solid light-dark(#cc8a00, #d4a73a);
+      background: light-dark(#fff8e6, #2a2310);
+      color: light-dark(#5a4400, #e6cd80);
+      font-size: 0.88rem;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-mode-b strong {
+      color: light-dark(#7a4400, #f0d68a);
+    }
+    .chargen-dm-review-seats {
+      list-style: none;
+      padding: 0;
+      margin: 0.4rem 0 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .chargen-dm-review-seat {
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#d4d4d4, #3a3a3a);
+      border-radius: 6px;
+      background: light-dark(#fafafa, #1d1d1d);
+    }
+    .chargen-dm-review-seat-accepted {
+      border-color: light-dark(#16a34a, #4ade80);
+      background: light-dark(#f0fdf4, #102e1c);
+    }
+    .chargen-dm-review-seat-head {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      margin-bottom: 0.4rem;
+    }
+    .chargen-dm-review-seat-pill {
+      display: inline-block;
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      background: light-dark(#e2e8f0, #1e293b);
+      color: light-dark(#0f172a, #cbd5e1);
+      font-weight: 600;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-seat-name code {
+      background: transparent;
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+    }
+    .chargen-dm-review-seat-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+    }
+    .chargen-dm-review-seat-actions button {
+      padding: 0.35rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    .chargen-dm-review-seat-actions button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .chargen-dm-review-invite-result {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-top: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .chargen-dm-review-invite-url {
+      flex: 1 1 18ch;
+      min-width: 0;
+      padding: 0.3rem 0.5rem;
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-invite-copied {
+      color: light-dark(#16803d, #4ade80);
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-synth {
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.7rem;
+      border-radius: 4px;
+      font-size: 0.92rem;
+    }
+    .chargen-dm-review-synth-ok {
+      background: light-dark(#ecfdf5, #022c22);
+      border-left: 3px solid light-dark(#16a34a, #4ade80);
+    }
+    .chargen-dm-review-synth-warnings {
+      color: light-dark(#92400e, #fcd34d);
+      margin-top: 0.2rem;
+    }
+    .chargen-dm-review-synth-accepted {
+      margin-top: 0.2rem;
+      font-style: italic;
+      color: light-dark(#16803d, #86efac);
+    }
+    .chargen-dm-review-synth-err {
+      background: light-dark(#fef2f2, #2a0a0a);
+      border-left: 3px solid light-dark(#dc2626, #f87171);
+    }
+    .chargen-dm-review-synth-spoiler {
+      background: light-dark(#fff8e6, #2a2310);
+      border-left: 3px solid light-dark(#cc8a00, #d4a73a);
+    }
+    .chargen-dm-review-synth-message {
+      color: light-dark(#374151, #cbd5e1);
+      font-size: 0.88em;
+      margin-top: 0.2rem;
+    }
+
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;
       padding: 0.6rem 0.9rem;
