@@ -119,6 +119,77 @@ export class SceneStage extends LitElement {
     return p.startsWith('dm/') || p.includes('/dm/');
   }
 
+  /**
+   * Resolve a campaign-relative href (from a markdown link like
+   * `[stakes](../dm/stakes.md)` inside a scene file) against the
+   * current `scenePath`.  Returns the normalized scene path inside
+   * the episode, or null when the href is external / non-md /
+   * escapes the episode root.
+   *
+   * Authors write links relative to the file containing them.  The
+   * runtime stores `scenePath` as the episode-relative path
+   * (`scenes/02-the-threads.md`), so resolution starts from
+   * `scenes/`, applies the href segment-by-segment, normalizes
+   * `..` and `.`, and rejects upward escapes that leave the
+   * episode root.
+   */
+  private resolveMarkdownLink(href: string): string | null {
+    if (!href) return null;
+    // External / scheme links — leave to the default browser
+    // handler (DOMPurify already enforced target=_blank).
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) {
+      return null;
+    }
+    if (!href.endsWith('.md')) return null;
+    const baseDir = this.scenePath.includes('/')
+      ? this.scenePath.slice(0, this.scenePath.lastIndexOf('/'))
+      : '';
+    const baseParts = baseDir ? baseDir.split('/') : [];
+    const hrefParts = href.split('/');
+    const stack: string[] = [...baseParts];
+    for (const part of hrefParts) {
+      if (part === '' || part === '.') continue;
+      if (part === '..') {
+        if (stack.length === 0) return null;
+        stack.pop();
+        continue;
+      }
+      stack.push(part);
+    }
+    return stack.join('/');
+  }
+
+  /**
+   * Delegated click handler for anchor links inside the rendered
+   * scene markdown.  Author-written links like `[dm/stakes.md](../dm/stakes.md)`
+   * are sanitized into plain `<a>` tags; without this interceptor
+   * the browser would navigate away (breaking the SPA, the active
+   * session, and the back-button stack).  We resolve the href
+   * relative to the current scene and route through `onNavigate`
+   * so the link behaves like the rest of the app's intra-campaign
+   * navigation.
+   */
+  private handleMarkdownClick = (e: MouseEvent): void => {
+    if (e.defaultPrevented) return;
+    if (e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest('a');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (!href) return;
+    const resolved = this.resolveMarkdownLink(href);
+    if (resolved === null) return;
+    if (!this.onNavigate) return;
+    this.onNavigate(e, {
+      kind: 'scene',
+      slug: this.campaignSlug,
+      episode: this.episodeSlug,
+      scene: resolved
+    });
+  };
+
   override render(): TemplateResult {
     const cautionActive = this.isDmOnlyPath();
     return html`
@@ -171,7 +242,9 @@ export class SceneStage extends LitElement {
           : nothing}
       </header>
       <section class="card ${cautionActive ? 'dm-caution-card' : ''}">
-        <div class="markdown">${this.renderBlocks()}</div>
+        <div class="markdown" @click=${this.handleMarkdownClick}>
+          ${this.renderBlocks()}
+        </div>
       </section>
     `;
   }

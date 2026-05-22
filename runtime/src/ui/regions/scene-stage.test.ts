@@ -244,3 +244,136 @@ describe('<scene-stage> per-block reveal rendering', () => {
     expect(stage.innerHTML).toContain('tense');
   });
 });
+
+describe('<scene-stage> markdown link interception (M3c polish)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function mountWithBlock(scenePath: string, html: string): {
+    stage: SceneStage;
+    routes: Array<{
+      kind: string;
+      slug: string;
+      episode: string;
+      scene: string;
+    }>;
+  } {
+    const stage = mountStage();
+    stage.campaignName = 'C';
+    stage.campaignSlug = 'c';
+    stage.episodeName = 'E';
+    stage.episodeSlug = 'ep1';
+    stage.scenePath = scenePath;
+    stage.sceneBlocks = [
+      {
+        blockHash: 'h1',
+        html: html as SanitizedHtml,
+        raw: '',
+        index: 0
+      }
+    ];
+    stage.revealedBlocks = new Set(['h1']);
+    stage.sceneFullyRevealed = true;
+    stage.isCoordinator = true;
+    const routes: Array<{
+      kind: string;
+      slug: string;
+      episode: string;
+      scene: string;
+    }> = [];
+    stage.onNavigate = (e, route) => {
+      e.preventDefault();
+      if (route.kind === 'scene') {
+        routes.push({
+          kind: route.kind,
+          slug: route.slug,
+          episode: route.episode,
+          scene: route.scene
+        });
+      }
+    };
+    return { stage, routes };
+  }
+
+  it('relative ../dm/stakes.md link from scenes/02-the-threads.md resolves to dm/stakes.md', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p>See <a href="../dm/stakes.md">stakes</a>.</p>'
+    );
+    await stage.updateComplete;
+    const link = stage.querySelector('.markdown a[href="../dm/stakes.md"]') as
+      | HTMLAnchorElement
+      | null;
+    expect(link).not.toBeNull();
+    link!.click();
+    expect(routes).toEqual([
+      { kind: 'scene', slug: 'c', episode: 'ep1', scene: 'dm/stakes.md' }
+    ]);
+  });
+
+  function markdownAnchor(stage: SceneStage): HTMLAnchorElement {
+    // Scope to the rendered markdown container — the breadcrumb has
+    // its own anchors that should never be picked up by this query.
+    const anchor = stage.querySelector('.markdown a') as HTMLAnchorElement | null;
+    if (!anchor) throw new Error('expected an anchor inside .markdown');
+    return anchor;
+  }
+
+  it('sibling-scene link resolves within the same directory', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p><a href="03-the-find.md">next</a></p>'
+    );
+    await stage.updateComplete;
+    markdownAnchor(stage).click();
+    expect(routes[0]?.scene).toBe('scenes/03-the-find.md');
+  });
+
+  it('external https links are NOT intercepted', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p><a href="https://example.com">ext</a></p>'
+    );
+    await stage.updateComplete;
+    markdownAnchor(stage).click();
+    expect(routes).toHaveLength(0);
+  });
+
+  it('non-md hrefs (anchors, images) are NOT intercepted', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p><a href="#section">jump</a></p>'
+    );
+    await stage.updateComplete;
+    markdownAnchor(stage).click();
+    expect(routes).toHaveLength(0);
+  });
+
+  it('upward escapes past the episode root return null (no navigation)', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p><a href="../../../escape.md">e</a></p>'
+    );
+    await stage.updateComplete;
+    markdownAnchor(stage).click();
+    expect(routes).toHaveLength(0);
+  });
+
+  it('modifier-clicks (cmd, ctrl) are NOT intercepted so new-tab still works', async () => {
+    const { stage, routes } = mountWithBlock(
+      'scenes/02-the-threads.md',
+      '<p><a href="../dm/stakes.md">x</a></p>'
+    );
+    await stage.updateComplete;
+    const link = markdownAnchor(stage);
+    const e = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      metaKey: true
+    });
+    link.dispatchEvent(e);
+    expect(routes).toHaveLength(0);
+  });
+});

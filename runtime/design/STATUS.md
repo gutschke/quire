@@ -1,6 +1,6 @@
 # STATUS
 
-Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22; polish batches 1 + 2 landed 2026-05-22.  Next: M3d (inventory primitive + content proposals) — see decision note below.
+Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22; polish batches 1 + 2 landed 2026-05-22.  First real play-test 2026-05-22 surfaced seven concerns reshaping the M3d scope; see `design/m3d-playtest-followups.md`.  Inventory primitive deferred (was original M3d) until play-test feedback on dice-UI + nav settles.
 
 ## M3c acceptance criteria
 
@@ -40,7 +40,27 @@ Plan: `design/m3c-ai-write-api.md` — 4-reviewer gate ran 2026-05-22, all `ship
 ## M3c polish batches (post-tag)
 
 - **Batch 1** (commit 6923f46) — UX affordances: Enter→Apply-All hotkey; DM reset-spam chip; review-every toggle; rejected-hard-gate banner.  +1 controller test (982 vitest pass).  Bundle +0.94 KB gzip → 91.56 KB.
-- **Batch 2** (this commit) — e2e fidelity: realistic cast-spam bootstrap via prior DM-direct casts; new multi-peer hostile test for Engine #1.  4 ai-write-api e2e pass.
+- **Batch 2** (commit 7a0e66a) — e2e fidelity: realistic cast-spam bootstrap via prior DM-direct casts; new multi-peer hostile test for Engine #1.  4 ai-write-api e2e pass.
+- **Batch 3** (this commit) — first-play-test fix: markdown link interceptor in `<scene-stage>`.  Author-written `[..](../dm/stakes.md)` links inside scene markdown now route through `navigateToRoute` instead of tearing down the session.  6 new unit tests (988 vitest pass).  Companion campaign edit: `dm/stakes.md` adds an authorial cue connecting scene-1's crying PC4 to the appropriate stake categories.
+
+## First play-test followups (2026-05-22)
+
+The user's first real DM-side play-test produced seven concerns documented in `design/m3d-playtest-followups.md`.  Two TTRPG-craft + UX expert consultations ran; the design doc synthesizes their recommendations.
+
+- [x] **Broken `../dm/stakes.md` markdown link** — fixed inline (batch 3).
+- [ ] **Campaign-link linter** — `scripts/lint-campaign-links.mjs` to catch broken intra-campaign markdown links pre-commit.  M3d.
+- [ ] **Stale-DM-peer on rejoin** — root-cause documented (autosave-restore rehydrates prior coord without matching leftAt).  M3d primary fix: route-change-fires-leave + heartbeat-based roster glyph.
+- [ ] **2d6-first dice UI** — TTRPG-expert confirms ~95% of rolls are 2d6+stat.  ui.md L154-160 spec is the target.  M3e.
+- [ ] **PC1/PC2 script variable binding** — `{{pc:N}}` markup + per-session `pcSlots` shared field + click-to-bind popover.  M3d.
+- [ ] **Modes-of-play polymorphism** — `tableTopology` + `tableSeats` shared field + `<seat-strip>` region.  Unblocks DM-only mode (no peers → no PCs).  M3d phase 1; M3e adds whisper + print.
+- [ ] **Scene-switching as dominant action** — `<dm-rail>` enumerates `dm/*.md` too; `[`/`]` hotkeys; AI `requestNav` tool.  M3d.
+
+Design doc + expert convergence point at three primitives:
+- `navController` extraction (concerns 1, 5, 7 share this).
+- Seat/slot data structure (concerns 5 and 6 share this).
+- The missing `design/ui.md` should be resurrected as M3d's first artifact.
+
+Recommended pre-implementation 4-reviewer gate on the design doc.
 
 ## Previous milestone — M3b polish + gap-fills (since `milestone-M3b` tag)
 
