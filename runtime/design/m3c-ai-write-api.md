@@ -20,7 +20,7 @@ Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applic
 - Provider tool schemas updated (Anthropic tool, Gemini responseSchema).
 - DM accept-gate UI: apply-all-with-60s-undo, one-line summaries.
 - HARD-GATE list (always explicit DM click; never apply-all-eligible):
-  - harm box 3→4 transition (rules-reference.md L78-79)
+  - harm box 3→4 transition (underleaf/world/rules.md L78-79)
   - stress box 4 (Broken) transition (L90)
   - caster ladder → Hunted (L133)
   - trying-too-hard activation (L179-186)
@@ -51,7 +51,7 @@ Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applic
 - **New event kind `caster-state-set`** (coord-only).
   - Payload: `{ v: 1, pcId, ladderState, reason?, taxActive?, spamCount?, causedByResponseId? }`.
   - `ladderState`: `'quiet' | 'noticed' | 'watched' | 'pushing-back' | 'hunted' | 'clear'` (explicit `'clear'` sentinel — avoids the empty-string-as-sentinel fragility Engine flagged).
-  - `reason`: short string; rendered as the DM's narration prompt (rules-reference.md L135 — ladder must be narrated, not numbered).  **Rendered via plain Lit text interpolation in the UI (auto-escaped), NOT `renderMarkdown(unsafeHTML(...))`** — Security S-2.
+  - `reason`: short string; rendered as the DM's narration prompt (underleaf/world/rules.md L135 — ladder must be narrated, not numbered).  **Rendered via plain Lit text interpolation in the UI (auto-escaped), NOT `renderMarkdown(unsafeHTML(...))`** — Security S-2.
   - `taxActive`: bool — trying-too-hard per L179-186.
   - `spamCount`: int — Free/Cheap cast counter per L141.  Reset emitter: **DM-direct "Reset spam counter" button** in the cockpit (Engine #3 / TTRPG #2).  Auto-reset on scene transition deferred to M3d — the runtime has no scene-transition event today; AI is told to ask the DM rather than auto-zero.
   - `causedByResponseId`: when set, materializer enforces hard-gate (see Phase 3).
@@ -116,7 +116,7 @@ Let the DM offload routine bookkeeping to the AI mid-session: harm/stress applic
   - One-line summary per update — derived from the typed payload + the rules-narration convention:
     - `pc-edit`: "Yui: +1 stress (Frayed cast)"
     - `dice-roll`: "Coin toss: 8 — Partial (with +2 from Costly cast)"
-    - `caster-state-set`: rendered with `reason` as primary text (e.g. "Timmy: \"the lights flicker again\"") and the state label (e.g. "→ Watched") as small DM-only metadata.  This honors rules-reference.md L135 ("narrate aloud, never by number").
+    - `caster-state-set`: rendered with `reason` as primary text (e.g. "Timmy: \"the lights flicker again\"") and the state label (e.g. "→ Watched") as small DM-only metadata.  This honors underleaf/world/rules.md L135 ("narrate aloud, never by number").
   - **Default action: Apply All** on Enter.  Batch commits as events with `causedByResponseId = <current ai-response responseId>`.
   - **60-second undo banner** after apply.  Per-update revert glyph during undo window.
   - **HARD-GATE entries** are excluded from Apply All; each renders with its own explicit "Accept this change" button + a small description of why it's gated ("Yui's harm reaching box 4 is out-of-action — confirm to apply.").  The non-gated entries can still apply-all-on-Enter; the gated ones wait.
@@ -188,5 +188,5 @@ All previous M3c open questions either resolved or moved to M3d.  The implementa
 - **M3d**: inventory primitive (rapid-change tier-2 per user) + content proposals (NPC / room / item, session-scoped only) + "Just say yes" narrate-only path + scene-transition auto-reset for spam counter (if a scene-transition event lands by then).  Requires the M4 promotion-from-session-scope path to be specified FIRST OR explicit acknowledgment that session content remains session-only until M4.
 - **M3d/M4 wrap-untrusted forward-note** (Security S-6): when session-digest cycling lands, any session event field with AI-authored text (currently `caster-state-set.reason`; future inventory/content `reason`s) MUST pass through `wrapUntrusted` when injected as prompt context.  `caster-state-set.reason` is NOT currently cycled back through campaign-context.ts; the latent risk activates when M3d/M4 introduces session-as-context.
 - **M4**: living-doc workflow.  Session-digest builder, DiffProposal schema, GitHub commit path.  Promotes session-scope state (NPCs, items, locations the players will remember) to tier-1 in the campaign repo.
-- **`pushing-back` ladder transition gating** (Adversarial #4): currently NOT hard-gated.  Borderline — the world begins working against the PC (rules-reference.md L132).  Defer to TTRPG-craft after first playtest; add to hard-gate list if it ships at-pace.
+- **`pushing-back` ladder transition gating** (Adversarial #4): currently NOT hard-gated.  Borderline — the world begins working against the PC (underleaf/world/rules.md L132).  Defer to TTRPG-craft after first playtest; add to hard-gate list if it ships at-pace.
 - **Manual cross-PC `pc-edit` gap** (Adversarial A-new-2): a DM directly editing another player's bound PC is not gated.  Pre-existing; M3c adds AI gating only.  Closing the manual gap is a separate concern.

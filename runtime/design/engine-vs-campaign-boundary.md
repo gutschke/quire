@@ -42,7 +42,7 @@ Each entry: where it lives, what it does, why it's policy, what the hybrid shape
 ### V-4. Stat keys STR/DEX/CON/INT/WIS/CHA
 - **Location:** `src/ui/regions/player-rail.ts` L47 (`type StatKey`) and several UI render sites.
 - **What:** the six D&D-shaped stat keys.
-- **Why policy:** these keys are arbitrary-but-Underleaf-pinned (per `quire/design/rules-reference.md` L18-23).  *Blades in the Dark* has Insight/Prowess/Resolve; *PbtA* games vary widely; *Cypher* uses Might/Speed/Intellect.
+- **Why policy:** these keys are arbitrary-but-Underleaf-pinned (per `underleaf/world/rules.md` L18-23).  *Blades in the Dark* has Insight/Prowess/Resolve; *PbtA* games vary widely; *Cypher* uses Might/Speed/Intellect.
 - **Hybrid shape:** engine ships a generic stat-block primitive; campaign declares the keys, their long-form labels, value ranges, and which key informs which roll.  The dice-Dock (planned) reads the declaration.
 
 ### V-5. Roll mechanic — "2d6 + stat" dominant
@@ -69,11 +69,11 @@ Each entry: where it lives, what it does, why it's policy, what the hybrid shape
 - **Why policy:** the questions ARE the campaign's character-creation contract.  *Blades* has playbook-specific questions; *Monster of the Week* has playbook questions; *D&D* has none (point-buy + class choice).
 - **Hybrid shape:** the campaign manifest carries a `characterCreation.questions[]` array, each with `id, kind (mc|short-answer), prompt, options?[], required, aiRole?`.  The chargen UI is a generic renderer for whatever the campaign declares.
 
-### V-9. quire/design/rules-reference.md is policy in the engine repo
-- **Location:** `/home/markus/src/ttrpg/quire/design/rules-reference.md`.
-- **What:** the canonical Underleaf rules document lives in the engine's design folder.
-- **Why policy:** "the rules" are by definition policy — they're what makes Underleaf the specific game it is.
-- **Hybrid shape:** the engine repo gets a `quire/design/rules-schema.md` (what a campaign's rules schema looks like + the contract the engine enforces).  Underleaf's actual rules live in `underleaf/world/rules.md` or `underleaf/rules.md`.  When other campaigns appear they each have their own.
+### V-9. ~~quire/design/rules-reference.md is policy in the engine repo~~ — **RESOLVED 2026-05-22**
+- **Was at:** `quire/design/rules-reference.md`.
+- **Now at:** `underleaf/world/rules.md` (canonical campaign-side ruleset) + `quire/design/rules-schema.md` (engine-side contract scaffold).
+- All 14 inbound references updated to the new paths in the same commit.
+- This is the *first* completed violation-fix from the V-* list, demonstrating the "low-friction cleanup" policy from [[feedback-tech-debt-policy]].
 
 ### V-10. Underleaf-shaped event kinds
 - **Location:** `src/core/state.ts` REGISTERED_EVENT_KINDS list.
@@ -121,9 +121,14 @@ For every new design doc / feature:
 3. When you find an existing violation not in the V-1…V-11 list above, append it here.
 4. Don't pause shipping on a violation — the user has accepted the debt — but DO make the violation visible.
 
-## Open questions for the user
+## Decisions locked 2026-05-22
 
-1. **Promote rules-reference.md to underleaf?**  Move `quire/design/rules-reference.md` → `underleaf/world/rules.md` and add a placeholder `quire/design/rules-schema.md`?  Or leave it where it is until the second-campaign question becomes real?
-2. **When is the first cross-campaign moment?**  Is there a second campaign on the horizon, or is "retarget Quire" a 5-years-out goal?  The answer scales how much we invest in the hybrid shapes above.
-3. **Do we add a `policy: 'underleaf-bias'` flag to STATUS.md** marking the violations as known-and-accepted, so a future drift-audit can scan for it?
-4. **Schema work as M4-or-M5?**  Adding campaign-declares-this-field schema for CasterLadderState, hardGateRules, primaryRoll, etc., is meaningful work.  Should it be its own milestone, or folded into the relevant feature work as we go?
+1. **Cross-campaign timeline:** a good while out, but tech-debt should still be paid down incrementally.  Low-friction cleanups (moving docs, fixing dubious code, adding regression tests when touching code) happen as a matter of course.  Don't over-engineer hypotheticals.  See [[feedback-tech-debt-policy]].
+2. **V-9 (rules-reference.md location):** **DONE.**  Moved this commit.
+3. **Operating discipline:** every new design doc + feature tags items [E]/[C]/[H].  When engine code hardcodes Underleaf-specific policy, leave a `// TODO(campaign-policy): ...` comment for future audit passes.
+
+## Carried for the prioritization conversation
+
+- Each of V-1 through V-8 is now visible on the violation list; the user will reorder them alongside other open items.
+- The hybrid-shape sketches above are seeds; nobody is committing to that exact JSON shape today.
+- The first opportunistic refactor came in V-9; subsequent ones land when their cost is small and a related touch is already in flight.

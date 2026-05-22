@@ -454,7 +454,7 @@ The original "14-19 weeks v1" framing was wrong because (a) v1 was overscoped to
 - Design spec: [`../../design/ui.md`](../../design/ui.md)
 - Architecture overview: [`../../design/architecture.md`](../../design/architecture.md)
 - Authoring conventions: [`../../design/authoring.md`](../../design/authoring.md)
-- Rules: [`../../design/rules-reference.md`](../../design/rules-reference.md)
+- Rules: [`../../../underleaf/world/rules.md`](../../../underleaf/world/rules.md)
 - Schemas: [`../../design/schemas.md`](../../design/schemas.md)
 - Security: [`../../design/security.md`](../../design/security.md)
 - CLI lint TODOs: [`../../cli/TODO.md`](../../cli/TODO.md)

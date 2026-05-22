@@ -2,7 +2,7 @@
 
 **Status:** design input. NOT a sequenced plan; the user has explicitly deferred prioritization.
 **Source:** play-test follow-up 2026-05-22; three expert consultations (TTRPG-craft, UX, prompt-engineering).
-**Companion docs:** `design/m3d-playtest-followups.md` (PC-slot binding scope), `quire/design/rules-reference.md`, `underleaf/characters/pcs/README.md`.
+**Companion docs:** `design/m3d-playtest-followups.md` (PC-slot binding scope), `underleaf/world/rules.md`, `underleaf/characters/pcs/README.md`.
 
 The user surfaced character creation as a planning concern with the following constraints (verbatim where they're load-bearing):
 
@@ -189,15 +189,36 @@ These are the discrete work items the user can hand to experts for prioritizatio
 - CC-30 **[C]**. Curated Bay Area place allowlist for the place-grounding question.
 - CC-31 **[C]**. "Two technical PCs" default constraint for Episode 1.
 
+### Slot rebinding (added 2026-05-22 from user clarification)
+
+`pcSlots` decision: **per-session with campaign-level default**.  Campaign manifest can declare initial bindings (e.g. shipped pre-gens get pre-assigned slot numbers); the session-level bindings override.  Real tables hit several edge cases beyond initial creation — the engine MUST support them (see [[project-quire-pcslots-rebinding]] for the full rule).
+
+- CC-32 **[E]**. DM-triggered slot reassignment (PC death → new character mid-campaign).  Standard event-log + materializer path; the affordance is a DM-only "rebind this seat" control in `<seat-strip>`.
+- CC-33 **[E]**. Player temporarily out — slot stays reserved; rebinds to original PC when player returns.  No new event; just a `present: boolean` field per peer.
+- CC-34 **[E]**. Player permanently leaves — slot reassigns to a new player OR retires (PC becomes DM-controlled NPC).  DM-only event with explicit "retire as NPC" vs "transfer to peer X" branch.
+- CC-35 **[E]**. Mid-session rebinding affordance.  Rare but must work; behind a confirm or "more" menu so it's not the default click but isn't buried either.
+- CC-36 **[E]**. AI-assisted rebinding write tool (extends the `pc-slot-bind` of CC-2).  DM tells the AI "Mei has died and Sarah is rolling up Lin to replace her"; the AI emits the rebind + a fiction-log note via the M3c accept-gate.
+- CC-37 **[E]**. Session/chapter boundary independence.  Rebinding affordances work at any granularity, not just clean chapter starts; the engine doesn't tie rebinding to chapter transitions.
+
+### DM approval gate — opt-out from Q3 (added 2026-05-22)
+
+The default is **DM approval required** before an AI-synthesized backstory is locked in as the player's PC.  The campaign manifest can declare an opt-out for tables that prefer faster onboarding:
+
+- CC-38 **[H]**. `campaign.json` field `aiBackstory.requiresDmApproval: boolean` (default `true`).  Engine reads at synthesis time.  Underleaf keeps the default; other campaigns can opt out without runtime changes.
+- CC-39 **[E]**. When opt-out is active, the post-generation forbidden-token validator + word-count validator (CC-20, CC-21) still run; only the human-eyes step is skipped.
+
 ## Open questions for the user (carry into the prioritization conversation)
 
-1. **Confirm `{{pc:N}}` migration choice.** Migration landed today; the renderer falls back to `PC<N>` until live bindings ship.  OK?
-2. **Where does `pcSlots` state live?**  Campaign-level (durable) vs session-level (rebindable per session)?  UX-expert and TTRPG-expert both default to session-level.
-3. **Async-mode policy on archetype deviation.** Pre-assignment is a soft hint per the recommendations — players CAN deviate (and the DM sees that at intake).  Or should the runtime enforce the hint as hard?
-4. **DM approval gate — required, or skippable?**  Prompt-engineer recommends required; some DMs may want skip-for-speed.
-5. **Pre-gen library scope.**  Does Underleaf ship with a curated pre-gen suite (5 PCs)?  Who writes it?
-6. **The "use same device" message wording.**  UX-expert proposed three expectation moments; the exact copy is a tone decision the user owns.
-7. **AI synthesis at scale.**  If 5 PCs synthesize in parallel at session 1, the DM may want a progress indicator + cancel-one-PC option.
-8. **Print-friendly character sheet.** Tagged "bigger scope" by all three experts; ship later or carry into M5?
+**Resolved 2026-05-22:**
+- ~~`{{pc:N}}` migration choice~~ — landed, renderer falls back to `PC<N>` when unbound.
+- ~~`pcSlots` scope~~ — per-session with campaign-level default; rebinding edge cases captured as CC-32 through CC-37.
+- ~~DM approval gate~~ — required by default, campaign-manifest opt-out (CC-38/CC-39).
+
+**Still open:**
+1. **Async-mode policy on archetype deviation.** Pre-assignment is a soft hint per the recommendations — players CAN deviate (and the DM sees that at intake).  Or should the runtime enforce the hint as hard?
+2. **Pre-gen library scope.**  Does Underleaf ship with a curated pre-gen suite (5 PCs)?  Who writes it?
+3. **The "use same device" message wording.**  UX-expert proposed three expectation moments; the exact copy is a tone decision the user owns.
+4. **AI synthesis at scale.**  If 5 PCs synthesize in parallel at session 1, the DM may want a progress indicator + cancel-one-PC option.
+5. **Print-friendly character sheet.** Tagged "bigger scope" by all three experts; ship later or carry into M5?
 
 These are NOT decisions for me to make.  They're inputs for the prioritization pass the user said they'd run with the experts.

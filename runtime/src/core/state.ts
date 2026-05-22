@@ -89,7 +89,7 @@ export type ThreadDebtLevel =
 
 /**
  * Per-PC caster-ladder state — combines the magic-discovery
- * ladder (rules-reference.md L125-135), the trying-too-hard tax
+ * ladder (underleaf/world/rules.md L125-135), the trying-too-hard tax
  * (L179-186), and the Free/Cheap cast-spam counter (L141) into
  * a single tier-2 record the AI write API can propose updates
  * to.  Render-gated DM-only (the DM narrates the ladder in
@@ -1369,7 +1369,7 @@ function applyEventToState(state: SessionState, event: QuireEvent): void {
     }
     case 'caster-state-set': {
       // Coord-only DM-side caster ladder + tax + spam-counter
-      // (rules-reference.md L125-141 + L179-186).  M3c.1
+      // (underleaf/world/rules.md L125-141 + L179-186).  M3c.1
       // materializer; M3c.5 wires hard-gate enforcement on
       // causedByResponseId for the AI-write path.  Render-gated
       // DM-only via filterForViewer + stripped from shareable saves.

@@ -17,7 +17,7 @@ Quire is a static-deployed web app that hosts a TTRPG play experience. Campaigns
 All design decisions are documented under [`design/`](design/):
 
 - [Architecture](design/architecture.md) — runtime, content split, networking, AI, storage.
-- [Rules reference](design/rules-reference.md) — the v0.1 ruleset the bundled play app supports.
+- [Rules schema](design/rules-schema.md) — engine-side contract for what a campaign declares. The canonical v0.1 ruleset itself lives in the Underleaf repo: [`underleaf/world/rules.md`](https://github.com/gutschke/underleaf/blob/main/world/rules.md).
 - [Schemas](design/schemas.md) — schema philosophy (hints, not gates), versioning, codemods.
 - [Security](design/security.md) — threat model, the canonical-origin trust anchor, AI broker invariants.
 

@@ -75,7 +75,20 @@ in the survey doc.  No new violations should land without explicit
 **[E]/[C]/[H]** tags on each work item.
 
 Tagged retroactively: `m3d-playtest-followups.md` items 1-7 and
-`m4-character-creation.md` items CC-1 through CC-31.
+`m4-character-creation.md` items CC-1 through CC-39.
+
+**Decisions locked 2026-05-22:**
+- Cross-campaign timeline: a good while out; pay tech-debt down
+  incrementally; low-friction cleanups happen as a matter of course.
+- V-9 (rules-reference.md location): **DONE this commit** — moved
+  to `underleaf/world/rules.md` + scaffold `quire/design/rules-schema.md`
+  in the engine repo; 14 inbound references updated.
+- pcSlots scope: per-session with campaign-level default; CC-32
+  through CC-37 cover rebinding edge cases (PC-death, player-leave,
+  mid-session, AI assistance).
+- DM approval gate for AI-synthesized backstories: required by
+  default; campaign-manifest opt-out via `aiBackstory.requiresDmApproval`
+  (CC-38/CC-39).
 
 ## Character-creation design pass (2026-05-22)
 

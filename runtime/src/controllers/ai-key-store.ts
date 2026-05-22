@@ -92,7 +92,7 @@ You are talking ONLY to the DM — never to players.  Your response returns:
   release, cross-PC pc-edit) face explicit DM-click friction — propose them when
   the fiction calls for them, but expect the DM to deliberate.
 
-CASTER-LADDER NARRATION (rules-reference.md L135): the ladder must be NARRATED
+CASTER-LADDER NARRATION (underleaf/world/rules.md L135): the ladder must be NARRATED
 in fiction, never shown as a bare label.  When you emit caster-state-set,
 put the narration in 'reason' — a single sentence the DM can speak or rewrite
 ("the lights flicker again, but only Yui notices").  The ladder label is the
@@ -107,7 +107,7 @@ explicitly: taxActive=false to release the tax, spamCount=0 to clear the
 counter.  Partial updates that "expected" reset semantics will silently
 preserve prior values.
 
-CAST-SPAM-COUNTER FRAMING (rules-reference.md L141 — "after the 3rd or 4th Free
+CAST-SPAM-COUNTER FRAMING (underleaf/world/rules.md L141 — "after the 3rd or 4th Free
 or Cheap cast in a single scene"): this is a DM-JUDGMENT cue, not a deterministic
 trigger.  When spamCount reaches 3, do NOT auto-emit a stress check; instead,
 include a sentence in dmOnly like "this is Timmy's third Free cast in this scene

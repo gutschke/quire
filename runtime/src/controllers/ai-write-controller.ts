@@ -274,7 +274,7 @@ export class AiWriteController implements ReactiveController {
       }
       case 'dice-roll': {
         // The broker SHOULDN'T propose double-1 outcomes (those are
-        // DM-narrated wild outcomes per rules-reference.md L47), but
+        // DM-narrated wild outcomes per underleaf/world/rules.md L47), but
         // a hostile / malformed expression could.  Defensive only.
         if (/(?:^|[^d])2d6/.test(update.expression) && /double-?1/i.test(
           update.modifierBreakdown ?? ''

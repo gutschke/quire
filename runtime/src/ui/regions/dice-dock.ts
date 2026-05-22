@@ -69,7 +69,7 @@ export class DiceDock extends LitElement {
    * the dice form.  Each chip shows the stat label + modifier
    * (e.g. "STR +1") and on click sets the dice draft to
    * "2d6+<mod>", priming a Roll.  Quire's 2d6+stat resolution
-   * (rules-reference.md) is the load-bearing reason this exists:
+   * (underleaf/world/rules.md) is the load-bearing reason this exists:
    * a new player who hasn't memorized the notation can roll
    * without composing a dice expression.
    *

@@ -617,7 +617,7 @@ export class AiPanel extends LitElement {
 
 /**
  * M3c.4: one-line summary of a StateUpdate, formatted for the
- * DM's at-a-glance scan.  Honors rules-reference.md L135 for the
+ * DM's at-a-glance scan.  Honors underleaf/world/rules.md L135 for the
  * caster-state-set case — `reason` (the narration prompt) is the
  * primary text; the bare ladder state is metadata in the muted
  * detail line.  Plain Lit text interpolation (no markdown
