@@ -14,15 +14,39 @@
 import { css } from 'lit';
 
 export const quireAppStyles = css`
+    /*
+     * Root host fills the viewport so the inner <quire-shell> grid
+     * can use 100dvw/100dvh.  No outer scrollbar, no centered max-
+     * width — the cockpit is the entire window per ui.md §
+     * "Layout system — the five-region grid."
+     */
     :host {
       display: block;
+      width: 100dvw;
+      height: 100dvh;
+      box-sizing: border-box;
       font-family: system-ui, -apple-system, sans-serif;
-      max-width: 65ch;
-      margin: 2rem auto;
-      padding: 1rem;
       line-height: 1.55;
       color: light-dark(#111, #eee);
       background: light-dark(#fff, #1a1a1a);
+      overflow: hidden;
+    }
+
+    /*
+     * Each region's scroll container needs its content padded
+     * consistently.  The .area divs inside quire-shell scroll their
+     * own content; this rule applies the padding inside the region
+     * containers themselves, NOT on the shell, so the scrollbar
+     * sits at the area boundary rather than offsetting the prose.
+     */
+    .area-rail > *,
+    .area-stage > *,
+    .area-aside > * {
+      padding: 0.6rem 1rem;
+    }
+    .area-topbar > *,
+    .area-dock > * {
+      padding: 0.3rem 1rem;
     }
 
     header h1 {
