@@ -1073,8 +1073,85 @@ export const quireAppStyles = css`
     .dm-rail,
     .dm-rail-empty,
     .seat-strip,
-    .seat-strip-empty {
+    .seat-strip-empty,
+    .invite-manager {
       border-left: 3px solid light-dark(#d4a017, #a07820);
+    }
+    /* CC-12: invite-manager panel.  Sits beside seat-strip in the
+       DM aside; renders only in DM views. */
+    .invite-manager-explainer {
+      font-size: 0.88em;
+      margin: 0.4rem 0 0.7rem;
+    }
+    .invite-manager-controls {
+      display: flex;
+      align-items: end;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .invite-manager-slot-label {
+      display: flex;
+      flex-direction: column;
+      font-size: 0.85em;
+      gap: 0.2rem;
+    }
+    .invite-manager-slot-select {
+      padding: 0.3rem 0.4rem;
+      border-radius: 0.25rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+    }
+    .invite-manager-generate {
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#925a17, #d6a559);
+      background: light-dark(#fef3c7, #3a2a04);
+      color: light-dark(#683f10, #f0c477);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .invite-manager-generate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .invite-manager-result {
+      margin-top: 0.7rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 0.3rem;
+      background: light-dark(#f8fafc, #1e293b);
+      border: 1px dashed light-dark(#cbd5e1, #334155);
+    }
+    .invite-manager-result-label {
+      font-size: 0.85em;
+      font-weight: 500;
+      margin-bottom: 0.3rem;
+    }
+    .invite-manager-result-url {
+      width: 100%;
+      padding: 0.3rem 0.4rem;
+      font-family: monospace;
+      font-size: 0.85em;
+      border-radius: 0.2rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      box-sizing: border-box;
+    }
+    .invite-manager-result-actions {
+      margin-top: 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .invite-manager-copy {
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.25rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    .invite-manager-feedback {
+      font-size: 0.85em;
+      color: light-dark(#16803d, #4ade80);
     }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×

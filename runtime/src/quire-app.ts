@@ -17,6 +17,8 @@ import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/seat-strip';
+import './ui/regions/invite-manager';
+import { encodeInviteToken, campaignFingerprint } from './invite-token';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -1017,6 +1019,10 @@ export class QuireApp extends LitElement {
         .pcSlots=${v.filteredShared.pcSlots}
         .onUnbind=${(slot: number) => this.bindPcSlot(slot, null)}
       ></seat-strip>
+      <invite-manager
+        .pcSlots=${v.filteredShared.pcSlots}
+        .onGenerate=${(slot: number) => this.generateInviteUrl(slot)}
+      ></invite-manager>
     `;
   }
 
@@ -1061,6 +1067,45 @@ export class QuireApp extends LitElement {
     if (!Number.isInteger(slot) || slot < 1 || slot > 9) return false;
     this.session.append('pc-slot-bind', { v: 1, slot, pcId });
     return true;
+  }
+
+  /**
+   * CC-12: generate an invite-URL for the given slot.  Coord-only
+   * (the `<invite-manager>` region is only mounted in DM views, but
+   * defense-in-depth check here too).  Returns the full URL on
+   * success, null on failure (slot out of range, no campaign loaded,
+   * encode failed).  The DM hands the URL to the intended player
+   * out-of-band (email / chat); the player visits and lands on the
+   * chargen route (CC-3).
+   */
+  generateInviteUrl(slot: number): Promise<string | null> {
+    if (!this.isCoordinator()) return Promise.resolve(null);
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return Promise.resolve(null);
+    if (!Number.isInteger(slot) || slot < 1 || slot > 9) {
+      return Promise.resolve(null);
+    }
+    try {
+      const fingerprint = campaignFingerprint(campaign.base.source);
+      const token = encodeInviteToken({
+        slot,
+        issuedAt: Date.now(),
+        campaignFingerprint: fingerprint
+      });
+      const search = routeToSearch({
+        kind: 'character-creation',
+        slug: this.slugFor(campaign),
+        inviteToken: token
+      });
+      const url = `${window.location.origin}${window.location.pathname}${search}`;
+      return Promise.resolve(url);
+    } catch {
+      // encodeInviteToken throws InviteTokenError for invalid input;
+      // the slot range check above should catch all cases, but a
+      // defensive null-return keeps the UI's "generation failed"
+      // path honest if a future bug slips a bad payload through.
+      return Promise.resolve(null);
+    }
   }
 
   /**
