@@ -139,50 +139,55 @@ Synthesis runs ONCE at session 1, on the DM's machine, with the DM's API key.
 
 ## Cross-cutting items for the planning backlog
 
-These are the discrete work items the user can hand to experts for prioritization later. **Order below is not implementation order** — it's just numbered for reference.
+These are the discrete work items the user can hand to experts for prioritization later.  **Order below is not implementation order** — it's just numbered for reference.
+
+**Engine/Campaign tags** per `runtime/design/engine-vs-campaign-boundary.md`:
+- **[E]** = engine mechanism (generic across any TTRPG).
+- **[C]** = campaign policy (specific to Underleaf / specific to whichever campaign).
+- **[H]** = hybrid (engine ships the primitive; campaign declares the vocabulary).
 
 ### Char-creation primitives
-- CC-1. Define the `tableSeats` shared field + `<seat-strip>` region (already in `m3d-playtest-followups.md` §6).
-- CC-2. Define the `pcSlots` shared field + click-to-bind UI + AI `pc-slot-bind` write tool.  Renderer is landed; live state field is not.
-- CC-3. New `AppMode = 'character-creation'` + invite-token route variant in `routing.ts`.
-- CC-4. `SaveDocument` variant scoped to one PC (`PcCreationBundle`?); persistence-controller variant scoped to one PC's events.
+- CC-1 **[E]**. Define the `tableSeats` shared field + `<seat-strip>` region (already in `m3d-playtest-followups.md` §6).
+- CC-2 **[E]**. Define the `pcSlots` shared field + click-to-bind UI + AI `pc-slot-bind` write tool.  Renderer is landed; live state field is not.
+- CC-3 **[E]**. New `AppMode = 'character-creation'` + invite-token route variant in `routing.ts`.
+- CC-4 **[E]**. `SaveDocument` variant scoped to one PC (`PcCreationBundle`?); persistence-controller variant scoped to one PC's events.
 
 ### Player flow (UX)
-- CC-5. 6-step creation page region (`<character-creation>`): Landing → Read-first → Pick path → Work → Done → Resume.
-- CC-6. Q&A form for 7 MC + 3 SA questions with conditional follow-ups.
-- CC-7. Free-write markdown editor with the mandatory question pinned.
-- CC-8. Pre-gen browser with "edit after picking" affordance.
-- CC-9. Path toggle (Q&A ↔ free-write) with answer-preservation across switch.
-- CC-10. "Pack my character" file download + copy-as-token export.
-- CC-11. Resume-on-revisit + "wrong-device" empty state.
+- CC-5 **[E]**. 6-step creation page region (`<character-creation>`): Landing → Read-first → Pick path → Work → Done → Resume.
+- CC-6 **[C]**. Q&A form for 7 MC + 3 SA questions with conditional follow-ups.  *Campaign declares the questions; engine renders.*
+- CC-7 **[E]**. Free-write markdown editor with the mandatory question pinned.
+- CC-8 **[H]**. Pre-gen browser with "edit after picking" affordance.  *Browser is engine; the pre-gens are campaign content.*
+- CC-9 **[E]**. Path toggle (Q&A ↔ free-write) with answer-preservation across switch.
+- CC-10 **[E]**. "Pack my character" file download + copy-as-token export.
+- CC-11 **[E]**. Resume-on-revisit + "wrong-device" empty state.
 
 ### DM flow
-- CC-12. `<invite-manager>` panel: list slots + generate invite link buttons + paste-incoming-token area.
-- CC-13. Session-1 intake: WebRTC pull / paste-token / collapse-to-Mode-A for unfinished players.
-- CC-14. "Synthesize all backstories" DM-only button + per-PC review pills.
-- CC-15. DM constraint DSL (start with `party_requires` + `party_unique`).
-- CC-16. Soft-warning surface for 72-hour-crystallization + engagement-layer balance.
+- CC-12 **[E]**. `<invite-manager>` panel: list slots + generate invite link buttons + paste-incoming-token area.
+- CC-13 **[E]**. Session-1 intake: WebRTC pull / paste-token / collapse-to-Mode-A for unfinished players.
+- CC-14 **[H]**. "Synthesize all backstories" DM-only button + per-PC review pills.  *Button + pill render are engine; what counts as a backstory is campaign.*
+- CC-15 **[H]**. DM constraint DSL (start with `party_requires` + `party_unique`).  *DSL grammar is engine; declared values are campaign.*
+- CC-16 **[H]**. Soft-warning surface for 72-hour-crystallization + engagement-layer balance.  *Warning surface is engine; thresholds are campaign.*
 
 ### AI synthesis
-- CC-17. Backstory-synthesis schema variant in `src/ai/schema.ts`.
-- CC-18. Player-facing context builder that hard-overrides `includeDmNotes: false`.
-- CC-19. System prompt (negative-tone + hard constraints + few-shot from existing example).
-- CC-20. Forbidden-token post-check + single auto-retry.
-- CC-21. Structural validator (word count, place token, name uniqueness).
-- CC-22. 1h cache for the campaign prefix; parallel suffix calls.
-- CC-23. Re-roll whole / regenerate-paragraph / edit-freely UX.
-- CC-24. DM approval gate + per-PC pill.
+- CC-17 **[H]**. Backstory-synthesis schema variant in `src/ai/schema.ts`.  *Schema is engine; prompt content is campaign.*
+- CC-18 **[E]**. Player-facing context builder that hard-overrides `includeDmNotes: false`.  *Engine invariant — see [[project-quire-ai-player-facing-scope]].*
+- CC-19 **[C]**. System prompt (negative-tone + hard constraints + few-shot from existing example).
+- CC-20 **[C]**. Forbidden-token post-check + single auto-retry.
+- CC-21 **[C]**. Structural validator (word count, place token, name uniqueness).
+- CC-22 **[E]**. 1h cache for the campaign prefix; parallel suffix calls.
+- CC-23 **[E]**. Re-roll whole / regenerate-paragraph / edit-freely UX.
+- CC-24 **[E]**. DM approval gate + per-PC pill.
 
 ### Pre-API-key checks
-- CC-25. Required-fields + length validator.
-- CC-26. Bay Area place allowlist + recent-transplant exemption.
-- CC-27. MC ↔ short-answer consistency cross-check.
+- CC-25 **[E]**. Required-fields + length validator.
+- CC-26 **[C]**. Bay Area place allowlist + recent-transplant exemption.
+- CC-27 **[C]**. MC ↔ short-answer consistency cross-check.
 
 ### Underleaf-specific
-- CC-28. Promote `underleaf/characters/pcs/README.md` 5-element list into a structured questionnaire schema.
-- CC-29. Per-archetype tag suggestions for the AI synthesis.
-- CC-30. Curated Bay Area place allowlist for the place-grounding question.
-- CC-31. "Two technical PCs" default constraint for Episode 1.
+- CC-28 **[C]**. Promote `underleaf/characters/pcs/README.md` 5-element list into a structured questionnaire schema.
+- CC-29 **[C]**. Per-archetype tag suggestions for the AI synthesis.
+- CC-30 **[C]**. Curated Bay Area place allowlist for the place-grounding question.
+- CC-31 **[C]**. "Two technical PCs" default constraint for Episode 1.
 
 ## Open questions for the user (carry into the prioritization conversation)
 

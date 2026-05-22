@@ -4,6 +4,18 @@
 **Source:** first real play-test 2026-05-22 (DM-only mode, Underleaf episode 1).
 **Reviewers consulted:** TTRPG-craft expert (roll UI), UX expert (navigation, modes, seat model, stale-peer).
 
+**Engine/Campaign tags** added 2026-05-22 per `runtime/design/engine-vs-campaign-boundary.md`:
+- **[E]** = engine mechanism.  **[C]** = campaign policy.  **[H]** = hybrid (engine primitive + campaign vocabulary).
+
+Item-level tags:
+- #1 markdown-link interceptor — **[E]**.
+- #2 campaign-link linter — **[E]**.
+- #3 stale-DM-peer cleanup — **[E]**.
+- #4 2d6-first dice UI — **[H]** (engine renders; campaign declares primary roll).
+- #5 PC1/PC2 binding — **[E]** (`{{pc:N}}` markup is engine convention).
+- #6 modes-of-play polymorphism — **[E]** (table topology is engine; PCs filling seats are campaign).
+- #7 scene-switching primary affordance — **[E]**.
+
 The play-test surfaced **seven concerns** that, taken together, point to a coherent next milestone scope.  Three of them (#1, #3, #5) share a navigation primitive; two (#2, #3) share a seat/slot primitive; one (#4) is pure cleanup.  Recommendation: M3d ships the navigation + seat primitives + the cleanup; M3e takes the roll-UI overhaul.  See "Suggested sequencing" at the end.
 
 ## The seven concerns
@@ -105,7 +117,7 @@ Open question: does this run on the *runtime* repo, the *campaign* repo, or both
 
 **Two concerns share the seat primitive.**  `pcSlots` (#5) and `tableSeats` (#6) are essentially the same data structure viewed two ways — scene-side substitution and seat-strip rendering.  Implement them as one underlying shared-state field; expose two render paths.
 
-**`design/ui.md` is missing.**  Both experts reached for it; only `redesign-plan.md` exists today.  Reconstructing `ui.md` from this design doc + the existing region implementations should be part of M3d's first phase.
+**`design/ui.md` exists at `quire/design/ui.md`** (one level up from the runtime).  Earlier draft of this doc claimed it was missing — that was wrong.  The runtime's design folder doesn't have its own ui.md; both experts correctly read the engine-level one.  Whether to also keep a runtime-scoped ui.md (or refactor the existing engine-level one) is a question for the engine-vs-campaign-boundary discussion.
 
 ## Suggested sequencing
 

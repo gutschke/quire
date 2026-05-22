@@ -62,6 +62,21 @@ Design doc + expert convergence point at three primitives:
 
 Recommended pre-implementation 4-reviewer gate on the design doc.
 
+## Engine-vs-campaign boundary survey (2026-05-22)
+
+User surfaced a cross-cutting design principle: Quire engine hosts
+primitives, campaigns host policy.  We're underleaf-first today (one
+campaign, hardcoded shortcuts acceptable) but every drift in the
+right direction is good.  Full survey: `design/engine-vs-campaign-boundary.md`.
+
+Known policy-in-engine violations (V-1 through V-11) are visible
+in the survey doc.  No new violations should land without explicit
+"we accept this debt" — every new design doc / feature gets
+**[E]/[C]/[H]** tags on each work item.
+
+Tagged retroactively: `m3d-playtest-followups.md` items 1-7 and
+`m4-character-creation.md` items CC-1 through CC-31.
+
 ## Character-creation design pass (2026-05-22)
 
 User play-test follow-up surfaced character creation as the next major
