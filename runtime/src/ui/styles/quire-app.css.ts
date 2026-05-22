@@ -1153,6 +1153,121 @@ export const quireAppStyles = css`
       font-size: 0.85em;
       color: light-dark(#16803d, #4ade80);
     }
+
+    /* CC-5: <character-creation> region (skeleton).  Renders as a
+       Stage takeover — once F8 polish lands it'll get a wider grid
+       column and collapse Rail / Aside / Dock; today it just sits
+       in the Stage region. */
+    .character-creation {
+      max-width: 48rem;
+    }
+    .character-creation-error {
+      border-left: 3px solid light-dark(#dc2626, #ef4444);
+    }
+    .character-creation-progress {
+      display: flex;
+      list-style: none;
+      padding: 0;
+      margin: 0 0 1rem;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .character-creation-progress-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.25rem 0.6rem;
+      border-radius: 999px;
+      background: light-dark(#f1f5f9, #1e293b);
+      font-size: 0.85em;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .character-creation-progress-step-current {
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e3a8a, #93c5fd);
+      font-weight: 600;
+    }
+    .character-creation-progress-step-done {
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #86efac);
+    }
+    .character-creation-progress-num {
+      font-weight: 600;
+    }
+    .character-creation-step {
+      margin: 1rem 0;
+    }
+    .character-creation-readfirst {
+      padding-left: 1.5rem;
+    }
+    .character-creation-readfirst li {
+      margin: 0.5rem 0;
+    }
+    .character-creation-paths {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      margin: 1rem 0;
+    }
+    .character-creation-path {
+      text-align: left;
+      padding: 0.7rem 0.9rem;
+      border-radius: 0.4rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    .character-creation-path:hover {
+      background: light-dark(#f8fafc, #1e293b);
+      border-color: light-dark(#94a3b8, #475569);
+    }
+    .character-creation-path-chosen {
+      border-color: light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+    }
+    .character-creation-path-header {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.3rem;
+    }
+    .character-creation-path-title {
+      font-weight: 600;
+    }
+    .character-creation-path-badge {
+      font-size: 0.78em;
+      padding: 0.05rem 0.45rem;
+      border-radius: 999px;
+      background: light-dark(#fef3c7, #3a2a04);
+      color: light-dark(#925a17, #d6a559);
+    }
+    .character-creation-path-description {
+      font-size: 0.9em;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .character-creation-stepnav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1rem;
+      padding-top: 0.7rem;
+      border-top: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+    .character-creation-stepnav button {
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    .character-creation-stepnav button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .character-creation-stepnav-progress {
+      font-size: 0.85em;
+      color: light-dark(#64748b, #94a3b8);
+    }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×
        button at row end. */

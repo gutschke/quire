@@ -47,6 +47,7 @@ export type AppStateKind =
   | 'episode'
   | 'scene'
   | 'character'
+  | 'character-creation'
   | 'error';
 
 export interface AppStateHook {

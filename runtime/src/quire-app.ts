@@ -18,7 +18,13 @@ import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/seat-strip';
 import './ui/regions/invite-manager';
-import { encodeInviteToken, campaignFingerprint } from './invite-token';
+import './ui/regions/character-creation';
+import {
+  encodeInviteToken,
+  decodeInviteToken,
+  campaignFingerprint,
+  InviteTokenError
+} from './invite-token';
 import './ui/regions/dm-rail';
 import type { DmRailEpisode } from './ui/regions/dm-rail';
 import './ui/regions/dice-dock';
@@ -186,6 +192,17 @@ type AppState =
       };
     }
   | { kind: 'character'; campaign: LoadedCampaign; character: LoadedCharacter }
+  /**
+   * CC-5 (M4 char-creation): the chargen route's loaded state.
+   * `slot` is 0 + `tokenError` is set when the token failed to
+   * decode; the region renders the friendly error banner.
+   */
+  | {
+      kind: 'character-creation';
+      campaign: LoadedCampaign;
+      slot: number;
+      tokenError: '' | 'malformed' | 'expired' | 'campaign-mismatch' | 'invalid-slot';
+    }
   | { kind: 'error'; message: string; details?: string };
 
 /**
@@ -247,6 +264,14 @@ export class QuireApp extends LitElement {
    * get a TypeScript error.
    */
   @state() private _appState: AppState = { kind: 'idle' };
+
+  /**
+   * CC-5: chosen-path state for the chargen region.  Local-only
+   * today; IndexedDB persistence lands in CC-4 + CC-11.  Empty
+   * string means "not chosen yet" (step 3 picker is unselected).
+   */
+  @state() private chargenChosenPath: 'qa' | 'free-write' | 'pre-gen' | '' =
+    '';
   get appState(): Readonly<AppState> {
     return this._appState;
   }
@@ -744,18 +769,37 @@ export class QuireApp extends LitElement {
         return;
       }
 
-      // CC-3: character-creation route — player visiting an invite
-      // link OR DM previewing a token redeem.  Today this lands on
-      // the campaign view as a placeholder; the 6-step
-      // `<character-creation>` region (CC-5) replaces this branch
-      // when it lands.  Token validation (CC-3 follow-on) and the
-      // actual chargen UI ship in subsequent commits.
+      // CC-3 / CC-5: character-creation route — player visiting
+      // an invite link.  Decode the token, validate against the
+      // loaded campaign's fingerprint, and stage the chargen
+      // region (which renders an error banner when validation
+      // fails rather than booting the player back to home).
       if (route.kind === 'character-creation') {
-        this._appState = { kind: 'campaign', campaign };
-        // No resume prompt — the player is entering a different
-        // workflow than session-load.  The chargen-resume affordance
-        // (CC-11, P2) hangs off the IndexedDB key
-        // `{campaignSlug}:{slotIndex}` not the autosave path.
+        const expectedFp = campaignFingerprint(campaign.base.source);
+        try {
+          const payload = decodeInviteToken(route.inviteToken, {
+            expectedFingerprint: expectedFp
+          });
+          this._appState = {
+            kind: 'character-creation',
+            campaign,
+            slot: payload.slot,
+            tokenError: ''
+          };
+        } catch (e) {
+          if (e instanceof InviteTokenError) {
+            this._appState = {
+              kind: 'character-creation',
+              campaign,
+              slot: 0,
+              tokenError: e.code
+            };
+          } else {
+            // Unexpected: re-throw to fall through to the generic
+            // error branch below.
+            throw e;
+          }
+        }
         return;
       }
 
@@ -1419,12 +1463,52 @@ export class QuireApp extends LitElement {
           this.appState.campaign,
           this.appState.character
         );
+      case 'character-creation':
+        return this.renderCharacterCreation(
+          this.appState.campaign,
+          this.appState.slot,
+          this.appState.tokenError
+        );
       case 'error':
         return this.renderError(
           this.appState.message,
           this.appState.details
         );
     }
+  }
+
+  /**
+   * CC-5: render the chargen region for an inbound invite-token
+   * visit.  The region's step machine + step copy lives in
+   * `<character-creation>`; QuireApp's job here is to feed it the
+   * validated slot + campaign info (or the error code when token
+   * validation failed at navigateToRoute time).
+   *
+   * Path-pick wiring is local-only today (the chosen path doesn't
+   * persist across reloads yet).  CC-11 / CC-4 land the
+   * IndexedDB-backed persistence.
+   */
+  private renderCharacterCreation(
+    campaign: LoadedCampaign,
+    slot: number,
+    tokenError:
+      | ''
+      | 'malformed'
+      | 'expired'
+      | 'campaign-mismatch'
+      | 'invalid-slot'
+  ): TemplateResult {
+    return html`
+      <character-creation
+        .slotNumber=${slot}
+        .campaignName=${campaign.base.manifest.name}
+        .tokenError=${tokenError}
+        .chosenPath=${this.chargenChosenPath}
+        .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
+          this.chargenChosenPath = p;
+        }}
+      ></character-creation>
+    `;
   }
 
   private renderIdle(): TemplateResult {
