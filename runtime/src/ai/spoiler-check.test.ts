@@ -133,17 +133,36 @@ describe('containsSpoilerTokens (CC-20)', () => {
     ).toEqual(['the network (closed)']);
   });
 
-  it('DEFAULT_SPOILER_TOKENS matches the Underleaf documented list', () => {
+  it('DEFAULT_SPOILER_TOKENS contains the original core 5 + F-S2 synonyms', () => {
     // Sanity check: serves as documentation of the current
     // hardcoded list.  Update this test when V-6 lands and the
-    // list moves to campaign.json.
-    expect([...DEFAULT_SPOILER_TOKENS]).toEqual([
-      'Quiet',
-      'magic',
-      'premonition',
-      'fate',
-      'chosen'
-    ]);
+    // list moves to campaign.json.  F-S2 (adversarial review
+    // 2026-05-22) extended the list with synonyms an AI naturally
+    // reaches for.
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('Quiet');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('magic');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('premonition');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('fate');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('chosen');
+    // F-S2 additions.
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('prophecy');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('destiny');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('supernatural');
+    expect([...DEFAULT_SPOILER_TOKENS]).toContain('psychic');
+  });
+
+  it('F-S2: catches synonyms the AI reaches for ("destiny", "prophecy", "psychic")', () => {
+    // Each of these would have passed the original 5-token list
+    // unscathed.  Verify they hit now.
+    expect(containsSpoilerTokens('She felt her destiny calling.')).toContain(
+      'destiny'
+    );
+    expect(
+      containsSpoilerTokens('an ancient prophecy weighed on her')
+    ).toContain('prophecy');
+    expect(
+      containsSpoilerTokens('she felt a psychic pull toward the gate')
+    ).toContain('psychic');
   });
 
   it('end-to-end: catches the prompt-engineer\'s example failure', () => {

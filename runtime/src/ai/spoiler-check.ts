@@ -35,21 +35,50 @@
  * before the discovery-arc beat, gives away the magic system to a
  * player whose character does not yet know magic exists.
  *
- * Per prompt-engineering recommendations: "Quiet, magic, premonition,
- * fate, chosen" — the five most obvious giveaways from the worldbook.
- * "Magical" is intentionally excluded as a separate token because it
- * collides with mundane English ("a magical sunset"); the post-check
- * is meant to catch deliberate disclosure, not idiomatic usage.
+ * **Adversarial review 2026-05-22 (F-S2):** the original 5-token
+ * list ("Quiet, magic, premonition, fate, chosen") was trivially
+ * defeated by an AI's natural synonym vocabulary — "the Hush", "the
+ * Stillness", "thaumaturgy", "destiny", "the elect", etc.  This list
+ * is broader after the review; the system prompt also explicitly
+ * tells the AI not to use synonyms (CC-19 follow-up), so the regex
+ * is the second-line catch, not the first.
+ *
+ * "Magical" / "magician" / "magically" are intentionally NOT in the
+ * list — they collide with mundane English ("a magical sunset", "a
+ * stage magician") and the word-boundary lookaround makes "magic"
+ * NOT match those substrings.  The post-check is meant to catch
+ * deliberate disclosure, not idiomatic usage.
  *
  * Word-boundary matching means "the Quiet" is caught but "quietly"
  * is not.  Case-insensitive so "quiet" / "Quiet" / "QUIET" all hit.
+ *
+ * **This list is CAMPAIGN POLICY (V-6 alias of CC-20).**  The default
+ * is Underleaf-tuned; future campaigns declare their own via
+ * `campaign.json` rules.spoilerTokens[] (`TODO(campaign-policy)`).
+ * The synthesizer accepts `spoilerTokens?` per-call so the campaign
+ * manifest can override.
  */
 export const DEFAULT_SPOILER_TOKENS: readonly string[] = [
+  // Core 5 (original v1).
   'Quiet',
   'magic',
   'premonition',
   'fate',
-  'chosen'
+  'chosen',
+  // F-S2 extensions — synonyms an AI naturally reaches for.
+  'prophecy',
+  'prophesied',
+  'destiny',
+  'destined',
+  'foreseen',
+  'foresight',
+  'supernatural',
+  'paranormal',
+  'psychic',
+  'thaumaturgy',
+  'sorcery',
+  'awakening',
+  'awakened'
 ];
 
 /**

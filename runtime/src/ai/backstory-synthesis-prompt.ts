@@ -171,9 +171,24 @@ export function assembleUserPrompt(input: SynthesisPromptInput): string {
 
 /**
  * Format a single Q+A pair for the user prompt.  MC answers are
- * presented as facts; short-answer answers are wrapped in
- * triple-quoted blocks (preserving the player's exact words for the
- * AI to imitate / paraphrase tightly per the `aiRole` hint).
+ * presented as facts; short-answer answers are wrapped in the
+ * canonical `<untrusted_content>` sentinel via `wrapUntrusted` so
+ * a player who types `"""` (or any other markdown / quote token)
+ * inside their answer can't break out and inject author-level
+ * instructions to the model.
+ *
+ * **Security history (F-PI1 — Phase 2 adversarial review,
+ * 2026-05-22):** an earlier version of this function wrapped
+ * short-answer text in triple-quotes (`"""\n...\n"""`).  A player
+ * who included `"""` literally in their answer could close the
+ * fence, inject "# Author override" instructions, and re-open the
+ * fence — directly defeating CC-20's spoiler firewall because the
+ * AI's compliance with the player's instructions trumps the
+ * "do not use these tokens" guard.  `wrapUntrusted` (defined in
+ * `context.ts`) carries the load-bearing wrapper-safety contract:
+ * any `</untrusted_content>` substring in the wrapped body is
+ * escaped to `<!--UC_CLOSE-->`.  See memory
+ * `project-quire-ai-player-facing-scope`.
  */
 function formatAnsweredQuestion(
   question: CampaignCharCreationQuestion,
@@ -191,10 +206,14 @@ function formatAnsweredQuestion(
   const labelLine = `**${question.prompt}**`;
 
   if (question.kind === 'short-answer') {
-    // Quote verbatim so the AI knows to paraphrase tightly.  The
-    // triple-quote pattern signals "treat as untrusted player input"
-    // distinct from the wrapped <untrusted_content> blocks above.
-    return `${labelLine}\n\n"""\n${answer}\n"""`;
+    // Wrap the player's verbatim text in the wrapper-safety sentinel
+    // so close-tag injection is escaped.  Source label includes the
+    // question id so the model has provenance even if multiple
+    // short-answers land back-to-back.
+    return `${labelLine}\n\n${wrapUntrusted(
+      answer,
+      `player-answer-${question.id}`
+    )}`;
   }
 
   // MC: present as a fact.
