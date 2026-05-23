@@ -6,27 +6,39 @@ import { execSync } from 'node:child_process';
 /**
  * Build-time version stamp.  Used by the runtime to render a discrete
  * corner badge so a user can tell at a glance which build Cloudflare
- * has deployed.  Format: "<commit-sha>" plus a "+dirty" suffix when
- * the working tree has uncommitted changes to TRACKED files.
+ * has deployed.  Format: "<commit-sha>" plus a "+dirty(N:firstFile)"
+ * suffix when the working tree has uncommitted changes to TRACKED
+ * files.
  *
  * Pass `--untracked-files=no` so files Cloudflare's build environment
- * generates (a `.wrangler/`, transient build artifacts, etc.) don't
- * trigger a perpetual "+dirty" on every deploy.  Tracked-file mods
- * still count — that's the signal we actually care about ("did the
- * developer push their local edits before deploying?").
+ * generates (`.wrangler/`, transient build artifacts) don't trigger a
+ * perpetual "+dirty" on every deploy.  Tracked-file mods still count
+ * — that's the signal we actually care about.
+ *
+ * Diagnostic suffix (2026-05-23): when dirty fires, surface the
+ * first modified file's path + total count so we can debug what
+ * Cloudflare's build is touching.  Format: `+dirty(3:src/foo.ts)`.
+ * Previous "+dirty" was opaque — couldn't tell whether it was
+ * legitimate (developer forgot to push) or noise (build env
+ * artifact).  Cap the file path to avoid bloating the badge.
  */
 function readVersionStamp(): string {
   try {
     const sha = execSync('git rev-parse --short HEAD', { cwd: __dirname })
       .toString()
       .trim();
-    const dirty =
-      execSync('git status --porcelain --untracked-files=no', {
-        cwd: __dirname
-      })
-        .toString()
-        .trim().length > 0;
-    return dirty ? `${sha}+dirty` : sha;
+    const dirtyOut = execSync(
+      'git status --porcelain --untracked-files=no',
+      { cwd: __dirname }
+    )
+      .toString()
+      .trim();
+    if (dirtyOut.length === 0) return sha;
+    const lines = dirtyOut.split('\n');
+    // Porcelain format: "XY <path>" (XY is the 2-char status code).
+    const first = lines[0]?.slice(3).trim() ?? '';
+    const firstShort = first.length > 30 ? first.slice(0, 27) + '…' : first;
+    return `${sha}+dirty(${lines.length}:${firstShort})`;
   } catch {
     return 'unknown';
   }

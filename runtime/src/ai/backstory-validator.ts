@@ -94,7 +94,12 @@ export interface BackstoryValidationIssue {
     | 'skill-mastery-too-few'
     | 'skill-mastery-too-many'
     | 'skill-mastery-unknown-category'
-    | 'skill-mastery-duplicate';
+    | 'skill-mastery-duplicate'
+    /** Phase 3b polish (2026-05-23): synthesizer attached this code
+        when the DM hand-edited a spoiler-leak-rejected backstory and
+        chose to accept the cleaned version.  Audit-only — surfaces
+        as a "DM edited" pip in the review card. */
+    | 'dm-hand-edited';
   /** Human-friendly description; used in the retry prompt + DM banner. */
   message: string;
 }

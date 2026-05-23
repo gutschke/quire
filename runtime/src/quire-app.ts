@@ -1293,6 +1293,10 @@ export class QuireApp extends LitElement {
             inlineAnswers: {}
           })}
         .onAccept=${(slot: number) => this.chargen.acceptSlot(slot)}
+        .onAcceptWithEdits=${(
+          slot: number,
+          edits: { name: string; backstory: string }
+        ) => this.chargen.acceptWithEdits(slot, edits)}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}
       ></chargen-dm-review>

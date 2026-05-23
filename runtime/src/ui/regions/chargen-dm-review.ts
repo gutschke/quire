@@ -67,6 +67,15 @@ export type QuickGenerateCallback = (
   options: { name: string; hook: string }
 ) => Promise<SynthesizeBackstoryResult>;
 /**
+ * Phase 3b polish (2026-05-23): DM hand-edits a spoiler-leak-
+ * rejected synth result and commits.  Returns false when the slot
+ * has no rejected response to edit (UI hides the affordance then).
+ */
+export type AcceptWithEditsCallback = (
+  slot: number,
+  edits: { name: string; backstory: string }
+) => boolean;
+/**
  * P3U-12: resolve a bound pcId to its display name.  Host wires to
  * `ChargenController.displayNameForBound`.  Returns null while the
  * character file is still loading; the region falls back to raw
@@ -188,6 +197,14 @@ export class ChargenDmReview extends LitElement {
   onQuickGenerate: QuickGenerateCallback | null = null;
 
   /**
+   * Phase 3b polish (2026-05-23): DM hand-edits a spoiler-leak-
+   * rejected backstory and commits.  Host wires to
+   * `ChargenController.acceptWithEdits`.
+   */
+  @property({ attribute: false })
+  onAcceptWithEdits: AcceptWithEditsCallback | null = null;
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -214,6 +231,16 @@ export class ChargenDmReview extends LitElement {
   @state() private quickGenHook: Map<number, string> = new Map();
   @state() private quickGenInFlight: Set<number> = new Set();
 
+  /**
+   * Phase 3b polish (2026-05-23): which seat's "Edit + accept"
+   * dialog is open (single at a time).  Initial values seed from
+   * the rejected response; subsequent edits live in
+   * `editDraft` until commit.
+   */
+  @state() private editModalSlot: number | null = null;
+  @state() private editDraftName: string = '';
+  @state() private editDraftBackstory: string = '';
+
   override render(): TemplateResult {
     return html`
       <section class="card chargen-dm-review">
@@ -229,6 +256,100 @@ export class ChargenDmReview extends LitElement {
         </ol>
       </section>
       ${this.renderReviewDialog()}
+      ${this.renderEditDialog()}
+    `;
+  }
+
+  /**
+   * Phase 3b polish (2026-05-23): editable dialog seeded from a
+   * spoiler-leak-rejected synthesis.  The DM removes the leaked
+   * tokens (highlighted as forbidden chips in the seat card) +
+   * commits via "Save + accept".  Same dialog pattern as the
+   * review modal — backdrop click + Esc + close button all close.
+   */
+  private renderEditDialog(): TemplateResult | typeof nothing {
+    const slot = this.editModalSlot;
+    if (slot === null) return nothing;
+    const synth = this.synthResults.get(slot);
+    if (!synth || synth.ok || !synth.rejectedResponse) return nothing;
+    const tokens = synth.persistentTokens ?? [];
+    const canSubmit =
+      this.editDraftName.trim().length > 0 &&
+      this.editDraftBackstory.trim().length > 0;
+    return html`
+      <dialog
+        class="chargen-dm-review-edit-modal"
+        @cancel=${() => this.closeEditModal()}
+        @click=${(e: MouseEvent) => {
+          if ((e.target as HTMLElement).tagName === 'DIALOG') {
+            this.closeEditModal();
+          }
+        }}
+      >
+        <header class="chargen-dm-review-modal-head">
+          <h3 class="chargen-dm-review-modal-title">
+            Edit PC${slot} backstory + accept
+          </h3>
+          <button
+            type="button"
+            class="chargen-dm-review-modal-close"
+            aria-label="Close edit"
+            @click=${() => this.closeEditModal()}
+          >
+            ×
+          </button>
+        </header>
+        <div class="chargen-dm-review-modal-body">
+          ${tokens.length > 0
+            ? html`<p class="chargen-dm-review-edit-hint">
+                Remove these AI-leaked words before saving:
+                ${tokens.map(
+                  (t, i) =>
+                    html`${i > 0 ? ', ' : ''}<strong
+                        class="chargen-dm-review-spoiler-token-inline"
+                        >${t}</strong
+                      >`
+                )}.
+              </p>`
+            : nothing}
+          <label class="chargen-dm-review-edit-field">
+            <span>PC name</span>
+            <input
+              type="text"
+              .value=${this.editDraftName}
+              maxlength="80"
+              @input=${(e: Event) => {
+                this.editDraftName = (e.currentTarget as HTMLInputElement).value;
+              }}
+            />
+          </label>
+          <label class="chargen-dm-review-edit-field">
+            <span>Backstory</span>
+            <textarea
+              rows="14"
+              .value=${this.editDraftBackstory}
+              @input=${(e: Event) => {
+                this.editDraftBackstory = (
+                  e.currentTarget as HTMLTextAreaElement
+                ).value;
+              }}
+            ></textarea>
+          </label>
+        </div>
+        <footer class="chargen-dm-review-modal-foot">
+          <button type="button" @click=${() => this.closeEditModal()}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="chargen-dm-review-edit-save"
+            ?disabled=${!canSubmit || !this.onAcceptWithEdits}
+            @click=${() => this.commitEditAndAccept()}
+          >
+            Save + accept
+          </button>
+        </footer>
+      </dialog>
     `;
   }
 
@@ -297,25 +418,31 @@ export class ChargenDmReview extends LitElement {
    * the element.  Closing follows the same pattern in reverse.
    */
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has('reviewModalSlot')) {
-      const dialog = this.querySelector<HTMLDialogElement>(
-        'dialog.chargen-dm-review-modal'
-      );
-      // Defensive: happy-dom (test env) may not implement
-      // showModal/close.  Wrap so a missing API doesn't fail
-      // re-renders.  In a real browser these calls are essential
-      // — they invoke the top-layer overlay + focus trap.
+    // Defensive showModal/close — happy-dom doesn't implement
+    // either, so wrap so a missing API doesn't fail re-renders.
+    // In a real browser these calls are essential (top-layer
+    // overlay + focus trap).
+    const sync = (
+      open: boolean,
+      selector: string
+    ): void => {
+      const dialog = this.querySelector<HTMLDialogElement>(selector);
+      if (!dialog) return;
       try {
-        if (this.reviewModalSlot !== null && dialog && !dialog.open) {
-          dialog.showModal?.();
-        }
-        if (this.reviewModalSlot === null && dialog && dialog.open) {
-          dialog.close?.();
-        }
+        if (open && !dialog.open) dialog.showModal?.();
+        if (!open && dialog.open) dialog.close?.();
       } catch {
-        /* test env without dialog support — DOM is still
-           inspectable for assertions */
+        /* test env without dialog support — DOM stays inspectable */
       }
+    };
+    if (changed.has('reviewModalSlot')) {
+      sync(this.reviewModalSlot !== null, 'dialog.chargen-dm-review-modal');
+    }
+    if (changed.has('editModalSlot')) {
+      sync(
+        this.editModalSlot !== null,
+        'dialog.chargen-dm-review-edit-modal'
+      );
     }
   }
 
@@ -602,6 +729,15 @@ export class ChargenDmReview extends LitElement {
       `;
     }
     const isSpoiler = synth.code === 'spoiler-leak-persistent';
+    // Phase 3b polish (2026-05-23): when we have the parsed-but-
+    // rejected response (currently only on spoiler-leak), surface
+    // the synthesized fields + persistent tokens + an "Edit +
+    // accept" affordance so the DM doesn't lose the salvageable
+    // backstory on a recoverable failure.
+    const canHandEdit =
+      isSpoiler &&
+      synth.code === 'spoiler-leak-persistent' &&
+      !!synth.rejectedResponse;
     return html`
       <div
         class="chargen-dm-review-synth ${isSpoiler
@@ -609,10 +745,80 @@ export class ChargenDmReview extends LitElement {
           : 'chargen-dm-review-synth-err'}"
       >
         <div class="chargen-dm-review-synth-label">
-          ${isSpoiler ? '⚠ Spoiler leak persisted' : '✗ Synthesis failed'}
+          ${isSpoiler ? '⚠ Spoiler leak' : '✗ Synthesis failed'}
         </div>
         <div class="chargen-dm-review-synth-message">${synth.message}</div>
-        ${this.renderAcceptReviseActions(slot, false)}
+        ${isSpoiler && synth.persistentTokens && synth.persistentTokens.length > 0
+          ? html`<ul class="chargen-dm-review-spoiler-tokens" aria-label="Forbidden words detected">
+              ${synth.persistentTokens.map(
+                (t) =>
+                  html`<li
+                    class="chargen-dm-review-spoiler-token"
+                    title="Campaign-forbidden term"
+                  >
+                    ${t}
+                  </li>`
+              )}
+            </ul>`
+          : nothing}
+        ${canHandEdit && synth.rejectedResponse
+          ? html`<div class="chargen-dm-review-rejected-preview">
+              <div class="chargen-dm-review-synth-name">
+                Generated as
+                <strong>${synth.rejectedResponse.name}</strong>
+                <span class="muted">
+                  — ${synth.rejectedResponse.pronouns}
+                </span>
+              </div>
+              ${this.renderTagChips(synth.rejectedResponse.tags)}
+              ${this.renderStatGrid(synth.rejectedResponse.stats)}
+              ${this.renderSkillChips(synth.rejectedResponse.skillMastery)}
+            </div>`
+          : nothing}
+        ${this.renderFailureActions(slot, canHandEdit)}
+      </div>
+    `;
+  }
+
+  /**
+   * Phase 3b polish (2026-05-23): action row for a failed synth.
+   * Replaces the prior "Ask player to revise" lone button (which
+   * made no sense for DM-driven quick-gen).  Now:
+   *   - "Edit + accept" (shown only when we have rejectedResponse)
+   *     opens a textarea modal so the DM can clean up the leak +
+   *     commit.
+   *   - "Discard + try again" always shown — clears the failed
+   *     result, returning the seat to the pre-synth state.
+   *   - "Ask player to revise" stays as a tertiary option for the
+   *     player-driven case (the audit-note framing makes sense
+   *     when answers came from the player).
+   */
+  private renderFailureActions(
+    slot: number,
+    canHandEdit: boolean
+  ): TemplateResult {
+    return html`
+      <div class="chargen-dm-review-synth-actions">
+        ${canHandEdit
+          ? html`<button
+              type="button"
+              class="chargen-dm-review-edit-accept"
+              ?disabled=${!this.onAcceptWithEdits}
+              title="Open the generated backstory in an editor; remove the leaked words; accept"
+              @click=${() => this.openEditModal(slot)}
+            >
+              Edit + accept
+            </button>`
+          : nothing}
+        <button
+          type="button"
+          class="chargen-dm-review-discard"
+          ?disabled=${!this.onRevise}
+          title="Discard this result; the seat returns to its pre-synth state"
+          @click=${() => this.onRevise?.(slot, 'discarded by DM')}
+        >
+          Discard + try again
+        </button>
       </div>
     `;
   }
@@ -659,6 +865,33 @@ export class ChargenDmReview extends LitElement {
 
   private openReviewModal(slot: number): void {
     this.reviewModalSlot = slot;
+  }
+
+  /**
+   * Phase 3b polish (2026-05-23): seed the edit dialog from the
+   * spoiler-leak-rejected response and open it.  Quietly no-ops if
+   * the slot has no rejected response.
+   */
+  private openEditModal(slot: number): void {
+    const synth = this.synthResults.get(slot);
+    if (!synth || synth.ok || !synth.rejectedResponse) return;
+    this.editDraftName = synth.rejectedResponse.name;
+    this.editDraftBackstory = synth.rejectedResponse.backstory;
+    this.editModalSlot = slot;
+  }
+
+  private closeEditModal(): void {
+    this.editModalSlot = null;
+  }
+
+  private commitEditAndAccept(): void {
+    const slot = this.editModalSlot;
+    if (slot === null || !this.onAcceptWithEdits) return;
+    const name = this.editDraftName.trim();
+    const backstory = this.editDraftBackstory.trim();
+    if (!name || !backstory) return;
+    const ok = this.onAcceptWithEdits(slot, { name, backstory });
+    if (ok) this.editModalSlot = null;
   }
 
   // ---- Step 5: full review card pieces ----

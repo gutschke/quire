@@ -382,6 +382,56 @@ export class ChargenController implements ReactiveController {
   }
 
   /**
+   * Phase 3b polish (2026-05-23): DM hand-edits a spoiler-leak-
+   * rejected synth result and accepts it.  Used when the spoiler
+   * firewall caught the AI but most of the backstory is salvageable
+   * — the DM rewrites the offending sentence(s) and commits.
+   *
+   * Replaces the slot's failed result with a synthesized ok result
+   * whose backstory + name are the DM-edited values; other fields
+   * (pronouns, tags, stats, skillMastery) come from the
+   * rejectedResponse.  Then runs the normal acceptSlot flow.
+   *
+   * Returns false when the slot has no rejected response to edit
+   * (the UI should hide the affordance in that case).
+   */
+  acceptWithEdits(
+    slot: number,
+    edits: { name: string; backstory: string }
+  ): boolean {
+    const failed = this._synthResults.get(slot);
+    if (
+      !failed ||
+      failed.ok ||
+      !failed.rejectedResponse
+    ) {
+      return false;
+    }
+    const cleaned: SynthesizeBackstoryResult = {
+      ok: true,
+      response: {
+        ...failed.rejectedResponse,
+        name: edits.name,
+        backstory: edits.backstory
+      },
+      warnings: [
+        {
+          severity: 'warning',
+          code: 'dm-hand-edited',
+          message:
+            'DM hand-edited the backstory after a spoiler-leak rejection.'
+        }
+      ],
+      retried: true
+    };
+    this._synthResults.set(slot, cleaned);
+    this.host.requestUpdate();
+    // Now commit via the normal accept path.
+    this.acceptSlot(slot);
+    return true;
+  }
+
+  /**
    * P3T-19 revise.  Drops the cached synth result + accept flag so
    * the region's seat shows the bare "ready to synthesize" state;
    * appends an audit scratch-note carrying the optional reason the

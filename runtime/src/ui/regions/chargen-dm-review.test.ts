@@ -223,11 +223,15 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
     expect(synth!.textContent).toMatch(/Synthesis failed/);
   });
 
-  it('renders spoiler-leak-persistent with the spoiler banner', async () => {
+  it('renders spoiler-leak-persistent with the spoiler banner + token chips', async () => {
+    // Phase 3b polish (2026-05-23): banner label dropped "persisted"
+    // (DM-unfriendly internal-jargon); the per-token chips replace
+    // the prose "(tokens: …)" so the leaked words pop visually.
     const r: SynthesizeBackstoryResult = {
       ok: false,
       code: 'spoiler-leak-persistent',
-      message: 'AI repeated forbidden tokens.',
+      message:
+        'AI used forbidden words: "quiet".  These reveal campaign secrets.',
       persistentTokens: ['quiet']
     };
     const el = mount();
@@ -235,7 +239,11 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
     await el.updateComplete;
     const synth = el.querySelector('.chargen-dm-review-synth-spoiler');
     expect(synth).not.toBeNull();
-    expect(synth!.textContent).toMatch(/Spoiler leak persisted/);
+    expect(synth!.textContent).toMatch(/Spoiler leak/);
+    // Each token renders as a chip in the list.
+    const chips = el.querySelectorAll('.chargen-dm-review-spoiler-token');
+    expect(chips.length).toBe(1);
+    expect(chips[0]!.textContent).toMatch(/quiet/);
   });
 
   it('marks accepted seats with the accepted CSS class', async () => {
@@ -309,7 +317,14 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
     expect(btn?.textContent?.trim()).toBe('Accepted');
   });
 
-  it('Revise button appears on both ok and failure results', async () => {
+  it('OK results show Revise; failure results show Discard (both wire to onRevise)', async () => {
+    // Phase 3b polish (2026-05-23): failed-synth UI no longer
+    // labels the discard path as "Ask player to revise" — that
+    // wording was misleading when the DM drove the synth
+    // (quick-gen) AND when the failure was the AI's fault
+    // (spoiler leak).  The button is now "Discard + try again"
+    // (.chargen-dm-review-discard) but still fires onRevise so
+    // the audit-trail behavior is unchanged.
     const el = mount();
     el.synthResults = new Map<number, SynthesizeBackstoryResult>([
       [2, { ok: false, code: 'parse-failed', message: 'bad' }],
@@ -318,8 +333,14 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
     el.onAccept = () => {};
     el.onRevise = () => {};
     await el.updateComplete;
-    const revise = el.querySelectorAll('.chargen-dm-review-revise');
-    expect(revise.length).toBe(2);
+    // OK card → existing 'Ask player to revise' button.
+    expect(
+      el.querySelectorAll('.chargen-dm-review-revise').length
+    ).toBe(1);
+    // Failure card → new 'Discard + try again' button (same wire).
+    expect(
+      el.querySelectorAll('.chargen-dm-review-discard').length
+    ).toBe(1);
   });
 
   it('Revise click prompts for a reason and forwards to onRevise', async () => {
@@ -568,5 +589,103 @@ describe('<chargen-dm-review> — clipboard copy', () => {
       '.chargen-dm-review-invite-copy'
     )!.click();
     expect(writeText).toHaveBeenCalledWith('https://x/abc');
+  });
+});
+
+// ---- Phase 3b polish (2026-05-23): spoiler-leak hand-edit ----
+
+describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
+  function rejectedResult(): SynthesizeBackstoryResult {
+    return {
+      ok: false,
+      code: 'spoiler-leak-persistent',
+      message:
+        'AI used forbidden words: "Quiet".  These reveal campaign secrets.',
+      persistentTokens: ['Quiet'],
+      rawResponse: '{"name":"Mei","backstory":"..."}',
+      rejectedResponse: {
+        name: 'Mei Tanaka',
+        pronouns: 'she/her',
+        tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory:
+          'Mei felt the Quiet of the apartment after her father left.',
+        raw: '{}',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: 'r-spoiler'
+      },
+      retried: true
+    } as unknown as SynthesizeBackstoryResult;
+  }
+
+  it('surfaces the rejected PC preview + leaked-token chips', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, rejectedResult()]]);
+    await el.updateComplete;
+    // Preview card shows the AI's generated name + tags + stats so
+    // the DM can decide whether the salvageable content is worth
+    // editing or whether to discard and try again.
+    const preview = el.querySelector('.chargen-dm-review-rejected-preview');
+    expect(preview).not.toBeNull();
+    expect(preview!.textContent).toMatch(/Mei Tanaka/);
+    // Leaked-token chip is rendered.
+    const chip = el.querySelector('.chargen-dm-review-spoiler-token');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toMatch(/Quiet/);
+  });
+
+  it('"Edit + accept" opens an editable dialog seeded from the rejected response', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, rejectedResult()]]);
+    el.onAcceptWithEdits = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-edit-accept'
+    )!.click();
+    await el.updateComplete;
+    // Edit dialog is in the DOM with the rejected name + backstory
+    // pre-filled into the form fields.
+    const dialog = el.querySelector('dialog.chargen-dm-review-edit-modal');
+    expect(dialog).not.toBeNull();
+    const nameInput = dialog!.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-edit-field input'
+    );
+    const backstoryArea = dialog!.querySelector<HTMLTextAreaElement>(
+      '.chargen-dm-review-edit-field textarea'
+    );
+    expect(nameInput?.value).toBe('Mei Tanaka');
+    expect(backstoryArea?.value).toMatch(/felt the Quiet/);
+  });
+
+  it('"Save + accept" forwards edits to onAcceptWithEdits', async () => {
+    const el = mount();
+    el.synthResults = new Map([[1, rejectedResult()]]);
+    const calls: Array<{ slot: number; name: string; backstory: string }> = [];
+    el.onAcceptWithEdits = (slot, edits) => {
+      calls.push({ slot, ...edits });
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-edit-accept'
+    )!.click();
+    await el.updateComplete;
+    // Simulate the DM cleaning up the backstory.
+    const backstoryArea = el.querySelector<HTMLTextAreaElement>(
+      'dialog.chargen-dm-review-edit-modal textarea'
+    )!;
+    backstoryArea.value =
+      'Mei felt the silence of the apartment after her father left.';
+    backstoryArea.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-edit-save'
+    )!.click();
+    expect(calls.length).toBe(1);
+    expect(calls[0].slot).toBe(1);
+    expect(calls[0].name).toBe('Mei Tanaka');
+    expect(calls[0].backstory).toMatch(/silence/);
   });
 });

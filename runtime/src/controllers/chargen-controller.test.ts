@@ -1156,6 +1156,67 @@ describe('ChargenController — pack import + inlineAnswers (Phase 3b polish 202
     if (!result.ok) expect(result.code).toBe('malformed');
   });
 
+  it('acceptWithEdits commits a spoiler-leak-rejected synth with DM-supplied name + backstory', async () => {
+    // Set up: synthesizer returns spoiler-leak with a rejected
+    // response.  The DM hand-edits, then accepts.  Result is one
+    // pc-create + one pc-slot-bind, just like the normal accept
+    // path, but with the DM-edited name + backstory.
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: false,
+        code: 'spoiler-leak-persistent',
+        message: 'AI used forbidden words: "Quiet".',
+        persistentTokens: ['Quiet'],
+        rawResponse: '{}',
+        rejectedResponse: {
+          name: 'Original Name',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei felt the Quiet of the apartment.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r-spoiler'
+        }
+      } as unknown as SynthesizeBackstoryResult);
+    const env = makeEnv(makeCampaign());
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, env);
+    // Populate the slot with the spoiler-leak result.
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    await ctrl.synthesizeForSlot(4);
+    expect(ctrl.getSynthResult(4)?.ok).toBe(false);
+    const ok = ctrl.acceptWithEdits(4, {
+      name: 'Mei (cleaned)',
+      backstory: 'Mei felt the silence of the apartment.'
+    });
+    expect(ok).toBe(true);
+    // pc-create event uses the edited values.
+    expect(env.pcCreates.length).toBe(1);
+    expect(env.pcCreates[0]!.name).toBe('Mei (cleaned)');
+    expect(env.pcCreates[0]!.backstory).toMatch(/silence/);
+    expect(env.pcCreates[0]!.backstory).not.toMatch(/Quiet/);
+    // Slot is now accepted.
+    expect(ctrl.isAccepted(4)).toBe(true);
+    synthSpy.mockRestore();
+  });
+
+  it('acceptWithEdits returns false when there is no rejected response to edit', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const ok = ctrl.acceptWithEdits(4, {
+      name: 'x',
+      backstory: 'y'
+    });
+    expect(ok).toBe(false);
+  });
+
   it('synthesizeForSlot uses inlineAnswers when provided (quick-gen path)', async () => {
     // No localStorage state for slot 5 — would fail in the normal
     // path with "No chargen answers".  With inlineAnswers: {} we

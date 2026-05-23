@@ -544,6 +544,128 @@ export const quireAppStyles = css`
       cursor: pointer;
     }
 
+    /* Phase 3b polish (2026-05-23): spoiler-leak failure card.
+       The leaked words show as red chips so the DM sees at a
+       glance which words triggered the firewall.  "Edit + accept"
+       is the primary action — preserves the salvageable backstory.
+       "Discard + try again" is secondary. */
+    .chargen-dm-review-spoiler-tokens {
+      list-style: none;
+      padding: 0;
+      margin: 0.4rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+    .chargen-dm-review-spoiler-token {
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      background: light-dark(#fef2f2, #2a0e0e);
+      color: light-dark(#7f1d1d, #fca5a5);
+      border: 1px solid light-dark(#fca5a5, #7f1d1d);
+      font-size: 0.85em;
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+    }
+    .chargen-dm-review-spoiler-token-inline {
+      color: light-dark(#7f1d1d, #fca5a5);
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+    }
+    .chargen-dm-review-rejected-preview {
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 4px;
+      background: light-dark(#ffffff, #0b1220);
+      border: 1px dashed light-dark(#cbd5e1, #334155);
+    }
+    .chargen-dm-review-edit-accept {
+      padding: 0.35rem 0.85rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .chargen-dm-review-edit-accept:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .chargen-dm-review-discard {
+      padding: 0.35rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+    }
+    /* Edit dialog (mirrors the review modal's outer shape). */
+    dialog.chargen-dm-review-edit-modal {
+      width: min(92vw, 900px);
+      max-height: 85vh;
+      padding: 0;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      border-radius: 8px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      margin: auto;
+    }
+    dialog.chargen-dm-review-edit-modal::backdrop {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(2px);
+    }
+    .chargen-dm-review-edit-hint {
+      margin: 0 0 0.7rem;
+      padding: 0.45rem 0.7rem;
+      border-left: 3px solid light-dark(#dc2626, #ef4444);
+      background: light-dark(#fef2f2, #2a0e0e);
+      color: light-dark(#7f1d1d, #fca5a5);
+      border-radius: 0 4px 4px 0;
+      font-size: 0.9rem;
+    }
+    .chargen-dm-review-edit-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      margin: 0.6rem 0;
+      font-size: 0.9rem;
+    }
+    .chargen-dm-review-edit-field span {
+      font-weight: 500;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .chargen-dm-review-edit-field input,
+    .chargen-dm-review-edit-field textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.4rem 0.55rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0b1220);
+      color: inherit;
+      font-family: inherit;
+      font-size: 0.95em;
+    }
+    .chargen-dm-review-edit-field textarea {
+      resize: vertical;
+      min-height: 8rem;
+      line-height: 1.5;
+    }
+    .chargen-dm-review-edit-save {
+      padding: 0.35rem 0.9rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .chargen-dm-review-edit-save:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;
       padding: 0.6rem 0.9rem;

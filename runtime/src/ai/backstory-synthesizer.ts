@@ -117,6 +117,16 @@ export type SynthesizeBackstoryResult =
       rawResponse?: string;
       /** Present on spoiler-leak-persistent — which tokens kept hitting. */
       persistentTokens?: string[];
+      /**
+       * Phase 3b polish (2026-05-23): present on spoiler-leak-
+       * persistent (and could be wired for validation-failed
+       * later).  The parsed PC the synthesizer was about to
+       * return — failed the spoiler firewall but is otherwise
+       * structurally valid.  The DM UI uses this to offer a hand-
+       * edit-and-accept path so the synth isn't wasted: the DM
+       * removes the leaked tokens and commits.
+       */
+      rejectedResponse?: PcBackstorySynthesisResponse;
       /** Present on provider-refused — the refusal sub-kind. */
       refusalKind?: 'safety' | 'model-unsupported' | 'truncated';
     };
@@ -164,15 +174,24 @@ export async function synthesizeBackstory(
     activeRaw = second.rawResponse;
     const secondHits = containsSpoilerTokens(active.backstory, tokens);
     if (secondHits.length > 0) {
+      // Phase 3b polish (2026-05-23): attach the parsed PC so the
+      // DM-review UI can offer hand-edit-and-accept.  The synth
+      // isn't wasted — most of the backstory is fine, the DM just
+      // needs to remove the leaked words (or use the auto-redact
+      // helper).  Without this, the only path forward was
+      // "discard and re-synthesize" which loses up to a minute of
+      // generated content.
       return {
         ok: false,
         code: 'spoiler-leak-persistent',
         message:
-          `AI repeated forbidden tokens (${secondHits.join(', ')}) ` +
-          'after retry.  Surface to the DM at the approval gate for ' +
-          'hand-edit before sharing with the player.',
+          `AI used forbidden words: ${secondHits.map((t) => `"${t}"`).join(', ')}.  ` +
+          'These reveal campaign secrets and must be removed before ' +
+          'the player sees the backstory.  Use "Edit + accept" to clean ' +
+          'up locally, or "Discard + try again" to re-synthesize.',
         rawResponse: activeRaw,
-        persistentTokens: secondHits
+        persistentTokens: secondHits,
+        rejectedResponse: active
       };
     }
   }
