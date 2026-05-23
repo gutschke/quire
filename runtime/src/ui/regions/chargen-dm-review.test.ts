@@ -415,7 +415,11 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     expect(items[1].textContent).toMatch(/no Bay Area place/);
   });
 
-  it('expands and collapses the review on the toggle button', async () => {
+  it('opens and closes the review modal on the toggle button', async () => {
+    // Phase 3b polish (2026-05-22): the inline-expand was replaced
+    // with a centered <dialog> modal because the DM aside column was
+    // too narrow for the two-column diff.  The toggle now opens the
+    // modal; a Close button inside the modal closes it.
     const el = mount();
     el.synthResults = new Map([[1, okResult()]]);
     el.answersLookup = () => ({
@@ -427,11 +431,19 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     });
     await el.updateComplete;
     expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
+    expect(el.querySelector('dialog.chargen-dm-review-modal')).toBeNull();
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
     await el.updateComplete;
+    // The dialog is in the DOM with the diff inside it.
+    expect(el.querySelector('dialog.chargen-dm-review-modal')).not.toBeNull();
     expect(el.querySelector('.chargen-dm-review-diff')).not.toBeNull();
-    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    // Click the modal's Close button (footer one).  The header × is
+    // also wired — either should close.
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-modal-foot button'
+    )!.click();
     await el.updateComplete;
+    expect(el.querySelector('dialog.chargen-dm-review-modal')).toBeNull();
     expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
   });
 

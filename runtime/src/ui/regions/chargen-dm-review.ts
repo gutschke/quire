@@ -144,12 +144,15 @@ export class ChargenDmReview extends LitElement {
   answersLookup: AnswersLookup | null = null;
 
   /**
-   * Per-seat "expand the full review" toggle.  Lives on the region
-   * (not the controller) because it's purely UI state — the DM
-   * expanding a card to inspect the stats grid + diff doesn't need
-   * to propagate to other peers.
+   * Which seat's review dialog is currently open (single modal at
+   * a time).  Lives on the region (not the controller) — opening
+   * the dialog doesn't propagate to other peers.  Phase 3b polish
+   * (2026-05-22) replaced the per-seat inline-expand behavior
+   * because in the DM aside (narrow column) the inline expand
+   * produced a "skinny but very tall" diff that was hard to read.
+   * The dialog uses the full window width/height (capped) instead.
    */
-  @state() private expandedSeats: Set<number> = new Set();
+  @state() private reviewModalSlot: number | null = null;
 
   /**
    * Generate an invite URL for a slot.  Host wires to
@@ -225,7 +228,112 @@ export class ChargenDmReview extends LitElement {
           ${ALL_SLOTS.map((slot) => this.renderSeat(slot))}
         </ol>
       </section>
+      ${this.renderReviewDialog()}
     `;
+  }
+
+  /**
+   * Phase 3b polish (2026-05-22): per-seat "Review backstory +
+   * answers" now opens a centered <dialog> overlay instead of
+   * expanding inline.  Rendered once at the bottom of the
+   * component; `reviewModalSlot` drives content + open/close.
+   *
+   * Uses the native <dialog> element so the browser handles:
+   *   - focus trap inside the dialog
+   *   - Esc-to-close (we listen for `cancel` to keep state in sync)
+   *   - top-layer rendering (above other stacking contexts)
+   *
+   * Scrolling: outer dialog clips at 85vh / 92vw; the body has its
+   * own overflow-y: auto, so long backstories scroll independently
+   * of the sticky header.  Reactive layout (mobile + reduced-motion)
+   * inherits from the CSS rules in `quire-app.css.ts`.
+   */
+  private renderReviewDialog(): TemplateResult | typeof nothing {
+    const slot = this.reviewModalSlot;
+    if (slot === null) return nothing;
+    const synth = this.synthResults.get(slot);
+    if (!synth || !synth.ok) return nothing;
+    const r = synth.response;
+    return html`
+      <dialog
+        class="chargen-dm-review-modal"
+        @cancel=${() => this.closeReviewModal()}
+        @click=${(e: MouseEvent) => this.handleDialogBackdropClick(e)}
+      >
+        <header class="chargen-dm-review-modal-head">
+          <h3 class="chargen-dm-review-modal-title">
+            Review PC${slot}
+            ${' '}— <strong>${r.name}</strong>
+            <span class="muted">(${r.pronouns})</span>
+          </h3>
+          <button
+            type="button"
+            class="chargen-dm-review-modal-close"
+            aria-label="Close review"
+            @click=${() => this.closeReviewModal()}
+          >
+            ×
+          </button>
+        </header>
+        <div class="chargen-dm-review-modal-body">
+          ${this.renderExpandedDiff(slot, r.backstory)}
+        </div>
+        <footer class="chargen-dm-review-modal-foot">
+          <button
+            type="button"
+            @click=${() => this.closeReviewModal()}
+          >
+            Close
+          </button>
+        </footer>
+      </dialog>
+    `;
+  }
+
+  /**
+   * Open the dialog AFTER Lit has rendered the <dialog> element
+   * for the active slot.  `showModal()` MUST be called on a real
+   * DOM node, which means we wait for updateComplete then locate
+   * the element.  Closing follows the same pattern in reverse.
+   */
+  override updated(changed: Map<string, unknown>): void {
+    if (changed.has('reviewModalSlot')) {
+      const dialog = this.querySelector<HTMLDialogElement>(
+        'dialog.chargen-dm-review-modal'
+      );
+      // Defensive: happy-dom (test env) may not implement
+      // showModal/close.  Wrap so a missing API doesn't fail
+      // re-renders.  In a real browser these calls are essential
+      // — they invoke the top-layer overlay + focus trap.
+      try {
+        if (this.reviewModalSlot !== null && dialog && !dialog.open) {
+          dialog.showModal?.();
+        }
+        if (this.reviewModalSlot === null && dialog && dialog.open) {
+          dialog.close?.();
+        }
+      } catch {
+        /* test env without dialog support — DOM is still
+           inspectable for assertions */
+      }
+    }
+  }
+
+  private closeReviewModal(): void {
+    this.reviewModalSlot = null;
+  }
+
+  /**
+   * Backdrop-click-to-close: native <dialog> doesn't do this for
+   * you.  When the user clicks OUTSIDE the dialog's content but
+   * still inside its rectangle (the backdrop / overlay area), the
+   * click target is the dialog element itself; clicks on inner
+   * elements bubble with `e.target` pointing at the child.
+   */
+  private handleDialogBackdropClick(e: MouseEvent): void {
+    if ((e.target as HTMLElement).tagName === 'DIALOG') {
+      this.closeReviewModal();
+    }
   }
 
   /**
@@ -455,7 +563,6 @@ export class ChargenDmReview extends LitElement {
       const r = synth.response;
       const warningCount = synth.warnings.length;
       const accepted = this.acceptedSlots.has(slot);
-      const expanded = this.expandedSeats.has(slot);
       return html`
         <div class="chargen-dm-review-synth chargen-dm-review-synth-ok">
           <div class="chargen-dm-review-synth-name">
@@ -485,12 +592,11 @@ export class ChargenDmReview extends LitElement {
           <button
             type="button"
             class="chargen-dm-review-expand"
-            aria-expanded=${expanded ? 'true' : 'false'}
-            @click=${() => this.toggleExpand(slot)}
+            title="Open the full backstory + player-answers review in a modal"
+            @click=${() => this.openReviewModal(slot)}
           >
-            ${expanded ? 'Hide review' : 'Review backstory + answers'}
+            Review backstory + answers
           </button>
-          ${expanded ? this.renderExpandedDiff(slot, r.backstory) : nothing}
           ${this.renderAcceptReviseActions(slot, accepted)}
         </div>
       `;
@@ -551,11 +657,8 @@ export class ChargenDmReview extends LitElement {
     `;
   }
 
-  private toggleExpand(slot: number): void {
-    const next = new Set(this.expandedSeats);
-    if (next.has(slot)) next.delete(slot);
-    else next.add(slot);
-    this.expandedSeats = next;
+  private openReviewModal(slot: number): void {
+    this.reviewModalSlot = slot;
   }
 
   // ---- Step 5: full review card pieces ----

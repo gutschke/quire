@@ -7,7 +7,13 @@ import { execSync } from 'node:child_process';
  * Build-time version stamp.  Used by the runtime to render a discrete
  * corner badge so a user can tell at a glance which build Cloudflare
  * has deployed.  Format: "<commit-sha>" plus a "+dirty" suffix when
- * the working tree has uncommitted changes.
+ * the working tree has uncommitted changes to TRACKED files.
+ *
+ * Pass `--untracked-files=no` so files Cloudflare's build environment
+ * generates (a `.wrangler/`, transient build artifacts, etc.) don't
+ * trigger a perpetual "+dirty" on every deploy.  Tracked-file mods
+ * still count — that's the signal we actually care about ("did the
+ * developer push their local edits before deploying?").
  */
 function readVersionStamp(): string {
   try {
@@ -15,8 +21,11 @@ function readVersionStamp(): string {
       .toString()
       .trim();
     const dirty =
-      execSync('git status --porcelain', { cwd: __dirname }).toString().trim()
-        .length > 0;
+      execSync('git status --porcelain --untracked-files=no', {
+        cwd: __dirname
+      })
+        .toString()
+        .trim().length > 0;
     return dirty ? `${sha}+dirty` : sha;
   } catch {
     return 'unknown';

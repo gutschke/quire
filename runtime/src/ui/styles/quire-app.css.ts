@@ -446,6 +446,104 @@ export const quireAppStyles = css`
       }
     }
 
+    /* Phase 3b polish (2026-05-22): "Review backstory + answers"
+       moved from inline-expand into a centered <dialog> overlay so
+       the DM gets the full window width to read the side-by-side
+       diff (the DM aside column is too narrow for two columns of
+       prose).  Caps at 92vw / 85vh with internal scroll on the
+       body so the sticky header + footer stay visible on long
+       backstories.  ::backdrop dims the page; the dialog itself
+       handles the focus trap. */
+    dialog.chargen-dm-review-modal {
+      width: min(92vw, 1100px);
+      max-height: 85vh;
+      padding: 0;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      border-radius: 8px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      /* Recent Chromium centers <dialog> automatically; older
+         flavors used margin: auto.  Keep both as belt-and-braces. */
+      margin: auto;
+    }
+    dialog.chargen-dm-review-modal::backdrop {
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(2px);
+    }
+    .chargen-dm-review-modal-head {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid light-dark(#e2e8f0, #1e293b);
+      background: light-dark(#f8fafc, #0b1220);
+      /* Sticky inside the flex column — keeps the title visible as
+         the body scrolls.  position: sticky on the head works
+         because the dialog itself has overflow: hidden and the body
+         has overflow-y: auto, so the body is the scroll viewport. */
+      flex: 0 0 auto;
+    }
+    .chargen-dm-review-modal-title {
+      margin: 0;
+      font-size: 1.05em;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .chargen-dm-review-modal-close {
+      flex: 0 0 auto;
+      border: 1px solid transparent;
+      background: transparent;
+      font-size: 1.4em;
+      line-height: 1;
+      padding: 0.1rem 0.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      color: inherit;
+    }
+    .chargen-dm-review-modal-close:hover {
+      background: light-dark(#e2e8f0, #1e293b);
+    }
+    .chargen-dm-review-modal-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 0.8rem 1rem;
+    }
+    /* Inside the modal the diff has plenty of width, so don't
+       collapse to single-column until much narrower than the
+       global 900px breakpoint. */
+    .chargen-dm-review-modal-body .chargen-dm-review-diff {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+    }
+    @media (max-width: 700px) {
+      .chargen-dm-review-modal-body .chargen-dm-review-diff {
+        grid-template-columns: 1fr;
+      }
+    }
+    .chargen-dm-review-modal-foot {
+      flex: 0 0 auto;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      padding: 0.6rem 1rem;
+      border-top: 1px solid light-dark(#e2e8f0, #1e293b);
+      background: light-dark(#f8fafc, #0b1220);
+    }
+    .chargen-dm-review-modal-foot button {
+      padding: 0.35rem 0.9rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      cursor: pointer;
+    }
+
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;
       padding: 0.6rem 0.9rem;
