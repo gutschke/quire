@@ -301,20 +301,48 @@ describe('toAnthropicSchema (step 3 adapter)', () => {
     ]);
   });
 
-  it('preserves enum and integer minimum/maximum (the structural backbone)', () => {
+  it('preserves the structural backbone (enum, properties, items)', () => {
     const adapted = toAnthropicSchema(
       PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
     );
     const props = adapted.properties as Record<string, Record<string, unknown>>;
-    // Integer bounds on stat ranges stay (strict mode supports them).
+    // stats object survives + its 6 keys are still there + each is integer.
     const stats = props.stats;
+    expect(stats.type).toBe('object');
     const statProps = stats.properties as Record<string, Record<string, unknown>>;
-    expect(statProps.STR.minimum).toBe(-2);
-    expect(statProps.STR.maximum).toBe(3);
-    // skillMastery enum stays — that's a strict-supported keyword.
+    expect(Object.keys(statProps).sort()).toEqual([
+      'CHA',
+      'CON',
+      'DEX',
+      'INT',
+      'STR',
+      'WIS'
+    ]);
+    expect(statProps.STR.type).toBe('integer');
+    // skillMastery enum survives — strict-mode supported.
     const skillItems = (props.skillMastery as Record<string, unknown>)
       .items as Record<string, unknown>;
     expect(Array.isArray(skillItems.enum)).toBe(true);
+  });
+
+  it('Phase 3b-X follow-up: strips integer minimum/maximum (strict-mode constraint)', () => {
+    // Live-tested 2026-05-22: Anthropic returns "For 'integer' type,
+    // properties maximum, minimum are not supported".  The stats
+    // range -2..+3 is enforced by `backstory-validator` post-parse
+    // (stats-out-of-range issue code), so dropping from the wire
+    // schema is safe.
+    const adapted = toAnthropicSchema(
+      PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
+    );
+    const props = adapted.properties as Record<string, Record<string, unknown>>;
+    const statProps = (props.stats.properties as Record<
+      string,
+      Record<string, unknown>
+    >);
+    expect(statProps.STR.minimum).toBeUndefined();
+    expect(statProps.STR.maximum).toBeUndefined();
+    expect(statProps.CHA.minimum).toBeUndefined();
+    expect(statProps.CHA.maximum).toBeUndefined();
   });
 
   it('Phase 3b-X follow-up: strips minItems/maxItems > 1 (strict-mode constraint)', () => {
