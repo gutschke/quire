@@ -324,6 +324,10 @@ describe('toAnthropicSchema (step 3 adapter)', () => {
     expect(props.ladderState).toBeDefined(); // caster-state-set
     // Intersection: only `kind` is in every variant's required[].
     expect(items.required).toEqual(['kind']);
+    // Live-tested 2026-05-22: Anthropic strict tool use rejects an
+    // object schema that omits additionalProperties.  The flattener
+    // must always emit it.
+    expect(items.additionalProperties).toBe(false);
   });
 });
 

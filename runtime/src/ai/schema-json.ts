@@ -338,8 +338,14 @@ function flattenUnion(
       : [...requiredSets[0]].filter((r) =>
           requiredSets.every((s) => s.has(r))
         );
+  // Live-tested 2026-05-22: Anthropic strict tool use rejects the
+  // flattened object with "For 'object' type, 'additionalProperties'
+  // must be explicitly set to false".  Always set it.  The Gemini
+  // adapter strips additionalProperties for its dialect, so this is
+  // harmless on that path.
   return {
     type: 'object',
+    additionalProperties: false,
     properties: mergedProps,
     ...(required.length > 0 && { required })
   };
