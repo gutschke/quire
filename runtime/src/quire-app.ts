@@ -1258,6 +1258,7 @@ export class QuireApp extends LitElement {
   ): TemplateResult | typeof nothing {
     void this.chargen.loadDmReviewRegion();
     if (!this.chargen.dmReviewRegionDefined) return nothing;
+    const campaign = this.getCurrentCampaign();
     return html`
       <chargen-dm-review
         .pcSlots=${pcSlots}
@@ -1268,6 +1269,8 @@ export class QuireApp extends LitElement {
           this.chargen.displayNameForBound(pcId)}
         .answersLookup=${(slot: number) =>
           this.chargen.loadPersistedAnswers(slot)}
+        .questions=${campaign?.base.manifest.characterCreation?.questions ??
+        []}
         .onGenerate=${(slot: number) => this.chargen.generateInviteUrl(slot)}
         .onSynthesize=${(slot: number) =>
           this.chargen.synthesizeForSlot(slot, {
@@ -2248,8 +2251,8 @@ export class QuireApp extends LitElement {
     return html`
       <div class="resume-prompt" role="status">
         <p>
-          You have an autosaved session for this campaign (${doc.events.length}
-          events, saved ${ago}).
+          Pick up where you left off?  ${doc.events.length} session
+          event${doc.events.length === 1 ? '' : 's'} saved ${ago}.
         </p>
         <div class="resume-prompt-actions">
           <button @click=${() => this.dismissResumePrompt()}>
@@ -2269,7 +2272,7 @@ export class QuireApp extends LitElement {
               this.loadFromString(json);
             }}
           >
-            Load autosave
+            Resume
           </button>
         </div>
       </div>

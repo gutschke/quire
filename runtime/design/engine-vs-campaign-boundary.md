@@ -132,3 +132,41 @@ For every new design doc / feature:
 - Each of V-1 through V-8 is now visible on the violation list; the user will reorder them alongside other open items.
 - The hybrid-shape sketches above are seeds; nobody is committing to that exact JSON shape today.
 - The first opportunistic refactor came in V-9; subsequent ones land when their cost is small and a related touch is already in flight.
+
+---
+
+## V-10: character-sheet fields entangled with quire-v0.1 (2026-05-23)
+
+**Surfaced by:** TTRPG-expert review during the post-chargen character-editor design pass.  The user reported wanting a "full character editor" dialog and asked whether the engine's character model would generalize to a non-Underleaf ruleset (the user named WotC-style D&D as a concrete counterexample).
+
+**Hardcoded in the engine today (audited by data-model agent 2026-05-23):**
+
+| Hardcoded entity | Files | Underleaf-specific aspect |
+|---|---|---|
+| Six-stat key set `{str,dex,con,int,wis,cha}` | `src/character-edits.ts:29`, `src/ui/regions/player-rail.ts:51`, `src/core/state.ts:627` | A WotC-style classic, but a "narrative shapes" ruleset might have 4 stats; PbtA might have 6 different ones (Hot/Cold/Volatile/Dark/Sharp) |
+| Stat range −3..+3 | `src/character-edits.ts:34-35`, `src/core/state.ts:604-605` | Underleaf rules.md:25 baseline; other rulesets use 0..18 or 1..20 |
+| Harm + stress as 4-box `0..4` tracks | `src/character-edits.ts:32-33`, `pc-edit` materializer | Underleaf rules.md:73-94 specifies the 4-box shape AND the label words ("Bruised/Wounded/…"); other rulesets call this Hit Points (number) or Hits (sequential states) |
+| Caster ladder enum (quiet/noticed/watched/pushing-back/hunted) | `src/core/state.ts:84-109, 652-660` | Underleaf magic discovery arc per rules.md:125-134; campaigns without a hidden-magic system don't need this |
+| Trying-too-hard tax mechanic | `src/core/state.ts:119, 770-774` | Underleaf rules.md:180-184; cosmologically specific |
+| Thread-debt ladder (same five rungs) | `src/core/state.ts:521-526` | Underleaf rules.md:128-134 |
+
+**Already campaign-declared (works):**
+
+- Primary roll expression (`2d6+{stat}` default) — `campaign-loader.ts:160-164`
+- Char-creation questionnaire — `campaign-loader.ts:77-99`
+- Spoiler-token list + place allowlist — `campaign-loader.ts:120-123`
+
+**Missing engine seams (would need extraction for WotC-style or other rulesets):**
+
+1. **Stat key declaration:** campaign manifests should declare `rules.stats: {key, label, range, startingArray}` rather than the engine hardcoding the six.
+2. **Track declaration:** harm/stress should be a generic `rules.tracks: [{key, label, boxLabels, max}]` so a campaign can declare HP-style numeric resources OR labeled-box tracks OR neither.
+3. **Magic system optional:** caster ladder + tax + foci should be `rules.magicSystem?: {kind: 'phased' | 'spells' | 'none', ...}`; campaigns without hidden magic omit it.
+4. **Thread-debt optional:** the antagonist-attention ladder is fictionally specific to Underleaf; another campaign might have factions, reputations, or no escalation concept at all.
+
+**Disposition: document only this commit; no refactor.**
+
+Per [[feedback-tech-debt-policy]]: low-hanging cleanups happen as a matter of course but speculative cross-system support waits for the second campaign to exist.  The character-editor work landing soon (per the UX expert's Stage-mode recommendation) will be Underleaf-shaped; the engine seams listed above remain open work for whenever a second campaign starts to materialize.
+
+When a non-Underleaf campaign appears, the V-10 backlog says: extract the stat keys + tracks + magic-system as the first refactor (1+2 above are coupled and probably want to land together), then the others.
+
+**Operational note for future authors:** the chargen-dm-review / character-editor surfaces use the six-stat shape directly (e.g. `StatGrid` renders STR/DEX/CON/INT/WIS/CHA labels).  When the V-10 refactor lands, those surfaces become campaign-policy-driven: the editor renders whatever the campaign's `rules.stats` array declares.  Leave a `// TODO(V-10-stats)` comment when you touch the six-stat code so the future audit can find every site.

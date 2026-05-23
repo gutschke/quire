@@ -27,8 +27,15 @@ function readVersionStamp(): string {
     const sha = execSync('git rev-parse --short HEAD', { cwd: __dirname })
       .toString()
       .trim();
+    // Cloudflare's `npm install` step rewrites package-lock.json
+    // during the build (lockfile content-hash differs from what
+    // we have locally even when versions match).  Live-confirmed
+    // 2026-05-23: the diagnostic showed `+dirty(1:package-lock.json)`
+    // on a freshly-deployed clean commit.  Exclude the lockfile
+    // from the dirty check — its mutations are build-env noise,
+    // not developer-source-of-truth changes.
     const dirtyOut = execSync(
-      'git status --porcelain --untracked-files=no',
+      "git status --porcelain --untracked-files=no -- . ':!package-lock.json'",
       { cwd: __dirname }
     )
       .toString()

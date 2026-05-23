@@ -498,7 +498,11 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     expect(backstory?.textContent).toMatch(/held the line/);
   });
 
-  it('highlights anchor phrases inside the backstory body', async () => {
+  it('Phase 3b polish (2026-05-23): backstory no longer highlights arbitrary word matches', async () => {
+    // The prior token-substring highlight produced an "angry
+    // fruitsalad" of arbitrary words.  Per user feedback, the
+    // side-by-side layout is enough — no highlight noise.  This
+    // test pins the new behavior: no <mark> elements appear.
     const el = mount();
     el.synthResults = new Map([
       [
@@ -514,18 +518,61 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     ]);
     el.answersLookup = () => ({
       'intent-moment': 'I learned to hold a line at the marina.',
-      'meaningful-item': 'a marina pass',
-      'prior-connection': 'none',
-      'flight-reason': 'work'
+      'meaningful-item': 'a marina pass'
     });
     await el.updateComplete;
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
     await el.updateComplete;
-    const marks = el.querySelectorAll('.chargen-dm-review-mark');
-    expect(marks.length).toBeGreaterThan(0);
-    expect([...marks].some((m) => /marina/i.test(m.textContent ?? ''))).toBe(
-      true
-    );
+    expect(el.querySelectorAll('.chargen-dm-review-mark').length).toBe(0);
+    // The backstory text itself is still rendered.
+    expect(el.textContent).toMatch(/Marina/);
+  });
+
+  it('Phase 3b polish (2026-05-23): MC option values render as their labels', async () => {
+    // Player answers stored as the MC option's internal `value`
+    // (e.g. "last-72h") need to surface as the option's
+    // human-readable `label` ("Booked in the last 72 hours") in
+    // the diff view; otherwise the DM sees internal tokens.
+    const el = mount();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.questions = [
+      {
+        id: 'flight-reason',
+        kind: 'mc',
+        prompt: 'Why on this flight?',
+        required: true,
+        options: [
+          { value: 'work', label: 'Work — meeting or handoff' },
+          {
+            value: 'last-72h',
+            label: 'Booked in the last 72 hours — urgent'
+          }
+        ]
+      },
+      {
+        id: 'prior-connection',
+        kind: 'mc',
+        prompt: 'Prior connection',
+        required: true,
+        options: [
+          { value: 'none', label: 'No prior connection to anyone aboard' },
+          { value: 'colleague', label: 'A colleague is also on the flight' }
+        ]
+      }
+    ];
+    el.answersLookup = () => ({
+      'flight-reason': 'last-72h',
+      'prior-connection': 'none'
+    });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    const answers = el.querySelector('.chargen-dm-review-diff-answers');
+    expect(answers).not.toBeNull();
+    expect(answers!.textContent).toMatch(/Booked in the last 72 hours/);
+    expect(answers!.textContent).toMatch(/No prior connection/);
+    // Internal tokens MUST NOT leak when a matching label exists.
+    expect(answers!.textContent).not.toMatch(/last-72h/);
   });
 
   it('shows "no saved answers" copy when answersLookup returns null', async () => {

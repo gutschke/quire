@@ -33,6 +33,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { SynthesizeBackstoryResult } from '../../ai/backstory-synthesizer';
+import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 
 /** All possible seat slots (matches invite-token range). */
 const ALL_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
@@ -153,6 +154,17 @@ export class ChargenDmReview extends LitElement {
   answersLookup: AnswersLookup | null = null;
 
   /**
+   * Phase 3b polish (2026-05-23): the campaign's declared chargen
+   * questions.  Used to (a) iterate the diff view in the
+   * campaign's authored order rather than a hardcoded Underleaf-
+   * specific anchor list, and (b) expand MC option VALUES (e.g.
+   * "last-72h") to their human-readable LABELS.  When empty, the
+   * diff view falls back to alphabetical id order with raw values.
+   */
+  @property({ attribute: false })
+  questions: CampaignCharCreationQuestion[] = [];
+
+  /**
    * Which seat's review dialog is currently open (single modal at
    * a time).  Lives on the region (not the controller) — opening
    * the dialog doesn't propagate to other peers.  Phase 3b polish
@@ -241,6 +253,18 @@ export class ChargenDmReview extends LitElement {
   @state() private editDraftName: string = '';
   @state() private editDraftBackstory: string = '';
 
+  /**
+   * Phase 3b polish (2026-05-23): track whether the click that
+   * started a drag-select originated on the dialog backdrop or
+   * on inner content.  Without this, a user who drags to select
+   * text that extends past the dialog frame fires a click on
+   * the DIALOG element (mouseup target = dialog), which triggers
+   * the backdrop-close handler — the modal auto-closes mid-select.
+   * Now: only close when BOTH mousedown AND click happened on
+   * the dialog backdrop.
+   */
+  private backdropMouseDownOnDialog = false;
+
   override render(): TemplateResult {
     return html`
       <section class="card chargen-dm-review">
@@ -280,11 +304,9 @@ export class ChargenDmReview extends LitElement {
       <dialog
         class="chargen-dm-review-edit-modal"
         @cancel=${() => this.closeEditModal()}
-        @click=${(e: MouseEvent) => {
-          if ((e.target as HTMLElement).tagName === 'DIALOG') {
-            this.closeEditModal();
-          }
-        }}
+        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
+        @click=${(e: MouseEvent) =>
+          this.handleDialogBackdropClick(e, () => this.closeEditModal())}
       >
         <header class="chargen-dm-review-modal-head">
           <h3 class="chargen-dm-review-modal-title">
@@ -379,13 +401,15 @@ export class ChargenDmReview extends LitElement {
       <dialog
         class="chargen-dm-review-modal"
         @cancel=${() => this.closeReviewModal()}
-        @click=${(e: MouseEvent) => this.handleDialogBackdropClick(e)}
+        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
+        @click=${(e: MouseEvent) =>
+          this.handleDialogBackdropClick(e, () => this.closeReviewModal())}
       >
         <header class="chargen-dm-review-modal-head">
           <h3 class="chargen-dm-review-modal-title">
-            Review PC${slot}
-            ${' '}— <strong>${r.name}</strong>
-            <span class="muted">(${r.pronouns})</span>
+            Review <strong>${r.name}</strong>
+            <span class="muted">${r.pronouns}</span>
+            <span class="chargen-dm-review-modal-slot">(PC${slot})</span>
           </h3>
           <button
             type="button"
@@ -456,11 +480,29 @@ export class ChargenDmReview extends LitElement {
    * still inside its rectangle (the backdrop / overlay area), the
    * click target is the dialog element itself; clicks on inner
    * elements bubble with `e.target` pointing at the child.
+   *
+   * Drag-select fix (2026-05-23): when a user drags to select text
+   * that extends past the dialog frame, mousedown happens on the
+   * inner content but mouseup ends on the backdrop — the click
+   * event's target is the dialog, so naive close-on-DIALOG-click
+   * fires mid-select.  Only close when BOTH mousedown AND click
+   * happened on the dialog element.  Reset the flag after every
+   * click regardless so the next interaction starts clean.
    */
-  private handleDialogBackdropClick(e: MouseEvent): void {
-    if ((e.target as HTMLElement).tagName === 'DIALOG') {
-      this.closeReviewModal();
-    }
+  private handleDialogBackdropClick(
+    e: MouseEvent,
+    close: () => void
+  ): void {
+    const onBackdrop =
+      (e.target as HTMLElement).tagName === 'DIALOG' &&
+      this.backdropMouseDownOnDialog;
+    this.backdropMouseDownOnDialog = false;
+    if (onBackdrop) close();
+  }
+
+  private recordBackdropMouseDown(e: MouseEvent): void {
+    this.backdropMouseDownOnDialog =
+      (e.target as HTMLElement).tagName === 'DIALOG';
   }
 
   /**
@@ -972,15 +1014,32 @@ export class ChargenDmReview extends LitElement {
     backstory: string
   ): TemplateResult {
     const answers = this.answersLookup?.(slot) ?? null;
-    // Four anchor questions worth diffing.  Order matches the
-    // campaign questionnaire flow for DM scanning ergonomics.
-    const anchors: Array<{ id: string; label: string }> = [
-      { id: 'flight-reason', label: 'Why on Flight 887?' },
-      { id: 'prior-connection', label: 'Prior connection' },
-      { id: 'meaningful-item', label: 'Meaningful item' },
-      { id: 'intent-moment', label: 'Intent-moment' }
-    ];
-    const phrases = this.extractAnchorPhrases(answers, anchors);
+    // Phase 3b polish (2026-05-23): iterate the CAMPAIGN's declared
+    // questions (in their authored order) rather than a hardcoded
+    // Underleaf anchor list.  When the campaign doesn't declare any,
+    // fall back to iterating whatever keys are present in `answers`.
+    const qs = this.questions ?? [];
+    const items: Array<{
+      id: string;
+      label: string;
+      display: string | null;
+    }> = qs.length > 0
+      ? qs.map((q) => ({
+          id: q.id,
+          label: q.prompt,
+          display: this.formatAnswerForDisplay(q, answers?.[q.id] ?? '')
+        }))
+      : answers
+        ? Object.entries(answers).map(([id, v]) => ({
+            id,
+            label: id,
+            display: v === '' ? null : v
+          }))
+        : [];
+    const paragraphs = backstory
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
     return html`
       <div class="chargen-dm-review-diff" role="group" aria-label="Backstory review">
         <div class="chargen-dm-review-diff-answers">
@@ -990,22 +1049,26 @@ export class ChargenDmReview extends LitElement {
                 No saved answers on this device.  (Player on another
                 device, or pre-pack-intake.)
               </p>`
-            : html`<dl>
-                ${anchors.map((a) => {
-                  const v = answers[a.id];
-                  if (v === undefined || v === '') {
-                    return html`<dt>${a.label}</dt>
-                      <dd class="muted">(not answered)</dd>`;
-                  }
-                  return html`<dt>${a.label}</dt>
-                    <dd>${v}</dd>`;
-                })}
-              </dl>`}
+            : items.length === 0
+              ? html`<p class="muted">
+                  No questions declared in the campaign and no saved
+                  answers to display.
+                </p>`
+              : html`<dl>
+                  ${items.map(
+                    (item) => html`<dt>${item.label}</dt>
+                      <dd class=${item.display === null ? 'muted' : ''}>
+                        ${item.display ?? '(not answered)'}
+                      </dd>`
+                  )}
+                </dl>`}
         </div>
         <div class="chargen-dm-review-diff-backstory">
           <h4>AI backstory</h4>
           <div class="chargen-dm-review-backstory-body">
-            ${this.renderBackstoryWithHighlights(backstory, phrases)}
+            ${paragraphs.length === 0
+              ? html`<p>${backstory}</p>`
+              : paragraphs.map((p) => html`<p>${p}</p>`)}
           </div>
         </div>
       </div>
@@ -1013,103 +1076,26 @@ export class ChargenDmReview extends LitElement {
   }
 
   /**
-   * Pull a small set of distinguishing noun phrases out of each
-   * anchor answer.  v1: take the words longer than 4 characters,
-   * lowercased, deduped, capped per-answer.  This is the
-   * "highlight the words from the player's answers that appear in
-   * the AI's backstory" heuristic.  Doesn't catch paraphrase; the
-   * goal is "show the DM the anchors that DID land," not "prove
-   * semantic correctness."
+   * Phase 3b polish (2026-05-23): turn a stored answer value into
+   * something a DM (or player at review time) can actually read.
+   * MC values are internal tokens — "last-72h" / "none" — so look
+   * up the option's `label`.  Short-answers display verbatim.
+   * Returns null when the answer is unset (caller renders "(not
+   * answered)" in muted style).
    */
-  private extractAnchorPhrases(
-    answers: Record<string, string> | null,
-    anchors: Array<{ id: string; label: string }>
-  ): string[] {
-    if (!answers) return [];
-    const out = new Set<string>();
-    for (const a of anchors) {
-      const text = answers[a.id];
-      if (!text) continue;
-      // Take long-enough word tokens; lower-case.
-      const tokens = text
-        .toLowerCase()
-        .split(/[\s.,;:!?()"'—–\-]+/u)
-        .filter((w) => w.length >= 5);
-      // Cap at the most-distinguishing few per anchor.
-      for (const t of tokens.slice(0, 8)) out.add(t);
+  private formatAnswerForDisplay(
+    q: CampaignCharCreationQuestion,
+    raw: string
+  ): string | null {
+    if (raw === '') return null;
+    if (q.kind === 'mc') {
+      const opt = (q.options ?? []).find((o) => o.value === raw);
+      // Fall back to the raw value if the option isn't declared
+      // anymore (e.g. campaign-side delete after the answer was
+      // stored).  Better to show the truth than mask it.
+      return opt?.label ?? raw;
     }
-    return [...out];
-  }
-
-  /**
-   * Render the backstory body with each occurrence of a highlight
-   * phrase wrapped in a `<mark>` tag.  Lit's html interpolation
-   * auto-escapes the text content; the marks are static markup
-   * inserted around safely-interpolated child nodes.
-   */
-  private renderBackstoryWithHighlights(
-    backstory: string,
-    phrases: string[]
-  ): TemplateResult {
-    if (phrases.length === 0) {
-      return html`<p>${backstory}</p>`;
-    }
-    // Split the backstory into paragraphs (double newline OR single
-    // newline run); render each as a separate `<p>` with the
-    // highlight pass over its content.
-    const paragraphs = backstory.split(/\n\s*\n/).filter((p) => p.trim());
-    return html`
-      ${paragraphs.map(
-        (para) => html`<p>${this.highlightFragments(para, phrases)}</p>`
-      )}
-    `;
-  }
-
-  /**
-   * Break a paragraph into alternating plain-text / highlighted
-   * fragments based on case-insensitive substring matches.  Returns
-   * a TemplateResult array Lit renders as a single text node
-   * sequence with `<mark>` for hits.  Auto-escaping is preserved
-   * because each fragment goes through interpolation.
-   */
-  private highlightFragments(
-    text: string,
-    phrases: readonly string[]
-  ): TemplateResult[] {
-    if (phrases.length === 0) return [html`${text}`];
-    // Lowercase the text for searching; track the original casing.
-    const lower = text.toLowerCase();
-    // Collect all match ranges, then merge overlapping.
-    const ranges: Array<[number, number]> = [];
-    for (const p of phrases) {
-      let from = 0;
-      while (from < lower.length) {
-        const idx = lower.indexOf(p, from);
-        if (idx === -1) break;
-        ranges.push([idx, idx + p.length]);
-        from = idx + p.length;
-      }
-    }
-    if (ranges.length === 0) return [html`${text}`];
-    ranges.sort((a, b) => a[0] - b[0]);
-    const merged: Array<[number, number]> = [];
-    for (const [s, e] of ranges) {
-      const last = merged[merged.length - 1];
-      if (last && s <= last[1]) {
-        last[1] = Math.max(last[1], e);
-      } else {
-        merged.push([s, e]);
-      }
-    }
-    const fragments: TemplateResult[] = [];
-    let pos = 0;
-    for (const [s, e] of merged) {
-      if (s > pos) fragments.push(html`${text.slice(pos, s)}`);
-      fragments.push(html`<mark class="chargen-dm-review-mark">${text.slice(s, e)}</mark>`);
-      pos = e;
-    }
-    if (pos < text.length) fragments.push(html`${text.slice(pos)}`);
-    return fragments;
+    return raw;
   }
 
   private handleRevise(slot: number): void {
