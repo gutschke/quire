@@ -23,36 +23,119 @@ function sa(id: string, prompt: string): CampaignCharCreationQuestion {
  * `calls` array captures every request the synthesizer made so
  * tests can assert on retry behavior + prompt contents.
  */
-function mockProvider(rawResponses: string[]): {
+function mockProvider(
+  rawResponses: string[],
+  options: {
+    /**
+     * Phase 3b polish (2026-05-23): synthesizer now runs an AI
+     * semantic-spoiler-check whenever the substring scanner fires.
+     * Tests that exercise the spoiler firewall must supply verdicts
+     * for those AI calls; verdicts are consumed in order each time
+     * the schema name matches `spoiler_check_verdict`.  When unset,
+     * the mock defaults to verdict='leak' returning the candidates
+     * verbatim — preserves the pre-polish behavior so tests written
+     * before the polish keep working.
+     */
+    spoilerVerdicts?: Array<
+      | 'auto-leak' // default: returns all candidates as leaks
+      | 'auto-ordinary' // all candidates are false positives
+      | {
+          verdict: 'ordinary' | 'leak';
+          leakingWords: string[];
+          reason: string;
+        }
+    >;
+  } = {}
+): {
   provider: AiProvider;
+  /**
+   * Generation-only calls (synthesizer requests).  Older tests
+   * that assert call counts use this so they don't accidentally
+   * count the new spoiler-check calls.
+   */
   calls: Array<{ system: string; user: string }>;
+  /** Spoiler-check calls (post-substring AI verdict requests). */
+  spoilerCalls: Array<{ system: string; user: string }>;
 } {
   let i = 0;
+  let spoilerI = 0;
   const calls: Array<{ system: string; user: string }> = [];
+  const spoilerCalls: Array<{ system: string; user: string }> = [];
   const provider: AiProvider = {
     id: 'claude',
-    callStructured: vi.fn(async <T>(req: { systemPrompt: string; prompt: string }) => {
-      calls.push({ system: req.systemPrompt, user: req.prompt });
-      const raw = rawResponses[i++] ?? rawResponses[rawResponses.length - 1];
-      const meta = {
-        tokensIn: 100,
-        tokensOut: 200,
-        responseId: `mock-${i}`
-      };
-      try {
-        const value = JSON.parse(raw) as T;
-        return { ok: true as const, value, raw, ...meta };
-      } catch {
-        return {
-          ok: false as const,
-          refusal: { kind: 'truncated' as const, message: 'mock: unparseable raw' },
-          raw,
-          ...meta
-        };
+    callStructured: vi.fn(
+      async <T>(
+        req: { systemPrompt: string; prompt: string },
+        schema?: { name?: string }
+      ) => {
+        const target =
+          schema?.name === 'spoiler_check_verdict' ? spoilerCalls : calls;
+        target.push({ system: req.systemPrompt, user: req.prompt });
+        const meta = (id: string | number) => ({
+          tokensIn: 100,
+          tokensOut: 200,
+          responseId: `mock-${id}`
+        });
+        // Spoiler-check call: synthesize a structured verdict.
+        if (schema?.name === 'spoiler_check_verdict') {
+          const j = spoilerI++;
+          const v = options.spoilerVerdicts?.[j] ?? 'auto-leak';
+          // Extract the flagged candidates from the prompt (line:
+          // "Flagged words: a, b, c") so 'auto-*' verdicts can
+          // produce a sensible response.
+          const m = /Flagged words: ([^\n]+)/.exec(req.prompt);
+          const candidates = m
+            ? m[1].split(/,\s*/).map((s) => s.trim()).filter((s) => s.length > 0)
+            : [];
+          let value: {
+            verdict: 'ordinary' | 'leak';
+            leakingWords: string[];
+            reason: string;
+          };
+          if (v === 'auto-leak') {
+            value = {
+              verdict: 'leak',
+              leakingWords: candidates,
+              reason: 'mock: auto-leak verdict (default)'
+            };
+          } else if (v === 'auto-ordinary') {
+            value = {
+              verdict: 'ordinary',
+              leakingWords: [],
+              reason: 'mock: auto-ordinary verdict'
+            };
+          } else {
+            value = v;
+          }
+          return {
+            ok: true as const,
+            value: value as T,
+            raw: JSON.stringify(value),
+            ...meta(`spoiler-${j}`)
+          };
+        }
+        // Generation call: replay rawResponses in order.  Use the
+        // 1-based generation index for the responseId so existing
+        // tests that assert `mock-1`, `mock-2` keep matching.
+        const raw = rawResponses[i++] ?? rawResponses[rawResponses.length - 1];
+        try {
+          const value = JSON.parse(raw) as T;
+          return { ok: true as const, value, raw, ...meta(i) };
+        } catch {
+          return {
+            ok: false as const,
+            refusal: {
+              kind: 'truncated' as const,
+              message: 'mock: unparseable raw'
+            },
+            raw,
+            ...meta(i)
+          };
+        }
       }
-    }) as AiProvider['callStructured']
+    ) as AiProvider['callStructured']
   };
-  return { provider, calls };
+  return { provider, calls, spoilerCalls };
 }
 
 const VALID_BACKSTORY_300 = Array.from({ length: 300 }, () => 'lorem').join(
@@ -267,6 +350,129 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       expect(result.persistentTokens).toContain('cabal');
     }
     expect(calls.length).toBe(2);
+  });
+
+  // ---- Phase 3b polish (2026-05-23): AI semantic-check filter ----
+
+  it('Phase 3b: false positive — substring hits but AI verdict says "ordinary"; backstory ACCEPTED with no retry', async () => {
+    // The substring scanner trips on the common-English word "chosen"
+    // but the AI semantic check looks at context and decides it's
+    // used in its everyday meaning ("problems I had chosen to
+    // focus on").  Per the user's live-reported false positive
+    // 2026-05-23 ("chosen" in "problems you'd chosen").
+    const benign = JSON.stringify({
+      name: 'Casey',
+      pronouns: 'they/them',
+      tags: ['systems engineer', 'self-taught', 'skeptical'],
+      ...SHEET_READY,
+      backstory:
+        `They picked contract work, freelance, side projects they'd chosen. ${VALID_BACKSTORY_300}`
+    });
+    const { provider, calls, spoilerCalls } = mockProvider([benign], {
+      spoilerVerdicts: ['auto-ordinary']
+    });
+    const result = await synthesizeBackstory(provider, BASE_REQ);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // No retry because AI filtered the substring hit as a false
+      // positive.
+      expect(result.retried).toBe(false);
+      expect(result.response.backstory).toContain('chosen');
+    }
+    // One generation call + one spoiler-check call.
+    expect(calls.length).toBe(1);
+    expect(spoilerCalls.length).toBe(1);
+  });
+
+  it('Phase 3b: genuine leak — substring hits AND AI verdict says "leak"; retry fires', async () => {
+    const leaky = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
+      backstory:
+        `She was the chosen one, destined for greater things. ${VALID_BACKSTORY_300}`
+    });
+    const clean = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
+      backstory:
+        `She grew up in the Mission. ${VALID_BACKSTORY_300}`
+    });
+    const { provider, calls, spoilerCalls } = mockProvider(
+      [leaky, clean],
+      {
+        // First spoiler-check: verdict=leak (genuine).  No second
+        // check because the retry's backstory has no substring
+        // hits — the substring scanner short-circuits.
+        spoilerVerdicts: ['auto-leak']
+      }
+    );
+    const result = await synthesizeBackstory(provider, BASE_REQ);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.retried).toBe(true);
+    }
+    expect(calls.length).toBe(2); // two generation calls
+    expect(spoilerCalls.length).toBe(1); // one check (only first backstory had hits)
+  });
+
+  it('Phase 3b: AI-check failure (provider error) → conservative fallback to treating substring hits as genuine', async () => {
+    // When the AI check itself throws/refuses, the synthesizer
+    // should fall back to treating the substring hits as genuine
+    // leaks (conservative — over-flag rather than leak).
+    const leaky = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      ...SHEET_READY,
+      backstory:
+        `She had chosen wisely. ${VALID_BACKSTORY_300}`
+    });
+    // Make the provider refuse all spoiler-check calls.
+    let callCount = 0;
+    const provider: AiProvider = {
+      id: 'claude',
+      callStructured: vi.fn(
+        async <T>(
+          _req: { systemPrompt: string; prompt: string },
+          schema?: { name?: string }
+        ) => {
+          callCount++;
+          if (schema?.name === 'spoiler_check_verdict') {
+            return {
+              ok: false as const,
+              refusal: {
+                kind: 'provider-error' as const,
+                message: 'simulated network outage'
+              },
+              raw: '',
+              tokensIn: 0,
+              tokensOut: 0,
+              responseId: 'mock-fail'
+            };
+          }
+          return {
+            ok: true as const,
+            value: JSON.parse(leaky) as T,
+            raw: leaky,
+            tokensIn: 100,
+            tokensOut: 200,
+            responseId: `mock-gen-${callCount}`
+          };
+        }
+      ) as AiProvider['callStructured']
+    };
+    const result = await synthesizeBackstory(provider, BASE_REQ);
+    // Substring hits + AI check failed → treated as genuine →
+    // retry → second attempt also hits → spoiler-leak-persistent.
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('spoiler-leak-persistent');
+      expect(result.persistentTokens).toContain('chosen');
+    }
   });
 });
 

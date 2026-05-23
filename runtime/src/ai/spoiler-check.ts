@@ -249,3 +249,156 @@ export function containsSpoilerTokens(
   }
   return out;
 }
+
+// =====================================================================
+// Phase 3b polish (2026-05-23): AI semantic spoiler check.
+//
+// The substring scanner above is a fast first pass.  When it fires
+// on common English words ("chosen", "fate", "magic" in everyday
+// senses), it has no way to tell a false positive from a genuine
+// leak.  This second pass routes the candidates + backstory through
+// the LLM, which CAN tell "problems I had chosen to focus on" from
+// "they were the chosen one."
+//
+// Cost: 1 extra AI call per chargen synthesis when substring hits.
+// At Haiku pricing (~$1/M tokens × ~500 tokens per check) ≈ $0.0005.
+// Negligible.  Latency: ~2-3 seconds.  Fine for chargen.
+// =====================================================================
+
+import type { AiProvider } from './broker';
+import { SPOILER_CHECK_CALL_SCHEMA } from './schema-json';
+
+/**
+ * Phase 3b polish: the AI's structured verdict on whether the
+ * substring-flagged words constitute genuine leaks.
+ *
+ * `checkFailed` is true when the AI check itself errored (provider
+ * down, refusal, etc.).  Callers fall back to treating the
+ * substring hits as genuine when this is true — conservative
+ * (over-flag rather than leak).
+ */
+export interface AiSpoilerCheckResult {
+  /** True when no genuine leaks (false positives filtered out). */
+  ok: boolean;
+  /** Subset of candidates that genuinely leak.  Empty when ok=true. */
+  leakingWords: string[];
+  /** One-sentence audit reason (always populated). */
+  reason: string;
+  /** True when the AI check itself failed; caller falls back to substring-only. */
+  checkFailed: boolean;
+}
+
+interface AiSpoilerCheckInput {
+  /** Provider API key (same key used for chargen synthesis). */
+  apiKey: string;
+  /** Provider model id. */
+  model: string;
+  /** The full backstory text to evaluate. */
+  backstory: string;
+  /** Words that the substring scanner flagged for review. */
+  candidateWords: string[];
+  /** Optional cancellation. */
+  signal?: AbortSignal;
+}
+
+const SPOILER_CHECK_SYSTEM_PROMPT = `You are reviewing a tabletop RPG character backstory for SPOILER LEAKS.  The campaign has hidden lore the player character does NOT know yet (typically: a hidden magic system the player will discover in play, prophecy/destiny tropes, supernatural awareness, "chosen-one" framing).
+
+Specific common-English words in the backstory have been flagged for review.  Your job: decide which (if any) flagged words are used in ways that REVEAL the hidden lore, versus used in their ordinary English meaning.
+
+Examples of ORDINARY usage (do NOT flag):
+  - "problems I had chosen to focus on" — "chosen" as everyday verb meaning "selected"
+  - "the magic of the morning light" — metaphor; not literal magic
+  - "a fated coincidence at the cafe" — casual figure of speech
+  - "destiny took us to Taipei" — common turn of phrase about a life path
+  - "a sixth sense for trouble" — idiomatic intuition, not literal psychic ability
+
+Examples of LEAKS (DO flag):
+  - "they were the chosen one" — chosen-one trope
+  - "she could feel the magic in her veins" — literal magic
+  - "fated to fulfill the prophecy" — prophecy framing
+  - "they always knew they were destined for greater things" — destiny-as-cosmic-spoiler
+  - "she had always sensed things others couldn't" — supernatural awareness
+
+Apply the test: would a player reading this paragraph think "huh, my character isn't quite ordinary"?  If yes → leak.  If the language is the kind a present-day reasonable adult would use without any in-fiction supernatural awareness → ordinary.
+
+Reply with the verdict, the SUBSET of flagged words genuinely leaking (empty when verdict is "ordinary"), and a one-sentence reason.`;
+
+/**
+ * Phase 3b polish: AI semantic spoiler check.  Call AFTER
+ * containsSpoilerTokens fires.  Returns ok=true to ALLOW the
+ * backstory (false positives filtered), ok=false to REJECT.
+ * On check failure (provider down etc.) returns
+ * `{ ok: false, leakingWords: <input candidates>, checkFailed: true,
+ *   reason: 'AI check failed; falling back to substring hits.' }`
+ * so the caller treats the candidates as genuine — conservative.
+ */
+export async function aiSemanticSpoilerCheck(
+  provider: AiProvider,
+  input: AiSpoilerCheckInput
+): Promise<AiSpoilerCheckResult> {
+  if (input.candidateWords.length === 0) {
+    return {
+      ok: true,
+      leakingWords: [],
+      reason: 'No flagged words to evaluate.',
+      checkFailed: false
+    };
+  }
+  const userPrompt =
+    `Flagged words: ${input.candidateWords.join(', ')}\n\n` +
+    `Backstory:\n${input.backstory}`;
+  let result;
+  try {
+    result = await provider.callStructured<{
+      verdict: 'ordinary' | 'leak';
+      leakingWords: string[];
+      reason: string;
+    }>(
+      {
+        apiKey: input.apiKey,
+        model: input.model,
+        systemPrompt: SPOILER_CHECK_SYSTEM_PROMPT,
+        prompt: userPrompt,
+        signal: input.signal
+      },
+      SPOILER_CHECK_CALL_SCHEMA
+    );
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw e;
+    return {
+      ok: false,
+      leakingWords: [...input.candidateWords],
+      reason: `AI spoiler-check failed: ${(e as Error).message}.  Treating substring hits as genuine.`,
+      checkFailed: true
+    };
+  }
+  if (!result.ok) {
+    return {
+      ok: false,
+      leakingWords: [...input.candidateWords],
+      reason:
+        `AI spoiler-check refused (${result.refusal.kind}: ${result.refusal.message}).  Treating substring hits as genuine.`,
+      checkFailed: true
+    };
+  }
+  const value = result.value;
+  // Defensive: ensure leakingWords is a subset of the candidates
+  // — the AI could hallucinate words not in the candidate list,
+  // which would be confusing in the DM-facing message.  Filter
+  // down to known candidates.
+  const candidateLower = new Set(
+    input.candidateWords.map((w) => w.toLowerCase())
+  );
+  const filtered = (value.leakingWords ?? []).filter((w) =>
+    candidateLower.has(w.toLowerCase())
+  );
+  // Treat the verdict + filtered list as the source of truth:
+  // verdict='ordinary' OR empty leak list both mean "allow."
+  const isOk = value.verdict === 'ordinary' || filtered.length === 0;
+  return {
+    ok: isOk,
+    leakingWords: filtered,
+    reason: value.reason || '(no reason provided)',
+    checkFailed: false
+  };
+}

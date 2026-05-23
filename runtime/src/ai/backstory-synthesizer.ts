@@ -37,6 +37,7 @@ import {
   type PcBackstorySynthesisResponse
 } from './schema';
 import {
+  aiSemanticSpoilerCheck,
   containsSpoilerTokens,
   DEFAULT_SPOILER_TOKENS
 } from './spoiler-check';
@@ -151,46 +152,79 @@ export async function synthesizeBackstory(
   if (!first.ok) return first;
 
   // ----- Spoiler check -----
+  //
+  // Phase 3b polish (2026-05-23): two-tier check.  Substring scanner
+  // is a fast first pass; when it hits common-English words ("chosen",
+  // "fate", "magic"), the AI semantic-check second pass decides
+  // whether the usage is everyday English (false positive — allow)
+  // or a genuine campaign-lore leak (proceed to retry/reject).
+  // Without the second pass, the user reported a "chosen" false-
+  // positive on "problems you'd chosen" against Underleaf's broad
+  // token list.
   const tokens = req.spoilerTokens ?? DEFAULT_SPOILER_TOKENS;
   let active = first.response;
   let activeRaw = first.rawResponse;
   let retried = false;
 
   const firstHits = containsSpoilerTokens(active.backstory, tokens);
+  let firstSemanticLeaks: string[] = firstHits;
   if (firstHits.length > 0) {
-    // Single auto-retry with a "do not use" appendix.  Per prompt-
-    // engineering recommendation: name the caught tokens so the AI
-    // knows exactly what to avoid; otherwise it tends to repeat
-    // the same vocabulary.
+    const semantic = await aiSemanticSpoilerCheck(provider, {
+      apiKey: req.apiKey,
+      model: req.model,
+      backstory: active.backstory,
+      candidateWords: firstHits,
+      signal: req.signal
+    });
+    // Use the AI's narrowed list (genuine leaks) for the retry +
+    // failure message.  When the AI check fails, it returns the
+    // candidates verbatim — conservative fallback.
+    firstSemanticLeaks = semantic.leakingWords;
+  }
+  if (firstSemanticLeaks.length > 0) {
+    // Single auto-retry with a "do not use" appendix.  The retry
+    // instruction names ONLY the genuine-leak words (not the
+    // false-positive ordinary-usage words), so the AI's second
+    // attempt doesn't waste effort rewriting prose that was fine.
     retried = true;
     const retryUser =
       user +
       '\n\n# Retry instruction\n' +
-      `The previous attempt used these forbidden words: ${firstHits.join(', ')}.  ` +
-      'Re-write the backstory WITHOUT using any of them.  Same JSON output format as before.';
+      `The previous attempt revealed campaign secrets via these words: ${firstSemanticLeaks.join(', ')}.  ` +
+      'Re-write the backstory WITHOUT using any of them in their ' +
+      'spoiler-revealing sense.  Same JSON output format as before.';
     const second = await callAndParse(provider, req, system, retryUser);
     if (!second.ok) return second;
     active = second.response;
     activeRaw = second.rawResponse;
     const secondHits = containsSpoilerTokens(active.backstory, tokens);
+    let secondSemanticLeaks: string[] = secondHits;
     if (secondHits.length > 0) {
+      const semantic = await aiSemanticSpoilerCheck(provider, {
+        apiKey: req.apiKey,
+        model: req.model,
+        backstory: active.backstory,
+        candidateWords: secondHits,
+        signal: req.signal
+      });
+      secondSemanticLeaks = semantic.leakingWords;
+    }
+    if (secondSemanticLeaks.length > 0) {
       // Phase 3b polish (2026-05-23): attach the parsed PC so the
       // DM-review UI can offer hand-edit-and-accept.  The synth
       // isn't wasted — most of the backstory is fine, the DM just
       // needs to remove the leaked words (or use the auto-redact
-      // helper).  Without this, the only path forward was
-      // "discard and re-synthesize" which loses up to a minute of
-      // generated content.
+      // helper).
       return {
         ok: false,
         code: 'spoiler-leak-persistent',
         message:
-          `AI used forbidden words: ${secondHits.map((t) => `"${t}"`).join(', ')}.  ` +
+          `AI used forbidden words: ${secondSemanticLeaks.map((t) => `"${t}"`).join(', ')}.  ` +
           'These reveal campaign secrets and must be removed before ' +
           'the player sees the backstory.  Use "Edit + accept" to clean ' +
           'up locally, or "Discard + try again" to re-synthesize.',
         rawResponse: activeRaw,
-        persistentTokens: secondHits,
+        persistentTokens: secondSemanticLeaks,
         rejectedResponse: active
       };
     }

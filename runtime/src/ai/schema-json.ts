@@ -260,6 +260,48 @@ export const AI_RESPONSE_CALL_SCHEMA: AiStructuredCallSchema = {
 };
 
 /**
+ * Phase 3b polish (2026-05-23): canonical schema for the AI
+ * semantic-spoiler-check response.  The synthesizer runs this
+ * AFTER the substring scanner reports hits; the AI reads the
+ * backstory + the flagged words and decides which (if any) are
+ * genuine campaign-lore leaks versus ordinary English usage.
+ *
+ * Schema-enforced:
+ *   - verdict: enum 'ordinary' | 'leak'.
+ *   - leakingWords: array of strings (subset of the candidates).
+ *   - reason: string (one-sentence DM-audit explanation).
+ */
+export const SPOILER_CHECK_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: {
+      type: 'string',
+      enum: ['ordinary', 'leak'],
+      description:
+        '"ordinary" = all flagged words are used in everyday English; "leak" = at least one usage reveals the hidden campaign lore.'
+    },
+    leakingWords: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Subset of the flagged words that genuinely leak.  Empty array when verdict is "ordinary".'
+    },
+    reason: {
+      type: 'string',
+      description:
+        'One-sentence explanation for the DM audit log (e.g., "Used \'chosen\' as the everyday verb meaning selected; no chosen-one framing.")'
+    }
+  },
+  required: ['verdict', 'leakingWords', 'reason'],
+  additionalProperties: false
+} as const;
+
+export const SPOILER_CHECK_CALL_SCHEMA: AiStructuredCallSchema = {
+  name: 'spoiler_check_verdict',
+  schema: SPOILER_CHECK_SCHEMA as unknown as Record<string, unknown>
+};
+
+/**
  * Phase 3b-X step 4 (Gemini): translate the canonical schema to
  * Gemini's responseSchema dialect.  Gemini follows OpenAPI 3.0,
  * not JSON Schema 2020-12, so:

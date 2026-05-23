@@ -455,8 +455,13 @@ export const quireAppStyles = css`
        backstories.  ::backdrop dims the page; the dialog itself
        handles the focus trap. */
     dialog.chargen-dm-review-modal {
-      width: min(92vw, 1100px);
-      max-height: 85vh;
+      /* Phase 3b polish (2026-05-23): same responsive sizing as
+         the edit modal — scales with viewport, capped so it isn't
+         a tiny dialog on a 27-inch screen or a ribbon on a 12-inch laptop.
+         Review modal is slightly wider (1300px max vs edit's
+         1200px) because it shows side-by-side Q&A + backstory. */
+      width: clamp(min(92vw, 700px), 75vw, 1300px);
+      max-height: min(90vh, 900px);
       padding: 0;
       border: 1px solid light-dark(#cbd5e1, #334155);
       border-radius: 8px;
@@ -597,10 +602,24 @@ export const quireAppStyles = css`
       background: light-dark(#ffffff, #0f172a);
       cursor: pointer;
     }
-    /* Edit dialog (mirrors the review modal's outer shape). */
+    /* Edit dialog (mirrors the review modal's outer shape).
+       Phase 3b polish (2026-05-23): responsive sizing.  Prior
+       sizing — width:min(92vw,900px); max-height:85vh — was
+       cramped on 12-inch laptops (~900px wide) and a tall narrow
+       ribbon on 27-inch displays (~900px wide × 1224px tall in a
+       2560×1440 viewport).  New sizing:
+         width  = clamp(min(92vw,600px), 70vw, 1200px)
+                  — 600..1200px range, 70% of viewport in between.
+                  At 1280px viewport: 896px.  At 2560px: 1200px.
+                  At 800px viewport: 736px (≥92vw floor protects).
+         height = min(90vh, 900px)
+                  — at 800px viewport: 720px.  At 1440px: 900px.
+       Dialog body flexes; the textarea inside uses a clamp() on
+       min-height (~45vh) so it gets a generous chunk of vertical
+       room.  User can still drag-resize. */
     dialog.chargen-dm-review-edit-modal {
-      width: min(92vw, 900px);
-      max-height: 85vh;
+      width: clamp(min(92vw, 600px), 70vw, 1200px);
+      max-height: min(90vh, 900px);
       padding: 0;
       border: 1px solid light-dark(#cbd5e1, #334155);
       border-radius: 8px;
@@ -649,7 +668,13 @@ export const quireAppStyles = css`
     }
     .chargen-dm-review-edit-field textarea {
       resize: vertical;
-      min-height: 8rem;
+      /* Phase 3b polish (2026-05-23): give the backstory textarea a
+         generous chunk of viewport height by default so the DM can
+         read a 400-word backstory without scrolling.  User can
+         drag-resize down if they want a smaller textarea.  Cap at
+         60vh so on tall displays it doesn't push the footer off-
+         screen. */
+      min-height: clamp(12rem, 45vh, 60vh);
       line-height: 1.5;
     }
     .chargen-dm-review-edit-save {
