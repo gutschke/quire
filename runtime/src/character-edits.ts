@@ -9,10 +9,15 @@
  * Supported field keys:
  *
  *   stats.str / stats.dex / stats.con / stats.int / stats.wis / stats.cha
- *   harm
- *   stress
- *   advancements
- *   marks
+ *   harm  /  stress  /  advancements  /  marks
+ *   Phase B P1c (2026-05-23) additions:
+ *     knowsTheyCanCast (bool)
+ *     magicPhase (enum)
+ *     moneyBand (enum)
+ *     tax.active (bool) / tax.sessionsRemaining (uint) / tax.releaseMoment (string ≤200)
+ *     threadDebt.rung (enum) / threadDebt.spamCount (uint)
+ *     alignmentDrift.marks (uint ≤5) / alignmentDrift.lastUpdated (uint epoch-ms)
+ *     markBullets.hardMoment / .learned / .risk / .against / .complication (bool)
  *
  * Unknown keys are silently ignored — forward-compatible with future
  * schema additions while keeping the renderer from blowing up on data
@@ -22,9 +27,20 @@
  * expected) are also ignored.  This is defense-in-depth: peers we
  * don't trust shouldn't be able to corrupt a sheet by sending
  * garbage.
+ *
+ * NOT covered yet (defer until a richer edit model lands):
+ *   foci / inventory / conditions / languages / skills / tags /
+ *   accidentalGrants / advancementHistory — these are arrays; LWW on
+ *   the whole array works mechanically but has bad merge semantics
+ *   when two peers edit concurrently.  Need add/remove ops.
  */
 
-import type { CharacterRecord } from './character-loader';
+import type {
+  CharacterRecord,
+  MagicPhase,
+  MoneyBand,
+  ThreadDebtRung
+} from './character-loader';
 
 const STAT_KEYS = new Set(['str', 'dex', 'con', 'int', 'wis', 'cha']);
 const TOP_NUMBER_KEYS = new Set(['harm', 'stress', 'advancements', 'marks']);
@@ -33,6 +49,40 @@ export const HARM_MAX = 4;
 export const STRESS_MAX = 4;
 export const STAT_MIN = -3;
 export const STAT_MAX = 3;
+
+// Phase B P1c: enums + bullets sets used by the per-field validation.
+const MAGIC_PHASES = new Set<MagicPhase>([
+  'accidental',
+  'realization',
+  'tax',
+  'free'
+]);
+const MONEY_BANDS = new Set<MoneyBand>([
+  'broke',
+  'tight',
+  'comfortable',
+  'well-off',
+  'wealthy'
+]);
+const THREAD_DEBT_RUNGS = new Set<ThreadDebtRung>([
+  'quiet',
+  'noticed',
+  'watched',
+  'pushing-back',
+  'hunted'
+]);
+const MARK_BULLET_KEYS = new Set([
+  'hardMoment',
+  'learned',
+  'risk',
+  'against',
+  'complication'
+]);
+
+/** Phase B P1c: cap on `releaseMoment` text and similar bounded
+ *  string fields written via pc-edit.  Same order-of-magnitude as
+ *  AccidentalGrant.note. */
+const PC_EDIT_TEXT_FIELD_MAX = 200;
 
 export function applyCharacterEdits(
   record: CharacterRecord,
@@ -43,7 +93,15 @@ export function applyCharacterEdits(
   if (keys.length === 0) return record;
   const out: CharacterRecord = {
     ...record,
-    stats: record.stats ? { ...record.stats } : undefined
+    stats: record.stats ? { ...record.stats } : undefined,
+    // Phase B P1c: clone object sub-fields up-front when we know
+    // we may write into them.  Cheap (the records are small).
+    tax: record.tax ? { ...record.tax } : undefined,
+    threadDebt: record.threadDebt ? { ...record.threadDebt } : undefined,
+    alignmentDrift: record.alignmentDrift
+      ? { ...record.alignmentDrift }
+      : undefined,
+    markBullets: record.markBullets ? { ...record.markBullets } : undefined
   };
   for (const key of keys) {
     const value = edits[key];
@@ -60,6 +118,73 @@ export function applyCharacterEdits(
       else if (key === 'stress') clamped = clamp(value, 0, STRESS_MAX);
       else clamped = Math.max(0, Math.floor(value));
       (out as Record<string, unknown>)[key] = clamped;
+    } else if (key === 'knowsTheyCanCast') {
+      if (typeof value !== 'boolean') continue;
+      out.knowsTheyCanCast = value;
+    } else if (key === 'magicPhase') {
+      if (typeof value !== 'string') continue;
+      if (!MAGIC_PHASES.has(value as MagicPhase)) continue;
+      out.magicPhase = value as MagicPhase;
+    } else if (key === 'moneyBand') {
+      if (typeof value !== 'string') continue;
+      if (!MONEY_BANDS.has(value as MoneyBand)) continue;
+      out.moneyBand = value as MoneyBand;
+    } else if (key.startsWith('tax.')) {
+      const sub = key.slice('tax.'.length);
+      out.tax = { ...(out.tax ?? { active: false }) };
+      if (sub === 'active' && typeof value === 'boolean') {
+        out.tax.active = value;
+      } else if (
+        sub === 'sessionsRemaining' &&
+        typeof value === 'number' &&
+        Number.isFinite(value)
+      ) {
+        out.tax.sessionsRemaining = Math.max(0, Math.floor(value));
+      } else if (
+        sub === 'releaseMoment' &&
+        typeof value === 'string' &&
+        value.length <= PC_EDIT_TEXT_FIELD_MAX
+      ) {
+        out.tax.releaseMoment = value;
+      }
+    } else if (key.startsWith('threadDebt.')) {
+      const sub = key.slice('threadDebt.'.length);
+      out.threadDebt = { ...(out.threadDebt ?? { rung: 'quiet' }) };
+      if (sub === 'rung' && typeof value === 'string') {
+        if (THREAD_DEBT_RUNGS.has(value as ThreadDebtRung)) {
+          out.threadDebt.rung = value as ThreadDebtRung;
+        }
+      } else if (
+        sub === 'spamCount' &&
+        typeof value === 'number' &&
+        Number.isFinite(value)
+      ) {
+        out.threadDebt.spamCount = Math.max(0, Math.floor(value));
+      }
+    } else if (key.startsWith('alignmentDrift.')) {
+      const sub = key.slice('alignmentDrift.'.length);
+      out.alignmentDrift = {
+        ...(out.alignmentDrift ?? { marks: 0 })
+      };
+      if (
+        sub === 'marks' &&
+        typeof value === 'number' &&
+        Number.isFinite(value)
+      ) {
+        out.alignmentDrift.marks = clamp(value, 0, 5);
+      } else if (
+        sub === 'lastUpdated' &&
+        typeof value === 'number' &&
+        Number.isFinite(value)
+      ) {
+        out.alignmentDrift.lastUpdated = Math.max(0, Math.floor(value));
+      }
+    } else if (key.startsWith('markBullets.')) {
+      const sub = key.slice('markBullets.'.length);
+      if (!MARK_BULLET_KEYS.has(sub)) continue;
+      if (typeof value !== 'boolean') continue;
+      out.markBullets = { ...(out.markBullets ?? {}) };
+      (out.markBullets as Record<string, boolean>)[sub] = value;
     }
   }
   return out;

@@ -116,3 +116,211 @@ describe('applyCharacterEdits', () => {
     expect(r.stats?.str).toBe(0);
   });
 });
+
+// =====================================================================
+// Phase B P1c (2026-05-23): per-field validation for the new fields
+// (knowsTheyCanCast, magicPhase, moneyBand, tax.*, threadDebt.*,
+// alignmentDrift.*, markBullets.*).
+// =====================================================================
+
+describe('Phase B P1c — knowsTheyCanCast / magicPhase / moneyBand', () => {
+  it('writes knowsTheyCanCast when value is boolean', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { knowsTheyCanCast: true }
+    );
+    expect(r.knowsTheyCanCast).toBe(true);
+  });
+
+  it('ignores knowsTheyCanCast when value is non-boolean', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', knowsTheyCanCast: false },
+      { knowsTheyCanCast: 'yes' as unknown as boolean }
+    );
+    expect(r.knowsTheyCanCast).toBe(false);
+  });
+
+  it('writes magicPhase only for valid enum values', () => {
+    const valid = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { magicPhase: 'realization' }
+    );
+    expect(valid.magicPhase).toBe('realization');
+    const invalid = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', magicPhase: 'accidental' },
+      { magicPhase: 'made-up-phase' }
+    );
+    expect(invalid.magicPhase).toBe('accidental');
+  });
+
+  it('writes moneyBand only for valid enum values', () => {
+    const valid = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { moneyBand: 'comfortable' }
+    );
+    expect(valid.moneyBand).toBe('comfortable');
+    const invalid = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', moneyBand: 'tight' },
+      { moneyBand: '$$$' }
+    );
+    expect(invalid.moneyBand).toBe('tight');
+  });
+});
+
+describe('Phase B P1c — tax.* sub-fields', () => {
+  it('writes tax.active as boolean', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'tax.active': true }
+    );
+    expect(r.tax?.active).toBe(true);
+  });
+
+  it('writes tax.sessionsRemaining as a clamped non-negative integer', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', tax: { active: true } },
+      { 'tax.sessionsRemaining': 2.7 }
+    );
+    expect(r.tax?.sessionsRemaining).toBe(2);
+    const neg = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', tax: { active: true } },
+      { 'tax.sessionsRemaining': -5 }
+    );
+    expect(neg.tax?.sessionsRemaining).toBe(0);
+  });
+
+  it('writes tax.releaseMoment as bounded string', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', tax: { active: false } },
+      { 'tax.releaseMoment': 'released at the bay' }
+    );
+    expect(r.tax?.releaseMoment).toBe('released at the bay');
+  });
+
+  it('drops tax.releaseMoment when it exceeds the bound', () => {
+    const longStr = 'x'.repeat(500);
+    const r = applyCharacterEdits(
+      {
+        $schemaVersion: '0.1.0',
+        name: 'Mei',
+        tax: { active: false, releaseMoment: 'old' }
+      },
+      { 'tax.releaseMoment': longStr }
+    );
+    expect(r.tax?.releaseMoment).toBe('old');
+  });
+
+  it('preserves existing tax fields when writing one sub-key', () => {
+    const r = applyCharacterEdits(
+      {
+        $schemaVersion: '0.1.0',
+        name: 'Mei',
+        tax: { active: true, sessionsRemaining: 3 }
+      },
+      { 'tax.active': false }
+    );
+    expect(r.tax?.active).toBe(false);
+    expect(r.tax?.sessionsRemaining).toBe(3);
+  });
+});
+
+describe('Phase B P1c — threadDebt.* sub-fields', () => {
+  it('writes threadDebt.rung only for valid rung enum', () => {
+    const valid = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'threadDebt.rung': 'watched' }
+    );
+    expect(valid.threadDebt?.rung).toBe('watched');
+    const invalid = applyCharacterEdits(
+      {
+        $schemaVersion: '0.1.0',
+        name: 'Mei',
+        threadDebt: { rung: 'quiet' }
+      },
+      { 'threadDebt.rung': 'invented-rung' }
+    );
+    expect(invalid.threadDebt?.rung).toBe('quiet');
+  });
+
+  it('writes threadDebt.spamCount as a non-negative integer', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'threadDebt.spamCount': 4 }
+    );
+    expect(r.threadDebt?.spamCount).toBe(4);
+  });
+});
+
+describe('Phase B P1c — alignmentDrift.* sub-fields', () => {
+  it('clamps alignmentDrift.marks to [0, 5]', () => {
+    const high = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'alignmentDrift.marks': 99 }
+    );
+    expect(high.alignmentDrift?.marks).toBe(5);
+    const neg = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'alignmentDrift.marks': -3 }
+    );
+    expect(neg.alignmentDrift?.marks).toBe(0);
+  });
+
+  it('writes alignmentDrift.lastUpdated as a non-negative integer epoch', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { 'alignmentDrift.lastUpdated': 1700000000000 }
+    );
+    expect(r.alignmentDrift?.lastUpdated).toBe(1700000000000);
+  });
+});
+
+describe('Phase B P1c — markBullets.* sub-fields', () => {
+  it('writes each of the 5 mark bullets as a boolean', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      {
+        'markBullets.hardMoment': true,
+        'markBullets.learned': false,
+        'markBullets.risk': true,
+        'markBullets.against': false,
+        'markBullets.complication': true
+      }
+    );
+    expect(r.markBullets?.hardMoment).toBe(true);
+    expect(r.markBullets?.learned).toBe(false);
+    expect(r.markBullets?.risk).toBe(true);
+    expect(r.markBullets?.against).toBe(false);
+    expect(r.markBullets?.complication).toBe(true);
+  });
+
+  it('ignores markBullets sub-keys outside the 5-bullet set', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      {
+        'markBullets.hardMoment': true,
+        'markBullets.invented': true
+      }
+    );
+    expect(r.markBullets?.hardMoment).toBe(true);
+    expect(
+      (r.markBullets as Record<string, unknown>)?.invented
+    ).toBeUndefined();
+  });
+});
+
+describe('Phase B P1c — input record is not mutated', () => {
+  it('preserves the source record when writing to new fields', () => {
+    const src = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      tax: { active: true, sessionsRemaining: 3 }
+    } as const;
+    const before = JSON.stringify(src);
+    applyCharacterEdits(src, {
+      'tax.active': false,
+      'tax.sessionsRemaining': 0
+    });
+    // Source unchanged.
+    expect(JSON.stringify(src)).toBe(before);
+  });
+});

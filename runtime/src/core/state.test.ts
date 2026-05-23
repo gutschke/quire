@@ -1652,6 +1652,143 @@ describe('materialize — hard-gate enforcement on AI-proposed events (M3c.5)', 
       )
     ).toBe(true);
   });
+
+  // ---- Phase B P1c (2026-05-23): new hard-gates ----
+
+  it('Phase B P1c: AI-proposed knowsTheyCanCast→true is rejected without ai-accept (one-way story gate)', () => {
+    // Seed a synthesized PC at knowsTheyCanCast=false (the
+    // Accidental phase).  The AI proposes flipping to true (the
+    // Realization beat).  Per rules.md:179 + TTRPG R3 #1, this is
+    // an irreversible narrative event; mirror the UI's deliberate
+    // "Reveal magic" button by requiring DM accept at the
+    // materializer.
+    const log = dmLog();
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'yui',
+      name: 'Yui',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      backstory: 'short'
+    });
+    log.append('pc-edit', { pcId: 'yui', field: 'knowsTheyCanCast', value: false });
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'knowsTheyCanCast',
+      value: true,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    // Edit blocked; pinned at the prior value.
+    expect(state.pcEdits['yui']?.knowsTheyCanCast).toBe(false);
+    const rejected = state.aiAudit.find(
+      (e) => e.kind === 'rejected-hard-gate'
+    );
+    expect(rejected?.rejectedReason).toMatch(/Realization|knowsTheyCanCast/);
+  });
+
+  it('Phase B P1c: AI-proposed knowsTheyCanCast→true WITH ai-accept is allowed', () => {
+    const log = dmLog();
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'yui',
+      name: 'Yui',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      backstory: 'short'
+    });
+    log.append('ai-accept', { v: 1, responseId: RESP_ID });
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'knowsTheyCanCast',
+      value: true,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.knowsTheyCanCast).toBe(true);
+  });
+
+  it('Phase B P1c: AI-proposed knowsTheyCanCast→false (un-reveal) is also gated', () => {
+    // The reverse flip is equally story-load-bearing — silently
+    // un-revealing magic to a player would be a story violation.
+    const log = dmLog();
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'yui',
+      name: 'Yui',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      backstory: 'short'
+    });
+    log.append('pc-edit', { pcId: 'yui', field: 'knowsTheyCanCast', value: true });
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'knowsTheyCanCast',
+      value: false,
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.knowsTheyCanCast).toBe(true);
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          /un-reveal|knowsTheyCanCast/.test(e.rejectedReason ?? '')
+      )
+    ).toBe(true);
+  });
+
+  it('Phase B P1c: AI-proposed threadDebt.rung=hunted is rejected without ai-accept', () => {
+    const log = dmLog();
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'threadDebt.rung',
+      value: 'hunted',
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    // Edit blocked.
+    expect(state.pcEdits['yui']?.['threadDebt.rung']).toBeUndefined();
+    expect(
+      state.aiAudit.some(
+        (e) =>
+          e.kind === 'rejected-hard-gate' &&
+          /Hunted/i.test(e.rejectedReason ?? '')
+      )
+    ).toBe(true);
+  });
+
+  it('Phase B P1c: AI-proposed threadDebt.rung→a non-hunted rung is NOT hard-gated', () => {
+    const log = dmLog();
+    log.append('pc-edit', {
+      pcId: 'yui',
+      field: 'threadDebt.rung',
+      value: 'watched',
+      causedByResponseId: RESP_ID
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.['threadDebt.rung']).toBe('watched');
+    expect(state.aiAudit).toEqual([]);
+  });
+
+  it('Phase B P1c: DM-direct knowsTheyCanCast flip bypasses hard-gate (UI deliberate-button is the gate)', () => {
+    // The hard-gate applies to AI-proposed edits only (those with
+    // a causedByResponseId).  DM directly clicking "Reveal magic"
+    // in the UI emits a pc-edit WITHOUT causedByResponseId; the
+    // UI button IS the deliberate gate per TTRPG R3 #1.  The
+    // materializer doesn't need to add a second confirmation.
+    const log = dmLog();
+    log.append('pc-edit', { pcId: 'yui', field: 'knowsTheyCanCast', value: true });
+    const state = materialize(log.events());
+    expect(state.pcEdits['yui']?.knowsTheyCanCast).toBe(true);
+    expect(state.aiAudit).toEqual([]);
+  });
 });
 
 describe('materialize — full session smoke test', () => {

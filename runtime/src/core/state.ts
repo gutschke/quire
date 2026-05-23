@@ -747,6 +747,44 @@ function pcEditHardGateReason(
   field: string,
   newValue: unknown
 ): string {
+  // Phase B P1c (2026-05-23): knowsTheyCanCast true-flip is a
+  // one-way story gate per rules.md:179 — the Realization beat is
+  // an irreversible narrative event.  Per the TTRPG expert R2
+  // critique: in the UI, this is a deliberate "Reveal magic"
+  // button (not an inline checkbox).  Mirror that intent at the
+  // materializer's hard-gate so an AI-proposed flip-to-true also
+  // requires explicit DM accept.  Flip-to-false (an accidental
+  // un-reveal) is the equally-load-bearing reverse — also gated.
+  if (field === 'knowsTheyCanCast' && typeof newValue === 'boolean') {
+    // Read the EFFECTIVE current value: pc-edit overlays (most
+    // recent LWW value) win over the pc-create synthesizedPcs
+    // baseline.  Without this, a DM-direct flip via pc-edit
+    // wouldn't be visible to a subsequent AI-proposed flip's
+    // hard-gate check.
+    const editedValue = state.pcEdits[pcId]?.knowsTheyCanCast;
+    const prior =
+      typeof editedValue === 'boolean'
+        ? editedValue
+        : (state.synthesizedPcs[pcId]?.knowsTheyCanCast ?? false);
+    if (newValue !== prior) {
+      return newValue
+        ? 'Realization beat (knowsTheyCanCast → true) is a one-way story gate'
+        : 'un-revealing magic (knowsTheyCanCast → false) cannot be silent';
+    }
+  }
+  // Phase B P1c: threadDebt.rung advancing to 'hunted' (rules.md:
+  // 132) is fictionally severe — the world is hunting the PC.
+  // Mirror the existing caster-state-set hard-gate that already
+  // covers ladderState='hunted' (the caster-state-set path); the
+  // pc-edit path needs the same gate because the rung lives in
+  // the character record now too.
+  if (
+    field === 'threadDebt.rung' &&
+    typeof newValue === 'string' &&
+    newValue === 'hunted'
+  ) {
+    return 'threadDebt.rung → Hunted is a hard escalation';
+  }
   if (typeof newValue !== 'number') return '';
   if (field === 'harm') {
     if (newValue >= 3) {
