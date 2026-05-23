@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Quire</title>
+    <!--
+      Reset the browser's default body margin (8px) so the
+      <quire-app> root, sized to 100dvh, fits the viewport exactly.
+      Without this, body height = 100dvh + 16px, which produces a
+      stray html-level scrollbar on top of <quire-app>'s own
+      region scrolls.  Live-reported by the user 2026-05-22:
+      "the entire screen scrolls as well, obscuring some of the
+      questions" — that was the document-level overflow.
+      Inline so it applies before any module CSS loads (avoiding
+      a first-paint flash of the bug).
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
   </head>
   <body>
     <quire-app></quire-app>
