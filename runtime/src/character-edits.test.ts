@@ -324,3 +324,69 @@ describe('Phase B P1c — input record is not mutated', () => {
     expect(JSON.stringify(src)).toBe(before);
   });
 });
+
+describe('Phase B P1c+ regression-guard — no spurious undefined keys (2026-05-23)', () => {
+  // Live-reported against build 75792d5: the output of
+  // applyCharacterEdits started carrying `tax: undefined`,
+  // `threadDebt: undefined`, `alignmentDrift: undefined`,
+  // `markBullets: undefined` as KEYS on every effective record,
+  // even when the source had none of them.  Caused a render
+  // regression in the deployed cockpit when the user loaded a
+  // packed character.  These tests pin the fix.
+
+  function srcNoNewFields() {
+    return {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 }
+    } as const;
+  }
+
+  it('does NOT add `tax` key when source has no tax and edits do not touch tax', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), { harm: 1 });
+    expect('tax' in out).toBe(false);
+  });
+
+  it('does NOT add `threadDebt` key when source has none and edits do not touch it', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), { harm: 1 });
+    expect('threadDebt' in out).toBe(false);
+  });
+
+  it('does NOT add `alignmentDrift` key when source has none and edits do not touch it', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), { harm: 1 });
+    expect('alignmentDrift' in out).toBe(false);
+  });
+
+  it('does NOT add `markBullets` key when source has none and edits do not touch it', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), { harm: 1 });
+    expect('markBullets' in out).toBe(false);
+  });
+
+  it('adds `tax` key (lazily) only when a tax.* edit actually applies a value', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), {
+      'tax.active': true
+    });
+    expect('tax' in out).toBe(true);
+    expect(out.tax?.active).toBe(true);
+  });
+
+  it('does NOT add `tax` key when a tax.* edit value is invalid (drop-on-bad-input)', () => {
+    const out = applyCharacterEdits(srcNoNewFields(), {
+      'tax.active': 'yes' as unknown as boolean
+    });
+    expect('tax' in out).toBe(false);
+  });
+
+  it('lazy-clone preserves existing source object when edit writes a different sub-field', () => {
+    const src = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      tax: { active: true, sessionsRemaining: 2 }
+    } as const;
+    const out = applyCharacterEdits(src, {
+      'tax.sessionsRemaining': 1
+    });
+    expect(out.tax?.active).toBe(true); // preserved
+    expect(out.tax?.sessionsRemaining).toBe(1); // updated
+  });
+});

@@ -91,17 +91,20 @@ export function applyCharacterEdits(
   if (!edits) return record;
   const keys = Object.keys(edits);
   if (keys.length === 0) return record;
+  // Phase B P1c+ (regression-fix 2026-05-23): originally cloned
+  // tax / threadDebt / alignmentDrift / markBullets up-front for
+  // sub-field writes — but that introduced `tax: undefined`,
+  // `threadDebt: undefined`, etc. KEYS on EVERY effective-character
+  // record, even when the source didn't have them.  Downstream
+  // consumers that do `'tax' in record` or iterate `Object.keys`
+  // saw new keys, which surfaced as a render-breaking regression
+  // when the user loaded a packed character on the deployed build
+  // 75792d5.  Fix: clone only `stats` up-front (existed before);
+  // clone the object sub-fields LAZILY only when an edit actually
+  // writes into them (the per-key branches below check first).
   const out: CharacterRecord = {
     ...record,
-    stats: record.stats ? { ...record.stats } : undefined,
-    // Phase B P1c: clone object sub-fields up-front when we know
-    // we may write into them.  Cheap (the records are small).
-    tax: record.tax ? { ...record.tax } : undefined,
-    threadDebt: record.threadDebt ? { ...record.threadDebt } : undefined,
-    alignmentDrift: record.alignmentDrift
-      ? { ...record.alignmentDrift }
-      : undefined,
-    markBullets: record.markBullets ? { ...record.markBullets } : undefined
+    stats: record.stats ? { ...record.stats } : undefined
   };
   for (const key of keys) {
     const value = edits[key];
@@ -131,60 +134,75 @@ export function applyCharacterEdits(
       out.moneyBand = value as MoneyBand;
     } else if (key.startsWith('tax.')) {
       const sub = key.slice('tax.'.length);
-      out.tax = { ...(out.tax ?? { active: false }) };
+      // Lazy-clone: only when this edit actually writes a valid
+      // value.  Avoids creating `tax: {active: false}` on every
+      // record that has no tax field at all.
       if (sub === 'active' && typeof value === 'boolean') {
-        out.tax.active = value;
+        out.tax = { ...(out.tax ?? { active: false }), active: value };
       } else if (
         sub === 'sessionsRemaining' &&
         typeof value === 'number' &&
         Number.isFinite(value)
       ) {
-        out.tax.sessionsRemaining = Math.max(0, Math.floor(value));
+        out.tax = {
+          ...(out.tax ?? { active: false }),
+          sessionsRemaining: Math.max(0, Math.floor(value))
+        };
       } else if (
         sub === 'releaseMoment' &&
         typeof value === 'string' &&
         value.length <= PC_EDIT_TEXT_FIELD_MAX
       ) {
-        out.tax.releaseMoment = value;
+        out.tax = {
+          ...(out.tax ?? { active: false }),
+          releaseMoment: value
+        };
       }
     } else if (key.startsWith('threadDebt.')) {
       const sub = key.slice('threadDebt.'.length);
-      out.threadDebt = { ...(out.threadDebt ?? { rung: 'quiet' }) };
       if (sub === 'rung' && typeof value === 'string') {
         if (THREAD_DEBT_RUNGS.has(value as ThreadDebtRung)) {
-          out.threadDebt.rung = value as ThreadDebtRung;
+          out.threadDebt = {
+            ...(out.threadDebt ?? { rung: 'quiet' }),
+            rung: value as ThreadDebtRung
+          };
         }
       } else if (
         sub === 'spamCount' &&
         typeof value === 'number' &&
         Number.isFinite(value)
       ) {
-        out.threadDebt.spamCount = Math.max(0, Math.floor(value));
+        out.threadDebt = {
+          ...(out.threadDebt ?? { rung: 'quiet' }),
+          spamCount: Math.max(0, Math.floor(value))
+        };
       }
     } else if (key.startsWith('alignmentDrift.')) {
       const sub = key.slice('alignmentDrift.'.length);
-      out.alignmentDrift = {
-        ...(out.alignmentDrift ?? { marks: 0 })
-      };
       if (
         sub === 'marks' &&
         typeof value === 'number' &&
         Number.isFinite(value)
       ) {
-        out.alignmentDrift.marks = clamp(value, 0, 5);
+        out.alignmentDrift = {
+          ...(out.alignmentDrift ?? { marks: 0 }),
+          marks: clamp(value, 0, 5)
+        };
       } else if (
         sub === 'lastUpdated' &&
         typeof value === 'number' &&
         Number.isFinite(value)
       ) {
-        out.alignmentDrift.lastUpdated = Math.max(0, Math.floor(value));
+        out.alignmentDrift = {
+          ...(out.alignmentDrift ?? { marks: 0 }),
+          lastUpdated: Math.max(0, Math.floor(value))
+        };
       }
     } else if (key.startsWith('markBullets.')) {
       const sub = key.slice('markBullets.'.length);
       if (!MARK_BULLET_KEYS.has(sub)) continue;
       if (typeof value !== 'boolean') continue;
-      out.markBullets = { ...(out.markBullets ?? {}) };
-      (out.markBullets as Record<string, boolean>)[sub] = value;
+      out.markBullets = { ...(out.markBullets ?? {}), [sub]: value };
     }
   }
   return out;
