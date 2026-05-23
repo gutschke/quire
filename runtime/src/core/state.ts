@@ -10,6 +10,7 @@
 
 import type { PeerId, QuireEvent } from './event-log';
 import type { CharacterRecord } from '../character-loader';
+import { stripDmOnlyFromCharacter } from '../character-loader';
 
 export interface PeerPresence {
   peerId: PeerId;
@@ -400,6 +401,23 @@ export function filterForViewer(
     // the assignment leaves the entry absent (cleaner than an empty
     // array, signals "nothing here" semantically).
   }
+  // Phase B P1b: strip DM-only fields from every synthesized PC
+  // record before it reaches the player-bound view.  The
+  // materialized state holds the full record (the DM authored it);
+  // the projection is a defense-in-depth layer between materializer
+  // and renderer.  Without this, a player peer's React/Lit render
+  // pipeline could pluck `record.knowsTheyCanCast` or
+  // `record.accidentalGrants` and leak the magic-discovery arc to
+  // the player whose PC is in Accidental phase.
+  //
+  // Note: characters loaded fresh from disk (character-loader's
+  // GitHub fetches) bypass this projection.  Those reads must
+  // call `stripDmOnlyFromCharacter` themselves at the render
+  // boundary.  See P3/P4 for the render-side enforcement.
+  const filteredSynthesizedPcs: Record<string, CharacterRecord> = {};
+  for (const [pcId, record] of Object.entries(state.synthesizedPcs)) {
+    filteredSynthesizedPcs[pcId] = stripDmOnlyFromCharacter(record);
+  }
   return {
     ...state,
     // DM-only fields wiped:
@@ -408,6 +426,7 @@ export function filterForViewer(
     scratchNotes: [],
     aiAudit: [],
     casterState: {},
+    synthesizedPcs: filteredSynthesizedPcs,
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };

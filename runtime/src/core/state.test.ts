@@ -1151,6 +1151,107 @@ describe('filterForViewer (P0-4)', () => {
     expect(filtered.scratchNotes).toEqual([]);
     expect(filtered.mapBlobs).toEqual({});
   });
+
+  // ---- Phase B P1b (2026-05-23): synthesizedPcs viewer-scope ----
+
+  it('Phase B P1b: non-coord viewer sees DM-only PC fields stripped from synthesizedPcs', () => {
+    const s = dmState();
+    // Inject a synthesized PC with both player-visible + DM-only
+    // fields populated.  The materializer wouldn't naturally
+    // produce all of these (some come from pc-edit events), but
+    // the projection's contract is shape-based: any DM-only field
+    // present in the source must be absent in the player view.
+    s.synthesizedPcs['pc-mei'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei Tanaka',
+      pronouns: 'she/her',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      tags: ['junior engineer'],
+      backstory: 'a paragraph',
+      // ---- DM-only ----
+      magicPhase: 'accidental',
+      knowsTheyCanCast: true,
+      tax: { active: false },
+      threadDebt: { rung: 'noticed' },
+      accidentalGrants: [{ ts: 100, note: 'silent nudge' }],
+      alignmentDrift: { marks: 1 },
+      dmNotes: 'remember the focus rename'
+    };
+    const filtered = filterForViewer(s, 'alice');
+    const projected = filtered.synthesizedPcs['pc-mei'];
+    expect(projected).toBeDefined();
+    // Player-visible fields preserved.
+    expect(projected.name).toBe('Mei Tanaka');
+    expect(projected.stats?.int).toBe(2);
+    expect(projected.skills).toEqual(['Tech', 'Knowledge']);
+    expect(projected.backstory).toBe('a paragraph');
+    // DM-only fields stripped — every one of them.
+    expect('magicPhase' in projected).toBe(false);
+    expect('knowsTheyCanCast' in projected).toBe(false);
+    expect('tax' in projected).toBe(false);
+    expect('threadDebt' in projected).toBe(false);
+    expect('accidentalGrants' in projected).toBe(false);
+    expect('alignmentDrift' in projected).toBe(false);
+    expect('dmNotes' in projected).toBe(false);
+  });
+
+  it('Phase B P1b: DM-as-viewer sees synthesizedPcs unchanged (no projection cost)', () => {
+    const s = dmState();
+    s.synthesizedPcs['pc-mei'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true,
+      dmNotes: 'note'
+    };
+    const filtered = filterForViewer(s, 'dm');
+    // DM sees the full record.  Identity check: filterForViewer
+    // returns the SAME state object when viewer is current coord
+    // (no allocation), so synthesizedPcs is also untouched.
+    expect(filtered).toBe(s);
+    expect(filtered.synthesizedPcs['pc-mei'].knowsTheyCanCast).toBe(true);
+    expect(filtered.synthesizedPcs['pc-mei'].dmNotes).toBe('note');
+  });
+
+  it('Phase B P1b: yielded-coord peer also gets DM-only PC fields stripped', () => {
+    // Threat model parity: a peer who briefly held coord then
+    // yielded must lose access to DM-only PC fields the same way
+    // they lose access to threadDebt / scratchNotes etc.
+    const s = dmState();
+    s.coordHolders.add('former-dm');
+    s.peers['former-dm'] = { peerId: 'former-dm', name: 'Former DM', joinedAt: 0 };
+    s.synthesizedPcs['pc-mei'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true,
+      dmNotes: 'note',
+      tax: { active: true, sessionsRemaining: 3 }
+    };
+    const filtered = filterForViewer(s, 'former-dm');
+    const projected = filtered.synthesizedPcs['pc-mei'];
+    expect('knowsTheyCanCast' in projected).toBe(false);
+    expect('dmNotes' in projected).toBe(false);
+    expect('tax' in projected).toBe(false);
+  });
+
+  it('Phase B P1b: filter does not mutate the source state synthesizedPcs', () => {
+    const s = dmState();
+    s.synthesizedPcs['pc-mei'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true
+    };
+    filterForViewer(s, 'alice');
+    // Source state retains the DM-only field — the projection is
+    // a copy, not an in-place wipe.
+    expect(s.synthesizedPcs['pc-mei'].knowsTheyCanCast).toBe(true);
+  });
+
+  it('Phase B P1b: empty synthesizedPcs map is handled cleanly', () => {
+    const s = emptyState();
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered.synthesizedPcs).toEqual({});
+  });
 });
 
 describe('materialize — caster-state-set (M3c.1)', () => {

@@ -286,6 +286,67 @@ export const DM_ONLY_CHARACTER_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof CharacterRecord>;
 export type DmOnlyCharacterField = (typeof DM_ONLY_CHARACTER_FIELDS)[number];
 
+/**
+ * Phase B P1b: type alias for a character record the local viewer is
+ * authorized to render in DM mode (full record, all DM-only fields
+ * visible).  Same shape as CharacterRecord — the alias is a
+ * documentation handle for reviewers.
+ */
+export type DmPc = CharacterRecord;
+
+/**
+ * Phase B P1b: type alias for a character record AFTER the viewer-
+ * scope projection has stripped DM-only fields.  Used as INTENT
+ * documentation on props / args whose viewer-scope is `player`.
+ *
+ * **Compile-time enforcement does NOT work today**: CharacterRecord
+ * carries an `[key: string]: unknown` index signature (forward-
+ * compat for unknown JSON fields), which means TypeScript's `Omit`
+ * doesn't actually drop the named DM-only fields — the index
+ * signature re-includes them as `unknown`.  Reading
+ * `pc.knowsTheyCanCast` on a `PlayerVisiblePc` returns `unknown`
+ * rather than a compile error.
+ *
+ * The load-bearing guard is `stripDmOnlyFromCharacter` (runtime
+ * delete) + the materializer-level wipe in `filterForViewer`.  The
+ * type alias is a documentation hook — same shape as
+ * CharacterRecord at the type level.
+ *
+ * Follow-up (V-10-strict, deferred): move forward-compat extras
+ * into a separate `extras: Record<string, unknown>` bag.  Removing
+ * the index signature would unlock real compile-time enforcement
+ * of the field-strip.  Out of scope for P1b — would touch every
+ * downstream consumer that reads dynamic keys.
+ */
+export type PlayerVisiblePc = CharacterRecord;
+
+/**
+ * Phase B P1b: pure function that strips every DM-only field from a
+ * character record.  Returns a structurally-identical-but-narrower
+ * record (same TS type per the caveat above — but the actual
+ * runtime object has the DM-only keys absent).  Idempotent; safe to
+ * call on already-stripped records.
+ *
+ * Used by `filterForViewer` in `core/state.ts` to project the
+ * coord's full synthesizedPcs map down to a player-safe map before
+ * it reaches a player peer's renderer.  Also exported for direct
+ * use by render-layer code that loads records from disk (the
+ * loader's records aren't routed through state.ts).
+ */
+export function stripDmOnlyFromCharacter(
+  record: CharacterRecord
+): PlayerVisiblePc {
+  // Shallow copy, then delete the DM-only keys.  Shallow is safe
+  // because every DM-only field is either a primitive or an object
+  // the player should not see — we don't need to deep-clone the
+  // surviving fields.
+  const result: Record<string, unknown> = { ...record };
+  for (const field of DM_ONLY_CHARACTER_FIELDS) {
+    delete result[field];
+  }
+  return result as PlayerVisiblePc;
+}
+
 export interface LoadedCharacter {
   kind: CharacterKind;
   id: string;

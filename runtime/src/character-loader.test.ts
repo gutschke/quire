@@ -424,3 +424,128 @@ describe('Phase B P1a — DM_ONLY_CHARACTER_FIELDS source-of-truth list', () => 
     }
   });
 });
+
+// =====================================================================
+// Phase B P1b (2026-05-23): viewer-scope projection — stripDmOnlyFromCharacter
+// =====================================================================
+
+describe('Phase B P1b — stripDmOnlyFromCharacter (runtime strip)', () => {
+  it('strips every field listed in DM_ONLY_CHARACTER_FIELDS', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const full: CharacterRecord = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      // DM-only fields:
+      magicPhase: 'accidental',
+      knowsTheyCanCast: true,
+      tax: { active: false },
+      threadDebt: { rung: 'noticed' },
+      accidentalGrants: [{ ts: 1700000000000, note: 'nudge' }],
+      alignmentDrift: { marks: 1 },
+      dmNotes: 'reminder'
+    };
+    const stripped = stripDmOnlyFromCharacter(full);
+    for (const field of DM_ONLY_CHARACTER_FIELDS) {
+      expect(field in stripped).toBe(false);
+    }
+  });
+
+  it('preserves every player-visible field', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const full: CharacterRecord = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      pronouns: 'she/her',
+      alignment: 'NN',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      tags: ['junior engineer'],
+      harm: 0,
+      stress: 1,
+      foci: [{ name: "grandmother's ring", domain: 'identity', status: 'active' }],
+      advancements: 0,
+      marks: 2,
+      markBullets: { hardMoment: true, learned: true },
+      backstory: 'a paragraph',
+      inventory: [{ name: 'Chromebook', carriedBy: 'on-person' }],
+      conditions: [{ name: 'Aided', effect: '+1' }],
+      languages: ['English'],
+      moneyBand: 'comfortable',
+      // DM-only fields present too:
+      knowsTheyCanCast: false,
+      dmNotes: 'note'
+    };
+    const stripped = stripDmOnlyFromCharacter(full);
+    expect(stripped.name).toBe('Mei');
+    expect(stripped.pronouns).toBe('she/her');
+    expect(stripped.alignment).toBe('NN');
+    expect(stripped.stats?.wis).toBe(1);
+    expect(stripped.skills).toEqual(['Tech', 'Knowledge']);
+    expect(stripped.tags).toEqual(['junior engineer']);
+    expect(stripped.harm).toBe(0);
+    expect(stripped.stress).toBe(1);
+    expect(stripped.foci?.[0]?.name).toBe("grandmother's ring");
+    expect(stripped.advancements).toBe(0);
+    expect(stripped.marks).toBe(2);
+    expect(stripped.markBullets?.hardMoment).toBe(true);
+    expect(stripped.backstory).toBe('a paragraph');
+    expect(stripped.inventory?.[0]?.name).toBe('Chromebook');
+    expect(stripped.conditions?.[0]?.name).toBe('Aided');
+    expect(stripped.languages).toEqual(['English']);
+    expect(stripped.moneyBand).toBe('comfortable');
+  });
+
+  it('is idempotent (calling twice yields the same shape)', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const full: CharacterRecord = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true,
+      dmNotes: 'note'
+    };
+    const once = stripDmOnlyFromCharacter(full);
+    const twice = stripDmOnlyFromCharacter(once);
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+  });
+
+  it('does not mutate the input record (callers can rely on this)', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const full: CharacterRecord = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true,
+      dmNotes: 'note'
+    };
+    const beforeStr = JSON.stringify(full);
+    stripDmOnlyFromCharacter(full);
+    expect(JSON.stringify(full)).toBe(beforeStr);
+    expect(full.knowsTheyCanCast).toBe(true);
+    expect(full.dmNotes).toBe('note');
+  });
+
+  it('handles a record with no DM-only fields gracefully', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const clean: CharacterRecord = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei'
+    };
+    const stripped = stripDmOnlyFromCharacter(clean);
+    expect(stripped.name).toBe('Mei');
+  });
+
+  it('handles forward-compat unknown fields (preserves them — they may be player-visible extras)', async () => {
+    const { stripDmOnlyFromCharacter } = await import('./character-loader');
+    const withExtras = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei',
+      knowsTheyCanCast: true, // DM-only (stripped)
+      customCampaignField: 'something a future ruleset uses' // unknown (kept)
+    } as CharacterRecord;
+    const stripped = stripDmOnlyFromCharacter(withExtras);
+    expect('knowsTheyCanCast' in stripped).toBe(false);
+    expect((stripped as Record<string, unknown>).customCampaignField).toBe(
+      'something a future ruleset uses'
+    );
+  });
+});
