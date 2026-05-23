@@ -666,6 +666,106 @@ export const quireAppStyles = css`
       cursor: not-allowed;
     }
 
+    /* ====================================================== */
+    /* Phase B P1d (2026-05-23): field-renderer components.    */
+    /* ====================================================== */
+
+    /* <rule-hover>: anchored popover for rule-consequence hints.
+       The host is inline so it doesn't break flow; the popover is
+       absolute-positioned relative to the host. */
+    rule-hover {
+      display: inline-block;
+      position: relative;
+    }
+    .rule-hover-host {
+      display: inline-block;
+      position: relative;
+    }
+    .rule-hover-popover {
+      position: absolute;
+      z-index: 1000;
+      pointer-events: none;
+      padding: 0.25rem 0.55rem;
+      border-radius: 4px;
+      background: light-dark(#0f172a, #f1f5f9);
+      color: light-dark(#f8fafc, #0f172a);
+      font-size: 0.8rem;
+      line-height: 1.3;
+      white-space: nowrap;
+      max-width: 30ch;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+      animation: rule-hover-fade-in 120ms ease-out;
+    }
+    .rule-hover-popover-above {
+      bottom: calc(100% + 4px);
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .rule-hover-popover-below {
+      top: calc(100% + 4px);
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    @keyframes rule-hover-fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .rule-hover-popover {
+        animation: none;
+      }
+    }
+
+    /* <track-bar>: 4-box harm or stress track. */
+    .track-bar {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: inline-flex;
+      gap: 0.2rem;
+    }
+    .track-bar-cell {
+      display: inline-block;
+    }
+    .track-bar-box {
+      width: 1.6em;
+      height: 1.6em;
+      padding: 0;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: light-dark(#334155, #cbd5e1);
+      font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+      font-size: 0.9em;
+      line-height: 1;
+      cursor: not-allowed;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .track-bar-editable .track-bar-box {
+      cursor: pointer;
+    }
+    .track-bar-editable .track-bar-box:hover:not(:disabled) {
+      border-color: light-dark(#94a3b8, #64748b);
+      background: light-dark(#f8fafc, #1e293b);
+    }
+    .track-bar-box-filled {
+      background: light-dark(#fef2f2, #2a0e0e);
+      border-color: light-dark(#dc2626, #ef4444);
+      color: light-dark(#7f1d1d, #fca5a5);
+    }
+    .track-bar-stress .track-bar-box-filled {
+      background: light-dark(#fff7ed, #2a1a0a);
+      border-color: light-dark(#ea580c, #fb923c);
+      color: light-dark(#7c2d12, #fdba74);
+    }
+    .track-bar-box-next {
+      /* Subtle outline on the next-empty box so the DM's eye finds
+         it quickly during a hover-to-preview-consequence flow. */
+      border-style: dashed;
+    }
+
     .invite-manager-mode-b-warning {
       margin: 0.6rem 0;
       padding: 0.6rem 0.9rem;
