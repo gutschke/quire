@@ -1273,6 +1273,25 @@ export class QuireApp extends LitElement {
           this.chargen.synthesizeForSlot(slot, {
             playerDisplayName: this.displayNameDraft || undefined
           })}
+        .onImportPack=${(slot: number, raw: string) =>
+          this.chargen.importPackFromText(raw, slot)}
+        .onQuickGenerate=${(
+          slot: number,
+          opts: { name: string; hook: string }
+        ) =>
+          this.chargen.synthesizeForSlot(slot, {
+            playerDisplayName: this.displayNameDraft || undefined,
+            // DM's name + hook become the synthesizer's dmConstraints
+            // anchor.  The AI uses 'name' as the canonical PC name and
+            // 'hook' as the concept it builds the backstory around.
+            // No persisted player answers needed — inlineAnswers: {}
+            // routes through the existing campaign-context + AI flow
+            // without complaining about missing localStorage state.
+            dmConstraints:
+              `Use the name "${opts.name}" for the PC.  ` +
+              `Core concept (DM-supplied because no player answers exist): ${opts.hook}`,
+            inlineAnswers: {}
+          })}
         .onAccept=${(slot: number) => this.chargen.acceptSlot(slot)}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}

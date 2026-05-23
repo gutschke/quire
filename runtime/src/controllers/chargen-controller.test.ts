@@ -19,7 +19,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ChargenController, type ChargenCampaign } from './chargen-controller';
 import type { ReactiveControllerHost } from 'lit';
-import { saveChargenState } from '../chargen-persistence';
+import { saveChargenState, loadChargenState } from '../chargen-persistence';
+import { campaignFingerprint } from '../invite-token';
 import type { LoadedCampaign as LoadedCampaignBase } from '../campaign-loader';
 import type { LoadedCharacter } from '../character-loader';
 import * as backstorySynthesizer from '../ai/backstory-synthesizer';
@@ -1005,6 +1006,194 @@ describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-1
     ctrl.requestReviseSlot(6);
     expect(ctrl.getSynthResult(6)).toBeUndefined();
     expect(ctrl.isAccepted(6)).toBe(false);
+    synthSpy.mockRestore();
+  });
+});
+
+// ---- Phase 3b polish (2026-05-22): DM-side pack import + inlineAnswers ----
+
+describe('ChargenController — pack import + inlineAnswers (Phase 3b polish 2026-05-22)', () => {
+  beforeEach(() => {
+    if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  it('importPack writes the pack answers to localStorage for the slot', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    // Build a pack whose fingerprint matches the test campaign's
+    // {owner:'o', repo:'r', ref:'main'} source.
+    const fingerprint = campaignFingerprint({
+      owner: 'o',
+      repo: 'r',
+      ref: 'main'
+    });
+    const result = ctrl.importPack(
+      {
+        $schemaVersion: '0.1.0',
+        campaignFingerprint: fingerprint,
+        slot: 4,
+        chosenPath: 'qa',
+        answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' },
+        packedAt: Date.now()
+      },
+      4
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.appliedSlot).toBe(4);
+    // The next synthesizeForSlot call should find these answers.
+    const persisted = loadChargenState('o-r-main', 4);
+    expect(persisted?.answers).toEqual({
+      archetype: 'hacker',
+      'intent-moment': 'I held the line.'
+    });
+  });
+
+  it('importPack rejects a pack with a different campaign fingerprint', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const result = ctrl.importPack(
+      {
+        $schemaVersion: '0.1.0',
+        campaignFingerprint: 'WRONG_FINGERPRINT_VALUE',
+        slot: 4,
+        chosenPath: 'qa',
+        answers: {},
+        packedAt: Date.now()
+      },
+      4
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('campaign-mismatch');
+      expect(result.message).toMatch(/different campaign/i);
+    }
+    // Nothing written.
+    expect(loadChargenState('o-r-main', 4)).toBeNull();
+  });
+
+  it('importPack rejects a pack whose slot differs from the drop target', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const fingerprint = campaignFingerprint({
+      owner: 'o',
+      repo: 'r',
+      ref: 'main'
+    });
+    const result = ctrl.importPack(
+      {
+        $schemaVersion: '0.1.0',
+        campaignFingerprint: fingerprint,
+        slot: 7,
+        chosenPath: 'qa',
+        answers: {},
+        packedAt: Date.now()
+      },
+      3
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('slot-mismatch');
+      expect(result.message).toContain('slot 7');
+      expect(result.message).toContain('slot 3');
+    }
+  });
+
+  it('importPack clears any existing synth result for the slot', async () => {
+    saveChargenState('o-r-main', 8, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Stale',
+          pronouns: 'they/them',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'stale',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r-stale'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    await ctrl.synthesizeForSlot(8);
+    expect(ctrl.getSynthResult(8)?.ok).toBe(true);
+    const fingerprint = campaignFingerprint({
+      owner: 'o',
+      repo: 'r',
+      ref: 'main'
+    });
+    ctrl.importPack(
+      {
+        $schemaVersion: '0.1.0',
+        campaignFingerprint: fingerprint,
+        slot: 8,
+        chosenPath: 'qa',
+        answers: { archetype: 'engineer', 'intent-moment': 'fresh take' },
+        packedAt: Date.now()
+      },
+      8
+    );
+    // Re-importing wipes the stale synth so the DM re-synths from
+    // the freshly loaded answers (no risk of reviewing the wrong PC).
+    expect(ctrl.getSynthResult(8)).toBeUndefined();
+    synthSpy.mockRestore();
+  });
+
+  it('importPackFromText reports malformed JSON', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const result = ctrl.importPackFromText('not json at all', 4);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('malformed');
+  });
+
+  it('synthesizeForSlot uses inlineAnswers when provided (quick-gen path)', async () => {
+    // No localStorage state for slot 5 — would fail in the normal
+    // path with "No chargen answers".  With inlineAnswers: {} we
+    // proceed and rely on dmConstraints to anchor the AI.
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Anya',
+          pronouns: 'she/her',
+          tags: ['EMT', 'Chicago expat', 'methodical'],
+          stats: { STR: 1, DEX: 1, CON: 2, INT: 1, WIS: 0, CHA: 0 },
+          skillMastery: ['Medic', 'Insight'],
+          backstory: 'Anya left Chicago after the storm...',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r-quick'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const result = await ctrl.synthesizeForSlot(5, {
+      inlineAnswers: {},
+      dmConstraints:
+        'Use the name "Anya" for the PC.  Concept: jaded EMT who fled Chicago.'
+    });
+    expect(result.ok).toBe(true);
+    // The synthesizer was called with an EMPTY answers array (no
+    // persisted state was loaded) — the dmConstraints carries the
+    // anchor.
+    const callArg = synthSpy.mock.calls[0]?.[1];
+    expect(callArg?.answers).toEqual([]);
+    expect(callArg?.dmConstraints).toContain('Anya');
+    expect(callArg?.dmConstraints).toContain('EMT');
     synthSpy.mockRestore();
   });
 

@@ -46,9 +46,11 @@ import { routeToSearch } from '../routing';
 import { loadChargenState, saveChargenState } from '../chargen-persistence';
 import {
   packChargen,
+  parseChargenPack,
   stringifyChargenPack,
   suggestedPackFilename,
-  ChargenPackError
+  ChargenPackError,
+  type ChargenPackDocument
 } from '../chargen-pack';
 import {
   buildPlayerFacingContext,
@@ -540,6 +542,106 @@ export class ChargenController implements ReactiveController {
     }, PACK_FEEDBACK_CLEAR_MS);
   }
 
+  // ---- DM-side pack import (Phase 3b polish 2026-05-22) ----
+
+  /**
+   * Accept a packed character JSON the DM received from a player
+   * (file picker / drag-drop / future WebRTC delivery) and write
+   * the answers into the slot's local persistence so the existing
+   * Synthesize flow can consume them.  Returns a discriminated
+   * result; the UI surfaces a precise message.
+   *
+   * Cross-campaign safety: the pack's campaignFingerprint must
+   * match the currently-loaded campaign.  Slot mismatch is
+   * surfaced as a typed error (the DM may have dropped the file
+   * onto the wrong seat) so the UI can offer "Apply to slot N
+   * instead?" or similar.
+   */
+  importPack(
+    pack: ChargenPackDocument,
+    targetSlot: number
+  ):
+    | { ok: true; appliedSlot: number }
+    | {
+        ok: false;
+        code: 'no-campaign' | 'campaign-mismatch' | 'slot-mismatch';
+        message: string;
+      } {
+    const campaign = this.env.getCurrentCampaign();
+    if (!campaign) {
+      return {
+        ok: false,
+        code: 'no-campaign',
+        message: 'No campaign loaded; cannot apply pack.'
+      };
+    }
+    const fingerprint = campaignFingerprint(campaign.base.source);
+    if (pack.campaignFingerprint !== fingerprint) {
+      return {
+        ok: false,
+        code: 'campaign-mismatch',
+        message:
+          `This pack is for a different campaign (fingerprint mismatch).  ` +
+          `Load the right campaign first, then re-import.`
+      };
+    }
+    if (pack.slot !== targetSlot) {
+      return {
+        ok: false,
+        code: 'slot-mismatch',
+        message:
+          `Pack was created for slot ${pack.slot}, but you dropped it on ` +
+          `slot ${targetSlot}.  Apply to slot ${pack.slot}, or ask the ` +
+          `player to re-pack with the correct invite link.`
+      };
+    }
+    const slug = this.env.getCampaignSlug(campaign);
+    saveChargenState(slug, pack.slot, {
+      chosenPath: pack.chosenPath,
+      answers: pack.answers
+    });
+    // Wipe any cached synth result for this slot — the DM will
+    // re-synth from the freshly-loaded answers.
+    this.clearSynth(pack.slot);
+    this.host.requestUpdate();
+    return { ok: true, appliedSlot: pack.slot };
+  }
+
+  /**
+   * Convenience helper: parse a raw JSON string and import it.
+   * Lets the UI hand over the file contents directly without
+   * needing to import the pack-parser separately.
+   */
+  importPackFromText(
+    raw: string,
+    targetSlot: number
+  ):
+    | { ok: true; appliedSlot: number }
+    | {
+        ok: false;
+        code:
+          | 'malformed'
+          | 'no-campaign'
+          | 'campaign-mismatch'
+          | 'slot-mismatch';
+        message: string;
+      } {
+    let parsed: ChargenPackDocument;
+    try {
+      parsed = parseChargenPack(raw);
+    } catch (e) {
+      if (e instanceof ChargenPackError) {
+        return { ok: false, code: 'malformed', message: e.message };
+      }
+      return {
+        ok: false,
+        code: 'malformed',
+        message: `Couldn't read pack file: ${(e as Error).message}`
+      };
+    }
+    return this.importPack(parsed, targetSlot);
+  }
+
   // ---- invite URL (CC-12) ----
 
   generateInviteUrl(slot: number): Promise<string | null> {
@@ -619,7 +721,19 @@ export class ChargenController implements ReactiveController {
    */
   async synthesizeForSlot(
     slot: number,
-    options: { playerDisplayName?: string; dmConstraints?: string } = {}
+    options: {
+      playerDisplayName?: string;
+      dmConstraints?: string;
+      /**
+       * DM-supplied answers used INSTEAD of the device-persisted
+       * answers.  Set this to drive synthesis from the DM's quick-
+       * generate form when no player answers exist on this device
+       * — pass `{}` to synthesize purely from campaign context +
+       * dmConstraints.  When omitted, the controller reads
+       * persisted answers as before.
+       */
+      inlineAnswers?: CharCreationAnswers;
+    } = {}
   ): Promise<SynthesizeBackstoryResult> {
     const campaign = this.env.getCurrentCampaign();
     if (!campaign) {
@@ -637,17 +751,24 @@ export class ChargenController implements ReactiveController {
       };
     }
     const slug = this.env.getCampaignSlug(campaign);
-    const persisted = loadChargenState(slug, slot);
-    if (!persisted) {
-      return {
-        ok: false,
-        code: 'provider-error',
-        message:
-          `No chargen answers for slot ${slot} on this device.  ` +
-          `Ask the player to send you their packed character file ` +
-          `from the end of their invite flow (or load the pack from ` +
-          `disk if they already sent it), then try again.`
-      };
+    // inlineAnswers wins when the DM is driving quick-generate.
+    // Otherwise fall back to per-device persistence.
+    let answersMap: CharCreationAnswers;
+    if (options.inlineAnswers !== undefined) {
+      answersMap = options.inlineAnswers;
+    } else {
+      const persisted = loadChargenState(slug, slot);
+      if (!persisted) {
+        return {
+          ok: false,
+          code: 'provider-error',
+          message:
+            `No chargen answers for slot ${slot} on this device.  ` +
+            `Either load the player's packed character (the "Load packed character" button) ` +
+            `or use Quick-generate to drive synthesis from a DM-supplied prompt.`
+        };
+      }
+      answersMap = persisted.answers;
     }
     const provider = this.env.getAiProvider();
     const apiKey = this.env.getAiApiKey();
@@ -662,7 +783,7 @@ export class ChargenController implements ReactiveController {
       campaign.base.manifest.characterCreation?.questions ?? [];
     const answers: AnsweredQuestion[] = [];
     for (const q of declared) {
-      const a = persisted.answers[q.id];
+      const a = answersMap[q.id];
       if (a !== undefined && a !== '') {
         answers.push({ question: q, answer: a });
       }

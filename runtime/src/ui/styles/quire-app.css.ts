@@ -146,6 +146,105 @@ export const quireAppStyles = css`
       opacity: 0.5;
       cursor: not-allowed;
     }
+    /* Pack import: <label> wrapping a hidden <input type="file">
+       gives the file picker a button-shaped affordance that
+       matches the sibling buttons in the actions row. */
+    .chargen-dm-review-import-label {
+      padding: 0.35rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+    .chargen-dm-review-import-label[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .chargen-dm-review-import-input {
+      /* Hide the native input but keep it focusable for keyboard
+         users; clicking the <label> opens the picker. */
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .chargen-dm-review-import-status {
+      margin-top: 0.4rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.88rem;
+    }
+    .chargen-dm-review-import-status-ok {
+      background: light-dark(#ecfdf5, #022c22);
+      color: light-dark(#0f5132, #4ade80);
+      border-left: 3px solid light-dark(#16a34a, #4ade80);
+    }
+    .chargen-dm-review-import-status-err {
+      background: light-dark(#fef2f2, #2a0e0e);
+      color: light-dark(#7f1d1d, #fca5a5);
+      border-left: 3px solid light-dark(#dc2626, #ef4444);
+    }
+    /* Drag-drop hover state on the seat — outline + tint so the DM
+       sees which seat will receive the dropped pack. */
+    .chargen-dm-review-seat-dragover {
+      outline: 2px dashed light-dark(#0b3d7f, #79b8f0);
+      outline-offset: -2px;
+      background: light-dark(#dbeafe, #0c1d3a);
+    }
+    /* Quick-generate inline form (per-seat). */
+    .chargen-dm-review-quickgen-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+      padding: 0.6rem 0.7rem;
+      background: light-dark(#f8fafc, #0f172a);
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+    }
+    .chargen-dm-review-quickgen-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.88rem;
+    }
+    .chargen-dm-review-quickgen-field span {
+      font-weight: 500;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .chargen-dm-review-quickgen-field input,
+    .chargen-dm-review-quickgen-field textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.35rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0b1220);
+      color: inherit;
+      font-family: inherit;
+      font-size: 0.95em;
+    }
+    .chargen-dm-review-quickgen-field textarea {
+      resize: vertical;
+      min-height: 3rem;
+    }
+    .chargen-dm-review-quickgen-submit {
+      align-self: flex-start;
+      padding: 0.35rem 0.85rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .chargen-dm-review-quickgen-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .chargen-dm-review-invite-result {
       display: flex;
       align-items: center;

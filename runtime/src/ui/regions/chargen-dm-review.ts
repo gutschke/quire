@@ -42,6 +42,31 @@ export type SynthesizeCallback = (
   slot: number
 ) => Promise<SynthesizeBackstoryResult>;
 /**
+ * Phase 3b polish (2026-05-22): DM imports a packed character JSON
+ * for a slot.  The host parses the file contents and calls back with
+ * the typed result so the region can surface a precise message
+ * (campaign mismatch / slot mismatch / malformed).
+ */
+export type ImportPackCallback = (
+  slot: number,
+  rawJson: string
+) =>
+  | { ok: true; appliedSlot: number }
+  | {
+      ok: false;
+      code: 'malformed' | 'no-campaign' | 'campaign-mismatch' | 'slot-mismatch';
+      message: string;
+    };
+/**
+ * Phase 3b polish (2026-05-22): DM quick-generate.  No saved
+ * answers needed — just a PC name + a one-line concept the AI uses
+ * as a dmConstraints anchor.
+ */
+export type QuickGenerateCallback = (
+  slot: number,
+  options: { name: string; hook: string }
+) => Promise<SynthesizeBackstoryResult>;
+/**
  * P3U-12: resolve a bound pcId to its display name.  Host wires to
  * `ChargenController.displayNameForBound`.  Returns null while the
  * character file is still loading; the region falls back to raw
@@ -144,6 +169,22 @@ export class ChargenDmReview extends LitElement {
     null;
 
   /**
+   * Phase 3b polish (2026-05-22): DM imports a packed character.
+   * Host wires to `ChargenController.importPackFromText(raw, slot)`.
+   */
+  @property({ attribute: false }) onImportPack: ImportPackCallback | null =
+    null;
+
+  /**
+   * Phase 3b polish (2026-05-22): DM quick-generate without player
+   * answers.  Host wires to `ChargenController.synthesizeForSlot`
+   * with `inlineAnswers: {}` + a synthetic dmConstraints built
+   * from the DM-supplied name + hook.
+   */
+  @property({ attribute: false })
+  onQuickGenerate: QuickGenerateCallback | null = null;
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -152,6 +193,23 @@ export class ChargenDmReview extends LitElement {
   @state() private lastGeneratedUrl: Map<number, string> = new Map();
   @state() private generatingFor: Set<number> = new Set();
   @state() private copiedFor: number | null = null;
+
+  /**
+   * Phase 3b polish: per-seat transient UI state for the pack-
+   * import + quick-generate affordances.  Lives on the region (not
+   * the controller) because it's purely UI — toggling the form
+   * open or showing a transient "Loaded!" pip shouldn't propagate
+   * to other peers or persist across reloads.
+   */
+  @state() private importStatus: Map<
+    number,
+    { kind: 'ok'; message: string } | { kind: 'err'; message: string }
+  > = new Map();
+  @state() private dragOverSeat: number | null = null;
+  @state() private quickGenOpen: Set<number> = new Set();
+  @state() private quickGenName: Map<number, string> = new Map();
+  @state() private quickGenHook: Map<number, string> = new Map();
+  @state() private quickGenInFlight: Set<number> = new Set();
 
   override render(): TemplateResult {
     return html`
@@ -174,6 +232,10 @@ export class ChargenDmReview extends LitElement {
    * Step 6 lifts this banner from `<invite-manager>`.  Step 2
    * already includes it because the rendered surface IS the new
    * DM-review area; the legacy mount becomes redundant in step 6.
+   *
+   * Phase 3b polish (2026-05-22): reworded to point at the new
+   * per-seat import + quick-gen affordances now that the gap is
+   * closed.  Live WebRTC pull is still future work.
    */
   private renderModeBNote(): TemplateResult {
     return html`
@@ -181,10 +243,11 @@ export class ChargenDmReview extends LitElement {
         <strong>Heads up:</strong> the player's chargen answers stay
         on <em>their</em> device.  To synthesize at session 1 you'll
         need either (a) the player sitting next to you with their
-        browser open, or (b) the packed character file they download
-        at the end of their invite flow.  Live pull-from-player isn't
-        wired yet — ask players to email or chat the pack file before
-        session 1.
+        browser open, (b) their packed character file (drop it on
+        the seat below, or use the <em>Load packed character</em>
+        button), or (c) <em>Quick-generate</em> from a one-line
+        prompt when a player skipped chargen.  Live pull-from-player
+        is the next step.
       </div>
     `;
   }
@@ -197,12 +260,20 @@ export class ChargenDmReview extends LitElement {
     const accepted = this.acceptedSlots.has(slot);
     const url = this.lastGeneratedUrl.get(slot);
     const generating = this.generatingFor.has(slot);
+    const importStatus = this.importStatus.get(slot);
+    const quickOpen = this.quickGenOpen.has(slot);
+    const quickInFlight = this.quickGenInFlight.has(slot);
+    const dragOver = this.dragOverSeat === slot;
     return html`
       <li
         class="chargen-dm-review-seat ${accepted
           ? 'chargen-dm-review-seat-accepted'
-          : ''}"
+          : ''} ${dragOver ? 'chargen-dm-review-seat-dragover' : ''}"
         data-slot=${slot}
+        @dragover=${(e: DragEvent) => this.handleDragOver(slot, e)}
+        @dragenter=${(e: DragEvent) => this.handleDragEnter(slot, e)}
+        @dragleave=${(e: DragEvent) => this.handleDragLeave(slot, e)}
+        @drop=${(e: DragEvent) => void this.handleDrop(slot, e)}
       >
         <header class="chargen-dm-review-seat-head">
           <span class="chargen-dm-review-seat-pill">PC${slot}</span>
@@ -221,19 +292,109 @@ export class ChargenDmReview extends LitElement {
           >
             ${generating ? 'Generating…' : 'Generate invite link'}
           </button>
+          <label
+            class="chargen-dm-review-import-label"
+            ?disabled=${!this.onImportPack}
+            title="Load the player's packed character JSON for PC${slot} (or drag-drop onto the seat)"
+          >
+            Load packed character
+            <input
+              type="file"
+              accept="application/json,.json"
+              class="chargen-dm-review-import-input"
+              ?disabled=${!this.onImportPack}
+              @change=${(e: Event) => void this.handleFilePick(slot, e)}
+            />
+          </label>
+          <button
+            type="button"
+            class="chargen-dm-review-quickgen-toggle"
+            ?disabled=${!this.onQuickGenerate}
+            aria-expanded=${quickOpen ? 'true' : 'false'}
+            title="Quick-generate from a name + one-line concept when the player skipped chargen"
+            @click=${() => this.toggleQuickGen(slot)}
+          >
+            ${quickOpen ? 'Cancel quick-gen' : 'Quick-generate…'}
+          </button>
           <button
             type="button"
             class="chargen-dm-review-synthesize"
             ?disabled=${inFlight || !this.onSynthesize}
-            title="Synthesize backstory for PC${slot} (uses API key)"
+            title="Synthesize backstory for PC${slot} from saved answers (uses API key)"
             @click=${() => void this.handleSynthesize(slot)}
           >
             ${inFlight ? 'Synthesizing…' : 'Synthesize backstory'}
           </button>
         </div>
+        ${importStatus
+          ? html`<div
+              class="chargen-dm-review-import-status chargen-dm-review-import-status-${importStatus.kind}"
+              role="status"
+              aria-live="polite"
+            >
+              ${importStatus.message}
+            </div>`
+          : nothing}
+        ${quickOpen ? this.renderQuickGenForm(slot, quickInFlight) : nothing}
         ${url ? this.renderInviteResult(slot, url) : nothing}
         ${synth ? this.renderSynthResult(slot, synth) : nothing}
       </li>
+    `;
+  }
+
+  private renderQuickGenForm(
+    slot: number,
+    inFlight: boolean
+  ): TemplateResult {
+    const name = this.quickGenName.get(slot) ?? '';
+    const hook = this.quickGenHook.get(slot) ?? '';
+    const canSubmit = name.trim().length > 0 && hook.trim().length > 0;
+    return html`
+      <form
+        class="chargen-dm-review-quickgen-form"
+        @submit=${(e: Event) => {
+          e.preventDefault();
+          if (canSubmit && !inFlight) void this.handleQuickGenSubmit(slot);
+        }}
+      >
+        <label class="chargen-dm-review-quickgen-field">
+          <span>PC name</span>
+          <input
+            type="text"
+            .value=${name}
+            placeholder="e.g. Anya"
+            maxlength="80"
+            @input=${(e: Event) =>
+              this.setQuickGenField(
+                slot,
+                'name',
+                (e.currentTarget as HTMLInputElement).value
+              )}
+          />
+        </label>
+        <label class="chargen-dm-review-quickgen-field">
+          <span>One-line concept</span>
+          <textarea
+            rows="2"
+            maxlength="400"
+            placeholder="e.g. jaded EMT who fled Chicago to look for her sister"
+            .value=${hook}
+            @input=${(e: Event) =>
+              this.setQuickGenField(
+                slot,
+                'hook',
+                (e.currentTarget as HTMLTextAreaElement).value
+              )}
+          ></textarea>
+        </label>
+        <button
+          type="submit"
+          class="chargen-dm-review-quickgen-submit"
+          ?disabled=${!canSubmit || inFlight}
+        >
+          ${inFlight ? 'Generating…' : 'Generate'}
+        </button>
+      </form>
     `;
   }
 
@@ -645,6 +806,139 @@ export class ChargenDmReview extends LitElement {
     // kick off the call and let the host's @property push the result
     // back through.  No local state to track.
     await this.onSynthesize(slot);
+  }
+
+  // ---- Phase 3b polish (2026-05-22): pack import + quick-gen ----
+
+  private async handleFilePick(slot: number, e: Event): Promise<void> {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    // Clear the input value so re-picking the same file fires
+    // another change event.
+    input.value = '';
+    if (!file) return;
+    await this.readAndImportFile(slot, file);
+  }
+
+  private handleDragOver(slot: number, e: DragEvent): void {
+    // preventDefault on dragover is required to allow a drop.
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    if (this.dragOverSeat !== slot) this.dragOverSeat = slot;
+  }
+
+  private handleDragEnter(slot: number, e: DragEvent): void {
+    e.preventDefault();
+    this.dragOverSeat = slot;
+  }
+
+  private handleDragLeave(slot: number, _e: DragEvent): void {
+    // dragleave fires when crossing child boundaries inside the
+    // drop zone — only clear if we're actually leaving the seat.
+    // The simplest heuristic: clear unconditionally; a subsequent
+    // dragover on the seat sets it back.  The visible flicker is
+    // a few ms and negligible.
+    if (this.dragOverSeat === slot) this.dragOverSeat = null;
+  }
+
+  private async handleDrop(slot: number, e: DragEvent): Promise<void> {
+    e.preventDefault();
+    this.dragOverSeat = null;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    await this.readAndImportFile(slot, file);
+  }
+
+  private async readAndImportFile(slot: number, file: File): Promise<void> {
+    if (!this.onImportPack) return;
+    let raw: string;
+    try {
+      raw = await file.text();
+    } catch (err) {
+      this.setImportStatus(slot, {
+        kind: 'err',
+        message: `Couldn't read file: ${(err as Error).message}`
+      });
+      return;
+    }
+    const result = this.onImportPack(slot, raw);
+    if (result.ok) {
+      this.setImportStatus(slot, {
+        kind: 'ok',
+        message: `Loaded pack — saved answers for PC${slot}.  Click "Synthesize backstory" to continue.`
+      });
+    } else {
+      this.setImportStatus(slot, {
+        kind: 'err',
+        message: result.message
+      });
+    }
+  }
+
+  private setImportStatus(
+    slot: number,
+    status:
+      | { kind: 'ok'; message: string }
+      | { kind: 'err'; message: string }
+  ): void {
+    const next = new Map(this.importStatus);
+    next.set(slot, status);
+    this.importStatus = next;
+    // Auto-clear ok pips after a few seconds so the seat doesn't
+    // stay decorated forever.  Errors stay until the next attempt
+    // (the DM needs them visible while deciding what to do).
+    if (status.kind === 'ok') {
+      setTimeout(() => {
+        if (this.importStatus.get(slot) === status) {
+          const after = new Map(this.importStatus);
+          after.delete(slot);
+          this.importStatus = after;
+        }
+      }, 4000);
+    }
+  }
+
+  private toggleQuickGen(slot: number): void {
+    const next = new Set(this.quickGenOpen);
+    if (next.has(slot)) next.delete(slot);
+    else next.add(slot);
+    this.quickGenOpen = next;
+  }
+
+  private setQuickGenField(
+    slot: number,
+    field: 'name' | 'hook',
+    value: string
+  ): void {
+    const map = field === 'name' ? this.quickGenName : this.quickGenHook;
+    const next = new Map(map);
+    next.set(slot, value);
+    if (field === 'name') this.quickGenName = next;
+    else this.quickGenHook = next;
+  }
+
+  private async handleQuickGenSubmit(slot: number): Promise<void> {
+    if (!this.onQuickGenerate) return;
+    const name = (this.quickGenName.get(slot) ?? '').trim();
+    const hook = (this.quickGenHook.get(slot) ?? '').trim();
+    if (!name || !hook) return;
+    this.quickGenInFlight.add(slot);
+    this.requestUpdate();
+    try {
+      await this.onQuickGenerate(slot, { name, hook });
+      // On success, close the form — the synth result card
+      // surfaces in its place.  On failure, leave the form open so
+      // the DM can adjust and retry.
+      const synth = this.synthResults.get(slot);
+      if (synth?.ok) {
+        const next = new Set(this.quickGenOpen);
+        next.delete(slot);
+        this.quickGenOpen = next;
+      }
+    } finally {
+      this.quickGenInFlight.delete(slot);
+      this.requestUpdate();
+    }
   }
 
   private async handleCopy(slot: number, url: string): Promise<void> {
