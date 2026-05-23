@@ -285,7 +285,7 @@ describe('PC_BACKSTORY_SYNTHESIS_SCHEMA — mirror tests', () => {
 });
 
 describe('toAnthropicSchema (step 3 adapter)', () => {
-  it('preserves additionalProperties and other strict-mode features for the chargen schema', () => {
+  it('preserves additionalProperties and required for the chargen schema', () => {
     const adapted = toAnthropicSchema(
       PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
     );
@@ -299,6 +299,61 @@ describe('toAnthropicSchema (step 3 adapter)', () => {
       'skillMastery',
       'backstory'
     ]);
+  });
+
+  it('preserves enum and integer minimum/maximum (the structural backbone)', () => {
+    const adapted = toAnthropicSchema(
+      PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
+    );
+    const props = adapted.properties as Record<string, Record<string, unknown>>;
+    // Integer bounds on stat ranges stay (strict mode supports them).
+    const stats = props.stats;
+    const statProps = stats.properties as Record<string, Record<string, unknown>>;
+    expect(statProps.STR.minimum).toBe(-2);
+    expect(statProps.STR.maximum).toBe(3);
+    // skillMastery enum stays — that's a strict-supported keyword.
+    const skillItems = (props.skillMastery as Record<string, unknown>)
+      .items as Record<string, unknown>;
+    expect(Array.isArray(skillItems.enum)).toBe(true);
+  });
+
+  it('Phase 3b-X follow-up: strips minItems/maxItems > 1 (strict-mode constraint)', () => {
+    // Live-tested 2026-05-22: Anthropic returns
+    // "tools.0.custom: For 'array' type, 'minItems' values other than
+    // 0 or 1 are not supported (got: [2, 5])".  The chargen schema's
+    // tags array uses minItems:3 / maxItems:5 and skillMastery uses
+    // maxItems:4 — strip those from the wire schema.  Post-parse
+    // defense-in-depth (backstory-validator) re-enforces.
+    const adapted = toAnthropicSchema(
+      PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
+    );
+    const props = adapted.properties as Record<string, Record<string, unknown>>;
+    expect(props.tags.minItems).toBeUndefined();
+    expect(props.tags.maxItems).toBeUndefined();
+    // skillMastery had minItems:0 — that IS a permitted value; KEEP.
+    expect(props.skillMastery.minItems).toBe(0);
+    expect(props.skillMastery.maxItems).toBeUndefined();
+  });
+
+  it('Phase 3b-X follow-up: strips uniqueItems / minLength / maxLength (likely strict-rejected)', () => {
+    const adapted = toAnthropicSchema(
+      PC_BACKSTORY_SYNTHESIS_SCHEMA as unknown as Record<string, unknown>
+    );
+    const props = adapted.properties as Record<string, Record<string, unknown>>;
+    // Top-level string bounds gone.
+    expect(props.name.minLength).toBeUndefined();
+    expect(props.name.maxLength).toBeUndefined();
+    expect(props.backstory.minLength).toBeUndefined();
+    expect(props.backstory.maxLength).toBeUndefined();
+    // skillMastery's uniqueItems gone (post-parse de-duplicates).
+    expect(props.skillMastery.uniqueItems).toBeUndefined();
+    // Nested items string bounds gone too (tags.items).
+    const tagItems = (props.tags as Record<string, unknown>).items as Record<
+      string,
+      unknown
+    >;
+    expect(tagItems.minLength).toBeUndefined();
+    expect(tagItems.maxLength).toBeUndefined();
   });
 
   it('Phase 3b-X follow-up: flattens oneOf for AI_RESPONSE_SCHEMA (strict mode rejects oneOf)', () => {

@@ -355,21 +355,44 @@ function flattenUnion(
  * Phase 3b-X step 3 (Anthropic): translate the canonical schema to
  * Anthropic's strict tool-use dialect.
  *
- * Strict mode is more permissive than Gemini's OpenAPI 3.0
- * subset, but it does NOT support `oneOf` / `anyOf` / `allOf` —
- * tested live 2026-05-22: Anthropic returns
- *   `tools.0.custom: Schema type 'oneOf' is not supported` (400).
- * So we flatten unions the same way `toGeminiSchema` does (union
- * of properties, intersection of `required[]`); the runtime
- * `isStateUpdate` guard re-enforces variant-specific required
- * fields after parse.
+ * Strict mode's accepted JSON Schema subset is narrower than the
+ * canonical schemas we author.  Live-tested incrementally
+ * 2026-05-22 — each restriction below produced an HTTP 400 we
+ * fixed by adding a drop to this adapter:
  *
- * Otherwise the canonical schema is strict-mode compatible
- * (no $ref, no format, additionalProperties: false everywhere).
+ *   - `oneOf` / `anyOf` / `allOf` — not supported; flatten unions
+ *     to a union object whose `required[]` is the intersection.
+ *     (Runtime `isStateUpdate` re-enforces variant-specific required
+ *     fields post-parse.)
+ *   - `additionalProperties: false` — must be set on EVERY object,
+ *     not just the top level.  Added by `flattenUnion`.
+ *   - `minItems` / `maxItems` — only 0 or 1 accepted; any other
+ *     numeric bound errors as "values other than 0 or 1 are not
+ *     supported".  Strip when > 1.  (The chargen tags array uses
+ *     minItems:3, maxItems:5 — those are soft constraints the
+ *     prompt language asks for and the `backstory-validator`
+ *     defense-in-depth catches post-parse, so dropping them from
+ *     the wire schema is safe.)
+ *   - `minLength` / `maxLength` / `pattern` / `uniqueItems` — likely
+ *     unsupported by strict mode (same family).  Pre-emptively
+ *     stripped to avoid a third round-trip of debugging.
+ *
+ * Kept:
+ *   - `type`, `properties`, `required`, `additionalProperties: false`,
+ *     `items`, `enum`, `description`, `minimum`, `maximum` (integers).
  */
 export function toAnthropicSchema(
   schema: Record<string, unknown>
 ): Record<string, unknown> {
+  // Soft constraints strict mode rejects.  The post-parse validators
+  // (backstory-validator, isStateUpdate, isAiResponse) still enforce
+  // these — the AI typically respects them via prompt language.
+  const stripUnconditional = new Set([
+    'uniqueItems',
+    'minLength',
+    'maxLength',
+    'pattern'
+  ]);
   function strip(node: unknown): unknown {
     if (Array.isArray(node)) return node.map(strip);
     if (!node || typeof node !== 'object') return node;
@@ -382,6 +405,12 @@ export function toAnthropicSchema(
     }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
+      if (stripUnconditional.has(k)) continue;
+      // minItems/maxItems: keep only 0 or 1.
+      if (k === 'minItems' || k === 'maxItems') {
+        if (v === 0 || v === 1) out[k] = v;
+        continue;
+      }
       out[k] = strip(v);
     }
     return out;
