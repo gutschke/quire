@@ -265,8 +265,30 @@ export function containsSpoilerTokens(
 // Negligible.  Latency: ~2-3 seconds.  Fine for chargen.
 // =====================================================================
 
-import type { AiProvider } from './broker';
-import { SPOILER_CHECK_CALL_SCHEMA } from './schema-json';
+import type { AiProvider, AiStructuredCallSchema } from './broker';
+
+/**
+ * Phase 3b polish (2026-05-23): canonical schema for the AI
+ * semantic-spoiler-check response.  Co-located with
+ * `aiSemanticSpoilerCheck` (the sole consumer) so it lands in the
+ * lazy chargen-synthesizer chunk rather than main bundle (schema-
+ * json.ts is eagerly imported by the broker).
+ */
+const SPOILER_CHECK_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['ordinary', 'leak'] },
+    leakingWords: { type: 'array', items: { type: 'string' } },
+    reason: { type: 'string' }
+  },
+  required: ['verdict', 'leakingWords', 'reason'],
+  additionalProperties: false
+} as const;
+
+const SPOILER_CHECK_CALL_SCHEMA: AiStructuredCallSchema = {
+  name: 'spoiler_check_verdict',
+  schema: SPOILER_CHECK_SCHEMA as unknown as Record<string, unknown>
+};
 
 /**
  * Phase 3b polish: the AI's structured verdict on whether the
