@@ -324,6 +324,64 @@ export const quireAppStyles = css`
       padding-top: 0.4rem;
       border-top: 1px dashed light-dark(#facc15, #a16207);
     }
+    /* Wave 2: stat swap-pair editor — cell is clickable when
+       editable, lock glyph on the player's chosen +2 stat. */
+    .chargen-dm-review-stat-cell-editable {
+      cursor: pointer;
+      border: 1px solid transparent;
+      background: transparent;
+      font: inherit;
+      color: inherit;
+      padding: 0.2rem 0.3rem;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-stat-cell-editable:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+      border-color: light-dark(#cbd5e1, #475569);
+    }
+    .chargen-dm-review-stat-cell-selected {
+      border-color: light-dark(#0b3d7f, #79b8f0) !important;
+      background: light-dark(#dbeafe, #1e3a8a);
+    }
+    .chargen-dm-review-stat-lock {
+      font-size: 0.7em;
+      margin-left: 0.2rem;
+      opacity: 0.7;
+    }
+    .chargen-dm-review-stat-cell-pick {
+      /* Subtle highlight on the player's-pick cell so the lock
+         glyph has visual context. */
+      box-shadow: inset 0 0 0 1px light-dark(#16a34a55, #4ade8055);
+    }
+    .chargen-dm-review-stat-confirm {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0.4rem 0;
+      padding: 0.4rem 0.6rem;
+      background: light-dark(#fef3c7, #422006);
+      border: 1px solid light-dark(#facc15, #a16207);
+      border-radius: 4px;
+      font-size: 0.88rem;
+    }
+    .chargen-dm-review-stat-confirm-yes,
+    .chargen-dm-review-stat-confirm-no {
+      padding: 0.2rem 0.55rem;
+      border: 1px solid light-dark(#a16207, #facc15);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.9em;
+    }
+    .chargen-dm-review-stat-confirm-yes {
+      margin-left: auto;
+    }
+    .chargen-dm-review-stat-confirm-yes:hover,
+    .chargen-dm-review-stat-confirm-no:hover {
+      background: light-dark(#fef9c3, #1e293b);
+    }
     .chargen-dm-review-seat-actions {
       display: flex;
       flex-wrap: wrap;

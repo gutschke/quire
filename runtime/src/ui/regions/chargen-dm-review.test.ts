@@ -1069,3 +1069,190 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
     expect(el.querySelector('.chargen-dm-review-drift')).toBeNull();
   });
 });
+
+describe('<chargen-dm-review> — Wave 2 stat swap-pair editor', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders the lock glyph on the +2 cell when synth holds the player-pick', async () => {
+    const el = mountWith9Seats();
+    // okResult puts +2 on INT.
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const cells = el.querySelectorAll('.chargen-dm-review-stat-cell');
+    expect(cells.length).toBe(6);
+    const picked = el.querySelector('.chargen-dm-review-stat-cell-pick');
+    expect(picked?.textContent).toMatch(/INT/);
+    expect(picked?.querySelector('.chargen-dm-review-stat-lock')).not.toBeNull();
+  });
+
+  it('cells become buttons when onEditPreAccept is wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const btns = el.querySelectorAll(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    expect(btns.length).toBe(6);
+  });
+
+  it('cells are display-only when no onEditPreAccept callback is wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    // onEditPreAccept intentionally null
+    await el.updateComplete;
+    const btns = el.querySelectorAll(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    expect(btns.length).toBe(0);
+  });
+
+  it('click-pair swap between two non-pick cells commits immediately', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    // okResult: STR=0, DEX=1, CON=1, INT=2, WIS=1, CHA=0.
+    // Swap STR (0) with DEX (1) — neither is the +2 holder.
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    cells[0].click(); // STR
+    await el.updateComplete;
+    cells[1].click(); // DEX
+    await el.updateComplete;
+    expect(patches.length).toBe(1);
+    expect(patches[0].slot).toBe(1);
+    const newStats = patches[0].stats as { STR: number; DEX: number };
+    expect(newStats.STR).toBe(1);
+    expect(newStats.DEX).toBe(0);
+  });
+
+  it('clicking the same cell twice cancels the selection', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    cells[0].click();
+    await el.updateComplete;
+    cells[0].click();
+    await el.updateComplete;
+    expect(patches).toEqual([]);
+    expect(
+      el.querySelector('.chargen-dm-review-stat-cell-selected')
+    ).toBeNull();
+  });
+
+  it('swap involving the +2 pick surfaces a confirm strip (does NOT commit)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    // INT (idx 3) is the +2 pick.  Swap STR with INT.
+    cells[0].click(); // STR
+    await el.updateComplete;
+    cells[3].click(); // INT
+    await el.updateComplete;
+    expect(patches).toEqual([]); // no commit yet
+    expect(
+      el.querySelector('.chargen-dm-review-stat-confirm')
+    ).not.toBeNull();
+  });
+
+  it('clicking Override on the confirm strip commits the swap', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    cells[0].click(); // STR
+    await el.updateComplete;
+    cells[3].click(); // INT (the +2 holder)
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-stat-confirm-yes'
+    )!.click();
+    await el.updateComplete;
+    expect(patches.length).toBe(1);
+    const stats = patches[0].stats as { STR: number; INT: number };
+    expect(stats.STR).toBe(2);
+    expect(stats.INT).toBe(0);
+    expect(
+      el.querySelector('.chargen-dm-review-stat-confirm')
+    ).toBeNull();
+  });
+
+  it('clicking Cancel on the confirm strip drops the swap (no commit)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    cells[0].click();
+    await el.updateComplete;
+    cells[3].click();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-stat-confirm-no'
+    )!.click();
+    await el.updateComplete;
+    expect(patches).toEqual([]);
+    expect(
+      el.querySelector('.chargen-dm-review-stat-confirm')
+    ).toBeNull();
+  });
+
+  it('lock stays on the original-pick cell after the +2 moves (drift snapshot wins)', async () => {
+    const el = mountWith9Seats();
+    // Original AI output put +2 on INT.  DM has already swapped to put +2 on STR.
+    // The drift snapshot remembers INT as the original.
+    const r = okResult('Mei');
+    r.response.stats = { STR: 2, DEX: 1, CON: 1, INT: 0, WIS: 1, CHA: 0 };
+    el.synthResults = new Map([[1, r]]);
+    el.preAcceptDrift = new Map([
+      [
+        1,
+        {
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 }
+        }
+      ]
+    ]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const picked = el.querySelector('.chargen-dm-review-stat-cell-pick');
+    expect(picked?.textContent).toMatch(/INT/);
+  });
+});

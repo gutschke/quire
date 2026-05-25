@@ -373,6 +373,30 @@ export class ChargenDmReview extends LitElement {
   } | null = null;
 
   /**
+   * Wave 2 (2026-05-25): the cell selected to be the first half of
+   * a stat swap.  `null` when no swap is in flight.  Clicking a
+   * second cell completes the swap (after confirm if the player's
+   * chosen +2 stat is involved).  Per-slot to avoid cross-seat
+   * confusion when multiple synth-result cards are visible.
+   */
+  @state() private selectedStatCell: {
+    slot: number;
+    key: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
+  } | null = null;
+
+  /**
+   * Wave 2 (2026-05-25): a stat swap awaiting DM confirmation
+   * because one of the cells is the player's chosen +2 stat (per
+   * stat-emphasis question — soft-lock per TTRPG-expert advice).
+   * Cleared by Confirm (commits the swap) or Cancel (drops state).
+   */
+  @state() private pendingStatSwap: {
+    slot: number;
+    from: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
+    to: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
+  } | null = null;
+
+  /**
    * Phase 3b polish: per-seat transient UI state for the pack-
    * import + quick-generate affordances.  Lives on the region (not
    * the controller) because it's purely UI — toggling the form
@@ -1169,7 +1193,7 @@ export class ChargenDmReview extends LitElement {
             )}</span>
           </div>
           ${this.renderTagChips(r.tags)}
-          ${this.renderStatGrid(r.stats)}
+          ${this.renderStatGrid(r.stats, slot)}
           ${this.renderSkillChips(r.skillMastery)}
           ${this.renderDriftBanner(slot)}
           ${warningCount > 0
@@ -1506,31 +1530,204 @@ export class ChargenDmReview extends LitElement {
     `;
   }
 
-  /** Stats grid — 6 quire-v0.1 stats laid out as label + signed modifier. */
-  private renderStatGrid(stats: {
-    STR: number;
-    DEX: number;
-    CON: number;
-    INT: number;
-    WIS: number;
-    CHA: number;
-  }): TemplateResult {
+  /**
+   * Stats grid — 6 quire-v0.1 stats laid out as label + signed
+   * modifier.  Wave 2 (2026-05-25): when `onEditPreAccept` is
+   * wired AND the slot isn't accepted, cells become clickable
+   * for the swap-pair UX.  Soft-lock on the player's chosen +2
+   * (per stat-emphasis question; sourced from drift snapshot if
+   * present, else from current stats).
+   *
+   * Swap interaction (click-pair, not drag — keyboard-friendlier
+   * and trivially testable in happy-dom):
+   *   - First click: cell becomes "selected" (visual border).
+   *   - Second click on same cell: cancels selection.
+   *   - Second click on a different cell: if either cell is the
+   *     player's +2 anchor, surfaces a confirm strip ("override?").
+   *     Otherwise the swap commits immediately.
+   *
+   * Array invariant (one +2, three +1s, two 0s) is preserved by
+   * construction — we're only permuting the existing values.
+   */
+  private renderStatGrid(
+    stats: {
+      STR: number;
+      DEX: number;
+      CON: number;
+      INT: number;
+      WIS: number;
+      CHA: number;
+    },
+    slot?: number
+  ): TemplateResult {
     const fmt = (n: number): string => (n >= 0 ? `+${n}` : `${n}`);
+    const editable =
+      typeof slot === 'number' &&
+      !!this.onEditPreAccept &&
+      !this.acceptedSlots.has(slot);
+    // Determine the player-pick stat (originally received the +2 from
+    // the AI).  When drift snapshot has stats, use it as the source
+    // of truth; otherwise the current +2 holder IS the original.
+    const driftStats = slot !== undefined
+      ? (this.preAcceptDrift.get(slot)?.stats as typeof stats | undefined)
+      : undefined;
+    const refStats = driftStats ?? stats;
+    let playerPickKey: keyof typeof stats | null = null;
+    for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as Array<
+      keyof typeof stats
+    >) {
+      if (refStats[k] === 2) {
+        playerPickKey = k;
+        break;
+      }
+    }
     const cell = (
       label: string,
       key: keyof typeof stats
-    ): TemplateResult => html`
-      <div class="chargen-dm-review-stat-cell">
+    ): TemplateResult => {
+      const selected =
+        editable &&
+        this.selectedStatCell?.slot === slot &&
+        this.selectedStatCell.key === key;
+      const isPick = playerPickKey === key;
+      const classes = [
+        'chargen-dm-review-stat-cell',
+        editable ? 'chargen-dm-review-stat-cell-editable' : '',
+        selected ? 'chargen-dm-review-stat-cell-selected' : '',
+        isPick ? 'chargen-dm-review-stat-cell-pick' : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+      const lockGlyph = isPick
+        ? html`<span
+            class="chargen-dm-review-stat-lock"
+            title="Player chose this stat for their +2 (stat-emphasis question).  Swapping is allowed but asks for confirm."
+            aria-label="Player's chosen stat"
+            >🔒</span
+          >`
+        : nothing;
+      const body = html`
         <span class="chargen-dm-review-stat-label">${label}</span>
         <span class="chargen-dm-review-stat-mod">${fmt(stats[key])}</span>
-      </div>
-    `;
+        ${lockGlyph}
+      `;
+      if (!editable || slot === undefined) {
+        return html`<div class=${classes}>${body}</div>`;
+      }
+      return html`<button
+        type="button"
+        class=${classes}
+        title="Click to ${selected ? 'cancel' : 'select'} for swap"
+        @click=${() => this.handleStatCellClick(slot, key)}
+      >
+        ${body}
+      </button>`;
+    };
     return html`
       <div class="chargen-dm-review-stat-grid" aria-label="Starting stats">
         ${cell('STR', 'STR')}${cell('DEX', 'DEX')}${cell('CON', 'CON')}
         ${cell('INT', 'INT')}${cell('WIS', 'WIS')}${cell('CHA', 'CHA')}
       </div>
+      ${this.renderPendingStatSwap(slot)}
     `;
+  }
+
+  /**
+   * Wave 2 (2026-05-25): inline confirm strip for a swap that
+   * touches the player's-+2 anchor.  Rendered when pendingStatSwap
+   * matches the slot.
+   */
+  private renderPendingStatSwap(
+    slot: number | undefined
+  ): TemplateResult | typeof nothing {
+    if (slot === undefined) return nothing;
+    const pending = this.pendingStatSwap;
+    if (!pending || pending.slot !== slot) return nothing;
+    return html`
+      <div class="chargen-dm-review-stat-confirm" role="alert">
+        <span
+          >Swap involves the player's chosen +2 stat
+          (<code>${pending.from === this.findPlayerPickKey(slot) ? pending.from : pending.to}</code>).  Confirm
+          override?</span
+        >
+        <button
+          type="button"
+          class="chargen-dm-review-stat-confirm-yes"
+          @click=${() => this.commitPendingStatSwap()}
+        >
+          Override
+        </button>
+        <button
+          type="button"
+          class="chargen-dm-review-stat-confirm-no"
+          @click=${() => {
+            this.pendingStatSwap = null;
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    `;
+  }
+
+  private findPlayerPickKey(
+    slot: number
+  ): 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA' | null {
+    const drift = this.preAcceptDrift.get(slot);
+    const synth = this.synthResults.get(slot);
+    if (!synth?.ok) return null;
+    const driftStats = drift?.stats as typeof synth.response.stats | undefined;
+    const ref = driftStats ?? synth.response.stats;
+    for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const) {
+      if (ref[k] === 2) return k;
+    }
+    return null;
+  }
+
+  private handleStatCellClick(
+    slot: number,
+    key: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'
+  ): void {
+    const selected = this.selectedStatCell;
+    if (!selected || selected.slot !== slot) {
+      this.selectedStatCell = { slot, key };
+      return;
+    }
+    if (selected.key === key) {
+      this.selectedStatCell = null;
+      return;
+    }
+    const pick = this.findPlayerPickKey(slot);
+    if (pick === selected.key || pick === key) {
+      // Soft-lock: require explicit confirm before mutating.
+      this.pendingStatSwap = { slot, from: selected.key, to: key };
+      this.selectedStatCell = null;
+      return;
+    }
+    this.applyStatSwap(slot, selected.key, key);
+    this.selectedStatCell = null;
+  }
+
+  private commitPendingStatSwap(): void {
+    const pending = this.pendingStatSwap;
+    if (!pending) return;
+    this.applyStatSwap(pending.slot, pending.from, pending.to);
+    this.pendingStatSwap = null;
+  }
+
+  private applyStatSwap(
+    slot: number,
+    a: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA',
+    b: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'
+  ): void {
+    if (!this.onEditPreAccept) return;
+    const synth = this.synthResults.get(slot);
+    if (!synth?.ok) return;
+    const next = { ...synth.response.stats };
+    const tmp = next[a];
+    next[a] = next[b];
+    next[b] = tmp;
+    this.onEditPreAccept(slot, { stats: next });
   }
 
   /** Skill mastery chips — 2-3 quire-v0.1 categories. */
