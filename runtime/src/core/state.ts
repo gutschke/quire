@@ -1110,6 +1110,10 @@ export const KNOWN_EVENT_KINDS = new Set([
   // - `pc-archive` transitions a bound-active or bound-retired
   //   seat to bound-archived.
   'seat-add',
+  // Wave 1 (2026-05-25): seat-remove — DM can drop an unbound seat
+  // that was added accidentally.  Bound (active/retired/archived)
+  // seats use the retire-flow instead — sticky-N preserves history.
+  'seat-remove',
   'pc-retire',
   'pc-archive'
 ]);
@@ -1949,6 +1953,34 @@ function applySeatAddEvent(state: SessionState, event: QuireEvent): void {
 }
 
 /**
+ * Wave 1 (2026-05-25): seat-remove — DM drops an unbound seat
+ * that was added accidentally.  Refuses to touch bound seats of
+ * any flavor (active / retired / archived) — those follow the
+ * retire-flow so sticky-N references survive.  The slot integer
+ * is freed for reuse by a subsequent seat-add.
+ */
+interface SeatRemovePayload {
+  v: 1;
+  slot: number;
+}
+function applySeatRemoveEvent(state: SessionState, event: QuireEvent): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SeatRemovePayload>;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  const seat = state.pcSlots[p.slot];
+  if (!seat) return;
+  // Only unbound seats may be removed.  Bound seats (active /
+  // retired / archived) require retire-flow so sticky-N keeps
+  // resolving across the campaign's narrative history.
+  if (seat.state !== 'unbound') return;
+  delete state.pcSlots[p.slot];
+}
+
+/**
  * Phase B' (2026-05-25): pc-retire — flips a bound-active seat to
  * bound-retired.  Carries the DM-authored player-safe label
  * (`inFictionRetireReason`) + DM-private metadata (retireReason
@@ -2079,6 +2111,7 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   // Phase B' (2026-05-25): both pc-retire and pc-archive route to
   // the same materializer; the payload's `state` field discriminates.
   'seat-add': applySeatAddEvent,
+  'seat-remove': applySeatRemoveEvent,
   'pc-retire': applyPcRetireOrArchiveEvent,
   'pc-archive': applyPcRetireOrArchiveEvent,
   'map-blob-add': applyMapBlobEvent,

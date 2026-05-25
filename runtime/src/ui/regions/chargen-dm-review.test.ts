@@ -788,3 +788,118 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
     expect(calls[0].backstory).toMatch(/silence/);
   });
 });
+
+describe('<chargen-dm-review> — Wave 1 seat-remove (X-glyph + 4s undo)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders the X-glyph on an unbound empty seat when onRemoveSeat is wired', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = () => true;
+    await el.updateComplete;
+    const x = el.querySelector('.chargen-dm-review-seat-remove');
+    expect(x).not.toBeNull();
+    expect(x?.getAttribute('aria-label')).toBe('Remove PC3');
+  });
+
+  it('hides the X-glyph on a bound seat (retire-flow only)', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei') };
+    el.onRemoveSeat = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-remove')).toBeNull();
+  });
+
+  it('hides the X-glyph when onRemoveSeat callback is null', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    // onRemoveSeat intentionally not set
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-remove')).toBeNull();
+  });
+
+  it('clicking X fires onRemoveSeat with the slot number', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    const calls: number[] = [];
+    el.onRemoveSeat = (slot: number) => {
+      calls.push(slot);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-remove'
+    )!.click();
+    expect(calls).toEqual([3]);
+  });
+
+  it('renders the undo banner after a successful remove', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-remove'
+    )!.click();
+    await el.updateComplete;
+    const banner = el.querySelector('.chargen-dm-review-remove-undo');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toMatch(/PC3 removed/);
+    expect(banner!.textContent).toMatch(/Undo \(4s\)/);
+  });
+
+  it('clicking Undo invokes onReaddSeat with the same slot', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = () => true;
+    const readds: number[] = [];
+    el.onReaddSeat = (slot: number) => {
+      readds.push(slot);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-remove'
+    )!.click();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-remove-undo-btn'
+    )!.click();
+    await el.updateComplete;
+    expect(readds).toEqual([3]);
+    // Banner should clear after undo.
+    expect(el.querySelector('.chargen-dm-review-remove-undo')).toBeNull();
+  });
+
+  it('does not surface the X-glyph on a seat with a cached synth result', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.synthResults = new Map([[3, okResult('Mei')]]);
+    el.onRemoveSeat = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-remove')).toBeNull();
+  });
+
+  it('does not surface the X-glyph on an accepted seat', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.acceptedSlots = new Set([3]);
+    el.onRemoveSeat = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-remove')).toBeNull();
+  });
+
+  it('does not show the banner when onRemoveSeat returns false (engine refused)', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = () => false; // simulate engine reject
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-remove'
+    )!.click();
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-remove-undo')).toBeNull();
+  });
+});

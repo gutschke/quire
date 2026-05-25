@@ -868,7 +868,7 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
   it('total kind count is 37 (13 legacy + 18 M1 + 1 caster-state-set + 1 pc-slot-bind + 1 pc-create + 3 Phase B-prime lifecycle)', () => {
     // Phase B' (2026-05-25): added seat-add + pc-retire + pc-archive
     // → 34 + 3 = 37.
-    expect(KNOWN_EVENT_KINDS.size).toBe(37);
+    expect(KNOWN_EVENT_KINDS.size).toBe(38);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -2427,6 +2427,102 @@ describe('materialize — pc-retire / pc-archive (Phase B-prime)', () => {
     });
     const state = materialize(log.events());
     expect(state.pcSlots[1]?.inFictionRetireReason).toBe('first reason');
+  });
+});
+
+describe('materialize — seat-remove (Wave 1 — phantom-seat removal)', () => {
+  it('coord can remove an unbound seat with no content', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 5 });
+    log.append('seat-remove', { v: 1, slot: 5 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[5]).toBeUndefined();
+  });
+
+  it('seat-remove frees the slot integer for reuse by a later seat-add', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 3 });
+    log.append('seat-remove', { v: 1, slot: 3 });
+    log.append('seat-add', { v: 1, slot: 3 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[3]).toEqual({ state: 'unbound' });
+  });
+
+  it('refuses to remove a bound-active seat (retire-flow only)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('seat-remove', { v: 1, slot: 1 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.pcSlots[1]?.pcId).toBe('mei');
+  });
+
+  it('refuses to remove a bound-retired seat (sticky-N preserves history)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'left after a hard betrayal',
+      reason: 'departed'
+    });
+    log.append('seat-remove', { v: 1, slot: 1 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-retired');
+  });
+
+  it('refuses to remove a bound-archived seat', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'stepped back from the party',
+      reason: 'other'
+    });
+    log.append('seat-remove', { v: 1, slot: 1 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-archived');
+  });
+
+  it('non-coord seat-remove is dropped', () => {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    const claim = alice.append('coordinator-claim', {});
+    bob.apply(claim);
+    const add = alice.append('seat-add', { v: 1, slot: 5 });
+    bob.apply(add);
+    bob.append('seat-remove', { v: 1, slot: 5 });
+    for (const ev of bob.events()) alice.apply(ev);
+    const state = materialize(alice.events());
+    expect(state.pcSlots[5]?.state).toBe('unbound');
+  });
+
+  it('seat-remove on a non-existent slot is a no-op', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-remove', { v: 1, slot: 99 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[99]).toBeUndefined();
+  });
+
+  it('rejects invalid slot (zero / negative / non-integer)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('seat-remove', { v: 1, slot: 0 });
+    log.append('seat-remove', { v: 1, slot: -1 });
+    log.append('seat-remove', { v: 1, slot: 1.5 });
+    const state = materialize(log.events());
+    // Slot 1 should still be there — none of the bad seat-removes touched it.
+    expect(state.pcSlots[1]?.state).toBe('unbound');
   });
 });
 

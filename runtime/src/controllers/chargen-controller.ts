@@ -159,6 +159,12 @@ export interface ChargenHost {
    */
   appendSeatAdd(slot: number): boolean;
   /**
+   * Wave 1 (2026-05-25): emit a `seat-remove` event for an unbound,
+   * empty seat that was added accidentally.  Engine refuses to
+   * touch bound seats.  Returns true on append.
+   */
+  appendSeatRemove(slot: number): boolean;
+  /**
    * Phase B-prime (2026-05-25): read the current slot map (post
    * filter-for-viewer) so the controller can compute lowest-unused.
    * Returns an empty map when no session is active.
@@ -360,6 +366,40 @@ export class ChargenController implements ReactiveController {
       break; // fall through; appendSeatAdd failure means no session
     }
     return null;
+  }
+
+  /**
+   * Wave 1 (2026-05-25): drop an accidentally-added seat.  Returns
+   * true on append.  Refuses when seat is bound (engine also
+   * refuses, but failing fast here avoids the round-trip) or when
+   * the controller side has any in-flight work for that slot
+   * (pending synth, displayed result, accepted) — those imply
+   * "the DM is using this seat," even if the engine state says
+   * unbound.  Also clears local controller-side caches.
+   */
+  removeSeat(slot: number): boolean {
+    if (!this.env.isCoordinator()) return false;
+    const slots = this.env.getPcSlots();
+    const seat = slots[slot];
+    if (!seat || seat.state !== 'unbound') return false;
+    if (this._synthResults.has(slot)) return false;
+    if (this._synthInFlight.has(slot)) return false;
+    if (this._acceptedSlots.has(slot)) return false;
+    if (!this.env.appendSeatRemove(slot)) return false;
+    return true;
+  }
+
+  /**
+   * Wave 1 (2026-05-25): undo a `removeSeat` within its UI window
+   * by re-allocating the exact slot integer.  Skips the lowest-
+   * unused search that `addSeat` performs.  The engine's seat-add
+   * is idempotent on bound slots so a race (someone bound the
+   * slot in the 4s window) is a safe no-op.
+   */
+  readdSeat(slot: number): boolean {
+    if (!this.env.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    return this.env.appendSeatAdd(slot);
   }
 
   acceptSlot(slot: number): void {

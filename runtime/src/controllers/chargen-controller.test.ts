@@ -95,6 +95,7 @@ function makeEnv(
   const pcCreates: Array<Record<string, unknown>> = [];
   const pcSlotBinds: Array<{ slot: number; pcId: string }> = [];
   const seatAdds: number[] = [];
+  const seatRemoves: number[] = [];
   const mockSlots: Record<number, { state: string; pcId?: string }> = {};
   return {
     getCurrentCampaign: () => campaign,
@@ -151,12 +152,18 @@ function makeEnv(
       mockSlots[slot] = { state: 'unbound' };
       return true;
     },
+    appendSeatRemove: (slot: number) => {
+      seatRemoves.push(slot);
+      delete mockSlots[slot];
+      return true;
+    },
     getPcSlots: () => mockSlots,
     loadedPcs: loaded,
     scratchNotes,
     pcCreates,
     pcSlotBinds,
     seatAdds,
+    seatRemoves,
     mockSlots
   };
 }
@@ -1294,5 +1301,82 @@ describe('ChargenController — pack import + inlineAnswers (Phase 3b polish 202
     await ctrl.synthesizeForSlot(2);
     expect(ctrl.slotsWithSynthState()).toEqual([2, 5]);
     synthSpy.mockRestore();
+  });
+});
+
+describe('ChargenController — addSeat / removeSeat (Wave 1)', () => {
+  it('addSeat allocates the lowest unused slot', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    env.mockSlots[1] = { state: 'unbound' };
+    env.mockSlots[2] = { state: 'bound-active', pcId: 'mei' };
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.addSeat()).toBe(3);
+    expect(env.seatAdds).toEqual([3]);
+  });
+
+  it('addSeat returns null when 1..9 are all occupied (soft cap)', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    for (let i = 1; i <= 9; i++) env.mockSlots[i] = { state: 'unbound' };
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.addSeat()).toBeNull();
+    expect(env.seatAdds).toEqual([]);
+  });
+
+  it('removeSeat drops an unbound seat and fires seat-remove', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    env.mockSlots[3] = { state: 'unbound' };
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.removeSeat(3)).toBe(true);
+    expect(env.seatRemoves).toEqual([3]);
+    expect(env.mockSlots[3]).toBeUndefined();
+  });
+
+  it('removeSeat refuses a bound seat (retire-flow only)', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    env.mockSlots[1] = { state: 'bound-active', pcId: 'mei' };
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.removeSeat(1)).toBe(false);
+    expect(env.seatRemoves).toEqual([]);
+  });
+
+  it('removeSeat refuses a non-existent slot', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.removeSeat(7)).toBe(false);
+    expect(env.seatRemoves).toEqual([]);
+  });
+
+  it('removeSeat refuses a seat with an accepted synth result', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    env.mockSlots[3] = { state: 'unbound' };
+    const ctrl = new ChargenController(host, env);
+    // Drive ctrl into accepted state for slot 3 via the public
+    // surface so the bookkeeping flag matches reality.
+    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(3);
+    expect(ctrl.removeSeat(3)).toBe(false);
+    expect(env.seatRemoves).toEqual([]);
+  });
+
+  it('removeSeat refuses a seat with synthesis in-flight', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    env.mockSlots[3] = { state: 'unbound' };
+    const ctrl = new ChargenController(host, env);
+    (ctrl as unknown as { _synthInFlight: Set<number> })._synthInFlight.add(3);
+    expect(ctrl.removeSeat(3)).toBe(false);
+  });
+
+  it('removeSeat refuses when caller is not coordinator', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign(), { isCoord: false });
+    env.mockSlots[3] = { state: 'unbound' };
+    const ctrl = new ChargenController(host, env);
+    expect(ctrl.removeSeat(3)).toBe(false);
   });
 });

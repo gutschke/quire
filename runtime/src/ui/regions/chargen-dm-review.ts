@@ -107,6 +107,14 @@ export type ReviseCallback = (slot: number, reason: string) => void;
  */
 export type AddSeatCallback = () => number | null;
 /**
+ * Wave 1 (2026-05-25): DM drops an unbound, empty seat that was
+ * added accidentally.  Host wires to ChargenController.removeSeat.
+ * Returns true if the engine accepted the removal.  The UI only
+ * surfaces the X-glyph affordance on truly removable seats — this
+ * is a defense-in-depth gate.
+ */
+export type RemoveSeatCallback = (slot: number) => boolean;
+/**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no
  * answers are saved on this device.
@@ -250,6 +258,23 @@ export class ChargenDmReview extends LitElement {
   onAddSeat: AddSeatCallback | null = null;
 
   /**
+   * Wave 1 (2026-05-25): drop an empty unbound seat.  When null,
+   * the X-glyph is not rendered (defense-in-depth — even if a stale
+   * seat ends up unbound after a host upgrade, we won't expose a
+   * remove verb without a wired callback).
+   */
+  @property({ attribute: false })
+  onRemoveSeat: RemoveSeatCallback | null = null;
+
+  /**
+   * Wave 1 (2026-05-25): undo a remove during the 4s window by
+   * re-allocating the exact slot integer.  Distinct from onAddSeat
+   * (which picks lowest-unused) — undo needs the specific slot.
+   */
+  @property({ attribute: false })
+  onReaddSeat: ((slot: number) => boolean) | null = null;
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -279,6 +304,17 @@ export class ChargenDmReview extends LitElement {
    * in P-R4.
    */
   @state() private startedPlaying: boolean = false;
+
+  /**
+   * Wave 1 (2026-05-25): 4-second undo window after a seat-remove.
+   * `pendingRemoveSlot` is the integer the DM just removed;
+   * `pendingRemoveSecondsLeft` counts down once per second.  When
+   * the timer expires (or the DM clicks Undo / triggers a new
+   * remove), the state clears and the banner disappears.
+   */
+  @state() private pendingRemoveSlot: number | null = null;
+  @state() private pendingRemoveSecondsLeft = 0;
+  private pendingRemoveTimerId: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Phase 3b polish: per-seat transient UI state for the pack-
@@ -361,6 +397,7 @@ export class ChargenDmReview extends LitElement {
     if (this.startedPlaying) {
       // Collapsed posture per UX C2: bound seats glance + resume verb.
       return html`
+        ${this.renderRemoveUndoBanner()}
         <ol class="chargen-dm-review-seats chargen-dm-review-seats-collapsed">
           ${sorted.map((slot) => this.renderSeat(slot))}
         </ol>
@@ -382,6 +419,7 @@ export class ChargenDmReview extends LitElement {
     const canAdd = this.computeNextAvailableSlot() !== null;
     const hasActive = this.hasBoundActiveSeat();
     return html`
+      ${this.renderRemoveUndoBanner()}
       <ol class="chargen-dm-review-seats">
         ${sorted.length === 0
           ? html`<li class="chargen-dm-review-seats-empty muted">
@@ -446,11 +484,105 @@ export class ChargenDmReview extends LitElement {
     return false;
   }
 
+  /**
+   * Wave 1 (2026-05-25): the 4s "PC5 removed — Undo (3s)" banner
+   * that follows a seat-remove.  Nothing rendered when no remove
+   * is pending.  Banner anchors above the seat list so it's visible
+   * in both the empty and populated states.
+   */
+  private renderRemoveUndoBanner(): TemplateResult | typeof nothing {
+    if (this.pendingRemoveSlot === null) return nothing;
+    return html`
+      <div class="chargen-dm-review-remove-undo" role="status">
+        <span>PC${this.pendingRemoveSlot} removed.</span>
+        <button
+          type="button"
+          class="chargen-dm-review-remove-undo-btn"
+          @click=${() => this.handleUndoRemoveSeat()}
+        >
+          Undo (${this.pendingRemoveSecondsLeft}s)
+        </button>
+      </div>
+    `;
+  }
+
   private handleAddSeat(): void {
     if (!this.onAddSeat) return;
     const slot = this.onAddSeat();
     if (slot === null) return;
     this.workingSlot = slot;
+  }
+
+  /**
+   * Wave 1 (2026-05-25): the seat is "removable" when nothing the
+   * DM has invested in it would be lost.  The engine layer also
+   * gates this (and the controller checks _synthInFlight /
+   * _synthResults / _acceptedSlots), so this is defense-in-depth
+   * for the affordance visibility.
+   *
+   * Conditions for visibility:
+   *   - the seat exists in pcSlots and is `unbound`
+   *   - no synthesis result is cached
+   *   - synthesis isn't currently in-flight
+   *   - the seat hasn't been accepted
+   *   - no quick-gen panel is in-flight
+   *   - the seat isn't the in-progress workingSlot (DM is mid-
+   *     chargen for it — clicking + would be unexpected)
+   *
+   * A generated invite URL alone does NOT disqualify removal:
+   * the player hasn't redeemed yet, so the seat is recoverable
+   * even if the link was sent.
+   */
+  private isSeatRemovable(slot: number): boolean {
+    if (!this.onRemoveSeat) return false;
+    const seat = this.pcSlots?.[slot];
+    if (!seat || seat.state !== 'unbound') return false;
+    if (this.synthResults.has(slot)) return false;
+    if (this.synthInFlight.has(slot)) return false;
+    if (this.acceptedSlots.has(slot)) return false;
+    if (this.quickGenInFlight.has(slot)) return false;
+    if (this.workingSlot === slot) return false;
+    return true;
+  }
+
+  private handleRemoveSeat(slot: number): void {
+    if (!this.isSeatRemovable(slot)) return;
+    const ok = this.onRemoveSeat!(slot);
+    if (!ok) return;
+    // Stash the slot for the 4s undo window; cancel any prior
+    // pending remove (clicking remove on a second seat collapses
+    // the older banner immediately — last-write-wins).
+    this.clearPendingRemoveTimer();
+    this.pendingRemoveSlot = slot;
+    this.pendingRemoveSecondsLeft = 4;
+    this.pendingRemoveTimerId = setInterval(() => {
+      this.pendingRemoveSecondsLeft -= 1;
+      if (this.pendingRemoveSecondsLeft <= 0) {
+        this.clearPendingRemoveTimer();
+        this.pendingRemoveSlot = null;
+      }
+    }, 1000);
+  }
+
+  private handleUndoRemoveSeat(): void {
+    const slot = this.pendingRemoveSlot;
+    this.clearPendingRemoveTimer();
+    this.pendingRemoveSlot = null;
+    this.pendingRemoveSecondsLeft = 0;
+    if (slot === null) return;
+    this.onReaddSeat?.(slot);
+  }
+
+  private clearPendingRemoveTimer(): void {
+    if (this.pendingRemoveTimerId !== null) {
+      clearInterval(this.pendingRemoveTimerId);
+      this.pendingRemoveTimerId = null;
+    }
+  }
+
+  disconnectedCallback(): void {
+    this.clearPendingRemoveTimer();
+    super.disconnectedCallback();
   }
 
   /**
@@ -729,6 +861,17 @@ export class ChargenDmReview extends LitElement {
               ? this.renderBoundName(boundPcId)
               : html`<span class="muted">open</span>`}
           </span>
+          ${this.isSeatRemovable(slot)
+            ? html`<button
+                type="button"
+                class="chargen-dm-review-seat-remove"
+                title="Remove this empty seat (undoable for 4 seconds)"
+                aria-label="Remove PC${slot}"
+                @click=${() => this.handleRemoveSeat(slot)}
+              >
+                ×
+              </button>`
+            : nothing}
         </header>
         <div class="chargen-dm-review-seat-actions">
           <button

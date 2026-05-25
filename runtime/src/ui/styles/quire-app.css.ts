@@ -187,6 +187,50 @@ export const quireAppStyles = css`
       opacity: 0.6;
       margin-left: 0.35rem;
     }
+    .chargen-dm-review-seat-remove {
+      /* Wave 1: subtle X glyph on removable unbound seats.  Visible
+         but unobtrusive (opacity 0.4) until hover.  Push to the
+         right of the header. */
+      margin-left: auto;
+      padding: 0 0.4rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+      opacity: 0.4;
+      border-radius: 4px;
+    }
+    .chargen-dm-review-seat-remove:hover {
+      opacity: 1;
+      border-color: light-dark(#dc2626, #f87171);
+      color: light-dark(#dc2626, #f87171);
+    }
+    .chargen-dm-review-remove-undo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin: 0 0 0.6rem;
+      padding: 0.4rem 0.7rem;
+      background: light-dark(#fef3c7, #422006);
+      border: 1px solid light-dark(#facc15, #a16207);
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+    .chargen-dm-review-remove-undo-btn {
+      padding: 0.25rem 0.6rem;
+      border: 1px solid light-dark(#a16207, #facc15);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      margin-left: auto;
+    }
+    .chargen-dm-review-remove-undo-btn:hover {
+      background: light-dark(#fef9c3, #1e293b);
+    }
     .chargen-dm-review-seat-actions {
       display: flex;
       flex-wrap: wrap;

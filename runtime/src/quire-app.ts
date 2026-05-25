@@ -304,6 +304,7 @@ export class QuireApp extends LitElement {
     appendPcCreate: (payload) => this.appendPcCreate(payload),
     bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId),
     appendSeatAdd: (slot: number) => this.appendSeatAdd(slot),
+    appendSeatRemove: (slot: number) => this.appendSeatRemove(slot),
     getPcSlots: () => this.sessionView?.shared.pcSlots ?? {}
   });
 
@@ -1308,6 +1309,8 @@ export class QuireApp extends LitElement {
           edits: { name: string; backstory: string }
         ) => this.chargen.acceptWithEdits(slot, edits)}
         .onAddSeat=${() => this.chargen.addSeat()}
+        .onRemoveSeat=${(slot: number) => this.chargen.removeSeat(slot)}
+        .onReaddSeat=${(slot: number) => this.chargen.readdSeat(slot)}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}
       ></chargen-dm-review>
@@ -1424,6 +1427,21 @@ export class QuireApp extends LitElement {
     // 1..9 convention until V-10 makes the cap campaign-config).
     if (slot > 9) return false;
     this.session.append('seat-add', { v: 1, slot });
+    return true;
+  }
+
+  /**
+   * Wave 1 (2026-05-25): emit a `seat-remove` event dropping an
+   * unbound, empty seat that was added accidentally.  Coord-only.
+   * The engine refuses to remove bound seats (sticky-N preserves
+   * narrative history through retire-flow instead).
+   */
+  appendSeatRemove(slot: number): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    this.session.append('seat-remove', { v: 1, slot });
     return true;
   }
 
