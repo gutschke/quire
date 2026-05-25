@@ -233,6 +233,27 @@ describe('validatePcBackstory', () => {
       ).toBe('warning');
     });
 
+    it('silently tolerates trivial overages (~5%) — 400 is guidance, not gospel', () => {
+      // The user explicitly called out 0.25% overages (e.g. 401 words)
+      // as DM-visible noise.  We tolerate up to 5% above the cap.
+      // makeBackstory adds a 5-word prefix, so total = wordCount + 5.
+      for (const wordCount of [395, 405, 410]) {
+        // 400 -> 415 total -> under 420 cap-with-5%-tolerance.
+        const issues = validatePcBackstory(
+          valid({ backstory: makeBackstory(wordCount) })
+        );
+        expect(
+          issues.some((i) => i.code === 'backstory-too-long'),
+          `${wordCount + 5} words should not trigger a warning`
+        ).toBe(false);
+      }
+      // 425 + prefix = 430 total: clearly above the 5% threshold.
+      const issues = validatePcBackstory(
+        valid({ backstory: makeBackstory(425) })
+      );
+      expect(issues.some((i) => i.code === 'backstory-too-long')).toBe(true);
+    });
+
     it('honors custom min/max word bounds', () => {
       const issues = validatePcBackstory(
         valid({ backstory: makeBackstory(50) }),

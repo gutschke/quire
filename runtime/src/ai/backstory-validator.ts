@@ -277,7 +277,10 @@ export function validatePcBackstory(
       code: 'backstory-too-short',
       message: `Backstory has ${words} words; minimum is ${minWords}.  AI was too brief.`
     });
-  } else if (words > maxWords) {
+  } else if (words > Math.ceil(maxWords * 1.05)) {
+    // 400 is guidance, not gospel.  A handful of extra words from
+    // sentence-tail momentum isn't worth a DM-visible nag — only
+    // flag when the AI is genuinely padded (>5% over the cap).
     issues.push({
       severity: 'warning',
       code: 'backstory-too-long',
