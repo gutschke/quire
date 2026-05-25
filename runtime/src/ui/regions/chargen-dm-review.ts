@@ -33,6 +33,7 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { SynthesizeBackstoryResult } from '../../ai/backstory-synthesizer';
+import type { PcBackstorySynthesisResponse } from '../../ai/schema';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 import type { Seat } from '../../core/state';
 
@@ -114,6 +115,26 @@ export type AddSeatCallback = () => number | null;
  * is a defense-in-depth gate.
  */
 export type RemoveSeatCallback = (slot: number) => boolean;
+/**
+ * Wave 2 (2026-05-25): DM patches one or more fields on a
+ * synthesized PC before accepting.  Host wires to
+ * ChargenController.editSynthFieldPreAccept.  Returns true on
+ * success; false when the slot has no ok-result or is already
+ * accepted.
+ */
+export type EditPreAcceptCallback = (
+  slot: number,
+  patch: Partial<PcBackstorySynthesisResponse>
+) => boolean;
+/**
+ * Wave 2 (2026-05-25): DM dismisses the drift-banner entry for a
+ * specific field on a slot ("Leave drift" — keep the edit, hide
+ * the banner).  Host wires to ChargenController.dismissPreAcceptDrift.
+ */
+export type DismissDriftCallback = (
+  slot: number,
+  field: keyof PcBackstorySynthesisResponse
+) => void;
 /**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no
@@ -275,6 +296,31 @@ export class ChargenDmReview extends LitElement {
   onReaddSeat: ((slot: number) => boolean) | null = null;
 
   /**
+   * Wave 2 (2026-05-25): patch a synthesized PC's fields before
+   * acceptance.  Hidden when null (defense-in-depth — same posture
+   * as the seat-remove X-glyph).
+   */
+  @property({ attribute: false })
+  onEditPreAccept: EditPreAcceptCallback | null = null;
+
+  /**
+   * Wave 2 (2026-05-25): "Leave drift" — clears the drift-banner
+   * entry for a field; the edit value stays.
+   */
+  @property({ attribute: false })
+  onDismissDrift: DismissDriftCallback | null = null;
+
+  /**
+   * Wave 2 (2026-05-25): per-slot map of original AI values for
+   * any field the DM has edited pre-accept.  The drift banner uses
+   * this for "Name: Mei → Mai" before/after rendering.  Empty map
+   * = no banners shown.
+   */
+  @property({ attribute: false })
+  preAcceptDrift: Map<number, Partial<PcBackstorySynthesisResponse>> =
+    new Map();
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -315,6 +361,16 @@ export class ChargenDmReview extends LitElement {
   @state() private pendingRemoveSlot: number | null = null;
   @state() private pendingRemoveSecondsLeft = 0;
   private pendingRemoveTimerId: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Wave 2 (2026-05-25): which header field on which slot is in
+   * inline-edit mode.  Single-edit at a time — opening one closes
+   * any other.  Cleared on commit / Esc / blur to a non-input.
+   */
+  @state() private editingHeader: {
+    slot: number;
+    field: 'name' | 'pronouns';
+  } | null = null;
 
   /**
    * Phase 3b polish: per-seat transient UI state for the pack-
@@ -583,6 +639,62 @@ export class ChargenDmReview extends LitElement {
   disconnectedCallback(): void {
     this.clearPendingRemoveTimer();
     super.disconnectedCallback();
+  }
+
+  /**
+   * Wave 2 (2026-05-25): open inline edit on a synth-result header
+   * field.  Accepted slots can't edit pre-accept (post-accept edits
+   * are Wave 3).  Click outside / Esc / Enter close the editor.
+   */
+  private openHeaderEdit(slot: number, field: 'name' | 'pronouns'): void {
+    if (this.acceptedSlots.has(slot)) return;
+    if (!this.onEditPreAccept) return;
+    this.editingHeader = { slot, field };
+  }
+
+  private commitHeaderEdit(value: string): void {
+    const editing = this.editingHeader;
+    if (!editing || !this.onEditPreAccept) {
+      this.editingHeader = null;
+      return;
+    }
+    const trimmed = value.trim();
+    const synth = this.synthResults.get(editing.slot);
+    if (synth?.ok) {
+      const current = synth.response[editing.field];
+      if (trimmed.length > 0 && trimmed !== current) {
+        const patch: Partial<PcBackstorySynthesisResponse> = {};
+        patch[editing.field] = trimmed;
+        this.onEditPreAccept(editing.slot, patch);
+      }
+    }
+    this.editingHeader = null;
+  }
+
+  private cancelHeaderEdit(): void {
+    this.editingHeader = null;
+  }
+
+  private handleHeaderInputKey(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.commitHeaderEdit((e.target as HTMLInputElement).value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this.cancelHeaderEdit();
+    }
+  }
+
+  /**
+   * Wave 2 (2026-05-25): "Leave drift" — DM accepts that the
+   * synth-result diverges from the AI's original output for a
+   * given field; banner stops showing for that field.
+   */
+  private handleLeaveDrift(
+    slot: number,
+    field: keyof PcBackstorySynthesisResponse
+  ): void {
+    this.onDismissDrift?.(slot, field);
   }
 
   /**
@@ -1048,12 +1160,18 @@ export class ChargenDmReview extends LitElement {
       return html`
         <div class="chargen-dm-review-synth chargen-dm-review-synth-ok">
           <div class="chargen-dm-review-synth-name">
-            ✓ <strong>${r.name}</strong>
-            <span class="muted">— ${r.pronouns}</span>
+            ✓ ${this.renderHeaderField(slot, 'name', r.name, accepted)}
+            <span class="muted">— ${this.renderHeaderField(
+              slot,
+              'pronouns',
+              r.pronouns,
+              accepted
+            )}</span>
           </div>
           ${this.renderTagChips(r.tags)}
           ${this.renderStatGrid(r.stats)}
           ${this.renderSkillChips(r.skillMastery)}
+          ${this.renderDriftBanner(slot)}
           ${warningCount > 0
             ? html`<div class="chargen-dm-review-synth-warnings">
                 ${warningCount} validator warning${warningCount === 1
@@ -1250,6 +1368,129 @@ export class ChargenDmReview extends LitElement {
   }
 
   // ---- Step 5: full review card pieces ----
+
+  /**
+   * Wave 2 (2026-05-25): render a synth-result header field
+   * (`name` or `pronouns`) as either a display span or an inline
+   * text input depending on `editingHeader`.  Click → switches to
+   * input.  Enter or blur commits via `onEditPreAccept`.  Esc
+   * cancels.  Accepted slots are display-only (post-accept edits
+   * live in Wave 3 with a different visibility model).
+   */
+  private renderHeaderField(
+    slot: number,
+    field: 'name' | 'pronouns',
+    value: string,
+    accepted: boolean
+  ): TemplateResult {
+    const editing =
+      this.editingHeader?.slot === slot && this.editingHeader.field === field;
+    if (editing) {
+      return html`
+        <input
+          type="text"
+          class="chargen-dm-review-header-input chargen-dm-review-header-input-${field}"
+          .value=${value}
+          aria-label="Edit ${field}"
+          autofocus
+          @keydown=${(e: KeyboardEvent) => this.handleHeaderInputKey(e)}
+          @blur=${(e: FocusEvent) =>
+            this.commitHeaderEdit((e.target as HTMLInputElement).value)}
+        />
+      `;
+    }
+    if (accepted || !this.onEditPreAccept) {
+      // Post-accept (or no callback): render as a static span — no
+      // pencil affordance.  Wave 3 will offer the post-accept
+      // edit path with a different visual treatment.
+      return field === 'name'
+        ? html`<strong>${value}</strong>`
+        : html`${value}`;
+    }
+    return html`<button
+      type="button"
+      class="chargen-dm-review-header-edit chargen-dm-review-header-edit-${field}"
+      title="Click to edit ${field}"
+      @click=${() => this.openHeaderEdit(slot, field)}
+    >
+      ${field === 'name' ? html`<strong>${value}</strong>` : html`${value}`}
+    </button>`;
+  }
+
+  /**
+   * Wave 2 (2026-05-25): drift banner — surfaces fields where the
+   * DM has edited the synth result away from the AI's original
+   * output.  Three actions:
+   *   - [Patch in place]   — Wave 3 (disabled stub)
+   *   - [Re-sync backstory]— Wave 3 (disabled stub)
+   *   - [Leave drift]      — Wave 2 active.  Dismisses the banner;
+   *                          edit value stays.
+   * Per the chargen-authorship memory: drift is INFORMATIONAL, not
+   * blocking.  The DM remains the authority.
+   */
+  private renderDriftBanner(slot: number): TemplateResult | typeof nothing {
+    const drift = this.preAcceptDrift.get(slot);
+    if (!drift) return nothing;
+    const fields = Object.keys(drift) as Array<
+      keyof PcBackstorySynthesisResponse
+    >;
+    if (fields.length === 0) return nothing;
+    const synth = this.synthResults.get(slot);
+    if (!synth?.ok) return nothing;
+    return html`
+      <div class="chargen-dm-review-drift" role="status">
+        <ul class="chargen-dm-review-drift-list">
+          ${fields.map((field) => {
+            const before = drift[field];
+            const after = synth.response[field];
+            return html`<li class="chargen-dm-review-drift-row">
+              <span class="chargen-dm-review-drift-field">${String(field)}:</span>
+              <span class="chargen-dm-review-drift-before">${this.formatDriftValue(
+                before
+              )}</span>
+              <span class="chargen-dm-review-drift-arrow">→</span>
+              <span class="chargen-dm-review-drift-after">${this.formatDriftValue(
+                after
+              )}</span>
+              <button
+                type="button"
+                class="chargen-dm-review-drift-leave"
+                title="Keep the edit; hide this banner row"
+                @click=${() => this.handleLeaveDrift(slot, field)}
+              >
+                Leave drift
+              </button>
+            </li>`;
+          })}
+        </ul>
+        <div class="chargen-dm-review-drift-actions">
+          <button
+            type="button"
+            class="chargen-dm-review-drift-patch"
+            disabled
+            title="Wave 3: deterministically rewrite the backstory to use the edited values"
+          >
+            Patch in place
+          </button>
+          <button
+            type="button"
+            class="chargen-dm-review-drift-resync"
+            disabled
+            title="Wave 3: re-call the AI with the edited values + the previous draft as anchor"
+          >
+            Re-sync backstory
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private formatDriftValue(v: unknown): string {
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.join(', ');
+    if (v && typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
 
   /** Tags chips — 3-5 free-text expertise items from the response. */
   private renderTagChips(tags: readonly string[]): TemplateResult {

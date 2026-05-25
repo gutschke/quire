@@ -1380,3 +1380,121 @@ describe('ChargenController — addSeat / removeSeat (Wave 1)', () => {
     expect(ctrl.removeSeat(3)).toBe(false);
   });
 });
+
+describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
+  function seedResult(ctrl: ChargenController, slot: number) {
+    (
+      ctrl as unknown as {
+        _synthResults: Map<number, unknown>;
+      }
+    )._synthResults.set(slot, {
+      ok: true,
+      response: {
+        name: 'Mei Tanaka',
+        pronouns: 'she/her',
+        tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory: 'Mei grew up in the Mission.',
+        raw: '{}',
+        tokensIn: 100,
+        tokensOut: 250,
+        responseId: 'syn-1'
+      },
+      warnings: [],
+      retried: false
+    });
+  }
+
+  it('patches name and records the original AI value for drift display', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    expect(ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' })).toBe(true);
+    const drift = ctrl.getPreAcceptDrift(1);
+    expect(drift?.name).toBe('Mei Tanaka');
+    // Synth result mutated in place — accept-flow will read the new name.
+    const result = (
+      ctrl as unknown as { _synthResults: Map<number, { response: { name: string } }> }
+    )._synthResults.get(1);
+    expect(result?.response.name).toBe('Mai Tanaka');
+  });
+
+  it('patches pronouns independently from name (drift map accumulates)', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' });
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    const drift = ctrl.getPreAcceptDrift(1);
+    expect(drift?.name).toBe('Mei Tanaka');
+    expect(drift?.pronouns).toBe('she/her');
+  });
+
+  it('first-edit-wins: subsequent edits do NOT overwrite the original snapshot', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai-Lin' });
+    const drift = ctrl.getPreAcceptDrift(1);
+    // Original AI value preserved, even after multiple edits.
+    expect(drift?.name).toBe('Mei Tanaka');
+  });
+
+  it('refuses to edit an already-accepted slot (Wave 3 territory)', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(1);
+    expect(ctrl.editSynthFieldPreAccept(1, { name: 'Mai' })).toBe(false);
+    expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
+  });
+
+  it('refuses to edit a slot with no ok-synth-result', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.editSynthFieldPreAccept(1, { name: 'X' })).toBe(false);
+  });
+
+  it('dismissPreAcceptDrift removes a single field entry', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai', pronouns: 'they/them' });
+    ctrl.dismissPreAcceptDrift(1, 'name');
+    const drift = ctrl.getPreAcceptDrift(1);
+    expect(drift?.name).toBeUndefined();
+    expect(drift?.pronouns).toBe('she/her');
+  });
+
+  it('dismissPreAcceptDrift with no field clears the whole slot entry', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai', pronouns: 'they/them' });
+    ctrl.dismissPreAcceptDrift(1);
+    expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
+  });
+
+  it('requestReviseSlot clears drift along with the synth result', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    ctrl.requestReviseSlot(1, 'try again');
+    expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
+  });
+
+  it('acceptSlot uses the edited name in the pc-create payload', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    seedResult(ctrl, 1);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka', pronouns: 'they/them' });
+    ctrl.acceptSlot(1);
+    expect(env.pcCreates.length).toBe(1);
+    expect(env.pcCreates[0].name).toBe('Mai Tanaka');
+    expect(env.pcCreates[0].pronouns).toBe('they/them');
+  });
+});

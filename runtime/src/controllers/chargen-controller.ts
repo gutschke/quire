@@ -65,6 +65,7 @@ import type {
   CharCreationAnswers
 } from '../ui/regions/character-creation';
 import type { SynthesizeBackstoryResult } from '../ai/backstory-synthesizer';
+import type { PcBackstorySynthesisResponse } from '../ai/schema';
 
 // Provider id matches the AiKeyStore vocabulary.
 type AiProvider = 'claude' | 'gemini';
@@ -211,6 +212,21 @@ export class ChargenController implements ReactiveController {
 
   /** Slots the DM has accepted (CC-24).  Used by the region for the accept-gate dim. */
   private readonly _acceptedSlots = new Set<number>();
+
+  /**
+   * Wave 2 (2026-05-25): per-slot snapshot of the original AI-
+   * synthesized values for any field the DM has edited before
+   * accept.  Each entry records the field's value at the moment of
+   * the first edit, so the drift banner can render a "before → now"
+   * comparison.  Cleared on dismissPreAcceptDrift / clearSynth /
+   * revise.  Pre-acceptance edits are DM-local (the synth result
+   * has not been broadcast yet); post-acceptance edits will go
+   * through pc-edit in Wave 3 with a separate visibility model.
+   */
+  private readonly _preAcceptOriginals = new Map<
+    number,
+    Partial<PcBackstorySynthesisResponse>
+  >();
 
   /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
@@ -402,6 +418,93 @@ export class ChargenController implements ReactiveController {
     return this.env.appendSeatAdd(slot);
   }
 
+  /**
+   * Wave 2 (2026-05-25): patch one or more fields on the in-memory
+   * synth result before the DM accepts.  Mutates the cached result
+   * in place and, on first touch of any field, snapshots the
+   * original AI value so the drift banner can render before/after.
+   *
+   * Pre-acceptance edits are DM-local — the synth result is only
+   * in this controller's cache; no event broadcast.  The eventual
+   * `acceptSlot` will read the (now-edited) result and emit a
+   * pc-create with the final values.  Per the chargen-authorship
+   * memory, pre-launch silent edits are appropriate; post-launch
+   * (post-accept) edits route through pc-edit with a different
+   * visibility model in Wave 3.
+   *
+   * Returns false when the slot has no ok-synth-result or the slot
+   * is already accepted (post-accept edits use pc-edit).
+   */
+  editSynthFieldPreAccept(
+    slot: number,
+    patch: Partial<PcBackstorySynthesisResponse>
+  ): boolean {
+    if (this._acceptedSlots.has(slot)) return false;
+    const result = this._synthResults.get(slot);
+    if (!result || !result.ok) return false;
+    let original = this._preAcceptOriginals.get(slot);
+    if (!original) {
+      original = {};
+      this._preAcceptOriginals.set(slot, original);
+    }
+    const origAny = original as Record<string, unknown>;
+    const respAny = result.response as unknown as Record<string, unknown>;
+    const patchAny = patch as Record<string, unknown>;
+    for (const key of Object.keys(patch)) {
+      if (!(key in origAny)) origAny[key] = respAny[key];
+      respAny[key] = patchAny[key];
+    }
+    this.host.requestUpdate();
+    return true;
+  }
+
+  /**
+   * Wave 2 (2026-05-25): read the drift map for a slot — the fields
+   * the DM has edited pre-accept, mapped to their original AI
+   * values.  Returns undefined when the slot has no recorded
+   * drift.  The UI uses this to render the "Name: Mei → Mai"
+   * before/after on the drift banner.
+   */
+  getPreAcceptDrift(
+    slot: number
+  ): Partial<PcBackstorySynthesisResponse> | undefined {
+    return this._preAcceptOriginals.get(slot);
+  }
+
+  /**
+   * Wave 2 (2026-05-25): "Leave drift" — the DM has decided to
+   * accept the field divergence between their edit and the AI's
+   * original output.  Clears the drift entry so the banner stops
+   * surfacing.  Pass `field` to dismiss one entry; omit to dismiss
+   * all drift for the slot.  The synth result itself is not
+   * touched — the edit stays.
+   */
+  dismissPreAcceptDrift(
+    slot: number,
+    field?: keyof PcBackstorySynthesisResponse
+  ): void {
+    const original = this._preAcceptOriginals.get(slot);
+    if (!original) return;
+    if (field !== undefined) {
+      delete (original as Record<string, unknown>)[field];
+      if (Object.keys(original).length === 0) {
+        this._preAcceptOriginals.delete(slot);
+      }
+    } else {
+      this._preAcceptOriginals.delete(slot);
+    }
+    this.host.requestUpdate();
+  }
+
+  /**
+   * Wave 2 (2026-05-25): full snapshot of all slots' drift state,
+   * suitable for passing into the UI as a property.  The UI uses
+   * the keys to know which slots have a banner to show.
+   */
+  preAcceptDriftMap(): Map<number, Partial<PcBackstorySynthesisResponse>> {
+    return this._preAcceptOriginals;
+  }
+
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
     const result = this._synthResults.get(slot);
@@ -516,6 +619,7 @@ export class ChargenController implements ReactiveController {
     if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
+    this._preAcceptOriginals.delete(slot);
     const trimmedReason = reason?.trim() ?? '';
     const msg = trimmedReason
       ? `DM asked player at slot ${slot} to revise.  Reason: ${trimmedReason}`
@@ -971,6 +1075,7 @@ export class ChargenController implements ReactiveController {
     const had = this._synthResults.has(slot) || this._acceptedSlots.has(slot);
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
+    this._preAcceptOriginals.delete(slot);
     if (had) this.host.requestUpdate();
   }
 

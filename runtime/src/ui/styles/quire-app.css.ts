@@ -231,6 +231,99 @@ export const quireAppStyles = css`
     .chargen-dm-review-remove-undo-btn:hover {
       background: light-dark(#fef9c3, #1e293b);
     }
+    /* Wave 2: synth-result header click-to-edit affordance. */
+    .chargen-dm-review-header-edit {
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 0 0.25rem;
+      margin: 0;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-header-edit:hover {
+      border-color: light-dark(#94a3b8, #475569);
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .chargen-dm-review-header-input {
+      font: inherit;
+      padding: 0.15rem 0.4rem;
+      border: 1px solid light-dark(#94a3b8, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      min-width: 8em;
+    }
+    .chargen-dm-review-header-input-name {
+      font-weight: 600;
+    }
+    /* Wave 2: drift banner — informational, not blocking. */
+    .chargen-dm-review-drift {
+      margin: 0.5rem 0;
+      padding: 0.5rem 0.7rem;
+      background: light-dark(#fef3c7, #422006);
+      border: 1px solid light-dark(#facc15, #a16207);
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+    .chargen-dm-review-drift-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .chargen-dm-review-drift-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.3rem;
+    }
+    .chargen-dm-review-drift-field {
+      font-weight: 600;
+      min-width: 5em;
+    }
+    .chargen-dm-review-drift-before {
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+    .chargen-dm-review-drift-after {
+      font-weight: 500;
+    }
+    .chargen-dm-review-drift-arrow {
+      opacity: 0.6;
+    }
+    .chargen-dm-review-drift-leave,
+    .chargen-dm-review-drift-patch,
+    .chargen-dm-review-drift-resync {
+      padding: 0.2rem 0.55rem;
+      border: 1px solid light-dark(#a16207, #facc15);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      margin-left: auto;
+    }
+    .chargen-dm-review-drift-leave:hover,
+    .chargen-dm-review-drift-patch:not(:disabled):hover,
+    .chargen-dm-review-drift-resync:not(:disabled):hover {
+      background: light-dark(#fef9c3, #1e293b);
+    }
+    .chargen-dm-review-drift-patch:disabled,
+    .chargen-dm-review-drift-resync:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      margin-left: 0;
+    }
+    .chargen-dm-review-drift-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-top: 0.4rem;
+      padding-top: 0.4rem;
+      border-top: 1px dashed light-dark(#facc15, #a16207);
+    }
     .chargen-dm-review-seat-actions {
       display: flex;
       flex-wrap: wrap;

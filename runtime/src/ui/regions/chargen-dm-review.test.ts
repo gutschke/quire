@@ -903,3 +903,169 @@ describe('<chargen-dm-review> — Wave 1 seat-remove (X-glyph + 4s undo)', () =>
     expect(el.querySelector('.chargen-dm-review-remove-undo')).toBeNull();
   });
 });
+
+describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders the name as a click-to-edit button when onEditPreAccept is wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const btn = el.querySelector('.chargen-dm-review-header-edit-name');
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toMatch(/Mei/);
+  });
+
+  it('renders name as a static span when onEditPreAccept callback is null', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    // onEditPreAccept intentionally null
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-header-edit-name')
+    ).toBeNull();
+  });
+
+  it('clicking the name swaps into an input field', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei Tanaka')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-header-edit-name'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-header-input-name'
+    );
+    expect(input).not.toBeNull();
+    expect(input!.value).toBe('Mei Tanaka');
+  });
+
+  it('Enter commits the edit via onEditPreAccept', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<{ slot: number; patch: Record<string, unknown> }> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, patch });
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-header-edit-name'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-header-input-name'
+    )!;
+    input.value = 'Mai Tanaka';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(patches).toEqual([{ slot: 1, patch: { name: 'Mai Tanaka' } }]);
+  });
+
+  it('Esc cancels the edit without calling onEditPreAccept', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-header-edit-name'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-header-input-name'
+    )!;
+    input.value = 'Should not save';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await el.updateComplete;
+    expect(patches).toEqual([]);
+    // Back to the click-to-edit button display.
+    expect(
+      el.querySelector('.chargen-dm-review-header-edit-name')
+    ).not.toBeNull();
+  });
+
+  it('empty input is treated as no-op (no patch fired)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-header-edit-name'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-header-input-name'
+    )!;
+    input.value = '  ';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(patches).toEqual([]);
+  });
+
+  it('renders the drift banner when preAcceptDrift has entries for the slot', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    await el.updateComplete;
+    const banner = el.querySelector('.chargen-dm-review-drift');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toMatch(/name/);
+    expect(banner!.textContent).toMatch(/Mei Tanaka/); // before
+    expect(banner!.textContent).toMatch(/Mai Tanaka/); // after
+  });
+
+  it('clicking Leave drift fires onDismissDrift with the slot + field', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    const dismissed: Array<{ slot: number; field: string }> = [];
+    el.onDismissDrift = (slot, field) => {
+      dismissed.push({ slot, field: String(field) });
+    };
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-leave'
+    )!.click();
+    expect(dismissed).toEqual([{ slot: 1, field: 'name' }]);
+  });
+
+  it('Wave 3 actions (Patch / Re-sync) are present but disabled in Wave 2', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    await el.updateComplete;
+    const patch = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-patch'
+    );
+    const resync = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync'
+    );
+    expect(patch?.disabled).toBe(true);
+    expect(resync?.disabled).toBe(true);
+  });
+
+  it('drift banner does not render when no drift is recorded', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map();
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-drift')).toBeNull();
+  });
+});

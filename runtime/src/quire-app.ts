@@ -1311,6 +1311,17 @@ export class QuireApp extends LitElement {
         .onAddSeat=${() => this.chargen.addSeat()}
         .onRemoveSeat=${(slot: number) => this.chargen.removeSeat(slot)}
         .onReaddSeat=${(slot: number) => this.chargen.readdSeat(slot)}
+        .onEditPreAccept=${(
+          slot: number,
+          patch: Partial<
+            import('./ai/schema').PcBackstorySynthesisResponse
+          >
+        ) => this.chargen.editSynthFieldPreAccept(slot, patch)}
+        .onDismissDrift=${(
+          slot: number,
+          field: keyof import('./ai/schema').PcBackstorySynthesisResponse
+        ) => this.chargen.dismissPreAcceptDrift(slot, field)}
+        .preAcceptDrift=${this.chargen.preAcceptDriftMap()}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}
       ></chargen-dm-review>
