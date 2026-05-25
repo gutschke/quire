@@ -865,8 +865,10 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     expect(m1.length).toBe(18);
   });
 
-  it('total kind count is 34 (13 legacy + 18 M1 + 1 M3c caster-state-set + 1 M3D-5 pc-slot-bind + 1 Phase 3b-1 pc-create)', () => {
-    expect(KNOWN_EVENT_KINDS.size).toBe(34);
+  it('total kind count is 37 (13 legacy + 18 M1 + 1 caster-state-set + 1 pc-slot-bind + 1 pc-create + 3 Phase B-prime lifecycle)', () => {
+    // Phase B' (2026-05-25): added seat-add + pc-retire + pc-archive
+    // → 34 + 3 = 37.
+    expect(KNOWN_EVENT_KINDS.size).toBe(37);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -1845,7 +1847,11 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
     log.append('coordinator-claim', {});
     log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
     const state = materialize(log.events());
-    expect(state.pcSlots[1]).toBe('mei');
+    // Phase B' (2026-05-25): pcSlots is now Record<number,Seat>.
+    // The bind writes state='bound-active' + pcId + controllerPeerId.
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.pcSlots[1]?.pcId).toBe('mei');
+    expect(state.pcSlots[1]?.controllerPeerId).toBe('alice');
   });
 
   it('emptyState starts with no bindings', () => {
@@ -1871,14 +1877,23 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
     expect(state.pcSlots[1]).toBeUndefined();
   });
 
-  it('rejects slot below 1 or above 9', () => {
+  it('rejects slot below 1 (Phase B-prime dropped the upper cap; campaign-config gates it now)', () => {
+    // Per the converged Phase B' design 2026-05-25: the engine
+    // does not cap slot indices.  Cap-at-9 (or whatever) is a
+    // campaign-config decision under V-10 ([C], not [E]).  The
+    // sticky-N invariant means slot numbers grow monotonically
+    // over a campaign's lifetime; the cap is a UI floor, not an
+    // engine ceiling.
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});
     log.append('pc-slot-bind', { v: 1, slot: 0, pcId: 'mei' });
-    log.append('pc-slot-bind', { v: 1, slot: 10, pcId: 'bob' });
     log.append('pc-slot-bind', { v: 1, slot: -1, pcId: 'eve' });
+    // Slot 10 is now ACCEPTED at the engine layer:
+    log.append('pc-slot-bind', { v: 1, slot: 10, pcId: 'bob' });
     const state = materialize(log.events());
-    expect(state.pcSlots).toEqual({});
+    expect(state.pcSlots[0]).toBeUndefined();
+    expect(state.pcSlots[-1]).toBeUndefined();
+    expect(state.pcSlots[10]?.pcId).toBe('bob');
   });
 
   it('rejects non-integer slot', () => {
@@ -1911,12 +1926,15 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
   });
 
   it('subsequent bind to the same slot overrides (LWW)', () => {
+    // Note: Phase B' sticky-N invariant says UI should NOT offer
+    // re-bind on a bound slot — but the materializer stays
+    // permissive (LWW) so corrupt-replay paths are recoverable.
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});
     log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
     log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'lin' });
     const state = materialize(log.events());
-    expect(state.pcSlots[1]).toBe('lin');
+    expect(state.pcSlots[1]?.pcId).toBe('lin');
   });
 
   it('multiple slots can be bound independently', () => {
@@ -1926,7 +1944,9 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
     log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'bob' });
     log.append('pc-slot-bind', { v: 1, slot: 4, pcId: 'aiyana' });
     const state = materialize(log.events());
-    expect(state.pcSlots).toEqual({ 1: 'mei', 2: 'bob', 4: 'aiyana' });
+    expect(state.pcSlots[1]?.pcId).toBe('mei');
+    expect(state.pcSlots[2]?.pcId).toBe('bob');
+    expect(state.pcSlots[4]?.pcId).toBe('aiyana');
   });
 
   it('rejects invalid character id (defensive)', () => {
@@ -1942,17 +1962,17 @@ describe('materialize — pc-slot-bind (M3D-5 / CC-2)', () => {
   });
 
   it('survives filterForViewer (pcSlots is PLAYER-visible)', () => {
-    // Critically: the substitution must render identical names for
-    // every viewer at the table, so pcSlots flows through the
-    // filter untouched.  Differs from caster-state-set + threadDebt
-    // + pinnedNpcs which the filter wipes.
+    // The substitution must render identical names for every viewer
+    // at the table, so pcSlots flows through the filter with pcId
+    // intact.  Phase B' (2026-05-25): DM-only seat metadata
+    // (retireReason, retiredScene) IS stripped, but pcId stays.
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});
     log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
     log.append('peer-join', { name: 'Bob' }); // bob: player
     const state = materialize(log.events());
     const filtered = filterForViewer(state, 'bob');
-    expect(filtered.pcSlots[1]).toBe('mei');
+    expect(filtered.pcSlots[1]?.pcId).toBe('mei');
   });
 });
 
@@ -2205,5 +2225,256 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
     const a = materialize(log.events());
     const b = materialize(log.events());
     expect(a.synthesizedPcs).toEqual(b.synthesizedPcs);
+  });
+});
+
+// =====================================================================
+// Phase B-prime (2026-05-25): roster lifecycle events — seat-add,
+// pc-retire, pc-archive + DM-only seat metadata projection.
+// =====================================================================
+
+describe('materialize — seat-add (Phase B-prime)', () => {
+  it('coord can allocate an unbound seat', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 5 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[5]).toEqual({ state: 'unbound' });
+  });
+
+  it('coord can pre-assign the controller peer on a fresh seat', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 5, controllerPeerId: 'bob' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[5]?.state).toBe('unbound');
+    expect(state.pcSlots[5]?.controllerPeerId).toBe('bob');
+  });
+
+  it('non-coord seat-add is dropped', () => {
+    const log = new EventLog('bob');
+    log.append('seat-add', { v: 1, slot: 5 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[5]).toBeUndefined();
+  });
+
+  it('seat-add is idempotent on an already-bound slot (no clobber)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('seat-add', { v: 1, slot: 1 }); // attempts to overwrite
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.pcSlots[1]?.pcId).toBe('mei');
+  });
+
+  it('rejects invalid slot (zero / negative / non-integer)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 0 });
+    log.append('seat-add', { v: 1, slot: -1 });
+    log.append('seat-add', { v: 1, slot: 1.5 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[0]).toBeUndefined();
+    expect(state.pcSlots[-1]).toBeUndefined();
+  });
+
+  it('Phase B-prime: no upper cap on slot number (campaign-config gates it)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 15 });
+    const state = materialize(log.events());
+    expect(state.pcSlots[15]?.state).toBe('unbound');
+  });
+});
+
+describe('materialize — pc-retire / pc-archive (Phase B-prime)', () => {
+  function setup(): EventLog {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    return log;
+  }
+
+  it('pc-retire transitions a bound-active seat to bound-retired with metadata', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'left the story after a hard betrayal',
+      reason: 'departed',
+      scene: 'ep1/scene-3'
+    });
+    const state = materialize(log.events());
+    const seat = state.pcSlots[1];
+    expect(seat?.state).toBe('bound-retired');
+    expect(seat?.pcId).toBe('mei');
+    expect(seat?.inFictionRetireReason).toBe(
+      'left the story after a hard betrayal'
+    );
+    expect(seat?.retireReason).toBe('departed');
+    expect(seat?.retiredScene).toBe('ep1/scene-3');
+    expect(seat?.retiredAt).toBeGreaterThan(0);
+    // controllerPeerId stripped on retire.
+    expect(seat?.controllerPeerId).toBeUndefined();
+  });
+
+  it('pc-archive transitions to bound-archived (same payload, different state)', () => {
+    const log = setup();
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'stepped back from the party',
+      reason: 'other'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-archived');
+  });
+
+  it('non-coord retire is dropped', () => {
+    const log = setup();
+    const log2 = new EventLog('bob');
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'x',
+      reason: 'other'
+    });
+    void log2; // mark used
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-retired'); // applied by alice (coord)
+  });
+
+  it('rejects missing inFictionReason (mandatory by design)', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      reason: 'departed'
+      // inFictionReason intentionally missing
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active'); // unchanged
+  });
+
+  it('rejects unknown reason enum', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'x',
+      reason: 'banished' // not in the enum
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+  });
+
+  it('rejects retire targeting a pcId with no seat', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'unknown-pc',
+      state: 'bound-retired',
+      inFictionReason: 'x',
+      reason: 'died'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+  });
+
+  it('bound-retired ↔ bound-archived transition (DM changes their mind)', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'left',
+      reason: 'departed'
+    });
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'left for now',
+      reason: 'departed'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-archived');
+    expect(state.pcSlots[1]?.inFictionRetireReason).toBe('left for now');
+  });
+
+  it('idempotent on same-state (no-op when already in target state)', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'first reason',
+      reason: 'died'
+    });
+    // Second retire with a different reason — idempotency: ignored.
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'different reason',
+      reason: 'departed'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.inFictionRetireReason).toBe('first reason');
+  });
+});
+
+describe('filterForViewer — Phase B-prime DM-only seat metadata strip', () => {
+  function setup(): EventLog {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'left the story after a hard betrayal',
+      reason: 'departed', // DM-only
+      scene: 'ep1/scene-3' // DM-only
+    });
+    return log;
+  }
+
+  it('player sees in-fiction reason but NOT retireReason or retiredScene', () => {
+    const state = materialize(setup().events());
+    const filtered = filterForViewer(state, 'bob');
+    const seat = filtered.pcSlots[1];
+    expect(seat?.state).toBe('bound-retired');
+    expect(seat?.pcId).toBe('mei'); // for {{pc:1}} substitution
+    expect(seat?.inFictionRetireReason).toBe(
+      'left the story after a hard betrayal'
+    );
+    // DM-only fields stripped:
+    expect(seat?.retireReason).toBeUndefined();
+    expect(seat?.retiredScene).toBeUndefined();
+    expect(seat?.retiredAt).toBeUndefined();
+  });
+
+  it('current coord sees full seat metadata (no projection)', () => {
+    const state = materialize(setup().events());
+    const filtered = filterForViewer(state, 'alice');
+    const seat = filtered.pcSlots[1];
+    expect(seat?.retireReason).toBe('departed');
+    expect(seat?.retiredScene).toBe('ep1/scene-3');
+    expect(seat?.retiredAt).toBeGreaterThan(0);
+  });
+
+  it('player view does not mutate source state (seat metadata preserved on source)', () => {
+    const state = materialize(setup().events());
+    filterForViewer(state, 'bob');
+    expect(state.pcSlots[1]?.retireReason).toBe('departed');
+    expect(state.pcSlots[1]?.retiredScene).toBe('ep1/scene-3');
   });
 });

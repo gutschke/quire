@@ -415,3 +415,38 @@ export function substitutePcSlots(
     return bound !== undefined && bound !== '' ? bound : `PC${slot}`;
   });
 }
+
+/**
+ * Phase B' (2026-05-25): adapter from the new Seat-shaped slot map
+ * to the legacy `PcSlotBindings` (slot → display-name) consumed by
+ * `substitutePcSlots`.  The substitution itself stays unchanged;
+ * this helper bridges the engine layer (which now stores rich
+ * Seat records) to the renderer layer (which only needs names).
+ *
+ * Sticky-N + narrative continuity: retired and archived seats
+ * still carry pcId, so substitution keeps resolving to the
+ * (possibly retired) PC's name — `{{pc:3}}'s bag` reads correctly
+ * in scenes authored before that PC retired.
+ *
+ * The `getDisplayName` callback maps pcId → display name (or
+ * returns null when the PC record hasn't loaded yet).  Caller
+ * decides how to resolve names — typically from `synthesizedPcs`
+ * + character-loader records.
+ *
+ * `slotMap` is parameterized as `Record<number, { pcId?: string }>`
+ * so this helper doesn't depend on the full Seat type from
+ * core/state.ts (avoids a circular import).  The contract is just
+ * "give me something with optional pcId per slot."
+ */
+export function pcSlotsToBindings(
+  slotMap: Record<number, { pcId?: string }>,
+  getDisplayName: (pcId: string) => string | null
+): PcSlotBindings {
+  const out: Record<number, string> = {};
+  for (const [slotStr, seat] of Object.entries(slotMap)) {
+    if (!seat.pcId) continue;
+    const name = getDisplayName(seat.pcId);
+    if (name && name.length > 0) out[Number(slotStr)] = name;
+  }
+  return out;
+}

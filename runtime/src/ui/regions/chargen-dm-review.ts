@@ -34,9 +34,21 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { SynthesizeBackstoryResult } from '../../ai/backstory-synthesizer';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
+import type { Seat } from '../../core/state';
 
-/** All possible seat slots (matches invite-token range). */
-const ALL_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+/**
+ * Phase B-prime (2026-05-25): the 9-slot grid that pre-dated this
+ * commit is gone.  The component now renders only seats that are
+ * currently in `pcSlots` (any state: bound-active, bound-retired,
+ * bound-archived, or unbound-but-pre-allocated) + the slot the DM
+ * is currently working chargen for.  "+ add player" allocates the
+ * next unused integer via `onAddSeat`.
+ *
+ * UI soft cap (not enforced by the engine): the "+ add player"
+ * button stops appearing past 9 unless a campaign-config raises it.
+ * Engine accepts arbitrary integer slot indices.
+ */
+const SOFT_SEAT_CAP = 9;
 
 export type GenerateInviteCallback = (slot: number) => Promise<string | null>;
 export type SynthesizeCallback = (
@@ -89,6 +101,12 @@ export type AcceptCallback = (slot: number) => void;
 /** P3T-19: DM asks the player to revise. */
 export type ReviseCallback = (slot: number, reason: string) => void;
 /**
+ * Phase B-prime (2026-05-25): DM allocates a new seat at the lowest
+ * unused integer.  Host wires to the seat-add event emitter.
+ * Returns the slot number allocated.
+ */
+export type AddSeatCallback = () => number | null;
+/**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no
  * answers are saved on this device.
@@ -106,7 +124,14 @@ export class ChargenDmReview extends LitElement {
    * `<seat-strip>` consumed; the region renders bound/open status
    * per seat row.
    */
-  @property({ attribute: false }) pcSlots: Record<number, string> = {};
+  /**
+   * Phase B' (2026-05-25): slot map now carries Seat metadata
+   * (state + pcId + retire info) rather than just pcId strings.
+   * Component reads `seat?.pcId` to detect binding and
+   * `seat?.state` to choose tile shape (active vs retired vs
+   * archived vs unbound).
+   */
+  @property({ attribute: false }) pcSlots: Record<number, Seat> = {};
 
   /**
    * Per-slot cached synthesis result.  Read from
@@ -217,6 +242,14 @@ export class ChargenDmReview extends LitElement {
   onAcceptWithEdits: AcceptWithEditsCallback | null = null;
 
   /**
+   * Phase B-prime (2026-05-25): DM allocates a new seat at the
+   * lowest unused integer.  Host wires to the seat-add event
+   * emitter.  Returns the slot allocated (or null on failure).
+   */
+  @property({ attribute: false })
+  onAddSeat: AddSeatCallback | null = null;
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -225,6 +258,27 @@ export class ChargenDmReview extends LitElement {
   @state() private lastGeneratedUrl: Map<number, string> = new Map();
   @state() private generatingFor: Set<number> = new Set();
   @state() private copiedFor: number | null = null;
+
+  /**
+   * Phase B-prime (2026-05-25): the slot the DM is currently
+   * working chargen for, even though it's not yet bound to a PC.
+   * Set by clicking "+ add player" — the new slot renders as a
+   * full chargen tile alongside the bound seats.  Cleared once
+   * the PC is created + bound (the seat then appears as a normal
+   * bound-active tile, no longer "working").
+   */
+  @state() private workingSlot: number | null = null;
+
+  /**
+   * Phase B-prime (2026-05-25): when true, the DM has clicked
+   * "Start playing →" and the chargen panel collapses to a single
+   * "Resume chargen" link.  Bound seats still render (read-only
+   * roster glance); chargen affordances + "+ add player" hide.
+   * Local @state — no event broadcast.  Cross-cockpit effects
+   * (auto-collapse on first dice-roll, ⊕ glyph in in-session) land
+   * in P-R4.
+   */
+  @state() private startedPlaying: boolean = false;
 
   /**
    * Phase 3b polish: per-seat transient UI state for the pack-
@@ -275,13 +329,128 @@ export class ChargenDmReview extends LitElement {
           sent their answers.
         </p>
         ${this.renderModeBNote()}
-        <ol class="chargen-dm-review-seats">
-          ${ALL_SLOTS.map((slot) => this.renderSeat(slot))}
-        </ol>
+        ${this.renderSeatList()}
       </section>
       ${this.renderReviewDialog()}
       ${this.renderEditDialog()}
     `;
+  }
+
+  /**
+   * Phase B-prime (2026-05-25): replaces the 9-slot grid.  Renders
+   * only currently-relevant seats:
+   *   - every seat in `pcSlots` (any state) in ascending slot order
+   *   - the `workingSlot` if the DM is mid-chargen for a new seat
+   *     and it's not yet in pcSlots
+   * Below the list:
+   *   - "+ add player" verb (allocates lowest unused integer up to
+   *     the SOFT_SEAT_CAP) — hidden when startedPlaying
+   *   - "Start playing →" CTA (toggles startedPlaying) — only
+   *     shown when at least one seat is bound-active
+   *   - "Resume chargen" link (when startedPlaying) — re-opens the
+   *     full panel for adding more players later
+   */
+  private renderSeatList(): TemplateResult {
+    const slotNumbers = new Set<number>();
+    for (const slotStr of Object.keys(this.pcSlots ?? {})) {
+      slotNumbers.add(Number(slotStr));
+    }
+    if (this.workingSlot !== null) slotNumbers.add(this.workingSlot);
+    const sorted = [...slotNumbers].sort((a, b) => a - b);
+
+    if (this.startedPlaying) {
+      // Collapsed posture per UX C2: bound seats glance + resume verb.
+      return html`
+        <ol class="chargen-dm-review-seats chargen-dm-review-seats-collapsed">
+          ${sorted.map((slot) => this.renderSeat(slot))}
+        </ol>
+        <div class="chargen-dm-review-collapse-controls">
+          <button
+            type="button"
+            class="chargen-dm-review-resume"
+            title="Re-open the chargen panel to add or edit a player"
+            @click=${() => {
+              this.startedPlaying = false;
+            }}
+          >
+            ⊕ Resume chargen
+          </button>
+        </div>
+      `;
+    }
+
+    const canAdd = this.computeNextAvailableSlot() !== null;
+    const hasActive = this.hasBoundActiveSeat();
+    return html`
+      <ol class="chargen-dm-review-seats">
+        ${sorted.length === 0
+          ? html`<li class="chargen-dm-review-seats-empty muted">
+              No players yet.  Click <strong>+ add player</strong> to
+              create the first seat.
+            </li>`
+          : sorted.map((slot) => this.renderSeat(slot))}
+      </ol>
+      <div class="chargen-dm-review-roster-controls">
+        ${canAdd
+          ? html`<button
+              type="button"
+              class="chargen-dm-review-add-seat"
+              ?disabled=${!this.onAddSeat}
+              title="Allocate the next seat for a new player"
+              @click=${() => this.handleAddSeat()}
+            >
+              + add player
+            </button>`
+          : html`<span class="muted chargen-dm-review-cap-note">
+              Seat cap reached (${SOFT_SEAT_CAP}).  Retire a PC to
+              free continuity, or raise the campaign's seat cap.
+            </span>`}
+        ${hasActive
+          ? html`<button
+              type="button"
+              class="chargen-dm-review-start-playing"
+              title="Hide the chargen panel; bound seats stay visible.  You can re-open later."
+              @click=${() => {
+                this.startedPlaying = true;
+              }}
+            >
+              Start playing →
+            </button>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * Phase B-prime: find the lowest unused positive integer (≤ soft
+   * cap) that isn't already in pcSlots OR the working slot.  Null
+   * when the soft cap is reached.
+   */
+  private computeNextAvailableSlot(): number | null {
+    const taken = new Set<number>();
+    for (const slotStr of Object.keys(this.pcSlots ?? {})) {
+      taken.add(Number(slotStr));
+    }
+    if (this.workingSlot !== null) taken.add(this.workingSlot);
+    for (let i = 1; i <= SOFT_SEAT_CAP; i++) {
+      if (!taken.has(i)) return i;
+    }
+    return null;
+  }
+
+  /** Whether any seat in pcSlots is currently bound-active. */
+  private hasBoundActiveSeat(): boolean {
+    for (const seat of Object.values(this.pcSlots ?? {})) {
+      if (seat.state === 'bound-active') return true;
+    }
+    return false;
+  }
+
+  private handleAddSeat(): void {
+    if (!this.onAddSeat) return;
+    const slot = this.onAddSeat();
+    if (slot === null) return;
+    this.workingSlot = slot;
   }
 
   /**
@@ -530,7 +699,8 @@ export class ChargenDmReview extends LitElement {
   }
 
   private renderSeat(slot: number): TemplateResult {
-    const boundPcId = this.pcSlots?.[slot];
+    const seat = this.pcSlots?.[slot];
+    const boundPcId = seat?.pcId;
     const bound = typeof boundPcId === 'string' && boundPcId.length > 0;
     const synth = this.synthResults.get(slot);
     const inFlight = this.synthInFlight.has(slot);

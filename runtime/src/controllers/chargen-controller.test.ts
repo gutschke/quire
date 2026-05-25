@@ -94,6 +94,8 @@ function makeEnv(
   const scratchNotes: string[] = [];
   const pcCreates: Array<Record<string, unknown>> = [];
   const pcSlotBinds: Array<{ slot: number; pcId: string }> = [];
+  const seatAdds: number[] = [];
+  const mockSlots: Record<number, { state: string; pcId?: string }> = {};
   return {
     getCurrentCampaign: () => campaign,
     getCampaignSlug: () => 'o-r-main',
@@ -140,10 +142,22 @@ function makeEnv(
       pcSlotBinds.push({ slot, pcId });
       return true;
     },
+    // Phase B-prime (2026-05-25): seat-add + pcSlots-read for the
+    // chargen-controller's addSeat() flow.  `seatAdds` records the
+    // appended slots; `mockSlots` is the simulated current slot map
+    // that addSeat() reads to compute lowest-unused.
+    appendSeatAdd: (slot: number) => {
+      seatAdds.push(slot);
+      mockSlots[slot] = { state: 'unbound' };
+      return true;
+    },
+    getPcSlots: () => mockSlots,
     loadedPcs: loaded,
     scratchNotes,
     pcCreates,
-    pcSlotBinds
+    pcSlotBinds,
+    seatAdds,
+    mockSlots
   };
 }
 

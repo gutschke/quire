@@ -93,6 +93,63 @@ export const quireAppStyles = css`
       flex-direction: column;
       gap: 0.5rem;
     }
+    /* Phase B-prime (2026-05-25): empty-state when no seats yet. */
+    .chargen-dm-review-seats-empty {
+      padding: 0.7rem 0.9rem;
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    /* Collapsed posture after "Start playing →" — bound seats glance. */
+    .chargen-dm-review-seats-collapsed .chargen-dm-review-seat-actions,
+    .chargen-dm-review-seats-collapsed .chargen-dm-review-synth {
+      display: none;
+    }
+    .chargen-dm-review-roster-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0.7rem 0 0;
+      padding-top: 0.5rem;
+      border-top: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+    .chargen-dm-review-collapse-controls {
+      margin: 0.7rem 0 0;
+      padding-top: 0.5rem;
+      border-top: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+    .chargen-dm-review-add-seat,
+    .chargen-dm-review-start-playing,
+    .chargen-dm-review-resume {
+      padding: 0.4rem 0.85rem;
+      border-radius: 4px;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+    }
+    .chargen-dm-review-add-seat:hover:not(:disabled),
+    .chargen-dm-review-start-playing:hover,
+    .chargen-dm-review-resume:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .chargen-dm-review-add-seat:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    /* "Start playing →" is the primary CTA; give it weight. */
+    .chargen-dm-review-start-playing {
+      border-color: light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      font-weight: 500;
+      margin-left: auto;
+    }
+    .chargen-dm-review-cap-note {
+      font-size: 0.85rem;
+      align-self: center;
+    }
     .chargen-dm-review-seat {
       padding: 0.6rem 0.8rem;
       border: 1px solid light-dark(#d4d4d4, #3a3a3a);

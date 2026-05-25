@@ -91,15 +91,19 @@ describe('QuireApp session wiring', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(app.sessionView?.status).toBe('active');
-    // Coord-direct bind.
+    // Coord-direct bind.  Phase B' (2026-05-25): pcSlots is now
+    // Record<number, Seat>; read pcId off the seat.
     expect(app.bindPcSlot(1, 'mei')).toBe(true);
-    expect(app.sessionView?.shared.pcSlots[1]).toBe('mei');
+    expect(app.sessionView?.shared.pcSlots[1]?.pcId).toBe('mei');
+    expect(app.sessionView?.shared.pcSlots[1]?.state).toBe('bound-active');
     expect(app.bindPcSlot(2, 'bob')).toBe(true);
-    expect(app.sessionView?.shared.pcSlots).toEqual({ 1: 'mei', 2: 'bob' });
+    expect(app.sessionView?.shared.pcSlots[2]?.pcId).toBe('bob');
     // Clear with null.
     expect(app.bindPcSlot(1, null)).toBe(true);
     expect(1 in (app.sessionView?.shared.pcSlots ?? {})).toBe(false);
-    // Invalid slot rejected at the API boundary.
+    // Invalid slot rejected at the API boundary.  Phase B' dropped
+    // the engine-side upper-cap; the API-boundary check in
+    // app.bindPcSlot still enforces 1..9 (UI-floor convention).
     expect(app.bindPcSlot(0, 'eve')).toBe(false);
     expect(app.bindPcSlot(10, 'eve')).toBe(false);
     expect(app.bindPcSlot(1.5, 'eve')).toBe(false);

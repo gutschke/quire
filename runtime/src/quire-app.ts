@@ -114,7 +114,11 @@ import {
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
 import { decideRoute } from './controllers/route-policy';
-import { KNOWN_EVENT_KINDS, type ThreadDebtLevel } from './core/state';
+import {
+  KNOWN_EVENT_KINDS,
+  type Seat,
+  type ThreadDebtLevel
+} from './core/state';
 import {
   extractJoinCode as extractJoinCodeHelper,
   parseRevealedPath as parseRevealedPathHelper,
@@ -127,6 +131,7 @@ import {
   doCopyInviteLink
 } from './controllers/session-bootstrap';
 import {
+  pcSlotsToBindings,
   renderMarkdown,
   renderMarkdownParagraphs,
   CryptoUnavailableError,
@@ -297,7 +302,9 @@ export class QuireApp extends LitElement {
     loadCharacterByPcId: (pcId) => this.loadCharacterByPcId(pcId),
     appendScratchNote: (text) => this.appendScratchNote(text),
     appendPcCreate: (payload) => this.appendPcCreate(payload),
-    bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId)
+    bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId),
+    appendSeatAdd: (slot: number) => this.appendSeatAdd(slot),
+    getPcSlots: () => this.sessionView?.shared.pcSlots ?? {}
   });
 
   /**
@@ -1254,7 +1261,7 @@ export class QuireApp extends LitElement {
    * Lazy-mounts the module on first DM render.
    */
   private renderChargenDmReviewLazy(
-    pcSlots: Record<number, string>
+    pcSlots: Record<number, Seat>
   ): TemplateResult | typeof nothing {
     void this.chargen.loadDmReviewRegion();
     if (!this.chargen.dmReviewRegionDefined) return nothing;
@@ -1300,10 +1307,28 @@ export class QuireApp extends LitElement {
           slot: number,
           edits: { name: string; backstory: string }
         ) => this.chargen.acceptWithEdits(slot, edits)}
+        .onAddSeat=${() => this.chargen.addSeat()}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}
       ></chargen-dm-review>
     `;
+  }
+
+  /**
+   * Phase B' (2026-05-25): adapter from the new Seat-shaped
+   * `pcSlots` to the legacy `PcSlotBindings` (slot → display name)
+   * that `substitutePcSlots` consumes.  Caches the result per
+   * render frame is unnecessary — caller is a getter inside a Lit
+   * template, called once per render.  Uses the chargen
+   * controller's displayNameForBound which knows how to find a
+   * name for a synthesized OR campaign-shipped PC.
+   */
+  private currentPcSlotBindings(): Record<number, string> {
+    const slots = this.sessionView?.shared.pcSlots;
+    if (!slots) return {};
+    return pcSlotsToBindings(slots, (pcId) =>
+      this.chargen.displayNameForBound(pcId)
+    );
   }
 
   /**
@@ -1384,6 +1409,25 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Phase B-prime (2026-05-25): emit a `seat-add` event allocating
+   * an unbound seat at `slot`.  Coord-only.  Returns true on
+   * append.  Caller (ChargenController.addSeat) computes the
+   * lowest-unused integer to pass in.
+   */
+  appendSeatAdd(slot: number): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    // Soft cap at the API boundary (engine accepts arbitrary
+    // positive integers per Phase B-prime; UI/API enforces the
+    // 1..9 convention until V-10 makes the cap campaign-config).
+    if (slot > 9) return false;
+    this.session.append('seat-add', { v: 1, slot });
+    return true;
+  }
+
+  /**
    * Public delegate retained so a few off-path callers continue to
    * compile.  All real work lives in ChargenController.synthesizeForSlot.
    */
@@ -1447,7 +1491,7 @@ export class QuireApp extends LitElement {
         .editable=${editable}
         .claimState=${claim.state}
         .claimedBy=${claim.claimedBy}
-        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
+        .pcSlotBindings=${this.currentPcSlotBindings()}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
@@ -2054,7 +2098,7 @@ export class QuireApp extends LitElement {
         .sceneFullyRevealed=${sceneFullyRevealed}
         .isCoordinator=${isCoord}
         .sceneFrontmatter=${scene.frontmatter}
-        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
+        .pcSlotBindings=${this.currentPcSlotBindings()}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleBlock=${(blockHash: string) =>
@@ -3621,7 +3665,7 @@ export class QuireApp extends LitElement {
         .editable=${editable}
         .claimState=${claim.state}
         .claimedBy=${claim.claimedBy}
-        .pcSlotBindings=${this.sessionView?.shared.pcSlots ?? {}}
+        .pcSlotBindings=${this.currentPcSlotBindings()}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',

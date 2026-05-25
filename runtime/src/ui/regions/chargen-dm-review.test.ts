@@ -8,11 +8,57 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import './chargen-dm-review';
 import type { ChargenDmReview } from './chargen-dm-review';
 import type { SynthesizeBackstoryResult } from '../../ai/backstory-synthesizer';
+import type { Seat } from '../../core/state';
 
 function mount(): ChargenDmReview {
   const el = document.createElement('chargen-dm-review') as ChargenDmReview;
   document.body.appendChild(el);
   return el;
+}
+
+/**
+ * Phase B-prime helper: mount a component with 9 unbound seats
+ * pre-seeded.  Most legacy tests assume a 9-row grid where seats
+ * for unbound slots still surface the Generate-invite / Synthesize
+ * buttons.  The new component renders only seats present in
+ * pcSlots — so legacy tests use this helper to keep working.
+ * Newly-written tests should prefer `mount()` + explicit seeding.
+ */
+function mountWith9Seats(): ChargenDmReview {
+  const el = mount();
+  el.pcSlots = nineUnbound();
+  return el;
+}
+
+/**
+ * Phase B' (2026-05-25): tests pre-roster-lifecycle used the
+ * simpler `Record<number, string>` shape (slot → pcId).  The
+ * shape is now `Record<number, Seat>`; this helper wraps a pcId
+ * in a bound-active Seat for test brevity.
+ */
+function bound(pcId: string): Seat {
+  return { state: 'bound-active', pcId };
+}
+
+/**
+ * Phase B-prime helper: an `unbound` seat at slot N.  Tests that
+ * exercise the seat's chargen affordances (Generate invite link,
+ * Synthesize, etc.) seed this so the slot renders before clicking.
+ * Mirrors what the seat-add event materializer produces.
+ */
+function unbound(): Seat {
+  return { state: 'unbound' };
+}
+
+/**
+ * Phase B-prime helper: seed pcSlots with N unbound seats numbered
+ * 1..N.  Used by tests that pre-date the chargen-grid replacement
+ * and still need 9 slots to exist for arbitrary slot-index clicks.
+ */
+function nineUnbound(): Record<number, Seat> {
+  const out: Record<number, Seat> = {};
+  for (let i = 1; i <= 9; i++) out[i] = unbound();
+  return out;
 }
 
 function okResult(name = 'Mei Tanaka'): Extract<
@@ -43,26 +89,32 @@ describe('<chargen-dm-review> — structure', () => {
     document.body.innerHTML = '';
   });
 
-  it('renders 9 seat cards (one per slot)', async () => {
+  it('Phase B-prime: renders an empty-state message when no seats exist', async () => {
+    // Pre-Phase-B-prime this rendered 9 fixed slot cards.  Post-
+    // Phase-B-prime the panel adapts to the actual roster — empty
+    // means "no players yet" copy + the "+ add player" verb.
+    // Uses plain `mount()` (no pre-seed) to exercise the empty
+    // pcSlots path; legacy tests use `mountWith9Seats()`.
     const el = mount();
     await el.updateComplete;
-    const seats = el.querySelectorAll('.chargen-dm-review-seat');
-    expect(seats.length).toBe(9);
+    expect(el.querySelectorAll('.chargen-dm-review-seat').length).toBe(0);
+    expect(el.querySelector('.chargen-dm-review-seats-empty')).not.toBeNull();
+    expect(el.querySelector('.chargen-dm-review-add-seat')).not.toBeNull();
   });
 
-  it('marks bound vs open seats correctly', async () => {
+  it('Phase B-prime: renders only the bound seats (no 9-slot grid)', async () => {
     const el = mount();
-    el.pcSlots = { 1: 'mei-tanaka', 3: 'reggie-okeke' };
+    el.pcSlots = { 1: bound('mei-tanaka'), 3: bound('reggie-okeke') };
     await el.updateComplete;
     const seats = el.querySelectorAll('.chargen-dm-review-seat');
+    expect(seats.length).toBe(2);
     expect(seats[0].textContent).toMatch(/mei-tanaka/);
-    expect(seats[1].textContent).toMatch(/open/);
-    expect(seats[2].textContent).toMatch(/reggie-okeke/);
+    expect(seats[1].textContent).toMatch(/reggie-okeke/);
   });
 
   it('P3U-12: renders display name when displayNameLookup resolves', async () => {
-    const el = mount();
-    el.pcSlots = { 1: 'mei-tanaka' };
+    const el = mountWith9Seats();
+    el.pcSlots = { 1: bound('mei-tanaka') };
     el.displayNameLookup = (pcId) => {
       return pcId === 'mei-tanaka' ? 'Mei Tanaka' : null;
     };
@@ -77,8 +129,8 @@ describe('<chargen-dm-review> — structure', () => {
   });
 
   it('P3U-12: falls back to raw pcId while display name is loading', async () => {
-    const el = mount();
-    el.pcSlots = { 1: 'mei-tanaka' };
+    const el = mountWith9Seats();
+    el.pcSlots = { 1: bound('mei-tanaka') };
     el.displayNameLookup = () => null; // not yet resolved
     await el.updateComplete;
     const seat = el.querySelector('.chargen-dm-review-seat');
@@ -89,8 +141,8 @@ describe('<chargen-dm-review> — structure', () => {
   });
 
   it('P3U-12: Lit auto-escapes a hostile name field (XSS defense)', async () => {
-    const el = mount();
-    el.pcSlots = { 1: 'evil' };
+    const el = mountWith9Seats();
+    el.pcSlots = { 1: bound('evil') };
     el.displayNameLookup = () => '<script>alert(1)</script>';
     await el.updateComplete;
     const seat = el.querySelector('.chargen-dm-review-seat');
@@ -99,7 +151,7 @@ describe('<chargen-dm-review> — structure', () => {
   });
 
   it('renders the Mode-B warning at the top of the card', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     await el.updateComplete;
     expect(el.querySelector('.chargen-dm-review-mode-b')).not.toBeNull();
   });
@@ -111,7 +163,7 @@ describe('<chargen-dm-review> — Generate invite link', () => {
   });
 
   it('Generate button calls the callback with the seat slot', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const calls: number[] = [];
     el.onGenerate = async (slot) => {
       calls.push(slot);
@@ -126,7 +178,7 @@ describe('<chargen-dm-review> — Generate invite link', () => {
   });
 
   it('disables the Generate button while in-flight + re-enables after', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     let resolve!: (v: string | null) => void;
     el.onGenerate = (slot: number) =>
       new Promise<string | null>((r) => {
@@ -148,7 +200,7 @@ describe('<chargen-dm-review> — Generate invite link', () => {
   });
 
   it('renders the generated URL on success', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.onGenerate = async () => 'https://example.com/?invite=abc';
     await el.updateComplete;
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-generate')!.click();
@@ -162,7 +214,7 @@ describe('<chargen-dm-review> — Generate invite link', () => {
   });
 
   it('omits the URL when the callback returns null (failure)', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.onGenerate = async () => null;
     await el.updateComplete;
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-generate')!.click();
@@ -178,7 +230,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
   });
 
   it('Synthesize button calls the callback with the seat slot', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const calls: number[] = [];
     el.onSynthesize = async (slot) => {
       calls.push(slot);
@@ -193,7 +245,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
   });
 
   it('renders ok result: name + warnings count when present', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const r: SynthesizeBackstoryResult = {
       ...okResult('Reggie Okeke'),
       warnings: [
@@ -214,7 +266,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
       code: 'parse-failed',
       message: 'JSON malformed'
     };
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[3, r]]);
     await el.updateComplete;
     const synth = el.querySelector('.chargen-dm-review-synth-err');
@@ -234,7 +286,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
         'AI used forbidden words: "quiet".  These reveal campaign secrets.',
       persistentTokens: ['quiet']
     };
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, r]]);
     await el.updateComplete;
     const synth = el.querySelector('.chargen-dm-review-synth-spoiler');
@@ -247,7 +299,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
   });
 
   it('marks accepted seats with the accepted CSS class', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     el.acceptedSlots = new Set([1]);
     await el.updateComplete;
@@ -256,7 +308,7 @@ describe('<chargen-dm-review> — Synthesize + result rendering', () => {
   });
 
   it('disables Synthesize while in-flight', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.onSynthesize = async () => okResult();
     el.synthInFlight = new Set([2]);
     await el.updateComplete;
@@ -275,7 +327,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 
   it('shows Accept button only when synth result is ok', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map<number, SynthesizeBackstoryResult>([
       [2, { ok: false, code: 'parse-failed', message: 'bad' }],
       [3, okResult()]
@@ -293,7 +345,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 
   it('Accept click calls onAccept with the seat slot', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const calls: number[] = [];
     el.synthResults = new Map([[4, okResult()]]);
     el.onAccept = (slot) => calls.push(slot);
@@ -304,7 +356,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 
   it('Accept button is disabled (and labeled "Accepted") when slot is in acceptedSlots', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[5, okResult()]]);
     el.acceptedSlots = new Set([5]);
     el.onAccept = () => {};
@@ -325,7 +377,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
     // (spoiler leak).  The button is now "Discard + try again"
     // (.chargen-dm-review-discard) but still fires onRevise so
     // the audit-trail behavior is unchanged.
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map<number, SynthesizeBackstoryResult>([
       [2, { ok: false, code: 'parse-failed', message: 'bad' }],
       [6, okResult()]
@@ -344,7 +396,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 
   it('Revise click prompts for a reason and forwards to onRevise', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const calls: Array<[number, string]> = [];
     el.synthResults = new Map([[1, okResult()]]);
     el.onAccept = () => {};
@@ -361,7 +413,7 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
   });
 
   it('Revise with cancelled prompt forwards an empty reason', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     const calls: Array<[number, string]> = [];
     el.synthResults = new Map([[2, okResult()]]);
     el.onAccept = () => {};
@@ -384,7 +436,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
   });
 
   it('renders stats grid + skill chips + tag chips on an ok result', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     el.onAccept = () => {};
     el.onRevise = () => {};
@@ -401,7 +453,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
   });
 
   it('formats stat modifiers with signs (+2, +0, etc.)', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     await el.updateComplete;
     const mods = Array.from(
@@ -427,7 +479,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
         }
       ]
     } as SynthesizeBackstoryResult;
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, r]]);
     await el.updateComplete;
     const items = el.querySelectorAll('.chargen-dm-review-warning-list li');
@@ -441,7 +493,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     // with a centered <dialog> modal because the DM aside column was
     // too narrow for the two-column diff.  The toggle now opens the
     // modal; a Close button inside the modal closes it.
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     el.answersLookup = () => ({
       'intent-moment': 'I held the line when my dad lost his job.',
@@ -469,7 +521,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
   });
 
   it('renders SA answers on the left and backstory on the right when expanded', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([
       [
         1,
@@ -503,7 +555,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     // fruitsalad" of arbitrary words.  Per user feedback, the
     // side-by-side layout is enough — no highlight noise.  This
     // test pins the new behavior: no <mark> elements appear.
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([
       [
         1,
@@ -533,7 +585,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     // (e.g. "last-72h") need to surface as the option's
     // human-readable `label` ("Booked in the last 72 hours") in
     // the diff view; otherwise the DM sees internal tokens.
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     el.questions = [
       {
@@ -576,7 +628,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
   });
 
   it('shows "no saved answers" copy when answersLookup returns null', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);
     el.answersLookup = () => null;
     await el.updateComplete;
@@ -587,7 +639,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
   });
 
   it('P3T-16: Lit auto-escapes hostile content from player answers + backstory', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([
       [
         1,
@@ -626,7 +678,7 @@ describe('<chargen-dm-review> — clipboard copy', () => {
       value: { writeText },
       configurable: true
     });
-    const el = mount();
+    const el = mountWith9Seats();
     el.onGenerate = async () => 'https://x/abc';
     await el.updateComplete;
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-generate')!.click();
@@ -668,7 +720,7 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
   }
 
   it('surfaces the rejected PC preview + leaked-token chips', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, rejectedResult()]]);
     await el.updateComplete;
     // Preview card shows the AI's generated name + tags + stats so
@@ -684,7 +736,7 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
   });
 
   it('"Edit + accept" opens an editable dialog seeded from the rejected response', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, rejectedResult()]]);
     el.onAcceptWithEdits = () => true;
     await el.updateComplete;
@@ -707,7 +759,7 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
   });
 
   it('"Save + accept" forwards edits to onAcceptWithEdits', async () => {
-    const el = mount();
+    const el = mountWith9Seats();
     el.synthResults = new Map([[1, rejectedResult()]]);
     const calls: Array<{ slot: number; name: string; backstory: string }> = [];
     el.onAcceptWithEdits = (slot, edits) => {

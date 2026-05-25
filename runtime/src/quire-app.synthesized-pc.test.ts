@@ -186,18 +186,20 @@ describe('QuireApp Phase 3b-1 — synthesized PC end-to-end', () => {
     await flush();
 
     // The host should now see slot 3 bound to the synthesized PC.
+    // Phase B' (2026-05-25): pcSlots is now Record<number, Seat>;
+    // read pcId off the seat.
     const view = (
       host as unknown as {
         sessionView?: {
           status: string;
           filteredShared: {
-            pcSlots: Record<number, string>;
+            pcSlots: Record<number, { state: string; pcId?: string }>;
             synthesizedPcs: Record<string, { name: string }>;
           };
         };
       }
     ).sessionView;
-    expect(view?.filteredShared.pcSlots[3]).toBe('slot-3-syn-zzz');
+    expect(view?.filteredShared.pcSlots[3]?.pcId).toBe('slot-3-syn-zzz');
     expect(view?.filteredShared.synthesizedPcs['slot-3-syn-zzz'].name).toBe(
       'Yui Tanaka'
     );

@@ -151,6 +151,19 @@ export interface ChargenHost {
    * on accept so the player sees their PC immediately.
    */
   bindPcSlot(slot: number, pcId: string): boolean;
+  /**
+   * Phase B-prime (2026-05-25): emit a `seat-add` event allocating
+   * a new unbound seat at `slot`.  Returns true on success (and
+   * the event lands in shared state), false when the seat is
+   * already taken or the session isn't active.
+   */
+  appendSeatAdd(slot: number): boolean;
+  /**
+   * Phase B-prime (2026-05-25): read the current slot map (post
+   * filter-for-viewer) so the controller can compute lowest-unused.
+   * Returns an empty map when no session is active.
+   */
+  getPcSlots(): Record<number, { state: string; pcId?: string }>;
 }
 
 /**
@@ -328,6 +341,27 @@ export class ChargenController implements ReactiveController {
    * `state.synthesizedPcs` — cleanup is a deferred-followup, not a
    * blocker for civilized players.
    */
+  /**
+   * Phase B-prime (2026-05-25): allocate a new unbound seat for
+   * chargen.  Returns the slot allocated (lowest unused 1..9) or
+   * null when the soft cap (9) is reached / not coord / no
+   * campaign / session isn't active.
+   */
+  addSeat(): number | null {
+    if (!this.env.isCoordinator()) return null;
+    if (!this.env.getCurrentCampaign()) return null;
+    const taken = new Set<number>();
+    for (const slotStr of Object.keys(this.env.getPcSlots())) {
+      taken.add(Number(slotStr));
+    }
+    for (let slot = 1; slot <= 9; slot++) {
+      if (taken.has(slot)) continue;
+      if (this.env.appendSeatAdd(slot)) return slot;
+      break; // fall through; appendSeatAdd failure means no session
+    }
+    return null;
+  }
+
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
     const result = this._synthResults.get(slot);

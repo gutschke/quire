@@ -127,6 +127,113 @@ export interface CasterState {
 }
 
 /**
+ * Phase B' (2026-05-25): roster-lifecycle slot states.
+ *
+ *   - `unbound`     — seat exists but no PC + no controller yet
+ *                     (DM has added the seat but chargen hasn't run).
+ *   - `bound-active`— PC is the currently-played character at this seat.
+ *   - `bound-retired`— PC is gone for good (death / departed / converted
+ *                     to NPC).  Retain pcId so `{{pc:N}}` substitution
+ *                     keeps resolving to the retired PC's name
+ *                     (narrative continuity per the converged design).
+ *   - `bound-archived`— PC is gone but the DM marked them as
+ *                     "potentially returnable."  UI surfaces in the
+ *                     Archive browser.  Slot stays sticky to this PC;
+ *                     restoring binds the PC into a NEW seat (N+1).
+ */
+export type SlotState =
+  | 'unbound'
+  | 'bound-active'
+  | 'bound-retired'
+  | 'bound-archived';
+
+/**
+ * Reason a PC retired.  DM-private — stripped from player-bound
+ * projection.  The player-safe label is `inFictionRetireReason`.
+ */
+export type RetireReason =
+  | 'died'
+  | 'departed'
+  | 'converted-to-npc'
+  | 'other';
+
+/**
+ * Phase B' (2026-05-25): a seat in the roster.  Slots are
+ * sticky-N: once bound, the integer is reserved for that PC for
+ * the life of the campaign.
+ */
+export interface Seat {
+  /** Slot state per the lifecycle. */
+  state: SlotState;
+  /**
+   * The bound PC's id — present on every state EXCEPT `unbound`.
+   * Sticky after first bind: stays the same through retire/archive.
+   */
+  pcId?: string;
+  /**
+   * The peer playing this seat — present only on `bound-active`.
+   * Stripped on retire/archive.
+   */
+  controllerPeerId?: PeerId;
+  /**
+   * Player-safe in-fiction reason for retirement (DM-authored at
+   * retire time).  Player Aside roster renders this as the tile's
+   * subtitle.  Never the literal scene name.  Example:
+   * "left the story after a hard betrayal."
+   * Present only on bound-retired / bound-archived.
+   */
+  inFictionRetireReason?: string;
+  /**
+   * DM-private retire metadata — STRIPPED by filterForViewer for
+   * non-coord viewers.  These fields surface only behind the DM's
+   * amber-rail ▸ disclosure on the retire tile.
+   */
+  retireReason?: RetireReason;
+  retiredScene?: string;
+  /** Epoch-ms when retirement landed (for chronological display). */
+  retiredAt?: number;
+}
+
+/**
+ * Phase B' (2026-05-25): PC entity lifecycle state.  Orthogonal to
+ * Seat.state — mostly tracks the slot, but the `sidelined` state
+ * is per-PC only (the seat remains `bound-active` while the player
+ * runs a sub-PC during the sidelining).
+ *
+ * Lives as `lifecycle?: PcLifecycleState` on CharacterRecord
+ * (see character-loader.ts Phase B' additions).
+ *
+ *   - `nascent`  — chargen in progress; sheet incomplete.
+ *   - `active`   — currently playable.
+ *   - `sidelined`— temporarily out (harm-4 incapacitation / coord-
+ *                  holding / voluntary session skip).  Player may
+ *                  have a parallel sub-PC during this state.
+ *   - `retired`  — gone for good; mirrors seat's bound-retired.
+ *   - `archived` — dormant but potentially returnable; mirrors
+ *                  seat's bound-archived.
+ *
+ * `npc` is NOT a state — once a PC is converted to NPC, the PC
+ * record retires/archives and a new NPC record (in `npcs/<id>.md`
+ * or `dm/npcs.md`) takes over.  Provenance lives in git history.
+ */
+export type PcLifecycleState =
+  | 'nascent'
+  | 'active'
+  | 'sidelined'
+  | 'retired'
+  | 'archived';
+
+/**
+ * Phase B' (2026-05-25): why a PC is in `sidelined` state.  Drives
+ * the distinct chip visual in the roster ("Out: Critical" vs "Out:
+ * DM" vs "Out: Skipped").
+ */
+export type SidelinedSource =
+  | 'harm-4'
+  | 'coord-holding'
+  | 'voluntary-skip';
+
+/**
  * DM scratch note — quick-jot during play, ingested by the
  * living-document AI post-session.  Render-gated DM-only AND
  * event-stripped from player save exports (see
@@ -286,18 +393,31 @@ export interface SessionState {
    */
   casterState: Record<string /*pcId*/, CasterState>;
   /**
-   * M3D-5 / CC-2: PC-slot bindings — maps slot numbers (1-9) to the
-   * character id occupying that slot in this session.  The renderer
-   * substitutes `{{pc:N}}` placeholders in campaign markdown with
-   * the bound character's display name (see `substitutePcSlots` in
-   * markdown.ts).  Per-session state; campaign-level defaults flow
-   * in from `campaign.json` at load time (M4 follow-on).
+   * Roster-lifecycle slot map.  Maps the campaign-stable slot index
+   * (N in `{{pc:N}}`) to a `Seat` record carrying the slot's state +
+   * bound PC + controller peer + retire metadata.
    *
-   * Player-visible (NOT DM-only) so the substitution renders the
-   * same names for everyone at the table.  Coord-authored via
-   * `pc-slot-bind` events.
+   * **Sticky-N invariant** (Phase B' converged design 2026-05-25):
+   * once seat N is first bound, N stays sticky to that PC for the
+   * life of the campaign — even after retire/archive.  New PCs (for
+   * the same player or any other) allocate the NEXT unused integer.
+   * This preserves `{{pc:N}}` authoring contracts: scenes written
+   * around "{{pc:3}}'s bag" keep resolving to the original PC after
+   * retirement (narrative continuity).
+   *
+   * Substitution: the renderer (substitutePcSlots in markdown.ts)
+   * still receives a `Record<number, string>` of slot → display name;
+   * quire-app.ts builds that view by looking up each Seat.pcId in
+   * synthesizedPcs + character records.  Retired/archived seats
+   * still carry pcId, so substitution keeps working.
+   *
+   * Coord-authored via `pc-slot-bind`, `seat-add`, `pc-retire`,
+   * `pc-archive` events.  Player-visible BUT the DM-only fields
+   * (retireReason enum, retiredScene) are stripped by
+   * filterForViewer; `inFictionRetireReason` (the DM-authored
+   * player-safe label) stays player-visible.
    */
-  pcSlots: Record<number, string>;
+  pcSlots: Record<number, Seat>;
   /**
    * Phase 3b-1: PC records materialized from AI chargen synthesis.
    * Cluster-E `acceptSlot()` emits a `pc-create` event that lands a
@@ -418,6 +538,27 @@ export function filterForViewer(
   for (const [pcId, record] of Object.entries(state.synthesizedPcs)) {
     filteredSynthesizedPcs[pcId] = stripDmOnlyFromCharacter(record);
   }
+  // Phase B' (2026-05-25): strip DM-only seat metadata.  Player-bound
+  // projection sees only the in-fiction reason — never the
+  // retireReason enum or the literal scene name.  Per the converged
+  // spoiler-firewall design: retired-tile "Retired in §the-gate"
+  // tells players a scene name they may not have unlocked AND the
+  // reason ("turned by The Quiet") could spoil DM-only plot.
+  const filteredPcSlots: Record<number, Seat> = {};
+  for (const [slotStr, seat] of Object.entries(state.pcSlots)) {
+    const slot = Number(slotStr);
+    const out: Seat = { state: seat.state };
+    if (seat.pcId !== undefined) out.pcId = seat.pcId;
+    if (seat.controllerPeerId !== undefined) {
+      out.controllerPeerId = seat.controllerPeerId;
+    }
+    // Player-safe: in-fiction reason stays.
+    if (seat.inFictionRetireReason !== undefined) {
+      out.inFictionRetireReason = seat.inFictionRetireReason;
+    }
+    // DM-only fields STRIPPED: retireReason, retiredScene, retiredAt.
+    filteredPcSlots[slot] = out;
+  }
   return {
     ...state,
     // DM-only fields wiped:
@@ -427,6 +568,7 @@ export function filterForViewer(
     aiAudit: [],
     casterState: {},
     synthesizedPcs: filteredSynthesizedPcs,
+    pcSlots: filteredPcSlots,
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -960,7 +1102,16 @@ export const KNOWN_EVENT_KINDS = new Set([
   // Coord-only authorship; player-visible (the player MUST see
   // their own PC).  Carries the full CharacterRecord shape; the
   // materializer stores it in `state.synthesizedPcs[pcId]`.
-  'pc-create'
+  'pc-create',
+  // Phase B' (2026-05-25): roster lifecycle events.  All coord-
+  // authored; payload validation in their respective materializers.
+  // - `seat-add` allocates an unbound seat at slot N.
+  // - `pc-retire` transitions a bound-active seat to bound-retired.
+  // - `pc-archive` transitions a bound-active or bound-retired
+  //   seat to bound-archived.
+  'seat-add',
+  'pc-retire',
+  'pc-archive'
 ]);
 
 /**
@@ -1729,30 +1880,153 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
 }
 
 function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
-  // M3D-5 / CC-2: coord-only binding of a `{{pc:N}}` slot to a
-  // character id.  Player-visible (NOT DM-only) so the substitution
-  // renders identically for everyone — pcSlots flows through
-  // filterForViewer untouched.
+  // Coord-only binding of a `{{pc:N}}` slot to a character id.
+  // Phase B' (2026-05-25): pcSlots is now Record<number, Seat>;
+  // bind writes a `bound-active` seat with pcId + optional
+  // controllerPeerId.  Slot cap (1..9 in M3D-5) was dropped —
+  // sticky-N appends without a fixed ceiling; campaign-config can
+  // cap if needed (P-R2 follow-up).
   if (!state.coordHolders.has(event.peerId)) return;
   if (!isPayloadV1(event.payload)) return;
   const p = event.payload as Partial<PcSlotBindPayload>;
-  // Slot must be a finite integer in [1, 9] — matches the
-  // `{{pc:N}}` regex range in `substitutePcSlots`.  Out-of-range
-  // slots are silently dropped (defensive against hostile peers /
-  // poisoned saves; a sane DM never produces them).
   if (typeof p.slot !== 'number') return;
   if (!Number.isFinite(p.slot)) return;
   if (!Number.isInteger(p.slot)) return;
-  if (p.slot < 1 || p.slot > 9) return;
-  // `null` explicitly clears the binding; a valid character id sets
-  // it.  Anything else is dropped (no implicit unbind on string
-  // 'undefined' or empty string — those are payload errors).
+  // Phase B' floor: slot ≥ 1 (zero / negative would break {{pc:0}}
+  // which is reserved sentinel territory; same as the old gate).
+  if (p.slot < 1) return;
+  // `null` explicitly clears the binding entirely — the seat goes
+  // back to fully-unallocated (slot is removed from the map, not
+  // marked unbound).  Use seat-add to re-allocate.
   if (p.pcId === null) {
     delete state.pcSlots[p.slot];
     return;
   }
   if (!isCharacterId(p.pcId)) return;
-  state.pcSlots[p.slot] = p.pcId;
+  // Bind writes a fresh bound-active seat OR rebinds an existing
+  // unbound seat.  If the slot was already bound (to another PC),
+  // we OVERWRITE — sticky-N is enforced at the AUTHOR layer (UI
+  // never offers re-bind on bound slots), not the materializer.
+  // Materializer stays permissive so corrupt-replay paths are
+  // recoverable.
+  state.pcSlots[p.slot] = {
+    state: 'bound-active',
+    pcId: p.pcId,
+    controllerPeerId: event.peerId
+  };
+}
+
+/**
+ * Phase B' (2026-05-25): seat-add — DM allocates a new seat
+ * without yet binding a PC.  The slot enters `unbound` state and
+ * waits for the chargen flow to produce a pcId, which then fires
+ * pc-slot-bind to promote it to `bound-active`.  Lets the DM
+ * pre-allocate a seat for an invite link (slot index gets baked
+ * into the token) before the player redeems.
+ */
+interface SeatAddPayload {
+  v: 1;
+  slot: number;
+  /** Optional: pre-assign the controller peer (e.g., from an invite token). */
+  controllerPeerId?: PeerId;
+}
+function applySeatAddEvent(state: SessionState, event: QuireEvent): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SeatAddPayload>;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  // Idempotent: re-adding an already-bound seat is a no-op
+  // (don't clobber a bound PC with an unbound seat).
+  if (state.pcSlots[p.slot] !== undefined) return;
+  const seat: Seat = { state: 'unbound' };
+  if (typeof p.controllerPeerId === 'string' && p.controllerPeerId.length > 0) {
+    seat.controllerPeerId = p.controllerPeerId;
+  }
+  state.pcSlots[p.slot] = seat;
+}
+
+/**
+ * Phase B' (2026-05-25): pc-retire — flips a bound-active seat to
+ * bound-retired.  Carries the DM-authored player-safe label
+ * (`inFictionRetireReason`) + DM-private metadata (retireReason
+ * enum, optional retiredScene).  Player projection sees only the
+ * in-fiction label.
+ *
+ * `pc-archive` is the same event with state='bound-archived'
+ * (the materializer accepts both; the UI distinguishes which to
+ * emit based on the DM's choice).
+ */
+interface PcRetireOrArchivePayload {
+  v: 1;
+  pcId: string;
+  /** Which terminal state: 'bound-retired' or 'bound-archived'. */
+  state: 'bound-retired' | 'bound-archived';
+  /** Player-safe in-fiction reason (e.g., "left the story after a hard betrayal"). */
+  inFictionReason: string;
+  /** DM-private retire reason enum. */
+  reason: RetireReason;
+  /** DM-private optional scene-id where retirement happened. */
+  scene?: string;
+}
+function applyPcRetireOrArchiveEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcRetireOrArchivePayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (p.state !== 'bound-retired' && p.state !== 'bound-archived') return;
+  if (typeof p.inFictionReason !== 'string' || p.inFictionReason.length === 0) {
+    return;
+  }
+  if (p.inFictionReason.length > 200) return;
+  if (
+    p.reason !== 'died' &&
+    p.reason !== 'departed' &&
+    p.reason !== 'converted-to-npc' &&
+    p.reason !== 'other'
+  ) {
+    return;
+  }
+  if (p.scene !== undefined) {
+    if (typeof p.scene !== 'string') return;
+    if (p.scene.length > 200) return;
+  }
+  // Find the seat by pcId.  Sticky-N: a PC has at most one seat.
+  let targetSlot: number | undefined;
+  for (const [slotStr, seat] of Object.entries(state.pcSlots)) {
+    if (seat.pcId === p.pcId) {
+      targetSlot = Number(slotStr);
+      break;
+    }
+  }
+  if (targetSlot === undefined) return;
+  const prior = state.pcSlots[targetSlot];
+  // Already in the target state → idempotent no-op.
+  if (prior.state === p.state) return;
+  // Only transition from bound-active OR between bound-retired↔bound-archived.
+  // Don't allow re-binding via this event.
+  if (
+    prior.state !== 'bound-active' &&
+    prior.state !== 'bound-retired' &&
+    prior.state !== 'bound-archived'
+  ) {
+    return;
+  }
+  state.pcSlots[targetSlot] = {
+    state: p.state,
+    pcId: p.pcId,
+    // controllerPeerId is intentionally dropped — retired/archived
+    // seats have no active player.
+    inFictionRetireReason: p.inFictionReason,
+    retireReason: p.reason,
+    retiredScene: p.scene,
+    retiredAt: event.ts
+  };
 }
 
 function applyMapBlobEvent(_state: SessionState, event: QuireEvent): void {
@@ -1802,6 +2076,11 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'caster-state-set': applyCasterStateSetEvent,
   'pc-slot-bind': applyPcSlotBindEvent,
   'pc-create': applyPcCreateEvent,
+  // Phase B' (2026-05-25): both pc-retire and pc-archive route to
+  // the same materializer; the payload's `state` field discriminates.
+  'seat-add': applySeatAddEvent,
+  'pc-retire': applyPcRetireOrArchiveEvent,
+  'pc-archive': applyPcRetireOrArchiveEvent,
   'map-blob-add': applyMapBlobEvent,
   'map-blob-move': applyMapBlobEvent,
   'map-blob-remove': applyMapBlobEvent,
