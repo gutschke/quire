@@ -902,6 +902,51 @@ describe('<chargen-dm-review> — Wave 1 seat-remove (X-glyph + 4s undo)', () =>
     await el.updateComplete;
     expect(el.querySelector('.chargen-dm-review-remove-undo')).toBeNull();
   });
+
+  it('post-Wave-2 regression: × renders on the workingSlot (the just-added seat)', async () => {
+    // TTRPG-R3 critical: previously isSeatRemovable excluded the
+    // workingSlot, hiding the X on exactly the seat the DM most
+    // often wants to undo (the accidental + add player click).
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = () => true;
+    el.onAddSeat = () => 3; // simulate add-seat callback returning slot 3
+    await el.updateComplete;
+    // Click + add player → workingSlot becomes 3.
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-add-seat'
+    )!.click();
+    await el.updateComplete;
+    // X glyph MUST still appear (regression: previously hidden).
+    expect(
+      el.querySelector('.chargen-dm-review-seat-remove')
+    ).not.toBeNull();
+  });
+
+  it('post-Wave-2: remove of the workingSlot clears workingSlot so no orphan chargen card lingers', async () => {
+    const el = mount();
+    el.pcSlots = { 3: unbound() };
+    el.onRemoveSeat = (slot: number) => {
+      delete el.pcSlots[slot];
+      return true;
+    };
+    el.onAddSeat = () => 3;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-add-seat'
+    )!.click();
+    await el.updateComplete;
+    // Now workingSlot=3.  Remove it.
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-remove'
+    )!.click();
+    await el.updateComplete;
+    // workingSlot internal state should be cleared.  Check via:
+    // the empty-state message reappears (no working seat).
+    expect(
+      el.querySelector('.chargen-dm-review-seats-empty')
+    ).not.toBeNull();
+  });
 });
 
 describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
@@ -1043,21 +1088,28 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
     expect(dismissed).toEqual([{ slot: 1, field: 'name' }]);
   });
 
-  it('Wave 3 actions (Patch / Re-sync) are present but disabled in Wave 2', async () => {
+  it('Wave 3 action stubs (Patch / Re-sync) are NOT rendered as broken-looking disabled buttons', async () => {
+    // UX + TTRPG R3 review: disabled stubs read as broken UI.
+    // Replaced by a single explanatory pip ("✎ N edits since synth.
+    // Prose may now mismatch — the AI re-sync tool arrives in a
+    // follow-up").  Wave 3 will replace the pip with active buttons.
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
     el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
     el.onEditPreAccept = () => true;
     el.onDismissDrift = () => {};
     await el.updateComplete;
-    const patch = el.querySelector<HTMLButtonElement>(
-      '.chargen-dm-review-drift-patch'
-    );
-    const resync = el.querySelector<HTMLButtonElement>(
-      '.chargen-dm-review-drift-resync'
-    );
-    expect(patch?.disabled).toBe(true);
-    expect(resync?.disabled).toBe(true);
+    expect(
+      el.querySelector('.chargen-dm-review-drift-patch')
+    ).toBeNull();
+    expect(
+      el.querySelector('.chargen-dm-review-drift-resync')
+    ).toBeNull();
+    // The explanation pip IS there.
+    const pip = el.querySelector('.chargen-dm-review-drift-pip');
+    expect(pip).not.toBeNull();
+    expect(pip!.textContent).toMatch(/edit/);
+    expect(pip!.textContent).toMatch(/follow-up/);
   });
 
   it('drift banner does not render when no drift is recorded', async () => {
@@ -1067,6 +1119,68 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
     el.onEditPreAccept = () => true;
     await el.updateComplete;
     expect(el.querySelector('.chargen-dm-review-drift')).toBeNull();
+  });
+
+  it('post-Wave-2: stats drift renders as a delta string (not JSON dump)', async () => {
+    const el = mountWith9Seats();
+    const r = okResult('Mei');
+    // DM swapped STR and INT.
+    r.response.stats = { STR: 2, DEX: 1, CON: 1, INT: 0, WIS: 1, CHA: 0 };
+    el.synthResults = new Map([[1, r]]);
+    el.preAcceptDrift = new Map([
+      [
+        1,
+        {
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 }
+        }
+      ]
+    ]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    await el.updateComplete;
+    const statsRow = el.querySelector('.chargen-dm-review-drift-stats');
+    expect(statsRow).not.toBeNull();
+    // Shows only the keys that changed, not all 6.
+    expect(statsRow!.textContent).toMatch(/STR \+0 → \+2/);
+    expect(statsRow!.textContent).toMatch(/INT \+2 → \+0/);
+    expect(statsRow!.textContent).not.toMatch(/DEX/); // unchanged
+    expect(statsRow!.textContent).not.toMatch(/[{}"]/); // no JSON
+  });
+
+  it('post-Wave-2: header-edit button has a useful aria-label', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei Tanaka')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const nameBtn = el.querySelector(
+      '.chargen-dm-review-header-edit-name'
+    );
+    expect(nameBtn?.getAttribute('aria-label')).toMatch(/Edit name/);
+    expect(nameBtn?.getAttribute('aria-label')).toMatch(/Mei Tanaka/);
+  });
+
+  it('post-Wave-2: stat cell has aria-pressed reflecting selection state', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const cells = el.querySelectorAll<HTMLButtonElement>(
+      'button.chargen-dm-review-stat-cell-editable'
+    );
+    expect(cells[0].getAttribute('aria-pressed')).toBe('false');
+    cells[0].click();
+    await el.updateComplete;
+    expect(cells[0].getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('post-Wave-2: lock glyph is aria-hidden (state lives on the cell)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]); // +2 on INT
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const lock = el.querySelector('.chargen-dm-review-stat-lock');
+    expect(lock).not.toBeNull();
+    expect(lock!.getAttribute('aria-hidden')).toBe('true');
   });
 });
 
@@ -1459,35 +1573,11 @@ describe('<chargen-dm-review> — Wave 2 party-stats nudge', () => {
     document.body.innerHTML = '';
   });
 
-  it('does not render with fewer than 2 ok PCs', async () => {
-    const el = mount();
-    el.pcSlots = { 1: unbound() };
-    el.synthResults = new Map([[1, okResult('Mei')]]);
-    await el.updateComplete;
-    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
-  });
-
-  it('does not render when distribution is balanced', async () => {
+  it('does not render with fewer than 3 ok PCs (post-Wave-2 review fix)', async () => {
     const el = mount();
     el.pcSlots = { 1: unbound(), 2: unbound() };
-    // Two PCs, balanced stats — no single stat hits the threshold.
-    const r1 = okResult('A');
-    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 };
-    const r2 = okResult('B');
-    r2.response.stats = { STR: 2, DEX: 1, CON: 0, INT: 0, WIS: 1, CHA: 1 };
-    el.synthResults = new Map([
-      [1, r1],
-      [2, r2]
-    ]);
-    await el.updateComplete;
-    // STR sum=2, DEX=2, CON=1, INT=2, WIS=2, CHA=1 — no triggers.
-    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
-  });
-
-  it('renders nudge when a stat sums ≥ +4', async () => {
-    const el = mount();
-    el.pcSlots = { 1: unbound(), 2: unbound() };
-    // Two PCs both with +2 in CHA = sum +4.
+    // Even a +4-sum CHA party of 2 should not nudge — two players
+    // sharing a +2 emphasis is a legit party-design choice.
     const r1 = okResult('A');
     r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
     const r2 = okResult('B');
@@ -1497,10 +1587,49 @@ describe('<chargen-dm-review> — Wave 2 party-stats nudge', () => {
       [2, r2]
     ]);
     await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
+  });
+
+  it('does not render when distribution is balanced (3 PCs)', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound(), 2: unbound(), 3: unbound() };
+    const r1 = okResult('A');
+    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 };
+    const r2 = okResult('B');
+    r2.response.stats = { STR: 2, DEX: 1, CON: 0, INT: 0, WIS: 1, CHA: 1 };
+    const r3 = okResult('C');
+    r3.response.stats = { STR: 1, DEX: 0, CON: 2, INT: 1, WIS: 1, CHA: 0 };
+    el.synthResults = new Map([
+      [1, r1],
+      [2, r2],
+      [3, r3]
+    ]);
+    await el.updateComplete;
+    // Each stat sums 2-3 across 3 PCs; threshold scales to 3, so
+    // none triggers.
+    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
+  });
+
+  it('renders nudge when a stat sums above the scaled threshold (3 PCs share CHA emphasis)', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound(), 2: unbound(), 3: unbound() };
+    // 3 PCs all with +2 in CHA = sum +6, well above 3-PC threshold of 3.
+    const r1 = okResult('A');
+    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    const r2 = okResult('B');
+    r2.response.stats = { STR: 0, DEX: 0, CON: 1, INT: 1, WIS: 1, CHA: 2 };
+    const r3 = okResult('C');
+    r3.response.stats = { STR: 1, DEX: 0, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    el.synthResults = new Map([
+      [1, r1],
+      [2, r2],
+      [3, r3]
+    ]);
+    await el.updateComplete;
     const nudge = el.querySelector('.chargen-dm-review-party-nudge');
     expect(nudge).not.toBeNull();
     expect(nudge!.textContent).toMatch(/CHA/);
-    expect(nudge!.textContent).toMatch(/\+4/);
+    expect(nudge!.textContent).toMatch(/\+6/);
     expect(nudge!.textContent).toMatch(/leans/);
   });
 

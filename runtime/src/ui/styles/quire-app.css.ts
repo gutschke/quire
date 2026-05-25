@@ -188,9 +188,10 @@ export const quireAppStyles = css`
       margin-left: 0.35rem;
     }
     .chargen-dm-review-seat-remove {
-      /* Wave 1: subtle X glyph on removable unbound seats.  Visible
-         but unobtrusive (opacity 0.4) until hover.  Push to the
-         right of the header. */
+      /* Wave 1: X glyph on removable unbound seats.  Post-Wave-2
+         polish: bumped opacity from 0.4 (UX review: too subtle for
+         a destructive action on a stale seat).  0.6 reads as
+         present-but-secondary; hover/focus jumps to 1.0. */
       margin-left: auto;
       padding: 0 0.4rem;
       border: 1px solid transparent;
@@ -199,10 +200,11 @@ export const quireAppStyles = css`
       cursor: pointer;
       font: inherit;
       line-height: 1;
-      opacity: 0.4;
+      opacity: 0.6;
       border-radius: 4px;
     }
-    .chargen-dm-review-seat-remove:hover {
+    .chargen-dm-review-seat-remove:hover,
+    .chargen-dm-review-seat-remove:focus-visible {
       opacity: 1;
       border-color: light-dark(#dc2626, #f87171);
       color: light-dark(#dc2626, #f87171);
@@ -258,14 +260,27 @@ export const quireAppStyles = css`
     .chargen-dm-review-header-input-name {
       font-weight: 600;
     }
-    /* Wave 2: drift banner — informational, not blocking. */
+    /* Wave 2: drift banner — informational, not blocking.
+       Post-Wave-2 polish: more vertical space below the banner so
+       it visually separates from the Review/Accept actions row
+       (UX review: was visually adjacent to Accept, reading as a
+       precondition). */
     .chargen-dm-review-drift {
-      margin: 0.5rem 0;
+      margin: 0.5rem 0 1rem;
       padding: 0.5rem 0.7rem;
       background: light-dark(#fef3c7, #422006);
       border: 1px solid light-dark(#facc15, #a16207);
       border-radius: 4px;
       font-size: 0.9rem;
+    }
+    .chargen-dm-review-drift-pip {
+      margin-bottom: 0.4rem;
+      padding-bottom: 0.35rem;
+      border-bottom: 1px dashed light-dark(#facc15, #a16207);
+      font-size: 0.9em;
+    }
+    .chargen-dm-review-drift-stats {
+      font-variant-numeric: tabular-nums;
     }
     .chargen-dm-review-drift-list {
       margin: 0;

@@ -607,17 +607,29 @@ export class ChargenDmReview extends LitElement {
       }
       counted += 1;
     }
-    // Don't nudge before there's at least two PCs to compare —
-    // the lopsidedness signal is meaningless with one.
-    if (counted < 2) return nothing;
-    // Find the most extreme stat (highest |sum|).  Threshold matches
-    // TTRPG-R2 spec: ≥+4 or ≤-2.
+    // Skip parties of fewer than 3 — the lopsidedness signal is too
+    // noisy.  Post-Wave-2 review (both experts): party of 2 hits +4
+    // any time both players pick the same +2 emphasis, which is
+    // a legitimate party-design choice, not a problem.
+    if (counted < 3) return nothing;
+    // Threshold scales linearly with party size: a fixed +4 was
+    // too eager for small parties (true any time two PCs share a
+    // +2 emphasis) and too quiet for large parties.  Formula
+    // `counted + 2` produces: 3 PCs → 5, 4 PCs → 6, 5 PCs → 7.
+    // Reasoning: 3 PCs sharing a +2 (= sum 6) is a real lean;
+    // 2 PCs sharing a +2 (= sum 4) is a legitimate design choice.
+    const posThreshold = counted + 2;
+    // Light-on threshold (negative): can't be triggered from valid
+    // chargen synth data (stat values are non-negative), but
+    // preserved for in-session scenarios where harm pushes a stat
+    // negative.  Scaled symmetrically.
+    const negThreshold = -Math.max(2, Math.ceil(counted / 2));
     let extreme:
       | { key: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'; sum: number }
       | null = null;
     for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const) {
       const s = sums[k];
-      const triggers = s >= 4 || s <= -2;
+      const triggers = s >= posThreshold || s <= negThreshold;
       if (!triggers) continue;
       if (!extreme || Math.abs(s) > Math.abs(extreme.sum)) {
         extreme = { key: k, sum: s };
@@ -628,10 +640,10 @@ export class ChargenDmReview extends LitElement {
     const sumFmt = extreme.sum > 0 ? `+${extreme.sum}` : `${extreme.sum}`;
     return html`
       <div class="chargen-dm-review-party-nudge" role="status">
-        <span class="chargen-dm-review-party-nudge-glyph">⚠</span>
+        <span class="chargen-dm-review-party-nudge-glyph" aria-hidden="true">⚠</span>
         <span
           >Party ${direction} <strong>${extreme.key}</strong> (${sumFmt}
-          across ${counted} PC${counted === 1 ? '' : 's'}).  Consider letting
+          across ${counted} PCs).  Consider letting
           it be — Quire's harm/stress consequences shape the
           fiction more than stat distribution.</span
         >
@@ -681,12 +693,18 @@ export class ChargenDmReview extends LitElement {
    *   - synthesis isn't currently in-flight
    *   - the seat hasn't been accepted
    *   - no quick-gen panel is in-flight
-   *   - the seat isn't the in-progress workingSlot (DM is mid-
-   *     chargen for it — clicking + would be unexpected)
    *
    * A generated invite URL alone does NOT disqualify removal:
    * the player hasn't redeemed yet, so the seat is recoverable
    * even if the link was sent.
+   *
+   * Post-Wave-2 polish (2026-05-25, TTRPG review fix): we previously
+   * excluded the workingSlot, but that ironically hid the X on the
+   * exact seat the DM most often wants to undo — the just-added one
+   * from a misclick on "+ add player".  Now: workingSlot is fine to
+   * remove as long as no work has landed (no synth in flight, no
+   * synth result, no quick-gen).  If the DM is mid-chargen (synth
+   * is running or finished), the other conditions hide the X anyway.
    */
   private isSeatRemovable(slot: number): boolean {
     if (!this.onRemoveSeat) return false;
@@ -696,7 +714,6 @@ export class ChargenDmReview extends LitElement {
     if (this.synthInFlight.has(slot)) return false;
     if (this.acceptedSlots.has(slot)) return false;
     if (this.quickGenInFlight.has(slot)) return false;
-    if (this.workingSlot === slot) return false;
     return true;
   }
 
@@ -704,6 +721,9 @@ export class ChargenDmReview extends LitElement {
     if (!this.isSeatRemovable(slot)) return;
     const ok = this.onRemoveSeat!(slot);
     if (!ok) return;
+    // Clear workingSlot if it was this seat — otherwise the UI
+    // keeps rendering a chargen card for a removed slot.
+    if (this.workingSlot === slot) this.workingSlot = null;
     // Stash the slot for the 4s undo window; cancel any prior
     // pending remove (clicking remove on a second seat collapses
     // the older banner immediately — last-write-wins).
@@ -717,6 +737,17 @@ export class ChargenDmReview extends LitElement {
         this.pendingRemoveSlot = null;
       }
     }, 1000);
+    // Post-Wave-2 polish: move focus to Undo so keyboard users have
+    // an immediate path to recover.  The undo banner renders above
+    // the seat list; we updateComplete-await before grabbing it.
+    void this.focusUndoButton();
+  }
+
+  private async focusUndoButton(): Promise<void> {
+    await this.updateComplete;
+    this.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-remove-undo-btn'
+    )?.focus();
   }
 
   private handleUndoRemoveSeat(): void {
@@ -767,11 +798,36 @@ export class ChargenDmReview extends LitElement {
         this.onEditPreAccept(editing.slot, patch);
       }
     }
+    const restoreSlot = editing.slot;
+    const restoreField = editing.field;
     this.editingHeader = null;
+    void this.refocusHeaderEdit(restoreSlot, restoreField);
   }
 
   private cancelHeaderEdit(): void {
+    const editing = this.editingHeader;
     this.editingHeader = null;
+    if (editing) {
+      void this.refocusHeaderEdit(editing.slot, editing.field);
+    }
+  }
+
+  /**
+   * Post-Wave-2 polish: after commit/cancel of a header inline-edit,
+   * focus drops to body.  Restore focus to the now-rendered edit
+   * button so keyboard users keep their place.
+   */
+  private async refocusHeaderEdit(
+    slot: number,
+    field: 'name' | 'pronouns'
+  ): Promise<void> {
+    await this.updateComplete;
+    const seat = this.querySelector(`[data-slot="${slot}"]`);
+    seat
+      ?.querySelector<HTMLButtonElement>(
+        `.chargen-dm-review-header-edit-${field}`
+      )
+      ?.focus();
   }
 
   private handleHeaderInputKey(e: KeyboardEvent): void {
@@ -1510,6 +1566,7 @@ export class ChargenDmReview extends LitElement {
       type="button"
       class="chargen-dm-review-header-edit chargen-dm-review-header-edit-${field}"
       title="Click to edit ${field}"
+      aria-label="Edit ${field} (currently ${value})"
       @click=${() => this.openHeaderEdit(slot, field)}
     >
       ${field === 'name' ? html`<strong>${value}</strong>` : html`${value}`}
@@ -1538,57 +1595,111 @@ export class ChargenDmReview extends LitElement {
     if (!synth?.ok) return nothing;
     return html`
       <div class="chargen-dm-review-drift" role="status">
-        <ul class="chargen-dm-review-drift-list">
-          ${fields.map((field) => {
-            const before = drift[field];
-            const after = synth.response[field];
-            return html`<li class="chargen-dm-review-drift-row">
-              <span class="chargen-dm-review-drift-field">${String(field)}:</span>
-              <span class="chargen-dm-review-drift-before">${this.formatDriftValue(
-                before
-              )}</span>
-              <span class="chargen-dm-review-drift-arrow">→</span>
-              <span class="chargen-dm-review-drift-after">${this.formatDriftValue(
-                after
-              )}</span>
-              <button
-                type="button"
-                class="chargen-dm-review-drift-leave"
-                title="Keep the edit; hide this banner row"
-                @click=${() => this.handleLeaveDrift(slot, field)}
-              >
-                Leave drift
-              </button>
-            </li>`;
-          })}
-        </ul>
-        <div class="chargen-dm-review-drift-actions">
-          <button
-            type="button"
-            class="chargen-dm-review-drift-patch"
-            disabled
-            title="Wave 3: deterministically rewrite the backstory to use the edited values"
-          >
-            Patch in place
-          </button>
-          <button
-            type="button"
-            class="chargen-dm-review-drift-resync"
-            disabled
-            title="Wave 3: re-call the AI with the edited values + the previous draft as anchor"
-          >
-            Re-sync backstory
-          </button>
+        <div class="chargen-dm-review-drift-pip">
+          ✎ <strong>${fields.length} edit${fields.length === 1 ? '' : 's'}</strong>
+          since synth.  Prose may now mismatch — the AI re-sync tool
+          arrives in a follow-up.
         </div>
+        <ul class="chargen-dm-review-drift-list">
+          ${fields.map((field) => this.renderDriftRow(slot, field, drift, synth.response))}
+        </ul>
       </div>
     `;
+  }
+
+  /**
+   * Post-Wave-2 polish: render a single drift row.  Stats get a
+   * compact delta-only display ("CHA +2 → +1, STR 0 → +2") instead
+   * of the full distribution; everything else uses the standard
+   * before/after.  Patch + Re-sync buttons removed entirely until
+   * Wave 3 lights them — disabled stubs read as broken UI per the
+   * UX review.
+   */
+  private renderDriftRow(
+    slot: number,
+    field: keyof PcBackstorySynthesisResponse,
+    drift: Partial<PcBackstorySynthesisResponse>,
+    current: PcBackstorySynthesisResponse
+  ): TemplateResult {
+    const before = drift[field];
+    const after = current[field];
+    if (field === 'stats' && this.isStatsLike(before) && this.isStatsLike(after)) {
+      const changes: string[] = [];
+      const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+      for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const) {
+        if (before[k] !== after[k]) {
+          changes.push(`${k} ${fmt(before[k])} → ${fmt(after[k])}`);
+        }
+      }
+      return html`<li class="chargen-dm-review-drift-row">
+        <span class="chargen-dm-review-drift-field">stats:</span>
+        <span class="chargen-dm-review-drift-stats">${changes.join(', ')}</span>
+        <button
+          type="button"
+          class="chargen-dm-review-drift-leave"
+          title="Keep the edit; hide this banner row"
+          @click=${() => this.handleLeaveDrift(slot, field)}
+        >
+          Leave drift
+        </button>
+      </li>`;
+    }
+    return html`<li class="chargen-dm-review-drift-row">
+      <span class="chargen-dm-review-drift-field">${String(field)}:</span>
+      <span class="chargen-dm-review-drift-before">${this.formatDriftValue(
+        before
+      )}</span>
+      <span class="chargen-dm-review-drift-arrow">→</span>
+      <span class="chargen-dm-review-drift-after">${this.formatDriftValue(
+        after
+      )}</span>
+      <button
+        type="button"
+        class="chargen-dm-review-drift-leave"
+        title="Keep the edit; hide this banner row"
+        @click=${() => this.handleLeaveDrift(slot, field)}
+      >
+        Leave drift
+      </button>
+    </li>`;
   }
 
   private formatDriftValue(v: unknown): string {
     if (typeof v === 'string') return v;
     if (Array.isArray(v)) return v.join(', ');
+    if (this.isStatsLike(v)) return this.formatStatsDelta(v);
     if (v && typeof v === 'object') return JSON.stringify(v);
     return String(v);
+  }
+
+  /**
+   * Post-Wave-2 polish (2026-05-25, TTRPG review fix): stats-drift
+   * row previously dumped JSON.  The actual question the DM cares
+   * about is "what swapped?" — so render the per-key delta instead.
+   */
+  private isStatsLike(
+    v: unknown
+  ): v is { STR: number; DEX: number; CON: number; INT: number; WIS: number; CHA: number } {
+    if (!v || typeof v !== 'object') return false;
+    const o = v as Record<string, unknown>;
+    return ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].every(
+      (k) => typeof o[k] === 'number'
+    );
+  }
+
+  /**
+   * Render the drift row's `before` cell for stats as a compact
+   * label list (just the stats that changed will be visible — the
+   * "after" cell will mirror it via the diffing in
+   * renderStatsDriftRow).  Caller uses this for both before/after.
+   */
+  private formatStatsDelta(stats: {
+    STR: number; DEX: number; CON: number; INT: number; WIS: number; CHA: number;
+  }): string {
+    const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+    return (['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const)
+      .map((k) => `${k} ${fmt(stats[k])}`)
+      .join(', ');
   }
 
   /**
@@ -1638,6 +1749,7 @@ export class ChargenDmReview extends LitElement {
                 type="button"
                 class="chargen-dm-review-chip chargen-dm-review-chip-add"
                 title="Add a new tag"
+                aria-label="Add a new tag"
                 @click=${() => {
                   this.addingChip = { slot: slot!, kind: 'tag' };
                 }}
@@ -1778,7 +1890,7 @@ export class ChargenDmReview extends LitElement {
         ? html`<span
             class="chargen-dm-review-stat-lock"
             title="Player chose this stat for their +2 (stat-emphasis question).  Swapping is allowed but asks for confirm."
-            aria-label="Player's chosen stat"
+            aria-hidden="true"
             >🔒</span
           >`
         : nothing;
@@ -1790,10 +1902,13 @@ export class ChargenDmReview extends LitElement {
       if (!editable || slot === undefined) {
         return html`<div class=${classes}>${body}</div>`;
       }
+      const lockNote = isPick ? ' (player-picked +2)' : '';
       return html`<button
         type="button"
         class=${classes}
         title="Click to ${selected ? 'cancel' : 'select'} for swap"
+        aria-pressed=${selected ? 'true' : 'false'}
+        aria-label="Stat ${label} ${fmt(stats[key])}${lockNote}, click to ${selected ? 'cancel selection' : 'select for swap'}"
         @click=${() => this.handleStatCellClick(slot, key)}
       >
         ${body}
@@ -1958,6 +2073,7 @@ export class ChargenDmReview extends LitElement {
                   type="button"
                   class="chargen-dm-review-chip chargen-dm-review-chip-add"
                   title="Add a skill category"
+                  aria-label="Add a skill category"
                   @click=${() => {
                     this.addingChip = { slot: slot!, kind: 'skill' };
                   }}

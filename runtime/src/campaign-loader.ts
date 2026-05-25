@@ -97,6 +97,17 @@ export interface CampaignCharCreationQuestion {
  */
 export interface CampaignCharacterCreation {
   questions?: CampaignCharCreationQuestion[];
+  /**
+   * Wave 2 follow-up (2026-05-25, P-R2): soft cap on the number of
+   * PC seats this campaign supports.  The engine accepts any
+   * positive integer slot number (Phase B-prime dropped the hard
+   * 1..9 cap); this field gates the UI's "+ add player" verb +
+   * the host-API guard.  Defaults to `DEFAULT_SEAT_CAP` when
+   * omitted.  Most campaigns leave this alone (9 is a reasonable
+   * tabletop default); campaigns expecting larger parties (e.g.
+   * a megagame or correspondence campaign) raise it.
+   */
+  seatCap?: number;
 }
 
 /**
@@ -162,6 +173,32 @@ export const DEFAULT_PRIMARY_ROLL: CampaignPrimaryRoll = {
   statSource: 'boundPc',
   modifierCap: { min: -2, max: 2 }
 };
+
+/**
+ * Engine default for the seat cap when a campaign doesn't declare
+ * `characterCreation.seatCap`.  Nine is a generous tabletop default
+ * (most TTRPGs run 3-5 PCs); the engine accepts arbitrary positive
+ * integers per Phase B-prime, this cap only gates the "+ add
+ * player" verb in the UI.
+ */
+export const DEFAULT_SEAT_CAP = 9;
+
+/**
+ * Resolve the effective seat cap for a campaign.  Reads
+ * `manifest.characterCreation.seatCap` and falls back to
+ * DEFAULT_SEAT_CAP when omitted.  Sub-1 / non-integer values fall
+ * back to the default (defensive — bad manifest data shouldn't
+ * lock the DM out of chargen).
+ */
+export function resolveSeatCap(
+  manifest: CampaignManifest | undefined | null
+): number {
+  const raw = manifest?.characterCreation?.seatCap;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+    return DEFAULT_SEAT_CAP;
+  }
+  return raw;
+}
 
 /**
  * Resolve the effective primary roll for a campaign, applying the
