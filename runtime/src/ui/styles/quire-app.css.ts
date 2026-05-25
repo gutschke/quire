@@ -382,6 +382,71 @@ export const quireAppStyles = css`
     .chargen-dm-review-stat-confirm-no:hover {
       background: light-dark(#fef9c3, #1e293b);
     }
+    /* Wave 2: chip editing (tags + skills) */
+    .chargen-dm-review-chip-editable {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.2rem;
+    }
+    .chargen-dm-review-chip-remove {
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: inherit;
+      opacity: 0.5;
+      padding: 0 0.15rem;
+      font: inherit;
+      font-size: 0.8em;
+      border-radius: 2px;
+    }
+    .chargen-dm-review-chip-remove:hover {
+      opacity: 1;
+      color: light-dark(#dc2626, #f87171);
+    }
+    .chargen-dm-review-chip-add {
+      cursor: pointer;
+      border: 1px dashed light-dark(#94a3b8, #475569);
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      padding: 0.1rem 0.55rem;
+      border-radius: 999px;
+      opacity: 0.7;
+    }
+    .chargen-dm-review-chip-add:hover {
+      opacity: 1;
+      border-style: solid;
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .chargen-dm-review-chip-input {
+      font: inherit;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid light-dark(#94a3b8, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      min-width: 6em;
+    }
+    .chargen-dm-review-chip-add-empty {
+      font-size: 0.85em;
+    }
+    /* Wave 2: conditional party-stats nudge */
+    .chargen-dm-review-party-nudge {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin: 0 0 0.7rem;
+      padding: 0.5rem 0.75rem;
+      background: light-dark(#fffbeb, #1c1917);
+      border: 1px solid light-dark(#fcd34d, #78350f);
+      border-radius: 4px;
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+    .chargen-dm-review-party-nudge-glyph {
+      flex-shrink: 0;
+      font-size: 1.1em;
+    }
     .chargen-dm-review-seat-actions {
       display: flex;
       flex-wrap: wrap;

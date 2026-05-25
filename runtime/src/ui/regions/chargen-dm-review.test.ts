@@ -1256,3 +1256,278 @@ describe('<chargen-dm-review> — Wave 2 stat swap-pair editor', () => {
     expect(picked?.textContent).toMatch(/INT/);
   });
 });
+
+describe('<chargen-dm-review> — Wave 2 tag/skill chip editing', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders × on each tag chip when editable', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const removes = el.querySelectorAll(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-remove'
+    );
+    // okResult has 3 tags.
+    expect(removes.length).toBe(3);
+  });
+
+  it('clicking × on a tag fires onEditPreAccept with the tag removed', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    const removes = el.querySelectorAll<HTMLButtonElement>(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-remove'
+    );
+    removes[0].click();
+    expect(patches.length).toBe(1);
+    expect(patches[0].slot).toBe(1);
+    const tags = patches[0].tags as string[];
+    expect(tags).toEqual(['reluctant insomniac', 'sister of a pilot']);
+  });
+
+  it('clicking + opens the add-tag input', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const add = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-add'
+    );
+    expect(add).not.toBeNull();
+    add!.click();
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-chip-input-tag')
+    ).not.toBeNull();
+  });
+
+  it('Enter on the add-tag input commits the new tag', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-add'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-chip-input-tag'
+    )!;
+    input.value = 'night-shift mechanic';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(patches.length).toBe(1);
+    const tags = patches[0].tags as string[];
+    expect(tags).toContain('night-shift mechanic');
+    expect(tags.length).toBe(4);
+  });
+
+  it('refuses to add a duplicate tag', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-add'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-chip-input-tag'
+    )!;
+    input.value = 'junior engineer'; // already in the tag list
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(patches).toEqual([]);
+  });
+
+  it('Esc on the add-tag input cancels without firing', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: unknown[] = [];
+    el.onEditPreAccept = () => {
+      patches.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-add'
+    )!.click();
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-chip-input-tag'
+    )!;
+    input.value = 'foo';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await el.updateComplete;
+    expect(patches).toEqual([]);
+    expect(
+      el.querySelector('.chargen-dm-review-chip-input-tag')
+    ).toBeNull();
+  });
+
+  it('skill add dropdown lists only categories not already chosen', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]); // Tech + Knowledge
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-skills .chargen-dm-review-chip-add'
+    )!.click();
+    await el.updateComplete;
+    const select = el.querySelector<HTMLSelectElement>(
+      '.chargen-dm-review-chip-input-skill'
+    )!;
+    const opts = Array.from(select.querySelectorAll('option'))
+      .map((o) => o.value)
+      .filter((v) => v.length > 0);
+    expect(opts).not.toContain('Tech');
+    expect(opts).not.toContain('Knowledge');
+    expect(opts).toContain('Insight');
+    expect(opts.length).toBe(6);
+  });
+
+  it('picking a skill from the dropdown commits the add', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-skills .chargen-dm-review-chip-add'
+    )!.click();
+    await el.updateComplete;
+    const select = el.querySelector<HTMLSelectElement>(
+      '.chargen-dm-review-chip-input-skill'
+    )!;
+    select.value = 'Insight';
+    select.dispatchEvent(new Event('change'));
+    expect(patches.length).toBe(1);
+    const skills = patches[0].skillMastery as string[];
+    expect(skills).toContain('Insight');
+  });
+
+  it('clicking × on a skill chip removes it', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const patches: Array<Record<string, unknown>> = [];
+    el.onEditPreAccept = (slot, patch) => {
+      patches.push({ slot, ...patch });
+      return true;
+    };
+    await el.updateComplete;
+    const removes = el.querySelectorAll<HTMLButtonElement>(
+      '.chargen-dm-review-skills .chargen-dm-review-chip-remove'
+    );
+    removes[0].click();
+    expect(patches.length).toBe(1);
+    const skills = patches[0].skillMastery as string[];
+    expect(skills).toEqual(['Knowledge']);
+  });
+
+  it('chips are display-only when onEditPreAccept callback is null', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-chip-remove')
+    ).toBeNull();
+    expect(
+      el.querySelector('.chargen-dm-review-chip-add')
+    ).toBeNull();
+  });
+});
+
+describe('<chargen-dm-review> — Wave 2 party-stats nudge', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('does not render with fewer than 2 ok PCs', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound() };
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
+  });
+
+  it('does not render when distribution is balanced', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound(), 2: unbound() };
+    // Two PCs, balanced stats — no single stat hits the threshold.
+    const r1 = okResult('A');
+    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 };
+    const r2 = okResult('B');
+    r2.response.stats = { STR: 2, DEX: 1, CON: 0, INT: 0, WIS: 1, CHA: 1 };
+    el.synthResults = new Map([
+      [1, r1],
+      [2, r2]
+    ]);
+    await el.updateComplete;
+    // STR sum=2, DEX=2, CON=1, INT=2, WIS=2, CHA=1 — no triggers.
+    expect(el.querySelector('.chargen-dm-review-party-nudge')).toBeNull();
+  });
+
+  it('renders nudge when a stat sums ≥ +4', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound(), 2: unbound() };
+    // Two PCs both with +2 in CHA = sum +4.
+    const r1 = okResult('A');
+    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    const r2 = okResult('B');
+    r2.response.stats = { STR: 0, DEX: 0, CON: 1, INT: 1, WIS: 1, CHA: 2 };
+    el.synthResults = new Map([
+      [1, r1],
+      [2, r2]
+    ]);
+    await el.updateComplete;
+    const nudge = el.querySelector('.chargen-dm-review-party-nudge');
+    expect(nudge).not.toBeNull();
+    expect(nudge!.textContent).toMatch(/CHA/);
+    expect(nudge!.textContent).toMatch(/\+4/);
+    expect(nudge!.textContent).toMatch(/leans/);
+  });
+
+  // Note: the "light on" (sum ≤ -2) branch can't trigger from valid
+  // chargen synth data (fixed-array stats: one +2, three +1, two 0,
+  // no negatives).  The branch is in place for post-accept / in-
+  // session contexts where harm can push a stat below 0.  Not
+  // exercised in chargen tests.
+
+  it('picks the most extreme stat when multiple trigger', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound(), 2: unbound(), 3: unbound() };
+    // Three PCs all stacking CHA — sum +6 vs other triggers smaller.
+    const r1 = okResult('A');
+    r1.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    const r2 = okResult('B');
+    r2.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    const r3 = okResult('C');
+    r3.response.stats = { STR: 0, DEX: 1, CON: 1, INT: 1, WIS: 0, CHA: 2 };
+    el.synthResults = new Map([
+      [1, r1],
+      [2, r2],
+      [3, r3]
+    ]);
+    await el.updateComplete;
+    const nudge = el.querySelector('.chargen-dm-review-party-nudge');
+    expect(nudge!.textContent).toMatch(/CHA/);
+    expect(nudge!.textContent).toMatch(/\+6/);
+  });
+});

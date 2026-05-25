@@ -34,6 +34,7 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { SynthesizeBackstoryResult } from '../../ai/backstory-synthesizer';
 import type { PcBackstorySynthesisResponse } from '../../ai/schema';
+import { QUIRE_SKILL_CATEGORIES } from '../../ai/schema';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 import type { Seat } from '../../core/state';
 
@@ -397,6 +398,17 @@ export class ChargenDmReview extends LitElement {
   } | null = null;
 
   /**
+   * Wave 2 (2026-05-25): which seat is currently in chip-add mode,
+   * either for tags ('tag') or skills ('skill').  Renders an inline
+   * input or dropdown that commits to onEditPreAccept on enter/pick.
+   * Single-open at a time (opening one closes any other).
+   */
+  @state() private addingChip: {
+    slot: number;
+    kind: 'tag' | 'skill';
+  } | null = null;
+
+  /**
    * Phase 3b polish: per-seat transient UI state for the pack-
    * import + quick-generate affordances.  Lives on the region (not
    * the controller) because it's purely UI — toggling the form
@@ -478,6 +490,7 @@ export class ChargenDmReview extends LitElement {
       // Collapsed posture per UX C2: bound seats glance + resume verb.
       return html`
         ${this.renderRemoveUndoBanner()}
+        ${this.renderPartyStatsNudge()}
         <ol class="chargen-dm-review-seats chargen-dm-review-seats-collapsed">
           ${sorted.map((slot) => this.renderSeat(slot))}
         </ol>
@@ -500,6 +513,7 @@ export class ChargenDmReview extends LitElement {
     const hasActive = this.hasBoundActiveSeat();
     return html`
       ${this.renderRemoveUndoBanner()}
+      ${this.renderPartyStatsNudge()}
       <ol class="chargen-dm-review-seats">
         ${sorted.length === 0
           ? html`<li class="chargen-dm-review-seats-empty muted">
@@ -562,6 +576,67 @@ export class ChargenDmReview extends LitElement {
       if (seat.state === 'bound-active') return true;
     }
     return false;
+  }
+
+  /**
+   * Wave 2 (2026-05-25): conditional party-stats nudge.  Surfaces a
+   * one-line verbal cue when the party's distribution is lopsided
+   * (one stat sums ≥ +4 or ≤ -2 across all synth-result PCs in the
+   * roster).  Per the TTRPG-expert review: a data-only glance row
+   * would push DMs toward min-max rebalancing, which is antithetical
+   * to Quire's story-first design.  The nudge frames it as "consider
+   * letting it be" — visible enough to surface the imbalance, soft
+   * enough not to encourage paternalistic editing.
+   */
+  private renderPartyStatsNudge(): TemplateResult | typeof nothing {
+    const sums: Record<'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA', number> = {
+      STR: 0, DEX: 0, CON: 0, INT: 0, WIS: 0, CHA: 0
+    };
+    let counted = 0;
+    for (const synth of this.synthResults.values()) {
+      if (!synth.ok) continue;
+      for (const k of [
+        'STR',
+        'DEX',
+        'CON',
+        'INT',
+        'WIS',
+        'CHA'
+      ] as Array<keyof typeof sums>) {
+        sums[k] += synth.response.stats[k];
+      }
+      counted += 1;
+    }
+    // Don't nudge before there's at least two PCs to compare —
+    // the lopsidedness signal is meaningless with one.
+    if (counted < 2) return nothing;
+    // Find the most extreme stat (highest |sum|).  Threshold matches
+    // TTRPG-R2 spec: ≥+4 or ≤-2.
+    let extreme:
+      | { key: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'; sum: number }
+      | null = null;
+    for (const k of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const) {
+      const s = sums[k];
+      const triggers = s >= 4 || s <= -2;
+      if (!triggers) continue;
+      if (!extreme || Math.abs(s) > Math.abs(extreme.sum)) {
+        extreme = { key: k, sum: s };
+      }
+    }
+    if (!extreme) return nothing;
+    const direction = extreme.sum > 0 ? 'leans' : 'is light on';
+    const sumFmt = extreme.sum > 0 ? `+${extreme.sum}` : `${extreme.sum}`;
+    return html`
+      <div class="chargen-dm-review-party-nudge" role="status">
+        <span class="chargen-dm-review-party-nudge-glyph">⚠</span>
+        <span
+          >Party ${direction} <strong>${extreme.key}</strong> (${sumFmt}
+          across ${counted} PC${counted === 1 ? '' : 's'}).  Consider letting
+          it be — Quire's harm/stress consequences shape the
+          fiction more than stat distribution.</span
+        >
+      </div>
+    `;
   }
 
   /**
@@ -1192,9 +1267,9 @@ export class ChargenDmReview extends LitElement {
               accepted
             )}</span>
           </div>
-          ${this.renderTagChips(r.tags)}
+          ${this.renderTagChips(r.tags, slot)}
           ${this.renderStatGrid(r.stats, slot)}
-          ${this.renderSkillChips(r.skillMastery)}
+          ${this.renderSkillChips(r.skillMastery, slot)}
           ${this.renderDriftBanner(slot)}
           ${warningCount > 0
             ? html`<div class="chargen-dm-review-synth-warnings">
@@ -1516,18 +1591,119 @@ export class ChargenDmReview extends LitElement {
     return String(v);
   }
 
-  /** Tags chips — 3-5 free-text expertise items from the response. */
-  private renderTagChips(tags: readonly string[]): TemplateResult {
+  /**
+   * Tags chips — 3-5 free-text expertise items.  Wave 2 (2026-05-25):
+   * editable when the slot has an ok-result + onEditPreAccept is
+   * wired + not accepted.  Each chip gets a × delete affordance;
+   * a trailing "+" chip opens an inline input for add.  Edits fire
+   * onEditPreAccept({ tags: [...] }).
+   */
+  private renderTagChips(
+    tags: readonly string[],
+    slot?: number
+  ): TemplateResult {
+    const editable =
+      typeof slot === 'number' &&
+      !!this.onEditPreAccept &&
+      !this.acceptedSlots.has(slot) &&
+      this.synthResults.get(slot)?.ok === true;
+    const adding =
+      editable &&
+      this.addingChip?.slot === slot &&
+      this.addingChip.kind === 'tag';
     return html`
       <div
         class="chargen-dm-review-chips chargen-dm-review-tags"
         aria-label="Tags"
       >
-        ${tags.map(
-          (t) => html`<span class="chargen-dm-review-chip">${t}</span>`
-        )}
+        ${tags.map((t, idx) => this.renderTagChip(t, idx, slot, editable))}
+        ${editable
+          ? adding
+            ? html`<input
+                type="text"
+                class="chargen-dm-review-chip-input chargen-dm-review-chip-input-tag"
+                placeholder="new tag"
+                autofocus
+                aria-label="Add a new tag"
+                @keydown=${(e: KeyboardEvent) =>
+                  this.handleTagAddKey(e, slot!, tags)}
+                @blur=${(e: FocusEvent) =>
+                  this.commitTagAdd(
+                    slot!,
+                    tags,
+                    (e.target as HTMLInputElement).value
+                  )}
+              />`
+            : html`<button
+                type="button"
+                class="chargen-dm-review-chip chargen-dm-review-chip-add"
+                title="Add a new tag"
+                @click=${() => {
+                  this.addingChip = { slot: slot!, kind: 'tag' };
+                }}
+              >
+                +
+              </button>`
+          : nothing}
       </div>
     `;
+  }
+
+  private renderTagChip(
+    text: string,
+    idx: number,
+    slot: number | undefined,
+    editable: boolean
+  ): TemplateResult {
+    if (!editable || slot === undefined) {
+      return html`<span class="chargen-dm-review-chip">${text}</span>`;
+    }
+    return html`<span class="chargen-dm-review-chip chargen-dm-review-chip-editable">
+      <span class="chargen-dm-review-chip-text">${text}</span>
+      <button
+        type="button"
+        class="chargen-dm-review-chip-remove"
+        title="Remove this tag"
+        aria-label="Remove tag ${text}"
+        @click=${() => this.handleTagRemove(slot, idx)}
+      >
+        ×
+      </button>
+    </span>`;
+  }
+
+  private handleTagAddKey(
+    e: KeyboardEvent,
+    slot: number,
+    tags: readonly string[]
+  ): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.commitTagAdd(slot, tags, (e.target as HTMLInputElement).value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this.addingChip = null;
+    }
+  }
+
+  private commitTagAdd(
+    slot: number,
+    tags: readonly string[],
+    raw: string
+  ): void {
+    const value = raw.trim();
+    if (value.length > 0 && !tags.includes(value) && this.onEditPreAccept) {
+      this.onEditPreAccept(slot, { tags: [...tags, value] });
+    }
+    this.addingChip = null;
+  }
+
+  private handleTagRemove(slot: number, idx: number): void {
+    const synth = this.synthResults.get(slot);
+    if (!synth?.ok || !this.onEditPreAccept) return;
+    const tags = synth.response.tags;
+    const next = [...tags.slice(0, idx), ...tags.slice(idx + 1)];
+    this.onEditPreAccept(slot, { tags: next });
   }
 
   /**
@@ -1731,20 +1907,113 @@ export class ChargenDmReview extends LitElement {
   }
 
   /** Skill mastery chips — 2-3 quire-v0.1 categories. */
-  private renderSkillChips(skills: readonly string[]): TemplateResult {
+  private renderSkillChips(
+    skills: readonly string[],
+    slot?: number
+  ): TemplateResult {
+    const editable =
+      typeof slot === 'number' &&
+      !!this.onEditPreAccept &&
+      !this.acceptedSlots.has(slot) &&
+      this.synthResults.get(slot)?.ok === true;
+    const adding =
+      editable &&
+      this.addingChip?.slot === slot &&
+      this.addingChip.kind === 'skill';
+    const unused = QUIRE_SKILL_CATEGORIES.filter((c) => !skills.includes(c));
     return html`
       <div
         class="chargen-dm-review-chips chargen-dm-review-skills"
         aria-label="Skill mastery"
       >
-        ${skills.map(
-          (s) =>
-            html`<span class="chargen-dm-review-chip chargen-dm-review-chip-skill"
-              >${s}</span
-            >`
-        )}
+        ${skills.map((s, idx) => this.renderSkillChip(s, idx, slot, editable))}
+        ${editable
+          ? adding
+            ? unused.length === 0
+              ? html`<span class="muted chargen-dm-review-chip-add-empty"
+                  >All categories chosen</span
+                >`
+              : html`<select
+                  class="chargen-dm-review-chip-input chargen-dm-review-chip-input-skill"
+                  aria-label="Add a skill category"
+                  autofocus
+                  @change=${(e: Event) =>
+                    this.commitSkillAdd(
+                      slot!,
+                      skills,
+                      (e.target as HTMLSelectElement).value
+                    )}
+                  @blur=${() => {
+                    this.addingChip = null;
+                  }}
+                >
+                  <option value="">— pick one —</option>
+                  ${unused.map(
+                    (c) => html`<option value=${c}>${c}</option>`
+                  )}
+                </select>`
+            : unused.length === 0
+              ? nothing
+              : html`<button
+                  type="button"
+                  class="chargen-dm-review-chip chargen-dm-review-chip-add"
+                  title="Add a skill category"
+                  @click=${() => {
+                    this.addingChip = { slot: slot!, kind: 'skill' };
+                  }}
+                >
+                  +
+                </button>`
+          : nothing}
       </div>
     `;
+  }
+
+  private renderSkillChip(
+    text: string,
+    idx: number,
+    slot: number | undefined,
+    editable: boolean
+  ): TemplateResult {
+    if (!editable || slot === undefined) {
+      return html`<span
+        class="chargen-dm-review-chip chargen-dm-review-chip-skill"
+        >${text}</span
+      >`;
+    }
+    return html`<span
+      class="chargen-dm-review-chip chargen-dm-review-chip-skill chargen-dm-review-chip-editable"
+    >
+      <span class="chargen-dm-review-chip-text">${text}</span>
+      <button
+        type="button"
+        class="chargen-dm-review-chip-remove"
+        title="Remove this skill"
+        aria-label="Remove skill ${text}"
+        @click=${() => this.handleSkillRemove(slot, idx)}
+      >
+        ×
+      </button>
+    </span>`;
+  }
+
+  private commitSkillAdd(
+    slot: number,
+    skills: readonly string[],
+    value: string
+  ): void {
+    if (value.length > 0 && !skills.includes(value) && this.onEditPreAccept) {
+      this.onEditPreAccept(slot, { skillMastery: [...skills, value] });
+    }
+    this.addingChip = null;
+  }
+
+  private handleSkillRemove(slot: number, idx: number): void {
+    const synth = this.synthResults.get(slot);
+    if (!synth?.ok || !this.onEditPreAccept) return;
+    const skills = synth.response.skillMastery;
+    const next = [...skills.slice(0, idx), ...skills.slice(idx + 1)];
+    this.onEditPreAccept(slot, { skillMastery: next });
   }
 
   /**
