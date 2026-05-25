@@ -158,6 +158,7 @@ function makeEnv(
       return true;
     },
     getPcSlots: () => mockSlots,
+    getSeatCap: () => 9,
     loadedPcs: loaded,
     scratchNotes,
     pcCreates,

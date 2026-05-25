@@ -1184,6 +1184,44 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
   });
 });
 
+describe('<chargen-dm-review> — P-R2 campaign-configured seatCap', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('"+ add player" stays available when not at cap', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('a'), 2: bound('b'), 3: bound('c') };
+    el.seatCap = 5;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-add-seat')).not.toBeNull();
+  });
+
+  it('"+ add player" hides when cap is reached (campaign-declared)', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('a'), 2: bound('b'), 3: bound('c') };
+    el.seatCap = 3;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-add-seat')).toBeNull();
+    expect(el.querySelector('.chargen-dm-review-cap-note')).not.toBeNull();
+    expect(el.querySelector('.chargen-dm-review-cap-note')!.textContent).toMatch(
+      /Seat cap reached \(3\)/
+    );
+  });
+
+  it('default seatCap is the engine default (9)', async () => {
+    const el = mount();
+    // Default property value should be 9 — confirmed by the cap
+    // note's text below.
+    el.pcSlots = {};
+    for (let i = 1; i <= 9; i++) el.pcSlots[i] = bound(`pc${i}`);
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-cap-note')!.textContent).toMatch(
+      /Seat cap reached \(9\)/
+    );
+  });
+});
+
 describe('<chargen-dm-review> — Wave 2 stat swap-pair editor', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

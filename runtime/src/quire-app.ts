@@ -59,6 +59,7 @@ import {
   loadCampaign,
   fetchCampaignFile,
   CampaignLoadError,
+  resolveSeatCap,
   type LoadedCampaign as LoadedCampaignBase
 } from './campaign-loader';
 import { loadEpisode, loadScene, type LoadedEpisode } from './episode-loader';
@@ -305,7 +306,8 @@ export class QuireApp extends LitElement {
     bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId),
     appendSeatAdd: (slot: number) => this.appendSeatAdd(slot),
     appendSeatRemove: (slot: number) => this.appendSeatRemove(slot),
-    getPcSlots: () => this.sessionView?.shared.pcSlots ?? {}
+    getPcSlots: () => this.sessionView?.shared.pcSlots ?? {},
+    getSeatCap: () => this.currentSeatCap()
   });
 
   /**
@@ -1311,6 +1313,7 @@ export class QuireApp extends LitElement {
         .onAddSeat=${() => this.chargen.addSeat()}
         .onRemoveSeat=${(slot: number) => this.chargen.removeSeat(slot)}
         .onReaddSeat=${(slot: number) => this.chargen.readdSeat(slot)}
+        .seatCap=${this.currentSeatCap()}
         .onEditPreAccept=${(
           slot: number,
           patch: Partial<
@@ -1417,9 +1420,22 @@ export class QuireApp extends LitElement {
     if (!this.session) return false;
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
-    if (!Number.isInteger(slot) || slot < 1 || slot > 9) return false;
+    if (!Number.isInteger(slot) || slot < 1 || slot > this.currentSeatCap()) {
+      return false;
+    }
     this.session.append('pc-slot-bind', { v: 1, slot, pcId });
     return true;
+  }
+
+  /**
+   * P-R2 (2026-05-25): the effective seat cap for the currently
+   * loaded campaign, falling back to the engine default when no
+   * campaign is loaded or the campaign doesn't declare one.  This
+   * is the single source of truth used by both the host API guards
+   * (bindPcSlot, appendSeatAdd) and the UI's "+ add player" verb.
+   */
+  currentSeatCap(): number {
+    return resolveSeatCap(this.getCurrentCampaign()?.base.manifest);
   }
 
   /**
@@ -1433,10 +1449,10 @@ export class QuireApp extends LitElement {
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
     if (!Number.isInteger(slot) || slot < 1) return false;
-    // Soft cap at the API boundary (engine accepts arbitrary
-    // positive integers per Phase B-prime; UI/API enforces the
-    // 1..9 convention until V-10 makes the cap campaign-config).
-    if (slot > 9) return false;
+    // P-R2: cap is now per-campaign (manifest.characterCreation.seatCap)
+    // with engine default 9.  Engine accepts arbitrary positive
+    // integers; this is the campaign-policy gate.
+    if (slot > this.currentSeatCap()) return false;
     this.session.append('seat-add', { v: 1, slot });
     return true;
   }

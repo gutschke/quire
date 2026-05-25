@@ -322,6 +322,16 @@ export class ChargenDmReview extends LitElement {
     new Map();
 
   /**
+   * P-R2 (2026-05-25): effective seat cap from the loaded campaign
+   * (or DEFAULT_SEAT_CAP fallback).  Used to gate the "+ add player"
+   * verb visibility — when all 1..cap slots are taken, "+ add player"
+   * hides and shows the cap-reached note instead.  Property (not
+   * constant) so a campaign manifest with a larger seatCap can
+   * raise the UI cap without recompiling.
+   */
+  @property({ type: Number }) seatCap = SOFT_SEAT_CAP;
+
+  /**
    * Per-seat last-generated link (transient — cleared when the DM
    * picks a different slot to generate for OR the page reloads).
    * Local to the region because re-generating after the DM has
@@ -534,7 +544,7 @@ export class ChargenDmReview extends LitElement {
               + add player
             </button>`
           : html`<span class="muted chargen-dm-review-cap-note">
-              Seat cap reached (${SOFT_SEAT_CAP}).  Retire a PC to
+              Seat cap reached (${this.seatCap}).  Retire a PC to
               free continuity, or raise the campaign's seat cap.
             </span>`}
         ${hasActive
@@ -564,7 +574,7 @@ export class ChargenDmReview extends LitElement {
       taken.add(Number(slotStr));
     }
     if (this.workingSlot !== null) taken.add(this.workingSlot);
-    for (let i = 1; i <= SOFT_SEAT_CAP; i++) {
+    for (let i = 1; i <= this.seatCap; i++) {
       if (!taken.has(i)) return i;
     }
     return null;

@@ -171,6 +171,12 @@ export interface ChargenHost {
    * Returns an empty map when no session is active.
    */
   getPcSlots(): Record<number, { state: string; pcId?: string }>;
+  /**
+   * P-R2 (2026-05-25): effective seat cap from the loaded campaign
+   * manifest (or DEFAULT_SEAT_CAP fallback).  The controller uses
+   * it as the upper bound on addSeat's lowest-unused search.
+   */
+  getSeatCap(): number;
 }
 
 /**
@@ -376,7 +382,8 @@ export class ChargenController implements ReactiveController {
     for (const slotStr of Object.keys(this.env.getPcSlots())) {
       taken.add(Number(slotStr));
     }
-    for (let slot = 1; slot <= 9; slot++) {
+    const cap = this.env.getSeatCap();
+    for (let slot = 1; slot <= cap; slot++) {
       if (taken.has(slot)) continue;
       if (this.env.appendSeatAdd(slot)) return slot;
       break; // fall through; appendSeatAdd failure means no session
