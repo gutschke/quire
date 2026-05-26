@@ -390,3 +390,57 @@ describe('Phase B P1c+ regression-guard — no spurious undefined keys (2026-05-
     expect(out.tax?.sessionsRemaining).toBe(1); // updated
   });
 });
+
+// =====================================================================
+// Task #295 (2026-05-25): dmNotes — DM-private soft-notes field.
+// Coordinator-only at the surface; engine accepts any peer's pc-edit
+// but the viewer-scope projection in core/state.ts wipes the overlay
+// from player-bound state.  Tests here pin the per-field validation
+// (string only, ≤ DM_NOTES_MAX chars, empty-string clears).
+// =====================================================================
+
+describe('Task #295 — dmNotes', () => {
+  it('writes dmNotes when value is a string', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { dmNotes: 'remember: deflect the premonition question' }
+    );
+    expect(r.dmNotes).toBe('remember: deflect the premonition question');
+  });
+
+  it('accepts an empty string (clears the notes)', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', dmNotes: 'old note' },
+      { dmNotes: '' }
+    );
+    expect(r.dmNotes).toBe('');
+  });
+
+  it('rejects non-string values silently', () => {
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', dmNotes: 'keep me' },
+      {
+        dmNotes: 42 as unknown as string
+      }
+    );
+    expect(r.dmNotes).toBe('keep me');
+  });
+
+  it('rejects oversized strings silently (preserves base)', () => {
+    const oversized = 'x'.repeat(2001);
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei', dmNotes: 'small' },
+      { dmNotes: oversized }
+    );
+    expect(r.dmNotes).toBe('small');
+  });
+
+  it('accepts strings at the boundary (length = DM_NOTES_MAX)', () => {
+    const exact = 'x'.repeat(2000);
+    const r = applyCharacterEdits(
+      { $schemaVersion: '0.1.0', name: 'Mei' },
+      { dmNotes: exact }
+    );
+    expect(r.dmNotes).toBe(exact);
+  });
+});

@@ -1254,6 +1254,93 @@ describe('filterForViewer (P0-4)', () => {
     const filtered = filterForViewer(s, 'alice');
     expect(filtered.synthesizedPcs).toEqual({});
   });
+
+  // ---- Task #295 (2026-05-25): pcEdits viewer-scope ----
+
+  it('Task #295: non-coord viewer sees dmNotes stripped from pcEdits', () => {
+    const s = dmState();
+    // Coordinator typed into the soft-notes textarea; the pc-edit
+    // event lands in state.pcEdits[pcId][dmNotes].  Without the
+    // projection strip, a player peer reading filteredShared would
+    // see the value directly.
+    s.pcEdits['pc-mei'] = {
+      harm: 1, // player-visible — keep
+      dmNotes: 'remember: their sister is the antagonist'
+    };
+    const filtered = filterForViewer(s, 'alice');
+    expect(filtered.pcEdits['pc-mei'].harm).toBe(1);
+    expect('dmNotes' in filtered.pcEdits['pc-mei']).toBe(false);
+  });
+
+  it('Task #295: pcEdits projection strips every DM-only field', () => {
+    const s = dmState();
+    // One-of-each across the DM_ONLY_CHARACTER_FIELDS list.
+    s.pcEdits['pc-mei'] = {
+      harm: 2, // KEEP
+      stress: 1, // KEEP
+      'stats.int': 3, // KEEP
+      magicPhase: 'tax', // STRIP
+      knowsTheyCanCast: true, // STRIP
+      'tax.active': true, // STRIP-NOT — tax.* is dotted, only the literal "tax" matches DM_ONLY
+      'threadDebt.rung': 'noticed', // STRIP-NOT — same as above
+      'alignmentDrift.marks': 2, // STRIP-NOT — same as above
+      dmNotes: 'a paragraph' // STRIP
+    };
+    const filtered = filterForViewer(s, 'alice');
+    const edits = filtered.pcEdits['pc-mei'];
+    expect(edits.harm).toBe(2);
+    expect(edits.stress).toBe(1);
+    expect(edits['stats.int']).toBe(3);
+    // The literal-field DM-only entries are gone.
+    expect('magicPhase' in edits).toBe(false);
+    expect('knowsTheyCanCast' in edits).toBe(false);
+    expect('dmNotes' in edits).toBe(false);
+    // Dotted sub-field edits are NOT in DM_ONLY_CHARACTER_FIELDS
+    // (which is keyed on top-level field names).  The whole-field
+    // gate at the synthesizedPcs projection already protects the
+    // rendered record; the dotted overlays would write into a
+    // stripped parent at render-time anyway.  This test pins the
+    // behavior so future drift gets caught.
+    expect(edits['tax.active']).toBe(true);
+  });
+
+  it('Task #295: DM-as-viewer sees pcEdits unchanged (identity fast-path)', () => {
+    const s = dmState();
+    s.pcEdits['pc-mei'] = {
+      dmNotes: 'secret reminder',
+      harm: 1
+    };
+    const filtered = filterForViewer(s, 'dm');
+    // Coord-self fast-path: no allocation, full state returned.
+    expect(filtered).toBe(s);
+    expect(filtered.pcEdits['pc-mei'].dmNotes).toBe('secret reminder');
+  });
+
+  it('Task #295: yielded-coord peer also gets dmNotes stripped from pcEdits', () => {
+    const s = dmState();
+    s.coordHolders.add('former-dm');
+    s.peers['former-dm'] = {
+      peerId: 'former-dm', name: 'Former DM', joinedAt: 0
+    };
+    s.pcEdits['pc-mei'] = {
+      dmNotes: 'note',
+      magicPhase: 'realization'
+    };
+    const filtered = filterForViewer(s, 'former-dm');
+    expect('dmNotes' in filtered.pcEdits['pc-mei']).toBe(false);
+    expect('magicPhase' in filtered.pcEdits['pc-mei']).toBe(false);
+  });
+
+  it('Task #295: filter does not mutate the source pcEdits', () => {
+    const s = dmState();
+    s.pcEdits['pc-mei'] = {
+      dmNotes: 'keep',
+      harm: 1
+    };
+    filterForViewer(s, 'alice');
+    // Source state retains the DM-only field.
+    expect(s.pcEdits['pc-mei'].dmNotes).toBe('keep');
+  });
 });
 
 /**

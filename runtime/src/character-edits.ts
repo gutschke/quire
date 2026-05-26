@@ -84,6 +84,13 @@ const MARK_BULLET_KEYS = new Set([
  *  AccidentalGrant.note. */
 const PC_EDIT_TEXT_FIELD_MAX = 200;
 
+/** Task #295 (2026-05-25): cap on the DM's private soft-notes
+ *  textarea on accepted PCs.  Generous enough for a few paragraphs
+ *  of "remember to..." / "their sister is the antagonist" prose;
+ *  bounded so a bug in a future AI-write path can't balloon state.
+ *  Mirrors the order-of-magnitude of CHAT_MAX_LENGTH × 4. */
+export const DM_NOTES_MAX = 2000;
+
 export function applyCharacterEdits(
   record: CharacterRecord,
   edits: Record<string, unknown> | undefined
@@ -203,6 +210,18 @@ export function applyCharacterEdits(
       if (!MARK_BULLET_KEYS.has(sub)) continue;
       if (typeof value !== 'boolean') continue;
       out.markBullets = { ...(out.markBullets ?? {}), [sub]: value };
+    } else if (key === 'dmNotes') {
+      // Task #295: DM-private soft-notes.  Free-text string; capped
+      // at DM_NOTES_MAX chars so the materialized state stays
+      // bounded.  Empty string is a valid edit (clears the notes);
+      // null / non-string values are ignored.  The viewer-scope
+      // projection in core/state.ts wipes this overlay from the
+      // player-bound pcEdits, mirroring the same wipe applied to
+      // synthesizedPcs[*].dmNotes — defense-in-depth so a player
+      // peer never sees the DM's private text.
+      if (typeof value !== 'string') continue;
+      if (value.length > DM_NOTES_MAX) continue;
+      out.dmNotes = value;
     }
   }
   return out;

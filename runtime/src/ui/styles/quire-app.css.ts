@@ -898,6 +898,44 @@ export const quireAppStyles = css`
       color: light-dark(#ffffff, #fecaca);
       font-weight: 600;
     }
+    /* Task #295: DM-private soft-notes editor on Active tiles.
+       Amber-left-border matches the DM-only convention used in the
+       chat-spoiler-lint modal + ai-card-dm.  Players never see this
+       block (host gates render). */
+    .stage-roster-dmnotes {
+      margin-top: 0.45rem;
+      padding-top: 0.4rem;
+      border-top: 1px dashed light-dark(#cbd5e1, #334155);
+    }
+    .stage-roster-dmnotes-toggle {
+      padding: 0.2rem 0.55rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82em;
+    }
+    .stage-roster-dmnotes-toggle-filled {
+      border-color: light-dark(#d97706, #f59e0b);
+      color: light-dark(#92400e, #fbbf24);
+      font-weight: 500;
+    }
+    .stage-roster-dmnotes-text {
+      display: block;
+      width: 100%;
+      margin-top: 0.35rem;
+      padding: 0.45rem;
+      box-sizing: border-box;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-left: 3px solid light-dark(#d97706, #f59e0b);
+      background: light-dark(#fffbeb, #1c1917);
+      color: inherit;
+      border-radius: 3px;
+      resize: vertical;
+    }
     .stage-roster-empty {
       padding: 0.7rem;
       font-style: italic;

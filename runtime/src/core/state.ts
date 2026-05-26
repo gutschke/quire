@@ -10,7 +10,10 @@
 
 import type { PeerId, QuireEvent } from './event-log';
 import type { CharacterRecord } from '../character-loader';
-import { stripDmOnlyFromCharacter } from '../character-loader';
+import {
+  stripDmOnlyFromCharacter,
+  DM_ONLY_CHARACTER_FIELDS
+} from '../character-loader';
 
 export interface PeerPresence {
   peerId: PeerId;
@@ -559,6 +562,24 @@ export function filterForViewer(
     // DM-only fields STRIPPED: retireReason, retiredScene, retiredAt.
     filteredPcSlots[slot] = out;
   }
+  // Task #295 (2026-05-25): strip DM-only field overlays from
+  // `pcEdits` too.  `synthesizedPcs` filtering above only protects
+  // the on-disk character record; once a DM types into the soft-
+  // notes textarea, the value lands in
+  // `state.pcEdits[pcId].dmNotes` and would otherwise be visible
+  // to any peer reading raw shared state.  Same field list as
+  // `DM_ONLY_CHARACTER_FIELDS` — single source of truth so the two
+  // projections can't drift.
+  const dmOnlyFieldSet = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
+  const filteredPcEdits: Record<string, Record<string, unknown>> = {};
+  for (const [pcId, edits] of Object.entries(state.pcEdits)) {
+    const safe: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(edits)) {
+      if (dmOnlyFieldSet.has(field)) continue;
+      safe[field] = value;
+    }
+    filteredPcEdits[pcId] = safe;
+  }
   return {
     ...state,
     // DM-only fields wiped:
@@ -569,6 +590,7 @@ export function filterForViewer(
     casterState: {},
     synthesizedPcs: filteredSynthesizedPcs,
     pcSlots: filteredPcSlots,
+    pcEdits: filteredPcEdits,
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };

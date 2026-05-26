@@ -98,7 +98,8 @@ import {
 import {
   applyCharacterEdits,
   STAT_MIN,
-  STAT_MAX
+  STAT_MAX,
+  DM_NOTES_MAX
 } from './character-edits';
 import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
 import {
@@ -2388,9 +2389,29 @@ export class QuireApp extends LitElement {
     const slots = v?.status === 'active' ? v.filteredShared.pcSlots : {};
     const synthesized =
       v?.status === 'active' ? v.filteredShared.synthesizedPcs : {};
+    // Task #295: collect current dmNotes per PC.  The shared state
+    // holds them under `pcEdits[pcId].dmNotes` (LWW overlay); fall
+    // back to the loaded record's dmNotes when no edit has happened
+    // yet.  Coord-only — filteredShared strips this for players, so
+    // the lookup naturally produces empty notes in non-coord views.
+    const dmNotesByPcId: Record<string, string> = {};
+    if (v?.status === 'active' && this.isCoordinator()) {
+      const pcEdits = v.shared.pcEdits;
+      for (const [pcId, record] of Object.entries(synthesized)) {
+        const editValue = pcEdits?.[pcId]?.dmNotes;
+        if (typeof editValue === 'string') {
+          dmNotesByPcId[pcId] = editValue;
+        } else if (typeof record.dmNotes === 'string') {
+          dmNotesByPcId[pcId] = record.dmNotes;
+        } else {
+          dmNotesByPcId[pcId] = '';
+        }
+      }
+    }
     return html`<stage-roster
       .pcSlots=${slots}
       .synthesizedPcs=${synthesized}
+      .dmNotesByPcId=${dmNotesByPcId}
       .displayNameLookup=${(pcId: string) => this.chargen.displayNameForBound(pcId)}
       .onRetirePc=${(slot: number) => {
         const seat = slots[slot];
@@ -2406,7 +2427,31 @@ export class QuireApp extends LitElement {
           reason: 'departed'
         });
       }}
+      .onSetDmNotes=${this.isCoordinator()
+        ? (pcId: string, value: string) =>
+            this.appendDmNotesEdit(pcId, value)
+        : null}
     ></stage-roster>`;
+  }
+
+  /**
+   * Task #295: dispatch a pc-edit event writing the DM-private
+   * soft-notes field.  Coord-only; bounded length enforced by the
+   * `applyCharacterEdits` validator (silently drops oversized).
+   */
+  appendDmNotesEdit(pcId: string, value: string): boolean {
+    if (!this.session) return false;
+    if (this.sessionView?.status !== 'active') return false;
+    if (!this.isCoordinator()) return false;
+    if (typeof pcId !== 'string' || pcId.length === 0) return false;
+    if (typeof value !== 'string') return false;
+    if (value.length > DM_NOTES_MAX) return false;
+    this.session.append('pc-edit', {
+      pcId,
+      field: 'dmNotes',
+      value
+    });
+    return true;
   }
 
   /**

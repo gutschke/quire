@@ -170,6 +170,140 @@ describe('<stage-roster>', () => {
     expect(tile?.textContent).toMatch(/Character data loading/);
   });
 
+  // ---- Task #295: DM-private soft-notes editor ----
+  describe('Task #295 — dmNotes editor', () => {
+    it('hides the notes block when onSetDmNotes is null (player view)', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      // onSetDmNotes intentionally null
+      await el.updateComplete;
+      expect(el.querySelector('.stage-roster-dmnotes')).toBeNull();
+    });
+
+    it('shows "Add notes" CTA when DM has no notes yet', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.onSetDmNotes = () => true;
+      await el.updateComplete;
+      const toggle = el.querySelector('.stage-roster-dmnotes-toggle');
+      expect(toggle).not.toBeNull();
+      expect(toggle?.textContent).toMatch(/Add notes/);
+      // Filled marker absent until notes exist.
+      expect(
+        el.querySelector('.stage-roster-dmnotes-toggle-filled')
+      ).toBeNull();
+    });
+
+    it('shows filled indicator when dmNotes is non-empty', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.dmNotesByPcId = { mei: 'remember the cabinet' };
+      el.onSetDmNotes = () => true;
+      await el.updateComplete;
+      const toggle = el.querySelector('.stage-roster-dmnotes-toggle');
+      expect(toggle?.textContent).toMatch(/Notes/);
+      expect(toggle?.classList.contains('stage-roster-dmnotes-toggle-filled'))
+        .toBe(true);
+    });
+
+    it('clicking the toggle opens the textarea pre-filled', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.dmNotesByPcId = { mei: 'cabinet code' };
+      el.onSetDmNotes = () => true;
+      await el.updateComplete;
+      const toggle = el.querySelector<HTMLButtonElement>(
+        '.stage-roster-dmnotes-toggle'
+      );
+      toggle!.click();
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.stage-roster-dmnotes-text'
+      );
+      expect(ta).not.toBeNull();
+      expect(ta!.value).toBe('cabinet code');
+    });
+
+    it('blurring the textarea fires onSetDmNotes with the new value', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.dmNotesByPcId = { mei: 'old' };
+      const calls: Array<[string, string]> = [];
+      el.onSetDmNotes = (pcId, value) => {
+        calls.push([pcId, value]);
+        return true;
+      };
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.stage-roster-dmnotes-toggle')!
+        .click();
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.stage-roster-dmnotes-text'
+      )!;
+      ta.value = 'new content';
+      ta.dispatchEvent(new Event('blur'));
+      expect(calls).toEqual([['mei', 'new content']]);
+    });
+
+    it('blur with unchanged value does NOT fire onSetDmNotes', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.dmNotesByPcId = { mei: 'same' };
+      const calls: Array<[string, string]> = [];
+      el.onSetDmNotes = (pcId, value) => {
+        calls.push([pcId, value]);
+        return true;
+      };
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.stage-roster-dmnotes-toggle')!
+        .click();
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.stage-roster-dmnotes-text'
+      )!;
+      // Value is unchanged from dmNotesByPcId.
+      ta.dispatchEvent(new Event('blur'));
+      expect(calls).toEqual([]);
+    });
+
+    it('per-PC toggles are independent (opening one does not open the other)', async () => {
+      const el = mount();
+      el.pcSlots = {
+        1: { state: 'bound-active', pcId: 'mei' },
+        2: { state: 'bound-active', pcId: 'reggie' }
+      };
+      el.synthesizedPcs = {
+        mei: record(),
+        reggie: record({ name: 'Reggie' })
+      };
+      el.displayNameLookup = (pcId) => (pcId === 'mei' ? 'Mei' : 'Reggie');
+      el.onSetDmNotes = () => true;
+      await el.updateComplete;
+      // Click only the first PC's toggle.
+      const toggles = el.querySelectorAll<HTMLButtonElement>(
+        '.stage-roster-dmnotes-toggle'
+      );
+      toggles[0].click();
+      await el.updateComplete;
+      const textareas = el.querySelectorAll('.stage-roster-dmnotes-text');
+      expect(textareas.length).toBe(1);
+    });
+  });
+
   it('sorts seats by slot integer', async () => {
     const el = mount();
     el.pcSlots = {

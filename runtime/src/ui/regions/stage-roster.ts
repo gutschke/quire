@@ -33,6 +33,13 @@ import type { SeatCardSeat } from '../components/seat-card';
 
 export type RetirePcCallback = (slot: number) => void;
 export type DisplayNameLookup = (pcId: string) => string | null;
+/**
+ * Task #295: persist a soft-notes edit on an accepted PC.  Returns
+ * true when the host accepted the edit (coord, length ok, session
+ * active); false when rejected.  The component does not depend on
+ * the return value — it's there for callers / tests.
+ */
+export type SetDmNotesCallback = (pcId: string, value: string) => boolean;
 
 type SubTab = 'active' | 'retired' | 'archived';
 
@@ -70,7 +77,32 @@ export class StageRoster extends LitElement {
   @property({ attribute: false })
   onRetirePc: RetirePcCallback | null = null;
 
+  /**
+   * Task #295: per-PC dmNotes overlay.  Map from pcId to the
+   * current notes value (typically taken from
+   * filteredShared.pcEdits[pcId].dmNotes, falling back to the
+   * loaded record's dmNotes).  Coord-only — never populated in
+   * a player-bound view because the viewer-scope projection
+   * strips dmNotes from both surfaces.
+   */
+  @property({ attribute: false })
+  dmNotesByPcId: Record<string, string> = {};
+
+  /**
+   * Task #295: persist a soft-notes edit.  When non-null, the
+   * Active-tile notes editor renders; when null, the disclosure
+   * is hidden (player-bound view, or coord without the wiring).
+   */
+  @property({ attribute: false })
+  onSetDmNotes: SetDmNotesCallback | null = null;
+
   @state() private activeSubTab: SubTab = 'active';
+
+  /**
+   * Task #295: per-PC "notes panel open" toggle.  Defaults closed
+   * so the Active tab stays compact; the DM clicks 📝 to expand.
+   */
+  @state() private openNotesPcId: Set<string> = new Set();
 
   override render(): TemplateResult {
     const slots = this.getSortedSlots();
@@ -160,8 +192,74 @@ export class StageRoster extends LitElement {
         .onRetire=${(s: number) => this.onRetirePc?.(s)}
       >
         ${this.renderActiveBody(record)}
+        ${this.renderDmNotes(pcId)}
       </seat-card>
     </li>`;
+  }
+
+  /**
+   * Task #295: DM-private soft-notes editor.  Rendered inside the
+   * seat-card body slot, below the harm/stress strip.  Defense-in-
+   * depth: when `onSetDmNotes` is null (player-bound view, or a
+   * coord-less context) the entire block is hidden — players never
+   * even see the disclosure toggle.
+   *
+   * The 📝 toggle shows a faint "·" indicator when the PC already
+   * has notes (so the DM knows-at-a-glance without expanding).
+   * Auto-saves on textarea blur — typical TTRPG DM workflow is "jot
+   * something then move on," not "save button."
+   */
+  private renderDmNotes(pcId: string): TemplateResult | typeof nothing {
+    if (!this.onSetDmNotes || !pcId) return nothing;
+    const current = this.dmNotesByPcId[pcId] ?? '';
+    const open = this.openNotesPcId.has(pcId);
+    const hasContent = current.length > 0;
+    return html`<div class="stage-roster-dmnotes">
+      <button
+        type="button"
+        class="stage-roster-dmnotes-toggle ${hasContent
+          ? 'stage-roster-dmnotes-toggle-filled'
+          : ''}"
+        aria-expanded=${open ? 'true' : 'false'}
+        title=${hasContent
+          ? 'DM notes — has content (click to view/edit)'
+          : 'Add DM notes (private — only you see these)'}
+        @click=${() => this.toggleDmNotes(pcId)}
+      >
+        📝 ${open ? 'Hide notes' : hasContent ? 'Notes ·' : 'Add notes'}
+      </button>
+      ${open
+        ? html`<textarea
+            class="stage-roster-dmnotes-text"
+            rows="3"
+            maxlength="2000"
+            placeholder="Private to the DM — players never see this.  e.g. 'remember: her sister is in the antagonist's cell'"
+            aria-label="DM-private notes for ${pcId}"
+            .value=${current}
+            @blur=${(e: Event) =>
+              this.commitDmNotes(
+                pcId,
+                (e.target as HTMLTextAreaElement).value
+              )}
+          ></textarea>`
+        : nothing}
+    </div>`;
+  }
+
+  private toggleDmNotes(pcId: string): void {
+    const next = new Set(this.openNotesPcId);
+    if (next.has(pcId)) next.delete(pcId);
+    else next.add(pcId);
+    this.openNotesPcId = next;
+  }
+
+  private commitDmNotes(pcId: string, value: string): void {
+    // Only dispatch when the value actually changed — avoids
+    // ricocheting through the autosave path on every focus/blur
+    // cycle where the DM didn't actually edit.
+    const prior = this.dmNotesByPcId[pcId] ?? '';
+    if (value === prior) return;
+    this.onSetDmNotes?.(pcId, value);
   }
 
   /**

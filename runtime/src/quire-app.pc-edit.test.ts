@@ -127,4 +127,64 @@ describe('QuireApp pc-edit', () => {
     await flush();
     expect(host.effectiveCharacter(fakePc('p1')).stress).toBe(2);
   });
+
+  // Task #295 — appendDmNotesEdit dispatches a pc-edit('dmNotes', …).
+  describe('Task #295 — appendDmNotesEdit', () => {
+    it('rejects calls outside an active session', () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      expect(app.appendDmNotesEdit('p1', 'note')).toBe(false);
+    });
+
+    it('coordinator writes dmNotes; merged record carries the value', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(app.appendDmNotesEdit('p1', 'sister is the antagonist')).toBe(
+        true
+      );
+      const merged = app.effectiveCharacter(fakePc('p1'));
+      expect(merged.dmNotes).toBe('sister is the antagonist');
+    });
+
+    it('LWW: a second dmNotes write replaces the first', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      app.appendDmNotesEdit('p1', 'first');
+      app.appendDmNotesEdit('p1', 'second');
+      expect(app.effectiveCharacter(fakePc('p1')).dmNotes).toBe('second');
+    });
+
+    it('empty string clears the note', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      app.appendDmNotesEdit('p1', 'something');
+      app.appendDmNotesEdit('p1', '');
+      expect(app.effectiveCharacter(fakePc('p1')).dmNotes).toBe('');
+    });
+
+    it('rejects oversized values (>2000 chars)', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(app.appendDmNotesEdit('p1', 'x'.repeat(2001))).toBe(false);
+      expect(app.effectiveCharacter(fakePc('p1')).dmNotes).toBeUndefined();
+    });
+
+    it('non-coordinator (player peer) cannot write dmNotes', async () => {
+      const network = new InMemoryNetwork();
+      const host = mountApp(inMemoryFactory(network, 'HOST'));
+      host.startHosting();
+      await flush();
+      const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+      guest.joinCodeDraft = 'HOST';
+      guest.joinSession();
+      await flush();
+      expect(guest.isCoordinator()).toBe(false);
+      expect(guest.appendDmNotesEdit('p1', 'sneaky note')).toBe(false);
+      // And the host's effective record carries nothing.
+      expect(host.effectiveCharacter(fakePc('p1')).dmNotes).toBeUndefined();
+    });
+  });
 });
