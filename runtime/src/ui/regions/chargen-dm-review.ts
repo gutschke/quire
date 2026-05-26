@@ -38,6 +38,7 @@ import { QUIRE_SKILL_CATEGORIES } from '../../ai/schema';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 import type { Seat } from '../../core/state';
 import '../components/quire-modal';
+import '../components/chip-editor';
 
 /**
  * Phase B-prime (2026-05-25): the 9-slot grid that pre-dated this
@@ -477,16 +478,13 @@ export class ChargenDmReview extends LitElement {
     to: 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA';
   } | null = null;
 
-  /**
-   * Wave 2 (2026-05-25): which seat is currently in chip-add mode,
-   * either for tags ('tag') or skills ('skill').  Renders an inline
-   * input or dropdown that commits to onEditPreAccept on enter/pick.
-   * Single-open at a time (opening one closes any other).
+  /*
+   * Phase 3b (2026-05-25): per-slot chip-add open/close state
+   * moved into the <chip-editor> primitive (see ../components/
+   * chip-editor.ts).  Each chip-editor manages its own open
+   * state — UX-R4 #4 fix: opening tag-add on PC1 no longer
+   * silently closes it on PC2.
    */
-  @state() private addingChip: {
-    slot: number;
-    kind: 'tag' | 'skill';
-  } | null = null;
 
   /**
    * P-R6 (2026-05-25): which bound seat is the DM retiring (modal
@@ -2262,96 +2260,33 @@ export class ChargenDmReview extends LitElement {
       !!this.onEditPreAccept &&
       !this.acceptedSlots.has(slot) &&
       this.synthResults.get(slot)?.ok === true;
-    const adding =
-      editable &&
-      this.addingChip?.slot === slot &&
-      this.addingChip.kind === 'tag';
-    return html`
-      <div
-        class="chargen-dm-review-chips chargen-dm-review-tags"
-        aria-label="Tags"
-      >
-        ${tags.map((t, idx) => this.renderTagChip(t, idx, slot, editable))}
-        ${editable
-          ? adding
-            ? html`<input
-                type="text"
-                class="chargen-dm-review-chip-input chargen-dm-review-chip-input-tag"
-                placeholder="new tag"
-                autofocus
-                aria-label="Add a new tag"
-                @keydown=${(e: KeyboardEvent) =>
-                  this.handleTagAddKey(e, slot!, tags)}
-                @blur=${(e: FocusEvent) =>
-                  this.commitTagAdd(
-                    slot!,
-                    tags,
-                    (e.target as HTMLInputElement).value
-                  )}
-              />`
-            : html`<button
-                type="button"
-                class="chargen-dm-review-chip chargen-dm-review-chip-add"
-                title="Add a new tag"
-                aria-label="Add a new tag"
-                @click=${() => {
-                  this.addingChip = { slot: slot!, kind: 'tag' };
-                }}
-              >
-                + tag
-              </button>`
-          : nothing}
-      </div>
-    `;
+    return html`<chip-editor
+      class="chargen-dm-review-chips chargen-dm-review-tags"
+      aria-label="Tags"
+      kind="text"
+      labelAdd="+ tag"
+      labelAriaAdd="Add a new tag"
+      labelAriaRemoveTemplate="Remove tag {0}"
+      placeholder="new tag"
+      ?editable=${editable}
+      ?dedupe=${true}
+      .items=${tags}
+      .onAdd=${editable && slot !== undefined
+        ? (v: string) => this.handleTagAdd(slot, tags, v)
+        : null}
+      .onRemove=${editable && slot !== undefined
+        ? (i: number) => this.handleTagRemove(slot, i)
+        : null}
+    ></chip-editor>`;
   }
 
-  private renderTagChip(
-    text: string,
-    idx: number,
-    slot: number | undefined,
-    editable: boolean
-  ): TemplateResult {
-    if (!editable || slot === undefined) {
-      return html`<span class="chargen-dm-review-chip">${text}</span>`;
-    }
-    return html`<span class="chargen-dm-review-chip chargen-dm-review-chip-editable">
-      <span class="chargen-dm-review-chip-text">${text}</span>
-      <button
-        type="button"
-        class="chargen-dm-review-chip-remove"
-        title="Remove this tag"
-        aria-label="Remove tag ${text}"
-        @click=${() => this.handleTagRemove(slot, idx)}
-      >
-        ×
-      </button>
-    </span>`;
-  }
-
-  private handleTagAddKey(
-    e: KeyboardEvent,
-    slot: number,
-    tags: readonly string[]
-  ): void {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      this.commitTagAdd(slot, tags, (e.target as HTMLInputElement).value);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      this.addingChip = null;
-    }
-  }
-
-  private commitTagAdd(
+  private handleTagAdd(
     slot: number,
     tags: readonly string[],
-    raw: string
+    value: string
   ): void {
-    const value = raw.trim();
-    if (value.length > 0 && !tags.includes(value) && this.onEditPreAccept) {
-      this.onEditPreAccept(slot, { tags: [...tags, value] });
-    }
-    this.addingChip = null;
+    if (!this.onEditPreAccept) return;
+    this.onEditPreAccept(slot, { tags: [...tags, value] });
   }
 
   private handleTagRemove(slot: number, idx: number): void {
@@ -2582,97 +2517,34 @@ export class ChargenDmReview extends LitElement {
       !!this.onEditPreAccept &&
       !this.acceptedSlots.has(slot) &&
       this.synthResults.get(slot)?.ok === true;
-    const adding =
-      editable &&
-      this.addingChip?.slot === slot &&
-      this.addingChip.kind === 'skill';
-    const unused = QUIRE_SKILL_CATEGORIES.filter((c) => !skills.includes(c));
-    return html`
-      <div
-        class="chargen-dm-review-chips chargen-dm-review-skills"
-        aria-label="Skill mastery"
-      >
-        ${skills.map((s, idx) => this.renderSkillChip(s, idx, slot, editable))}
-        ${editable
-          ? adding
-            ? unused.length === 0
-              ? html`<span class="muted chargen-dm-review-chip-add-empty"
-                  >All categories chosen</span
-                >`
-              : html`<select
-                  class="chargen-dm-review-chip-input chargen-dm-review-chip-input-skill"
-                  aria-label="Add a skill category"
-                  autofocus
-                  @change=${(e: Event) =>
-                    this.commitSkillAdd(
-                      slot!,
-                      skills,
-                      (e.target as HTMLSelectElement).value
-                    )}
-                  @blur=${() => {
-                    this.addingChip = null;
-                  }}
-                >
-                  <option value="">— pick one —</option>
-                  ${unused.map(
-                    (c) => html`<option value=${c}>${c}</option>`
-                  )}
-                </select>`
-            : unused.length === 0
-              ? nothing
-              : html`<button
-                  type="button"
-                  class="chargen-dm-review-chip chargen-dm-review-chip-add"
-                  title="Add a skill category"
-                  aria-label="Add a skill category"
-                  @click=${() => {
-                    this.addingChip = { slot: slot!, kind: 'skill' };
-                  }}
-                >
-                  + skill
-                </button>`
-          : nothing}
-      </div>
-    `;
+    return html`<chip-editor
+      class="chargen-dm-review-chips chargen-dm-review-skills"
+      aria-label="Skill mastery"
+      kind="select"
+      chipClass="chargen-dm-review-chip-skill"
+      labelAdd="+ skill"
+      labelAriaAdd="Add a skill category"
+      labelAriaRemoveTemplate="Remove skill {0}"
+      ?editable=${editable}
+      ?dedupe=${true}
+      .items=${skills}
+      .options=${[...QUIRE_SKILL_CATEGORIES]}
+      .onAdd=${editable && slot !== undefined
+        ? (v: string) => this.handleSkillAdd(slot, skills, v)
+        : null}
+      .onRemove=${editable && slot !== undefined
+        ? (i: number) => this.handleSkillRemove(slot, i)
+        : null}
+    ></chip-editor>`;
   }
 
-  private renderSkillChip(
-    text: string,
-    idx: number,
-    slot: number | undefined,
-    editable: boolean
-  ): TemplateResult {
-    if (!editable || slot === undefined) {
-      return html`<span
-        class="chargen-dm-review-chip chargen-dm-review-chip-skill"
-        >${text}</span
-      >`;
-    }
-    return html`<span
-      class="chargen-dm-review-chip chargen-dm-review-chip-skill chargen-dm-review-chip-editable"
-    >
-      <span class="chargen-dm-review-chip-text">${text}</span>
-      <button
-        type="button"
-        class="chargen-dm-review-chip-remove"
-        title="Remove this skill"
-        aria-label="Remove skill ${text}"
-        @click=${() => this.handleSkillRemove(slot, idx)}
-      >
-        ×
-      </button>
-    </span>`;
-  }
-
-  private commitSkillAdd(
+  private handleSkillAdd(
     slot: number,
     skills: readonly string[],
     value: string
   ): void {
-    if (value.length > 0 && !skills.includes(value) && this.onEditPreAccept) {
-      this.onEditPreAccept(slot, { skillMastery: [...skills, value] });
-    }
-    this.addingChip = null;
+    if (!this.onEditPreAccept) return;
+    this.onEditPreAccept(slot, { skillMastery: [...skills, value] });
   }
 
   private handleSkillRemove(slot: number, idx: number): void {
