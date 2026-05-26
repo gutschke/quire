@@ -1324,6 +1324,7 @@ export class QuireApp extends LitElement {
           slot: number,
           field: keyof import('./ai/schema').PcBackstorySynthesisResponse
         ) => this.chargen.dismissPreAcceptDrift(slot, field)}
+        .onPatchInPlace=${(slot: number) => this.chargen.patchInPlace(slot)}
         .preAcceptDrift=${this.chargen.preAcceptDriftMap()}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}

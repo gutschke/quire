@@ -512,6 +512,76 @@ export class ChargenController implements ReactiveController {
     return this._preAcceptOriginals;
   }
 
+  /**
+   * Wave 3a (2026-05-25): apply a deterministic find-replace to the
+   * cached backstory based on the patchable subset of drift entries
+   * (name + pronouns).  No AI call required; appropriate for
+   * "Mei → Mai" and "she/her → they/them" identifier swaps.
+   *
+   * Tag/skill/stat edits and substantial pronoun rewrites need
+   * AI re-sync (Wave 3b).  This method silently skips those fields;
+   * caller checks `patchableDriftFields(slot)` to know which were
+   * deterministically applied.
+   *
+   * Returns true when at least one field was patched; false when
+   * the slot has no patchable drift.  Dismisses the drift entries
+   * that were applied so the banner reflects the new state.
+   */
+  patchInPlace(slot: number): boolean {
+    if (this._acceptedSlots.has(slot)) return false;
+    const result = this._synthResults.get(slot);
+    if (!result || !result.ok) return false;
+    const drift = this._preAcceptOriginals.get(slot);
+    if (!drift) return false;
+    const patchable = this.patchableDriftFields(slot);
+    if (patchable.length === 0) return false;
+    let text = result.response.backstory;
+    for (const field of patchable) {
+      if (field === 'name') {
+        const old = drift.name;
+        const next = result.response.name;
+        if (typeof old === 'string' && typeof next === 'string' && old !== next) {
+          text = replaceAll(text, old, next);
+        }
+      } else if (field === 'pronouns') {
+        const old = drift.pronouns;
+        const next = result.response.pronouns;
+        if (typeof old === 'string' && typeof next === 'string' && old !== next) {
+          text = applyPronounSubstitutions(text, old, next);
+        }
+      }
+    }
+    // Apply the patched backstory + dismiss the drift entries that
+    // were honored.  The backstory edit itself does NOT add a new
+    // drift entry — it's a direct application of existing drift.
+    result.response.backstory = text;
+    for (const field of patchable) {
+      delete (drift as Record<string, unknown>)[field];
+    }
+    if (Object.keys(drift).length === 0) {
+      this._preAcceptOriginals.delete(slot);
+    }
+    this.host.requestUpdate();
+    return true;
+  }
+
+  /**
+   * Wave 3a: which drift fields can be patched deterministically
+   * (find-replace, no AI).  Currently: `name` and `pronouns`.
+   * Other fields (tags / skillMastery / stats) require AI re-sync
+   * (Wave 3b).
+   */
+  patchableDriftFields(
+    slot: number
+  ): Array<'name' | 'pronouns'> {
+    const drift = this._preAcceptOriginals.get(slot);
+    if (!drift) return [];
+    const out: Array<'name' | 'pronouns'> = [];
+    if ('name' in drift) out.push('name');
+    if ('pronouns' in drift) out.push('pronouns');
+    return out;
+  }
+
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
     const result = this._synthResults.get(slot);
@@ -1131,4 +1201,91 @@ function derivePcId(slot: number, responseId: string): string | null {
   if (safe.length === 0) return null;
   const short = safe.slice(0, 8);
   return `slot-${slot}-${short}`;
+}
+
+/**
+ * Wave 3a (2026-05-25): plain find-replace that escapes regex
+ * metachars in the needle.  Used for name patching — the haystack
+ * (backstory) may contain regex-special chars but the needle
+ * (PC name) is treated literally.
+ */
+function replaceAll(haystack: string, needle: string, replacement: string): string {
+  if (needle.length === 0) return haystack;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return haystack.replace(new RegExp(escaped, 'g'), replacement);
+}
+
+/**
+ * Wave 3a: deterministic pronoun substitution.  Handles the SAFE
+ * subset: subject (she/he/they/ze), reflexive (herself/himself/
+ * themselves/zirself), and possessive-determiner-when-followed-by-
+ * a-noun-stem (hers/his/theirs/zirs).
+ *
+ * Deliberately DOES NOT touch the ambiguous "her"/"him" forms —
+ * "her" can be object ("saw her") or possessive ("her keys"); the
+ * correct substitute differs ("them" vs "their").  Same for "his"
+ * vs "him".  Wave 3b adds an AI verb-fixup pass that disambiguates.
+ *
+ * Limitations (documented for Wave 3b followup):
+ *   - Doesn't fix verb agreement ("she was" → "they were").
+ *   - Doesn't handle capitalized sentence-start variants robustly
+ *     (matches case-sensitively only).
+ *   - Does NOT touch unknown pronoun sets (custom pronouns); falls
+ *     through to a single safe rewrite of subject only.
+ */
+function applyPronounSubstitutions(
+  text: string,
+  fromPronouns: string,
+  toPronouns: string
+): string {
+  const from = parsePronounSet(fromPronouns);
+  const to = parsePronounSet(toPronouns);
+  if (!from || !to) {
+    // Unknown set — punt; user can revise manually.
+    return text;
+  }
+  let out = text;
+  // Order matters: longer substitutions first so we don't partially
+  // match a shorter form embedded in a longer one.
+  const subs: Array<[string, string]> = [
+    [from.reflexive, to.reflexive],
+    [from.possessive, to.possessive],
+    [from.subject, to.subject]
+  ];
+  // Word-boundary regex to avoid matching inside other words
+  // ("she" → "they" should not touch "shed" or "sherbet").
+  for (const [a, b] of subs) {
+    if (a === b) continue;
+    const escaped = a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`\\b${escaped}\\b`, 'g'), b);
+  }
+  return out;
+}
+
+/**
+ * Wave 3a: lookup table for the SAFE pronoun substitution subset.
+ * Subject + reflexive + possessive-determiner.  Skips object form
+ * ("her"/"him") and possessive-pronoun ("hers" vs "his") because
+ * they disambiguate context-dependently.
+ *
+ * Returns null for unknown pronoun strings; caller falls back to
+ * a no-op (AI re-sync in Wave 3b will handle custom sets).
+ */
+function parsePronounSet(
+  raw: string
+): { subject: string; reflexive: string; possessive: string } | null {
+  const t = raw.trim().toLowerCase();
+  if (t === 'she/her' || t === 'she') {
+    return { subject: 'she', reflexive: 'herself', possessive: 'hers' };
+  }
+  if (t === 'he/him' || t === 'he') {
+    return { subject: 'he', reflexive: 'himself', possessive: 'his' };
+  }
+  if (t === 'they/them' || t === 'they') {
+    return { subject: 'they', reflexive: 'themselves', possessive: 'theirs' };
+  }
+  if (t === 'ze/zir' || t === 'ze') {
+    return { subject: 'ze', reflexive: 'zirself', possessive: 'zirs' };
+  }
+  return null;
 }

@@ -137,6 +137,13 @@ export type DismissDriftCallback = (
   field: keyof PcBackstorySynthesisResponse
 ) => void;
 /**
+ * Wave 3a (2026-05-25): DM applies deterministic find-replace
+ * patches to the backstory for the patchable subset of drift
+ * fields (name + pronouns).  Returns true on success.  Host
+ * wires to ChargenController.patchInPlace.
+ */
+export type PatchInPlaceCallback = (slot: number) => boolean;
+/**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no
  * answers are saved on this device.
@@ -310,6 +317,14 @@ export class ChargenDmReview extends LitElement {
    */
   @property({ attribute: false })
   onDismissDrift: DismissDriftCallback | null = null;
+
+  /**
+   * Wave 3a (2026-05-25): "Patch in place" — applies deterministic
+   * find-replace to the backstory for the patchable subset (name +
+   * safe-subset pronouns).  Hidden when no callback wired.
+   */
+  @property({ attribute: false })
+  onPatchInPlace: PatchInPlaceCallback | null = null;
 
   /**
    * Wave 2 (2026-05-25): per-slot map of original AI values for
@@ -1603,18 +1618,65 @@ export class ChargenDmReview extends LitElement {
     if (fields.length === 0) return nothing;
     const synth = this.synthResults.get(slot);
     if (!synth?.ok) return nothing;
+    // Wave 3a: which fields are deterministically patchable.
+    const patchable = fields.filter((f) => f === 'name' || f === 'pronouns');
+    const hasUnpatchable = fields.length > patchable.length;
     return html`
       <div class="chargen-dm-review-drift" role="status">
-        <div class="chargen-dm-review-drift-pip">
-          ✎ <strong>${fields.length} edit${fields.length === 1 ? '' : 's'}</strong>
-          since synth.  Prose may now mismatch — the AI re-sync tool
-          arrives in a follow-up.
-        </div>
+        ${this.renderDriftPip(fields.length, patchable.length, hasUnpatchable)}
         <ul class="chargen-dm-review-drift-list">
           ${fields.map((field) => this.renderDriftRow(slot, field, drift, synth.response))}
         </ul>
+        ${patchable.length > 0 && this.onPatchInPlace
+          ? html`<div class="chargen-dm-review-drift-actions">
+              <button
+                type="button"
+                class="chargen-dm-review-drift-patch"
+                title="Apply name/pronoun substitutions to the backstory text deterministically (no AI call)"
+                @click=${() => this.handlePatchInPlace(slot)}
+              >
+                Patch ${this.summarizePatchable(patchable)} in backstory
+              </button>
+            </div>`
+          : nothing}
       </div>
     `;
+  }
+
+  private summarizePatchable(
+    patchable: Array<keyof PcBackstorySynthesisResponse>
+  ): string {
+    if (patchable.length === 1) return String(patchable[0]);
+    return patchable.map((p) => String(p)).join(' + ');
+  }
+
+  private renderDriftPip(
+    total: number,
+    patchableCount: number,
+    hasUnpatchable: boolean
+  ): TemplateResult {
+    if (hasUnpatchable && patchableCount > 0) {
+      return html`<div class="chargen-dm-review-drift-pip">
+        ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
+        synth.  Patch covers name + pronoun substitutions; the AI
+        re-sync tool (for tag / stat / skill rewrites) arrives next.
+      </div>`;
+    }
+    if (hasUnpatchable) {
+      return html`<div class="chargen-dm-review-drift-pip">
+        ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
+        synth.  Prose may now mismatch — the AI re-sync tool arrives
+        next.
+      </div>`;
+    }
+    return html`<div class="chargen-dm-review-drift-pip">
+      ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
+      synth.  Patch applies the substitution to the backstory text.
+    </div>`;
+  }
+
+  private handlePatchInPlace(slot: number): void {
+    this.onPatchInPlace?.(slot);
   }
 
   /**

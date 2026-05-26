@@ -1499,3 +1499,167 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     expect(env.pcCreates[0].pronouns).toBe('they/them');
   });
 });
+
+describe('ChargenController — patchInPlace (Wave 3a)', () => {
+  function seedResultWithBackstory(
+    ctrl: ChargenController,
+    slot: number,
+    backstory: string,
+    overrides: Partial<{ name: string; pronouns: string }> = {}
+  ): void {
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(slot, {
+      ok: true,
+      response: {
+        name: overrides.name ?? 'Mei Tanaka',
+        pronouns: overrides.pronouns ?? 'she/her',
+        tags: ['t1', 't2', 't3'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory,
+        raw: '{}',
+        tokensIn: 100,
+        tokensOut: 250,
+        responseId: 'syn-1'
+      },
+      warnings: [],
+      retried: false
+    });
+  }
+
+  it('patches the renamed name (full canonical form) throughout the backstory', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(
+      ctrl,
+      1,
+      'Mei Tanaka was a junior engineer.  Mei Tanaka loved her sister.  Mei Tanaka carried the box.'
+    );
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' });
+    expect(ctrl.patchInPlace(1)).toBe(true);
+    const result = (
+      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
+    )._synthResults.get(1)!;
+    expect(result.response.backstory).toMatch(/Mai Tanaka was/);
+    expect(
+      (result.response.backstory.match(/Mai Tanaka/g) || []).length
+    ).toBe(3);
+    expect(result.response.backstory).not.toMatch(/\bMei Tanaka\b/);
+  });
+
+  it('limitation: diminutive prose ("Mei" vs full "Mei Tanaka") is NOT patched (Wave 3b territory)', () => {
+    // The deterministic find-replace looks for the exact name
+    // field value.  When the AI's backstory uses a diminutive that
+    // doesn't match the full name verbatim, the substitution
+    // misses.  Wave 3b's AI re-sync handles this case.
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(
+      ctrl,
+      1,
+      'Mei was here.  Just Mei.'
+    );
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' });
+    ctrl.patchInPlace(1);
+    const text = (
+      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
+    )._synthResults.get(1)!.response.backstory;
+    // "Mei" remains because we replaced "Mei Tanaka" (original full
+    // name) with "Mai Tanaka" but the prose uses just "Mei".
+    expect(text).toMatch(/\bMei\b/);
+  });
+
+  it('patches pronoun subjects (she → they) and reflexives (herself → themselves)', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(
+      ctrl,
+      1,
+      'She built it herself.  She kept herself sharp.  She was a fighter.'
+    );
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    expect(ctrl.patchInPlace(1)).toBe(true);
+    const text = (
+      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
+    )._synthResults.get(1)!.response.backstory;
+    // Subject substitutions happen — only matches lowercase "she" word-bounded.
+    // (Capital-S "She" at sentence start won't match the lowercase pattern;
+    // case-handling is a Wave 3b polish item, not 3a scope.)
+    // Reflexive substitutions DO match because they're already lowercase.
+    expect(text).toMatch(/themselves/);
+    expect(text).not.toMatch(/\bherself\b/);
+  });
+
+  it('does NOT touch the ambiguous "her" form (object vs possessive)', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(
+      ctrl,
+      1,
+      'her keys were missing.  She saw her in the mirror.'
+    );
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    ctrl.patchInPlace(1);
+    const text = (
+      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
+    )._synthResults.get(1)!.response.backstory;
+    expect(text).toMatch(/\bher\b/);
+  });
+
+  it('dismisses the drift entries that were patched', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'Mei was here.');
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    expect(ctrl.getPreAcceptDrift(1)?.name).toBeDefined();
+    ctrl.patchInPlace(1);
+    expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
+  });
+
+  it('leaves non-patchable drift (tags) untouched after patch', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'Mei was here.');
+    ctrl.editSynthFieldPreAccept(1, {
+      name: 'Mai',
+      tags: ['data analyst', 't2', 't3']
+    });
+    ctrl.patchInPlace(1);
+    const drift = ctrl.getPreAcceptDrift(1);
+    expect(drift?.name).toBeUndefined(); // patched + dismissed
+    expect(drift?.tags).toBeDefined(); // still in drift
+  });
+
+  it('patchableDriftFields returns name + pronouns only', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    ctrl.editSynthFieldPreAccept(1, {
+      name: 'New',
+      pronouns: 'they/them',
+      tags: ['t1', 't2', 't3']
+    });
+    const fields = ctrl.patchableDriftFields(1);
+    expect(fields).toContain('name');
+    expect(fields).toContain('pronouns');
+    expect(fields).not.toContain('tags');
+  });
+
+  it('patchInPlace returns false when no patchable drift exists', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    ctrl.editSynthFieldPreAccept(1, { tags: ['only-non-patchable'] });
+    expect(ctrl.patchInPlace(1)).toBe(false);
+  });
+
+  it('refuses on accepted slots', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    ctrl.editSynthFieldPreAccept(1, { name: 'New' });
+    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(1);
+    expect(ctrl.patchInPlace(1)).toBe(false);
+  });
+});

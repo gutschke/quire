@@ -1088,17 +1088,20 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
     expect(dismissed).toEqual([{ slot: 1, field: 'name' }]);
   });
 
-  it('Wave 3 action stubs (Patch / Re-sync) are NOT rendered as broken-looking disabled buttons', async () => {
+  it('Wave 3 action stubs: Re-sync is still NOT rendered as a broken-looking disabled button', async () => {
     // UX + TTRPG R3 review: disabled stubs read as broken UI.
-    // Replaced by a single explanatory pip ("✎ N edits since synth.
-    // Prose may now mismatch — the AI re-sync tool arrives in a
-    // follow-up").  Wave 3 will replace the pip with active buttons.
+    // Wave 3a lit Patch (deterministic find-replace); Re-sync
+    // (AI call) waits for Wave 3b and remains absent (not a
+    // disabled button) until then.
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
-    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    // Use a non-patchable drift to keep this assertion focused on
+    // the absence of disabled stubs.
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
     el.onEditPreAccept = () => true;
     el.onDismissDrift = () => {};
     await el.updateComplete;
+    // No Patch button (no patchable drift here) AND no Re-sync stub.
     expect(
       el.querySelector('.chargen-dm-review-drift-patch')
     ).toBeNull();
@@ -1109,7 +1112,7 @@ describe('<chargen-dm-review> — Wave 2 click-to-edit + drift banner', () => {
     const pip = el.querySelector('.chargen-dm-review-drift-pip');
     expect(pip).not.toBeNull();
     expect(pip!.textContent).toMatch(/edit/);
-    expect(pip!.textContent).toMatch(/follow-up/);
+    expect(pip!.textContent).toMatch(/re-sync tool/);
   });
 
   it('drift banner does not render when no drift is recorded', async () => {
@@ -1219,6 +1222,85 @@ describe('<chargen-dm-review> — P-R2 campaign-configured seatCap', () => {
     expect(el.querySelector('.chargen-dm-review-cap-note')!.textContent).toMatch(
       /Seat cap reached \(9\)/
     );
+  });
+});
+
+describe('<chargen-dm-review> — Wave 3a Patch-in-place', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders the Patch button when name is drifted + callback wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onPatchInPlace = () => true;
+    await el.updateComplete;
+    const patch = el.querySelector('.chargen-dm-review-drift-patch');
+    expect(patch).not.toBeNull();
+    expect(patch!.textContent).toMatch(/Patch name/);
+  });
+
+  it('renders Patch button covering both name + pronouns when both drifted', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([
+      [1, { name: 'Mei Tanaka', pronouns: 'she/her' }]
+    ]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onPatchInPlace = () => true;
+    await el.updateComplete;
+    const patch = el.querySelector('.chargen-dm-review-drift-patch');
+    expect(patch!.textContent).toMatch(/name \+ pronouns/);
+  });
+
+  it('does NOT render Patch when only non-patchable fields drifted', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onPatchInPlace = () => true;
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-drift-patch')
+    ).toBeNull();
+  });
+
+  it('shows the right pip text when a mix of patchable + unpatchable drift exists', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai')]]);
+    el.preAcceptDrift = new Map([
+      [1, { name: 'Mei', tags: ['old', 't2', 't3'] }]
+    ]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onPatchInPlace = () => true;
+    await el.updateComplete;
+    const pip = el.querySelector('.chargen-dm-review-drift-pip');
+    expect(pip!.textContent).toMatch(/Patch covers name/);
+    expect(pip!.textContent).toMatch(/re-sync tool/);
+  });
+
+  it('clicking Patch fires onPatchInPlace with the slot', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai Tanaka')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei Tanaka' }]]);
+    const patched: number[] = [];
+    el.onPatchInPlace = (slot) => {
+      patched.push(slot);
+      return true;
+    };
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-patch'
+    )!.click();
+    expect(patched).toEqual([1]);
   });
 });
 
