@@ -37,6 +37,7 @@ import type { PcBackstorySynthesisResponse } from '../../ai/schema';
 import { QUIRE_SKILL_CATEGORIES } from '../../ai/schema';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 import type { Seat } from '../../core/state';
+import '../components/quire-modal';
 
 /**
  * Phase B-prime (2026-05-25): the 9-slot grid that pre-dated this
@@ -564,17 +565,13 @@ export class ChargenDmReview extends LitElement {
   @state() private editDraftName: string = '';
   @state() private editDraftBackstory: string = '';
 
-  /**
-   * Phase 3b polish (2026-05-23): track whether the click that
-   * started a drag-select originated on the dialog backdrop or
-   * on inner content.  Without this, a user who drags to select
-   * text that extends past the dialog frame fires a click on
-   * the DIALOG element (mouseup target = dialog), which triggers
-   * the backdrop-close handler — the modal auto-closes mid-select.
-   * Now: only close when BOTH mousedown AND click happened on
-   * the dialog backdrop.
+  /*
+   * Phase 3a (2026-05-25): the drag-select tracking + showModal()
+   * lifecycle was moved into the <quire-modal> primitive (see
+   * `../components/quire-modal.ts`).  Backdrop-click safety, Esc
+   * via @cancel, and the showModal sync now belong to the
+   * primitive; this region just renders the per-modal content.
    */
-  private backdropMouseDownOnDialog = false;
 
   override render(): TemplateResult {
     return html`
@@ -621,12 +618,10 @@ export class ChargenDmReview extends LitElement {
     const displayName =
       (seat?.pcId && this.displayNameLookup?.(seat.pcId)) ?? `PC${slot}`;
     return html`
-      <dialog
+      <quire-modal
         class="chargen-dm-review-revise-modal"
-        @cancel=${() => this.closeReviseDialog()}
-        @click=${(e: MouseEvent) =>
-          this.handleDialogBackdropClick(e, () => this.closeReviseDialog())}
-        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
+        ?open=${this.reviseDialogSlot !== null}
+        .onClose=${() => this.closeReviseDialog()}
       >
         <div class="chargen-dm-review-revise-body">
           <h3>Ask ${displayName} to revise</h3>
@@ -699,7 +694,7 @@ export class ChargenDmReview extends LitElement {
             </button>
           </div>
         </div>
-      </dialog>
+      </quire-modal>
     `;
   }
 
@@ -719,12 +714,10 @@ export class ChargenDmReview extends LitElement {
       this.displayNameLookup?.(seat.pcId) ?? seat.pcId;
     const canCommit = this.retireInFictionReason.trim().length > 0;
     return html`
-      <dialog
+      <quire-modal
         class="chargen-dm-review-retire-modal"
-        @cancel=${() => this.closeRetireDialog()}
-        @click=${(e: MouseEvent) =>
-          this.handleDialogBackdropClick(e, () => this.closeRetireDialog())}
-        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
+        ?open=${this.retireDialogSlot !== null}
+        .onClose=${() => this.closeRetireDialog()}
       >
         <div class="chargen-dm-review-retire-body">
           <h3>Retire ${displayName}?</h3>
@@ -791,7 +784,7 @@ export class ChargenDmReview extends LitElement {
             </button>
           </div>
         </div>
-      </dialog>
+      </quire-modal>
     `;
   }
 
@@ -1261,12 +1254,10 @@ export class ChargenDmReview extends LitElement {
       this.editDraftName.trim().length > 0 &&
       this.editDraftBackstory.trim().length > 0;
     return html`
-      <dialog
+      <quire-modal
         class="chargen-dm-review-edit-modal"
-        @cancel=${() => this.closeEditModal()}
-        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
-        @click=${(e: MouseEvent) =>
-          this.handleDialogBackdropClick(e, () => this.closeEditModal())}
+        ?open=${this.editModalSlot !== null}
+        .onClose=${() => this.closeEditModal()}
       >
         <header class="chargen-dm-review-modal-head">
           <h3 class="chargen-dm-review-modal-title">
@@ -1331,7 +1322,7 @@ export class ChargenDmReview extends LitElement {
             Save + accept
           </button>
         </footer>
-      </dialog>
+      </quire-modal>
     `;
   }
 
@@ -1358,12 +1349,10 @@ export class ChargenDmReview extends LitElement {
     if (!synth || !synth.ok) return nothing;
     const r = synth.response;
     return html`
-      <dialog
+      <quire-modal
         class="chargen-dm-review-modal"
-        @cancel=${() => this.closeReviewModal()}
-        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
-        @click=${(e: MouseEvent) =>
-          this.handleDialogBackdropClick(e, () => this.closeReviewModal())}
+        ?open=${this.reviewModalSlot !== null}
+        .onClose=${() => this.closeReviewModal()}
       >
         <header class="chargen-dm-review-modal-head">
           <h3 class="chargen-dm-review-modal-title">
@@ -1391,7 +1380,7 @@ export class ChargenDmReview extends LitElement {
             Close
           </button>
         </footer>
-      </dialog>
+      </quire-modal>
     `;
   }
 
@@ -1401,85 +1390,17 @@ export class ChargenDmReview extends LitElement {
    * DOM node, which means we wait for updateComplete then locate
    * the element.  Closing follows the same pattern in reverse.
    */
-  override updated(changed: Map<string, unknown>): void {
-    // Defensive showModal/close — happy-dom doesn't implement
-    // either, so wrap so a missing API doesn't fail re-renders.
-    // In a real browser these calls are essential (top-layer
-    // overlay + focus trap).
-    const sync = (
-      open: boolean,
-      selector: string
-    ): void => {
-      const dialog = this.querySelector<HTMLDialogElement>(selector);
-      if (!dialog) return;
-      try {
-        if (open && !dialog.open) dialog.showModal?.();
-        if (!open && dialog.open) dialog.close?.();
-      } catch {
-        /* test env without dialog support — DOM stays inspectable */
-      }
-    };
-    if (changed.has('reviewModalSlot')) {
-      sync(this.reviewModalSlot !== null, 'dialog.chargen-dm-review-modal');
-    }
-    if (changed.has('editModalSlot')) {
-      sync(
-        this.editModalSlot !== null,
-        'dialog.chargen-dm-review-edit-modal'
-      );
-    }
-    // Wave 3 polish (2026-05-25, UX-R4 fix #1): Retire + Revise
-    // dialogs also use showModal() now — previously they were `open`-
-    // attribute pseudo-modals that weren't in the top layer, missed
-    // native focus trap, and had a custom @keydown Esc handler that
-    // only fired when something inside had focus.
-    if (changed.has('retireDialogSlot')) {
-      sync(
-        this.retireDialogSlot !== null,
-        'dialog.chargen-dm-review-retire-modal'
-      );
-    }
-    if (changed.has('reviseDialogSlot')) {
-      sync(
-        this.reviseDialogSlot !== null,
-        'dialog.chargen-dm-review-revise-modal'
-      );
-    }
-  }
+  /*
+   * Phase 3a (2026-05-25): the bespoke updated()-sync,
+   * handleDialogBackdropClick, and recordBackdropMouseDown methods
+   * were extracted into the `<quire-modal>` primitive (see
+   * `../components/quire-modal.ts`).  All four modals now use the
+   * shared element; this region keeps only its modal-specific
+   * close handlers + content render methods.
+   */
 
   private closeReviewModal(): void {
     this.reviewModalSlot = null;
-  }
-
-  /**
-   * Backdrop-click-to-close: native <dialog> doesn't do this for
-   * you.  When the user clicks OUTSIDE the dialog's content but
-   * still inside its rectangle (the backdrop / overlay area), the
-   * click target is the dialog element itself; clicks on inner
-   * elements bubble with `e.target` pointing at the child.
-   *
-   * Drag-select fix (2026-05-23): when a user drags to select text
-   * that extends past the dialog frame, mousedown happens on the
-   * inner content but mouseup ends on the backdrop — the click
-   * event's target is the dialog, so naive close-on-DIALOG-click
-   * fires mid-select.  Only close when BOTH mousedown AND click
-   * happened on the dialog element.  Reset the flag after every
-   * click regardless so the next interaction starts clean.
-   */
-  private handleDialogBackdropClick(
-    e: MouseEvent,
-    close: () => void
-  ): void {
-    const onBackdrop =
-      (e.target as HTMLElement).tagName === 'DIALOG' &&
-      this.backdropMouseDownOnDialog;
-    this.backdropMouseDownOnDialog = false;
-    if (onBackdrop) close();
-  }
-
-  private recordBackdropMouseDown(e: MouseEvent): void {
-    this.backdropMouseDownOnDialog =
-      (e.target as HTMLElement).tagName === 'DIALOG';
   }
 
   /**

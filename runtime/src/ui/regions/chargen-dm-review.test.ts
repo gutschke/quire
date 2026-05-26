@@ -563,11 +563,11 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     });
     await el.updateComplete;
     expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
-    expect(el.querySelector('dialog.chargen-dm-review-modal')).toBeNull();
+    expect(el.querySelector('quire-modal.chargen-dm-review-modal')).toBeNull();
     el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
     await el.updateComplete;
     // The dialog is in the DOM with the diff inside it.
-    expect(el.querySelector('dialog.chargen-dm-review-modal')).not.toBeNull();
+    expect(el.querySelector('quire-modal.chargen-dm-review-modal')).not.toBeNull();
     expect(el.querySelector('.chargen-dm-review-diff')).not.toBeNull();
     // Click the modal's Close button (footer one).  The header × is
     // also wired — either should close.
@@ -575,7 +575,7 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
       '.chargen-dm-review-modal-foot button'
     )!.click();
     await el.updateComplete;
-    expect(el.querySelector('dialog.chargen-dm-review-modal')).toBeNull();
+    expect(el.querySelector('quire-modal.chargen-dm-review-modal')).toBeNull();
     expect(el.querySelector('.chargen-dm-review-diff')).toBeNull();
   });
 
@@ -805,7 +805,7 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
     await el.updateComplete;
     // Edit dialog is in the DOM with the rejected name + backstory
     // pre-filled into the form fields.
-    const dialog = el.querySelector('dialog.chargen-dm-review-edit-modal');
+    const dialog = el.querySelector('quire-modal.chargen-dm-review-edit-modal');
     expect(dialog).not.toBeNull();
     const nameInput = dialog!.querySelector<HTMLInputElement>(
       '.chargen-dm-review-edit-field input'
@@ -832,7 +832,7 @@ describe('<chargen-dm-review> — spoiler-leak hand-edit flow', () => {
     await el.updateComplete;
     // Simulate the DM cleaning up the backstory.
     const backstoryArea = el.querySelector<HTMLTextAreaElement>(
-      'dialog.chargen-dm-review-edit-modal textarea'
+      'quire-modal.chargen-dm-review-edit-modal textarea'
     )!;
     backstoryArea.value =
       'Mei felt the silence of the apartment after her father left.';
@@ -1679,7 +1679,7 @@ describe('<chargen-dm-review> — P-R6 retire flow', () => {
       '.chargen-dm-review-seat-retire'
     )!.click();
     await el.updateComplete;
-    expect(el.querySelector('dialog.chargen-dm-review-retire-modal')).not.toBeNull();
+    expect(el.querySelector('quire-modal.chargen-dm-review-retire-modal')).not.toBeNull();
   });
 
   it('commit is disabled until an in-fiction reason is typed', async () => {
@@ -1756,7 +1756,7 @@ describe('<chargen-dm-review> — P-R6 retire flow', () => {
     )!.click();
     await el.updateComplete;
     expect(calls).toEqual([]);
-    expect(el.querySelector('dialog.chargen-dm-review-retire-modal')).toBeNull();
+    expect(el.querySelector('quire-modal.chargen-dm-review-retire-modal')).toBeNull();
   });
 });
 
