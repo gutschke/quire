@@ -1428,7 +1428,7 @@ describe('filterForViewer — P-R9 pre-realization PC swap (spoiler firewall)', 
     // Departed PC's DM-only character fields ALSO stripped.
     const meiProj = filtered.synthesizedPcs['pc-mei'];
     expect(meiProj).toBeDefined();
-    const meiAny = meiProj as Record<string, unknown>;
+    const meiAny = meiProj as unknown as Record<string, unknown>;
     expect(meiAny.knowsTheyCanCast).toBeUndefined();
     expect(meiAny.accidentalGrants).toBeUndefined();
     expect(meiAny.magicPhase).toBeUndefined();
@@ -1477,7 +1477,7 @@ describe('filterForViewer — P-R9 pre-realization PC swap (spoiler firewall)', 
     // in-depth: stripDmOnlyFromCharacter is idempotent on records
     // that never had them, but verifying the guard fires).
     const guestProj = filtered.synthesizedPcs['pc-guest'];
-    const guestAny = guestProj as Record<string, unknown>;
+    const guestAny = guestProj as unknown as Record<string, unknown>;
     expect(guestAny.knowsTheyCanCast).toBeUndefined();
     expect(guestAny.accidentalGrants).toBeUndefined();
     expect(guestAny.magicPhase).toBeUndefined();
@@ -1528,13 +1528,13 @@ describe('filterForViewer — P-R9 pre-realization PC swap (spoiler firewall)', 
     // reference via {{pc:1}} in archived narrative).  Both records
     // must be DM-only-stripped in the player view.
     const replProj = filtered.synthesizedPcs['pc-replacement'];
-    const replAny = replProj as Record<string, unknown>;
+    const replAny = replProj as unknown as Record<string, unknown>;
     expect(replAny.knowsTheyCanCast).toBeUndefined();
     expect(replAny.accidentalGrants).toBeUndefined();
     expect(replAny.dmNotes).toBeUndefined();
     // Mei's record (still in the map) ALSO stripped.
     const meiProj = filtered.synthesizedPcs['pc-mei'];
-    const meiAny = meiProj as Record<string, unknown>;
+    const meiAny = meiProj as unknown as Record<string, unknown>;
     expect(meiAny.knowsTheyCanCast).toBeUndefined();
     expect(meiAny.accidentalGrants).toBeUndefined();
     expect(meiAny.magicPhase).toBeUndefined();
@@ -1575,7 +1575,7 @@ describe('filterForViewer — P-R9 pre-realization PC swap (spoiler firewall)', 
     // Player CANNOT see PC2's magic state either — same DM-only
     // strip applies across the synthesizedPcs map.
     const reggieProj = filtered.synthesizedPcs['pc-reggie'];
-    const reggieAny = reggieProj as Record<string, unknown>;
+    const reggieAny = reggieProj as unknown as Record<string, unknown>;
     expect(reggieAny.knowsTheyCanCast).toBeUndefined();
     expect(reggieAny.magicPhase).toBeUndefined();
     // But player-visible fields survive (sanity check):

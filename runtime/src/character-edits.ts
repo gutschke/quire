@@ -127,7 +127,7 @@ export function applyCharacterEdits(
       if (key === 'harm') clamped = clamp(value, 0, HARM_MAX);
       else if (key === 'stress') clamped = clamp(value, 0, STRESS_MAX);
       else clamped = Math.max(0, Math.floor(value));
-      (out as Record<string, unknown>)[key] = clamped;
+      (out as unknown as Record<string, unknown>)[key] = clamped;
     } else if (key === 'knowsTheyCanCast') {
       if (typeof value !== 'boolean') continue;
       out.knowsTheyCanCast = value;

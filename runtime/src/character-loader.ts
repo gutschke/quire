@@ -256,8 +256,23 @@ export interface CharacterRecord {
   accidentalGrants?: AccidentalGrant[];
   /** Alignment-drift counter.  DM-only. */
   alignmentDrift?: AlignmentDrift;
-  // Forward-compat: any other fields are kept as unknown.
-  [key: string]: unknown;
+  /**
+   * V-10-strict (2026-05-25): bag for forward-compat fields the
+   * runtime doesn't recognize.  Previously we used an
+   * `[key: string]: unknown` index signature, which defeated the
+   * named-field strip enforcement that PlayerVisiblePc / DmPc want
+   * to express (TypeScript's Omit can't drop named fields out of an
+   * index signature — the index re-includes them as `unknown`).
+   *
+   * Author/loader code that needs to round-trip unknown JSON fields
+   * should park them in `extras` rather than as siblings of known
+   * fields.  The materialized loader doesn't currently route extras
+   * through `extras` (it relies on the runtime-permissive cast at
+   * `loadCharacter` end), but the type-level contract is now strict
+   * — the compile-time field strip via `Omit<CharacterRecord,
+   * 'dmNotes' | …>` works correctly.
+   */
+  extras?: Record<string, unknown>;
 }
 
 /**
@@ -344,7 +359,7 @@ export function stripDmOnlyFromCharacter(
   for (const field of DM_ONLY_CHARACTER_FIELDS) {
     delete result[field];
   }
-  return result as PlayerVisiblePc;
+  return result as unknown as PlayerVisiblePc;
 }
 
 export interface LoadedCharacter {

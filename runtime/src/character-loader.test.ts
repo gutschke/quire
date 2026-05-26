@@ -535,17 +535,23 @@ describe('Phase B P1b — stripDmOnlyFromCharacter (runtime strip)', () => {
   });
 
   it('handles forward-compat unknown fields (preserves them — they may be player-visible extras)', async () => {
+    // V-10-strict (2026-05-25): the index signature was removed
+    // from CharacterRecord, but the runtime stripper still preserves
+    // any non-named fields via shallow-clone (the type cast +
+    // runtime `delete DM_ONLY_CHARACTER_FIELDS` are the only steps).
+    // Older saves with flat extras keep round-tripping.  Newer code
+    // should put forward-compat fields under the typed `extras` bag.
     const { stripDmOnlyFromCharacter } = await import('./character-loader');
     const withExtras = {
       $schemaVersion: '0.1.0',
       name: 'Mei',
       knowsTheyCanCast: true, // DM-only (stripped)
       customCampaignField: 'something a future ruleset uses' // unknown (kept)
-    } as CharacterRecord;
+    } as unknown as CharacterRecord;
     const stripped = stripDmOnlyFromCharacter(withExtras);
     expect('knowsTheyCanCast' in stripped).toBe(false);
-    expect((stripped as Record<string, unknown>).customCampaignField).toBe(
-      'something a future ruleset uses'
-    );
+    expect(
+      (stripped as unknown as Record<string, unknown>).customCampaignField
+    ).toBe('something a future ruleset uses');
   });
 });
