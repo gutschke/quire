@@ -287,6 +287,28 @@ export class ChargenDmReview extends LitElement {
    * Phase 3b polish (2026-05-22): DM imports a packed character.
    * Host wires to `ChargenController.importPackFromText(raw, slot)`.
    */
+  /**
+   * #253 (2026-05-26): pending live-WebRTC pack deliveries keyed
+   * by slot.  Each entry carries enough metadata for the DM-side
+   * pip ("Pack from <name>") without ever exposing the pack
+   * content here — Accept/Dismiss callbacks identify by
+   * `(senderPeerId, slot)` and the host pulls the pack from
+   * shared state.
+   */
+  @property({ attribute: false }) pendingChargenPacks: Record<
+    number,
+    {
+      senderPeerId: string;
+      senderPeerName: string;
+      packedAt: number;
+    }
+  > = {};
+  @property({ attribute: false }) onAcceptChargenPack:
+    | ((senderPeerId: string, slot: number) => boolean)
+    | null = null;
+  @property({ attribute: false }) onDismissChargenPack:
+    | ((senderPeerId: string, slot: number) => boolean)
+    | null = null;
   @property({ attribute: false }) onImportPack: ImportPackCallback | null =
     null;
 
@@ -1447,6 +1469,7 @@ export class ChargenDmReview extends LitElement {
     const url = this.lastGeneratedUrl.get(slot);
     const generating = this.generatingFor.has(slot);
     const importStatus = this.importStatus.get(slot);
+    const pendingPack = this.pendingChargenPacks?.[slot];
     const quickOpen = this.quickGenOpen.has(slot);
     const quickInFlight = this.quickGenInFlight.has(slot);
     const dragOver = this.dragOverSeat === slot;
@@ -1518,6 +1541,36 @@ export class ChargenDmReview extends LitElement {
             ${inFlight ? 'Synthesizing…' : 'Synthesize backstory'}
           </button>
         </div>
+        ${pendingPack && this.onAcceptChargenPack && this.onDismissChargenPack
+          ? html`<div class="chargen-dm-review-pending-pack" role="status">
+              <strong>📥 Pack from ${pendingPack.senderPeerName}</strong>
+              <span class="muted">— delivered live via session</span>
+              <div class="chargen-dm-review-pending-pack-actions">
+                <button
+                  type="button"
+                  class="chargen-dm-review-pending-pack-accept"
+                  @click=${() =>
+                    this.onAcceptChargenPack?.(
+                      pendingPack.senderPeerId,
+                      slot
+                    )}
+                >
+                  Accept + import
+                </button>
+                <button
+                  type="button"
+                  class="chargen-dm-review-pending-pack-dismiss"
+                  @click=${() =>
+                    this.onDismissChargenPack?.(
+                      pendingPack.senderPeerId,
+                      slot
+                    )}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>`
+          : nothing}
         ${importStatus
           ? html`<div
               class="chargen-dm-review-import-status chargen-dm-review-import-status-${importStatus.kind}"

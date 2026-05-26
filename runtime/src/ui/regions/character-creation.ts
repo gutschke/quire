@@ -132,6 +132,20 @@ export class CharacterCreation extends LitElement {
    * export path yet.
    */
   @property({ attribute: false }) onPack: (() => void) | null = null;
+  /**
+   * #253 (2026-05-26): live "Send to DM" callback.  When non-null,
+   * the player sees a primary "Send to DM" button alongside the
+   * "Pack my character" download.  Host wires this only when the
+   * player is in an active session (chargen + WebRTC together).
+   * When null, only the download is offered (legacy file-shuffle
+   * workflow).
+   */
+  @property({ attribute: false }) onSendToDm: (() => void) | null = null;
+  @property() sendToDmFeedback:
+    | ''
+    | 'sent'
+    | 'send-failed'
+    | 'send-too-large' = '';
 
   /**
    * CC-10 feedback: when the host wants to surface "packed!" or
@@ -538,7 +552,7 @@ export class CharacterCreation extends LitElement {
   }
 
   private renderDone(): TemplateResult {
-    const feedback = (() => {
+    const packFeedback = (() => {
       switch (this.packFeedback) {
         case 'packed':
           return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-ok"
@@ -552,6 +566,28 @@ export class CharacterCreation extends LitElement {
           return nothing;
       }
     })();
+    // #253: live "Send to DM" feedback.
+    const sendFeedback = (() => {
+      switch (this.sendToDmFeedback) {
+        case 'sent':
+          return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-ok"
+            >✓ Sent to the DM — they'll see it on their next refresh.</span
+          >`;
+        case 'send-failed':
+          return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-err"
+            >Couldn't send live — use "Pack my character" to download
+            the file as a backup, then email/chat it to your DM.</span
+          >`;
+        case 'send-too-large':
+          return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-err"
+            >Your pack is too large to send live (over 32 KB).  Use
+            "Pack my character" to download a file and send that
+            instead.</span
+          >`;
+        default:
+          return nothing;
+      }
+    })();
     return html`
       <h2>You're done — see you at session 1</h2>
       <p>
@@ -559,24 +595,39 @@ export class CharacterCreation extends LitElement {
         starts, sit down with the DM and they'll run the synthesis.
       </p>
       <p class="character-creation-required-pack">
-        <strong>Required:</strong> click "Pack my character" below
-        to download your character file, then email or chat it to
-        your DM <em>before</em> session 1.  Your DM cannot synthesize
-        without this file — your answers live only on this device.
-        (Live DM-pull is not wired yet, so the file is currently
-        the only way for them to get your work.)
+        ${this.onSendToDm
+          ? html`<strong>Send your pack to the DM</strong> using the
+              live button below — it travels via the session connection,
+              no file shuffling required.  The download is still
+              available as a backup.`
+          : html`<strong>Required:</strong> click "Pack my character"
+              below to download your character file, then email or
+              chat it to your DM <em>before</em> session 1.  Your DM
+              cannot synthesize without this file — your answers live
+              only on this device.`}
       </p>
-      ${this.onPack
+      ${this.onSendToDm || this.onPack
         ? html`
             <div class="character-creation-pack-actions">
-              <button
-                type="button"
-                class="character-creation-pack-button"
-                @click=${() => this.onPack?.()}
-              >
-                Pack my character
-              </button>
-              ${feedback}
+              ${this.onSendToDm
+                ? html`<button
+                    type="button"
+                    class="character-creation-send-button"
+                    @click=${() => this.onSendToDm?.()}
+                  >
+                    Send to DM
+                  </button>`
+                : nothing}
+              ${this.onPack
+                ? html`<button
+                    type="button"
+                    class="character-creation-pack-button"
+                    @click=${() => this.onPack?.()}
+                  >
+                    Pack my character
+                  </button>`
+                : nothing}
+              ${sendFeedback}${packFeedback}
             </div>
           `
         : nothing}

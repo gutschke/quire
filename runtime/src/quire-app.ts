@@ -279,6 +279,20 @@ function isAbortError(e: unknown): boolean {
 }
 
 /**
+ * Hostile-bundle regression (2026-05-26): clamp an NPC's stat
+ * value into the [PC_CREATE_STAT_MIN, PC_CREATE_STAT_MAX] range
+ * pc-create requires.  Non-number / NaN coerces to 0.  Used by
+ * promoteNpcToPc so a +5/+5 boss NPC can still be promoted —
+ * the DM rewrites baselines via the edit dialog afterward.
+ */
+function clampPromoteStat(value: unknown): number {
+  const n = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  if (n < STAT_MIN) return STAT_MIN;
+  if (n > STAT_MAX) return STAT_MAX;
+  return Math.round(n);
+}
+
+/**
  * Task #293: one-line status copy for the chat-spoiler-lint modal,
  * varying with the async AI semantic check.  Pulled out of the
  * render method so the strings are easy to scan + adjust.
@@ -365,7 +379,9 @@ export class QuireApp extends LitElement {
     appendSeatAdd: (slot: number) => this.appendSeatAdd(slot),
     appendSeatRemove: (slot: number) => this.appendSeatRemove(slot),
     getPcSlots: () => this.sessionView?.shared.pcSlots ?? {},
-    getSeatCap: () => this.currentSeatCap()
+    getSeatCap: () => this.currentSeatCap(),
+    appendChargenPackDeliver: (slot, pack) =>
+      this.appendChargenPackDeliver(slot, pack)
   });
 
   /**
@@ -1541,6 +1557,15 @@ export class QuireApp extends LitElement {
           pinnedQuestionIds?: readonly string[]
         ) =>
           this.chargen.requestReviseSlot(slot, reason, pinnedQuestionIds)}
+        .pendingChargenPacks=${this.computePendingChargenPacksMap()}
+        .onAcceptChargenPack=${this.isCoordinator()
+          ? (senderPeerId: string, slot: number) =>
+              this.acceptChargenPack(senderPeerId, slot)
+          : null}
+        .onDismissChargenPack=${this.isCoordinator()
+          ? (senderPeerId: string, slot: number) =>
+              this.dismissChargenPack(senderPeerId, slot)
+          : null}
       ></chargen-dm-review>
     `;
   }
@@ -1736,6 +1761,110 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * #253 (2026-05-26): compute the slot→PendingPack map for the
+   * chargen-dm-review surface.  Coord-only (the materializer
+   * already strips for non-coord viewers; redundant gate here
+   * keeps the player-side rendering of chargen-dm-review honest
+   * even if the DM's UI ever reuses this method outside the
+   * coord-only render path).
+   *
+   * Resolves senderPeerId → display name once per build so the
+   * pip reads "Pack from Bob" rather than the raw peer id.
+   */
+  private computePendingChargenPacksMap(): Record<
+    number,
+    { senderPeerId: string; senderPeerName: string; packedAt: number }
+  > {
+    const out: Record<
+      number,
+      { senderPeerId: string; senderPeerName: string; packedAt: number }
+    > = {};
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return out;
+    for (const entry of v.shared.pendingChargenPacks) {
+      // LWW: if multiple entries for the same slot somehow exist
+      // (shouldn't, by sticky-N), the later one wins.
+      const prior = out[entry.slot];
+      if (prior && prior.packedAt >= entry.ts) continue;
+      out[entry.slot] = {
+        senderPeerId: entry.senderPeerId,
+        senderPeerName: this.displayNameFor(entry.senderPeerId),
+        packedAt: entry.ts
+      };
+    }
+    return out;
+  }
+
+  /**
+   * #253 (2026-05-26): player-authored chargen-pack-deliver
+   * dispatch.  Coord-not-required (deliberate — chargen flow
+   * authoring is player-side).  Silent no-op outside an active
+   * session.  The materializer enforces shape + size limits
+   * defense-in-depth.
+   */
+  appendChargenPackDeliver(
+    slot: number,
+    pack: import('./chargen-pack').ChargenPackDocument
+  ): boolean {
+    if (!this.session) return false;
+    if (this.sessionView?.status !== 'active') return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    this.session.append('chargen-pack-deliver', { v: 1, slot, pack });
+    return true;
+  }
+
+  /**
+   * #253: coord-only dispatcher for `chargen-pack-clear`.  Used
+   * by Accept (post-import) and Dismiss paths.  Identified by
+   * `(senderPeerId, slot)` to match the materializer's key.
+   */
+  appendChargenPackClear(senderPeerId: string, slot: number): boolean {
+    if (!this.session) return false;
+    if (this.sessionView?.status !== 'active') return false;
+    if (!this.isCoordinator()) return false;
+    if (typeof senderPeerId !== 'string' || senderPeerId.length === 0) {
+      return false;
+    }
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    this.session.append('chargen-pack-clear', {
+      v: 1,
+      senderPeerId,
+      slot
+    });
+    return true;
+  }
+
+  /**
+   * #253: DM accepts a pending pack — import locally, then emit
+   * the clear event only if the import succeeded.  On failure
+   * (campaign-mismatch, etc.) the pack stays pending so the DM
+   * can fix the underlying issue + retry, OR dismiss explicitly.
+   */
+  acceptChargenPack(senderPeerId: string, slot: number): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const entry = v.shared.pendingChargenPacks.find(
+      (e) => e.senderPeerId === senderPeerId && e.slot === slot
+    );
+    if (!entry) return false;
+    const result = this.chargen.importPack(entry.pack, slot);
+    if (!result.ok) {
+      this.aiError = `Import failed: ${result.message}`;
+      return false;
+    }
+    return this.appendChargenPackClear(senderPeerId, slot);
+  }
+
+  /**
+   * #253: DM dismisses a pending pack without importing.  Emits
+   * the clear event directly.
+   */
+  dismissChargenPack(senderPeerId: string, slot: number): boolean {
+    return this.appendChargenPackClear(senderPeerId, slot);
+  }
+
+  /**
    * #301 (2026-05-26): allocate the lowest unused slot integer as
    * an UNREVEALED seat (`revealed: false`).  Players never see it
    * until the DM later clicks Reveal on the resulting Active tile
@@ -1874,13 +2003,19 @@ export class QuireApp extends LitElement {
       name: typeof r.name === 'string' && r.name.length > 0 ? r.name : npcId,
       pronouns: typeof r.pronouns === 'string' ? r.pronouns : '',
       tags,
+      // Hostile-bundle regression: NPCs have permissive stat ranges
+      // (combat NPCs run +5/+5/+5).  pc-create requires
+      // PC_CREATE_STAT_MIN ≤ x ≤ PC_CREATE_STAT_MAX (i.e., [-3, 3]).
+      // Clamp on the way in so the promote succeeds even for spicy
+      // NPCs; the DM rewrites in the edit dialog if they want
+      // different baselines.
       stats: {
-        str: typeof npcStats.str === 'number' ? npcStats.str : 0,
-        dex: typeof npcStats.dex === 'number' ? npcStats.dex : 0,
-        con: typeof npcStats.con === 'number' ? npcStats.con : 0,
-        int: typeof npcStats.int === 'number' ? npcStats.int : 0,
-        wis: typeof npcStats.wis === 'number' ? npcStats.wis : 0,
-        cha: typeof npcStats.cha === 'number' ? npcStats.cha : 0
+        str: clampPromoteStat(npcStats.str),
+        dex: clampPromoteStat(npcStats.dex),
+        con: clampPromoteStat(npcStats.con),
+        int: clampPromoteStat(npcStats.int),
+        wis: clampPromoteStat(npcStats.wis),
+        cha: clampPromoteStat(npcStats.cha)
       },
       skills: Array.isArray(r.skills) ? r.skills : [],
       backstory: promoteStub
@@ -2479,6 +2614,10 @@ export class QuireApp extends LitElement {
           this.chargen.persistDebounced(campaign, slot);
         }}
         .onPack=${() => this.chargen.packAndDownload(campaign, slot)}
+        .onSendToDm=${this.sessionView?.status === 'active'
+          ? () => this.chargen.packAndSendToDm(campaign, slot)
+          : null}
+        .sendToDmFeedback=${this.chargen.sendToDmFeedback}
       ></character-creation>
     `;
   }

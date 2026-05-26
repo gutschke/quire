@@ -50,7 +50,8 @@ import {
   stringifyChargenPack,
   suggestedPackFilename,
   ChargenPackError,
-  type ChargenPackDocument
+  type ChargenPackDocument,
+  CHARGEN_PACK_MAX_SIZE_BYTES
 } from '../chargen-pack';
 import {
   buildPlayerFacingContext,
@@ -186,6 +187,17 @@ export interface ChargenHost {
    * it as the upper bound on addSeat's lowest-unused search.
    */
   getSeatCap(): number;
+  /**
+   * #253 (2026-05-26): live-WebRTC pack delivery.  The controller
+   * builds the ChargenPackDocument from current local state and
+   * hands it to the host, which dispatches a `chargen-pack-deliver`
+   * event over the active session.  Returns false when no session
+   * is active OR the pack exceeds the materializer size cap.
+   */
+  appendChargenPackDeliver?(
+    slot: number,
+    pack: ChargenPackDocument
+  ): boolean;
 }
 
 /**
@@ -207,6 +219,16 @@ export class ChargenController implements ReactiveController {
 
   /** Transient feedback on the "Pack my character" download. */
   packFeedback: '' | 'packed' | 'pack-failed' = '';
+  /**
+   * #253 (2026-05-26): transient feedback on the live "Send to DM"
+   * pack delivery.  States:
+   *   - 'sent'           — chargen-pack-deliver event accepted
+   *   - 'send-failed'    — no active session / not in chargen mode
+   *   - 'send-too-large' — stringified pack exceeds the materializer cap
+   * Auto-clears via the same PACK_FEEDBACK_CLEAR_MS timer as the
+   * download path.
+   */
+  sendToDmFeedback: '' | 'sent' | 'send-failed' | 'send-too-large' = '';
 
   /**
    * Per-slot AI synthesis result map.  Populated by
@@ -1032,6 +1054,69 @@ export class ChargenController implements ReactiveController {
       }
     }, PACK_FEEDBACK_CLEAR_MS);
   }
+
+  /**
+   * #253 (2026-05-26): live "Send to DM" — pack the player's
+   * current chargen state and dispatch over the active WebRTC
+   * session as a `chargen-pack-deliver` event.  Returns true on
+   * append success; false when no session, no host wiring, or
+   * the encoded pack exceeds the materializer's hard cap.
+   *
+   * Feedback state (`sendToDmFeedback`) auto-clears after
+   * PACK_FEEDBACK_CLEAR_MS, same as `packFeedback` for the
+   * download path.
+   */
+  packAndSendToDm(campaign: ChargenCampaign, slot: number): boolean {
+    if (!this.env.appendChargenPackDeliver) {
+      this.sendToDmFeedback = 'send-failed';
+      this.scheduleSendToDmFeedbackClear();
+      this.host.requestUpdate();
+      return false;
+    }
+    let pack: ChargenPackDocument;
+    try {
+      const fingerprint = campaignFingerprint(campaign.base.source);
+      pack = packChargen({
+        campaignFingerprint: fingerprint,
+        slot,
+        chosenPath: this.chosenPath,
+        answers: this.answers
+      });
+    } catch {
+      this.sendToDmFeedback = 'send-failed';
+      this.scheduleSendToDmFeedbackClear();
+      this.host.requestUpdate();
+      return false;
+    }
+    // Pre-send size check — surface "use file fallback" locally
+    // BEFORE dispatching so the materializer doesn't silently drop
+    // the event.  Same constant as the materializer cap (single
+    // source of truth via chargen-pack).
+    const encoded = JSON.stringify(pack);
+    if (encoded.length > CHARGEN_PACK_MAX_SIZE_BYTES) {
+      this.sendToDmFeedback = 'send-too-large';
+      this.scheduleSendToDmFeedbackClear();
+      this.host.requestUpdate();
+      return false;
+    }
+    const ok = this.env.appendChargenPackDeliver(slot, pack);
+    this.sendToDmFeedback = ok ? 'sent' : 'send-failed';
+    this.scheduleSendToDmFeedbackClear();
+    this.host.requestUpdate();
+    return ok;
+  }
+
+  private scheduleSendToDmFeedbackClear(): void {
+    if (this.sendToDmFeedbackTimer) {
+      clearTimeout(this.sendToDmFeedbackTimer);
+    }
+    this.sendToDmFeedbackTimer = setTimeout(() => {
+      this.sendToDmFeedbackTimer = null;
+      this.sendToDmFeedback = '';
+      this.host.requestUpdate();
+    }, PACK_FEEDBACK_CLEAR_MS);
+  }
+  private sendToDmFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ---- DM-side pack import (Phase 3b polish 2026-05-22) ----
 

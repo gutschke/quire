@@ -74,6 +74,18 @@ const MAX_ANSWER_VALUE_LEN = 4000;
 const MAX_ANSWER_COUNT = 50;
 
 /**
+ * #253 (2026-05-26): hard cap on the stringified pack size at the
+ * `chargen-pack-deliver` event materializer + the sender-side
+ * pre-send check.  Defense-in-depth — the per-field caps above
+ * already bound a realistic pack to a few KB, but this top-level
+ * gate makes the bound explicit and lets the sender surface
+ * "pack too large — use file fallback" cleanly.  32 KB is
+ * comfortable for the realistic ceiling (50 × 4000 = ~200 KB
+ * worst case; typical packs run ~5 KB).
+ */
+export const CHARGEN_PACK_MAX_SIZE_BYTES = 32 * 1024;
+
+/**
  * Serialize chargen state into a portable JSON document.  Throws
  * `ChargenPackError` on invalid input (slot out of range, etc.) so
  * the caller surfaces a "Couldn't pack — try again" banner rather

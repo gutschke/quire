@@ -10,6 +10,8 @@
 
 import type { PeerId, QuireEvent } from './event-log';
 import type { CharacterRecord } from '../character-loader';
+import type { ChargenPackDocument } from '../chargen-pack';
+import { CHARGEN_PACK_MAX_SIZE_BYTES } from '../chargen-pack';
 import {
   stripDmOnlyFromCharacter,
   DM_ONLY_CHARACTER_FIELDS
@@ -180,6 +182,39 @@ export interface PcRetireRequest {
   /** Retire reason enum (becomes pc-retire's `reason` on accept). */
   reason: RetireReason;
   /** Epoch-ms request authored. */
+  ts: number;
+}
+
+/**
+ * #253 (2026-05-26): an in-flight chargen pack the player has
+ * "Sent to DM" via the live WebRTC pack delivery affordance.
+ * Materializes from a player-authored `chargen-pack-deliver` event;
+ * cleared by a coord-authored `chargen-pack-clear` when the DM
+ * imports or dismisses.  Keyed by `(senderPeerId, slot)` — a
+ * resend overwrites the prior pack's timestamp (LWW).
+ *
+ * The `pack` field is the full `ChargenPackDocument` (player's
+ * chargen answers + chosen path + fingerprint).  Content is
+ * DM-only in the viewer-scope projection — other players see only
+ * the metadata (sender + slot + delivered status), never another
+ * player's answer text.  Per the chat/AI confusion threat-model
+ * the answer text often contains the player's private intent for
+ * their PC ("I want her to find out she's the chosen one"), which
+ * shouldn't be readable by teammates.
+ *
+ * Payload size cap is enforced at the materializer (32 KB
+ * stringified) so a hostile / buggy peer can't balloon shared
+ * state.  The chargen-pack validator already caps individual
+ * fields; this is the belt-and-suspenders top-level gate.
+ */
+export interface ChargenPackDelivery {
+  /** Peer who sent the pack.  Also the controlling player at the slot. */
+  senderPeerId: PeerId;
+  /** Slot the pack is for. */
+  slot: number;
+  /** Full pack document — DM-only content via projection. */
+  pack: ChargenPackDocument;
+  /** Epoch-ms the delivery was authored. */
   ts: number;
 }
 
@@ -497,6 +532,22 @@ export interface SessionState {
    */
   pcRetireRejections: PcRetireRejection[];
   /**
+   * #253 (2026-05-26): live-WebRTC pack deliveries pending DM
+   * review.  Each entry carries the full ChargenPackDocument the
+   * player authored.  Materialized by `chargen-pack-deliver`
+   * (player-authored); cleared by `chargen-pack-clear` (coord-
+   * authored) when the DM accepts (import + clear) or dismisses
+   * (clear without import).
+   *
+   * Viewer-scope projection:
+   *   - DM (coord): sees all entries with full content.
+   *   - Sender (the player who packed): sees ONLY their own entry,
+   *     and with `pack` stripped to a placeholder so the player
+   *     gets a "delivered" pip but the answer text isn't echoed.
+   *   - Other peers: stripped entirely (existence is DM-only).
+   */
+  pendingChargenPacks: ChargenPackDelivery[];
+  /**
    * Phase 3b-1: PC records materialized from AI chargen synthesis.
    * Cluster-E `acceptSlot()` emits a `pc-create` event that lands a
    * full `CharacterRecord` here, keyed by the derived pcId.  The
@@ -540,7 +591,8 @@ export function emptyState(): SessionState {
     pcSlots: {},
     synthesizedPcs: {},
     pcRetireRequests: [],
-    pcRetireRejections: []
+    pcRetireRejections: [],
+    pendingChargenPacks: []
   };
 }
 
@@ -696,6 +748,30 @@ export function filterForViewer(
   const filteredPcRetireRejections = state.pcRetireRejections.filter(
     (r) => r.requestingPeerId === viewerPeerId
   );
+  // #253: project pendingChargenPacks.  Sender sees ONLY their
+  // own entry, content replaced with a placeholder so the
+  // "delivered" pip works without the answers echoing back.
+  // Other peers see nothing — pack existence is DM-only.
+  const filteredPendingChargenPacks: ChargenPackDelivery[] = [];
+  for (const entry of state.pendingChargenPacks) {
+    if (entry.senderPeerId !== viewerPeerId) continue;
+    // Strip the answer text for the sender — they don't need it
+    // echoed; only the metadata for the pip.  Pack still parses
+    // because the empty answers + empty chosenPath are valid.
+    filteredPendingChargenPacks.push({
+      senderPeerId: entry.senderPeerId,
+      slot: entry.slot,
+      ts: entry.ts,
+      pack: {
+        $schemaVersion: entry.pack.$schemaVersion,
+        campaignFingerprint: entry.pack.campaignFingerprint,
+        slot: entry.pack.slot,
+        chosenPath: '',
+        answers: {},
+        packedAt: entry.pack.packedAt
+      }
+    });
+  }
   return {
     ...state,
     // DM-only fields wiped:
@@ -709,6 +785,7 @@ export function filterForViewer(
     pcEdits: filteredPcEdits,
     pcRetireRequests: filteredPcRetireRequests,
     pcRetireRejections: filteredPcRetireRejections,
+    pendingChargenPacks: filteredPendingChargenPacks,
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -1285,7 +1362,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // with the optional `revealed: false` field on `seat-add` to let
   // the DM stage a future-twist PC without the slot appearing in
   // player views until the moment of reveal.
-  'seat-reveal'
+  'seat-reveal',
+  // #253 (2026-05-26): live WebRTC chargen pack delivery.  Player
+  // sends their packed chargen answers directly via the session
+  // instead of file download → physical send → file import.
+  // `chargen-pack-deliver` is player-authored; `chargen-pack-clear`
+  // is coord-authored (DM accepts after local import, or dismisses).
+  'chargen-pack-deliver',
+  'chargen-pack-clear'
 ]);
 
 /**
@@ -2200,6 +2284,96 @@ function applySeatRevealEvent(state: SessionState, event: QuireEvent): void {
 }
 
 /**
+ * #253 (2026-05-26): record a live-WebRTC pack delivery into shared
+ * state.  Player-authored — `event.peerId` IS the sender.  Strict
+ * shape validation: the pack must already be a well-formed
+ * `ChargenPackDocument`-ish payload AND its stringified size must
+ * be ≤ CHARGEN_PACK_MAX_SIZE_BYTES (defense-in-depth against a
+ * hostile peer building a pack that bypasses the chargen-pack
+ * module's per-field caps).  Silent reject on any failure — same
+ * shape as other validators.
+ *
+ * LWW on duplicate `(senderPeerId, slot)`: resend overwrites the
+ * prior entry's `pack` + `ts` so the DM always sees the freshest
+ * answers.
+ */
+function applyChargenPackDeliverEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as {
+    v?: unknown;
+    slot?: unknown;
+    pack?: unknown;
+  };
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  if (!isPlainObjectPayload(p.pack)) return;
+  const pack = p.pack as Record<string, unknown>;
+  // Stringified-size cap.  Bound the encode at the materializer so
+  // a malicious / buggy peer can't balloon state.  Drops silently;
+  // sender-side pre-check surfaces "pack too large — use file
+  // fallback" before submit.
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(pack);
+  } catch {
+    return;
+  }
+  if (encoded.length > CHARGEN_PACK_MAX_SIZE_BYTES) return;
+  // Minimal shape gate.  Trust the per-field caps in chargen-pack
+  // for the deeper validation; here we just ensure the shape is a
+  // ChargenPackDocument so downstream readers don't crash.
+  if (typeof pack.$schemaVersion !== 'string') return;
+  if (typeof pack.campaignFingerprint !== 'string') return;
+  if (typeof pack.slot !== 'number' || pack.slot !== p.slot) return;
+  if (typeof pack.chosenPath !== 'string') return;
+  if (typeof pack.answers !== 'object' || pack.answers === null) return;
+  if (typeof pack.packedAt !== 'number') return;
+  // LWW: drop any existing entry from the same (sender, slot).
+  const filtered = state.pendingChargenPacks.filter(
+    (e) => !(e.senderPeerId === event.peerId && e.slot === p.slot)
+  );
+  filtered.push({
+    senderPeerId: event.peerId,
+    slot: p.slot,
+    pack: pack as unknown as ChargenPackDocument,
+    ts: event.ts
+  });
+  state.pendingChargenPacks = filtered;
+}
+
+/**
+ * #253 (2026-05-26): clear a pending pack delivery.  Coord-only
+ * (DM accepts after local import, or dismisses).  Identifies the
+ * target by `(senderPeerId, slot)` — both fields required.
+ * Idempotent on no-match.
+ */
+function applyChargenPackClearEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as {
+    v?: unknown;
+    senderPeerId?: unknown;
+    slot?: unknown;
+  };
+  if (typeof p.senderPeerId !== 'string') return;
+  if (p.senderPeerId.length === 0 || p.senderPeerId.length > 80) return;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  state.pendingChargenPacks = state.pendingChargenPacks.filter(
+    (e) => !(e.senderPeerId === p.senderPeerId && e.slot === p.slot)
+  );
+}
+
+/**
  * Wave 1 (2026-05-25): seat-remove — DM drops an unbound seat
  * that was added accidentally.  Refuses to touch bound seats of
  * any flavor (active / retired / archived) — those follow the
@@ -2296,7 +2470,14 @@ function applyPcRetireOrArchiveEvent(
   ) {
     return;
   }
-  state.pcSlots[targetSlot] = {
+  // Hostile-bundle regression (2026-05-26): preserve the
+  // revealed:false flag across the retire so a hidden bound seat
+  // stays hidden after retiring.  Mirrors the same preservation
+  // logic in pc-slot-bind (#303 follow-up).  Without this,
+  // retiring a #301 hidden seat would silently re-reveal it
+  // to all players via the projection — defeating the firewall.
+  const wasHidden = prior.revealed === false;
+  const newSeat: Seat = {
     state: p.state,
     pcId: p.pcId,
     // controllerPeerId is intentionally dropped — retired/archived
@@ -2306,6 +2487,8 @@ function applyPcRetireOrArchiveEvent(
     retiredScene: p.scene,
     retiredAt: event.ts
   };
+  if (wasHidden) newSeat.revealed = false;
+  state.pcSlots[targetSlot] = newSeat;
   // P-R11: when this retire was driven by a player's pending request,
   // clear the request so it doesn't keep pinging the DM.  Also clear
   // any stale rejection records for the same (peer, pc) pair so the
@@ -2502,7 +2685,10 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'pc-retire-request': applyPcRetireRequestEvent,
   'pc-retire-reject': applyPcRetireRejectEvent,
   // #301 (2026-05-26): flip an unrevealed seat to revealed.
-  'seat-reveal': applySeatRevealEvent
+  'seat-reveal': applySeatRevealEvent,
+  // #253 (2026-05-26): live WebRTC chargen pack delivery.
+  'chargen-pack-deliver': applyChargenPackDeliverEvent,
+  'chargen-pack-clear': applyChargenPackClearEvent
 };
 
 /**

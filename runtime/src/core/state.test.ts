@@ -871,7 +871,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // P-R7 (2026-05-25): added pc-switch (audit-only) → 39.
     // P-R11 (2026-05-25): added pc-retire-request + pc-retire-reject → 41.
     // #301 (2026-05-26): added seat-reveal → 42.
-    expect(KNOWN_EVENT_KINDS.size).toBe(42);
+    // #253 (2026-05-26): added chargen-pack-deliver + chargen-pack-clear → 44.
+    expect(KNOWN_EVENT_KINDS.size).toBe(44);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {

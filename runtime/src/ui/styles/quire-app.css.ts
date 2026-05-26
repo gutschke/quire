@@ -1126,6 +1126,55 @@ export const quireAppStyles = css`
       color: light-dark(#7f1d1d, #fca5a5);
       border-left: 3px solid light-dark(#dc2626, #ef4444);
     }
+    /* #253: live pack delivery pip — blue-rail accent (distinct from
+       the green/red of import-status, so the DM scans "incoming live
+       pack" at a glance). */
+    .chargen-dm-review-pending-pack {
+      margin-top: 0.5rem;
+      padding: 0.45rem 0.7rem;
+      border-radius: 4px;
+      background: light-dark(#eff6ff, #0b1d3a);
+      border-left: 3px solid light-dark(#0369a1, #38bdf8);
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .chargen-dm-review-pending-pack-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-left: auto;
+    }
+    .chargen-dm-review-pending-pack-accept,
+    .chargen-dm-review-pending-pack-dismiss {
+      padding: 0.25rem 0.7rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-pending-pack-accept {
+      border-color: light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      font-weight: 500;
+    }
+    /* #253: player-side "Send to DM" button — distinct from the
+       file-download button. */
+    .character-creation-send-button {
+      padding: 0.4rem 0.9rem;
+      border: 1px solid light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 500;
+    }
     /* Drag-drop hover state on the seat — outline + tint so the DM
        sees which seat will receive the dropped pack. */
     .chargen-dm-review-seat-dragover {
