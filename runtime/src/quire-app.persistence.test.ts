@@ -302,4 +302,59 @@ describe('QuireApp persistence — localStorage autosave', () => {
     expect(stored).not.toBeNull();
     expect(stored!.length).toBeGreaterThan(0);
   });
+
+  it('#257: startHosting auto-replays a staged resumePromptDoc', async () => {
+    // Session 1: build a session with a recognizable event.
+    const app1 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app1);
+    await app1.startHosting();
+    await flush();
+    app1.submitChat('previous-session-marker');
+    const doc = app1.buildSaveDocument()!;
+    document.body.removeChild(app1);
+
+    // Session 2: start clean, stage the doc, then click Host.
+    // The fixed startHosting should replay the doc automatically
+    // (no separate loadFromString call needed) — previously this
+    // failed silently because loadFromString gated on "no
+    // session active".
+    const app2 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST2'));
+    injectCampaign(app2);
+    (app2 as unknown as { resumePromptDoc: unknown }).resumePromptDoc = doc;
+    await app2.startHosting();
+    await flush();
+    expect(
+      app2.sessionView!.shared.chat.some(
+        (c) => c.text === 'previous-session-marker'
+      )
+    ).toBe(true);
+    // The staged doc should be cleared after replay.
+    expect(
+      (app2 as unknown as { resumePromptDoc: unknown }).resumePromptDoc
+    ).toBeNull();
+  });
+
+  it('#257: startHosting falls back to localStorage when no doc is staged', async () => {
+    // Pre-populate localStorage with a save (simulates a prior
+    // session that wrote an autosave then the tab was closed).
+    const app1 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app1);
+    await app1.startHosting();
+    await new Promise((r) => setTimeout(r, 2000)); // past autosave debounce
+    app1.submitChat('autosaved-marker');
+    await new Promise((r) => setTimeout(r, 2000)); // let next debounce land
+    document.body.removeChild(app1);
+
+    // Fresh app, no resumePromptDoc staged.  Clicking Host should
+    // still pick up the localStorage save.
+    const app2 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST2'));
+    injectCampaign(app2);
+    await app2.startHosting();
+    await flush();
+    expect(
+      app2.sessionView!.shared.chat.some(
+        (c) => c.text === 'autosaved-marker'
+      )
+    ).toBe(true);
+  });
 });

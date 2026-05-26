@@ -148,10 +148,15 @@ export function doHostSession(
   session: SessionLike | null,
   displayName: string,
   campaign?: { owner: string; repo: string; ref: string }
-): void {
-  if (!session) return;
+): Promise<void> {
+  // #257 (2026-05-25): now returns the awaitable promise so callers
+  // can sequence post-host actions (notably loadFromString for
+  // resume-on-host).  Errors are still swallowed at this layer —
+  // surfaced via sessionView; callers can opt to await the
+  // resolved promise without inheriting a rejection.
+  if (!session) return Promise.resolve();
   const name = displayName.trim() || undefined;
-  void session.host(name, campaign).catch(() => {
+  return session.host(name, campaign).catch(() => {
     /* surfaced via sessionView */
   });
 }

@@ -2434,16 +2434,26 @@ export class QuireApp extends LitElement {
           </button>
           <button
             @click=${() => {
-              const json = stringifySave(doc);
-              this.dismissResumePrompt();
-              // loadFromString carries its own "session not active"
-              // gate (surfaced via loadStatus).  We previously also
-              // wrote a duplicate gate here into saveStatus — that
-              // produced a contradictory "Host a session first..."
-              // banner that persisted in the session bar even after
-              // the DM actually started hosting (saveStatus is
-              // sticky between transitions).  Drop the duplicate.
-              this.loadFromString(json);
+              // #257 fix (2026-05-25): leave resumePromptDoc set so
+              // startHosting picks it up after the session is
+              // active.  Previously this called loadFromString
+              // directly, which always failed with "Start or host
+              // a session first" because no session existed yet —
+              // the user saw "Resumed!" and was actually in a
+              // fresh empty session.  startHosting now owns the
+              // replay-after-host sequence.
+              if (this.session && this.sessionView?.status === 'active') {
+                // Edge case: a session is already active (the DM
+                // hosted before clicking Resume).  Old direct-
+                // loadFromString path works in this case.
+                const json = stringifySave(doc);
+                this.dismissResumePrompt();
+                this.loadFromString(json);
+              } else {
+                // Normal path: trigger host, which replays the
+                // staged doc.
+                this.startHosting();
+              }
             }}
           >
             Resume
@@ -2818,15 +2828,38 @@ export class QuireApp extends LitElement {
   // joinCodeDraft) stay on QuireApp because they're tied to the
   // render templates; the LOGIC moves to testable helpers.
 
-  startHosting(): void {
+  async startHosting(): Promise<void> {
     // R3-C: embed the campaign reference in the host's peer-join
     // so guests who arrived without ?campaign= in their URL can
     // discover what to load.
-    doHostSession(
+    //
+    // #257 fix (2026-05-25): now async — we await the underlying
+    // session.host() so a staged resume-doc can replay after the
+    // session is active.  Existing callers that don't await still
+    // work; the Lit event handlers + tests both flush microtasks
+    // before asserting.
+    await doHostSession(
       this.session,
       this.displayNameDraft,
       this.getCurrentCampaign()?.base.source
     );
+    // If an autosave is staged for this campaign (or discoverable
+    // in localStorage), replay it now that the session is active.
+    // Previously the Resume modal called loadFromString directly
+    // — which always failed with "Start or host a session first"
+    // because no session was active.  The DM saw "Resumed" then
+    // was actually in a fresh empty session.  startHosting now
+    // owns the replay-after-host sequence.
+    let docToReplay = this.resumePromptDoc;
+    if (!docToReplay) {
+      const source = this.getCurrentCampaign()?.base.source;
+      if (source) docToReplay = this.autosave.checkResume(source);
+    }
+    if (docToReplay) {
+      const json = stringifySave(docToReplay);
+      this.resumePromptDoc = null;
+      this.loadFromString(json);
+    }
   }
 
   joinSession(): void {
