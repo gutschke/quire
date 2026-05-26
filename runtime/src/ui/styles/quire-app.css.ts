@@ -770,6 +770,143 @@ export const quireAppStyles = css`
       font-size: 0.9em;
       font-style: italic;
     }
+    /* P-R5: Stage tab bar (Scene | Roster) */
+    .stage-tabs {
+      display: flex;
+      gap: 0.4rem;
+      margin: 0 0 0.6rem;
+      padding: 0.3rem 0;
+      border-bottom: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+    .stage-tab {
+      padding: 0.4rem 0.85rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      border-radius: 4px 4px 0 0;
+    }
+    .stage-tab:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .stage-tab-active {
+      border-color: light-dark(#cbd5e1, #475569);
+      border-bottom-color: light-dark(#ffffff, #0f172a);
+      background: light-dark(#ffffff, #0f172a);
+      margin-bottom: -1px;
+      font-weight: 500;
+    }
+    /* P-R5: Stage roster region */
+    .stage-roster {
+      padding: 0.7rem 0.9rem;
+    }
+    .stage-roster-head {
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      margin-bottom: 0.6rem;
+    }
+    .stage-roster-head h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .stage-roster-tabs {
+      display: flex;
+      gap: 0.3rem;
+      margin-left: auto;
+    }
+    .stage-roster-tab {
+      padding: 0.3rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.88em;
+      border-radius: 3px;
+    }
+    .stage-roster-tab:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .stage-roster-tab-active {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#0b3d7f, #79b8f0);
+      color: light-dark(#0b3d7f, #dbeafe);
+      font-weight: 500;
+    }
+    .stage-roster-tab-count {
+      display: inline-block;
+      margin-left: 0.3rem;
+      padding: 0 0.4rem;
+      background: light-dark(#e2e8f0, #1e293b);
+      border-radius: 999px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+    .stage-roster-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .stage-roster-item {
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#d4d4d4, #3a3a3a);
+      border-radius: 6px;
+      background: light-dark(#fafafa, #1d1d1d);
+    }
+    .stage-roster-active-body {
+      margin-top: 0.4rem;
+    }
+    .stage-roster-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      margin-bottom: 0.35rem;
+    }
+    .stage-roster-tag-chip {
+      padding: 0.1rem 0.5rem;
+      background: light-dark(#e2e8f0, #1e293b);
+      border-radius: 999px;
+      font-size: 0.85em;
+    }
+    .stage-roster-status {
+      display: flex;
+      gap: 0.7rem;
+      font-size: 0.85em;
+    }
+    .stage-roster-stat {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 3px;
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .stage-roster-stat-level-2 {
+      background: light-dark(#fef3c7, #422006);
+    }
+    .stage-roster-stat-level-3 {
+      background: light-dark(#fee2e2, #450a0a);
+      color: light-dark(#dc2626, #fecaca);
+    }
+    .stage-roster-stat-level-4 {
+      background: light-dark(#dc2626, #450a0a);
+      color: light-dark(#ffffff, #fecaca);
+      font-weight: 600;
+    }
+    .stage-roster-empty {
+      padding: 0.7rem;
+      font-style: italic;
+      text-align: center;
+    }
+    .stage-roster-retire-reason {
+      margin: 0.4rem 0 0;
+      font-size: 0.9em;
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

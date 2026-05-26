@@ -13,6 +13,7 @@ import './ui/shell/quire-aside';
 import './ui/shell/quire-dock';
 import './ui/regions/player-rail';
 import './ui/regions/scene-stage';
+import './ui/regions/stage-roster';
 import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
@@ -2220,31 +2221,93 @@ export class QuireApp extends LitElement {
           v.filteredShared.revealedScenes.includes(fullScenePath)
         : true;
     return html`
-      <scene-stage
-        .campaignName=${campaign.base.manifest.name}
-        .campaignSlug=${slug}
-        .episodeName=${episode.manifest.name}
-        .episodeSlug=${episode.slug}
-        .scenePath=${scene.path}
-        .sceneBlocks=${scene.blocks}
-        .revealedBlocks=${revealedBlocks}
-        .sceneFullyRevealed=${sceneFullyRevealed}
-        .isCoordinator=${isCoord}
-        .sceneFrontmatter=${scene.frontmatter}
-        .pcSlotBindings=${this.currentPcSlotBindings()}
-        .onNavigate=${(e: Event, route: AppRoute) =>
-          this.navigate(e, route)}
-        .onToggleBlock=${(blockHash: string) =>
-          this.toggleBlockReveal(fullScenePath, blockHash)}
-        .onBroadcast=${() => this.broadcastCurrentView()}
-        .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}
-      ></scene-stage>
+      ${isCoord ? this.renderStageTabBar() : nothing}
+      ${this.stageTab === 'roster' && isCoord
+        ? this.renderStageRoster()
+        : html`<scene-stage
+            .campaignName=${campaign.base.manifest.name}
+            .campaignSlug=${slug}
+            .episodeName=${episode.manifest.name}
+            .episodeSlug=${episode.slug}
+            .scenePath=${scene.path}
+            .sceneBlocks=${scene.blocks}
+            .revealedBlocks=${revealedBlocks}
+            .sceneFullyRevealed=${sceneFullyRevealed}
+            .isCoordinator=${isCoord}
+            .sceneFrontmatter=${scene.frontmatter}
+            .pcSlotBindings=${this.currentPcSlotBindings()}
+            .onNavigate=${(e: Event, route: AppRoute) =>
+              this.navigate(e, route)}
+            .onToggleBlock=${(blockHash: string) =>
+              this.toggleBlockReveal(fullScenePath, blockHash)}
+            .onBroadcast=${() => this.broadcastCurrentView()}
+            .headerExtras=${this.renderRevealControl(episode.slug, scene.path)}
+          ></scene-stage>`}
       ${this.renderCharacterMenus(
         slug,
         campaign.base.manifest.characters
       )}
       ${this.renderRollPanel()}
     `;
+  }
+
+  /**
+   * P-R5 (2026-05-25): Stage panel tab bar.  Only renders for the
+   * coordinator (per ui.md the DM has Stage tabs; players see only
+   * the active surface).  Default tab is 'scene'.  Other tabs
+   * (Outline, NPCs, Map) land in M5+; for now: Scene + Roster.
+   */
+  private renderStageTabBar(): TemplateResult {
+    return html`
+      <nav class="stage-tabs" role="tablist" aria-label="Stage view">
+        ${this.renderStageTabButton('scene', 'Scene')}
+        ${this.renderStageTabButton('roster', 'Roster')}
+      </nav>
+    `;
+  }
+
+  private renderStageTabButton(
+    tab: 'scene' | 'roster',
+    label: string
+  ): TemplateResult {
+    const active = this.stageTab === tab;
+    return html`<button
+      type="button"
+      class="stage-tab ${active ? 'stage-tab-active' : ''}"
+      role="tab"
+      aria-selected=${active ? 'true' : 'false'}
+      @click=${() => {
+        this.stageTab = tab;
+      }}
+    >
+      ${label}
+    </button>`;
+  }
+
+  private renderStageRoster(): TemplateResult {
+    const v = this.sessionView;
+    const slots = v?.status === 'active' ? v.filteredShared.pcSlots : {};
+    const synthesized =
+      v?.status === 'active' ? v.filteredShared.synthesizedPcs : {};
+    return html`<stage-roster
+      .pcSlots=${slots}
+      .synthesizedPcs=${synthesized}
+      .displayNameLookup=${(pcId: string) => this.chargen.displayNameForBound(pcId)}
+      .onRetirePc=${(slot: number) => {
+        const seat = slots[slot];
+        if (!seat?.pcId) return;
+        const name = this.chargen.displayNameForBound(seat.pcId) ?? seat.pcId;
+        const reason = window.prompt(
+          `Retire ${name}? Enter an in-fiction reason (player-safe):`
+        );
+        if (!reason || reason.trim().length === 0) return;
+        this.appendPcRetire({
+          pcId: seat.pcId,
+          inFictionReason: reason.trim(),
+          reason: 'departed'
+        });
+      }}
+    ></stage-roster>`;
   }
 
   /**
@@ -2885,6 +2948,14 @@ export class QuireApp extends LitElement {
 
   /** R6 Engineering note: re-entrancy guard for startHosting. */
   private hostingInProgress = false;
+
+  /**
+   * P-R5 (2026-05-25): which Stage tab is showing.  Default
+   * 'scene' so existing flows are unchanged.  DM-only; players
+   * don't see the tab bar.  Session-scoped — resets to 'scene'
+   * on session change.
+   */
+  @state() private stageTab: 'scene' | 'roster' = 'scene';
 
   joinSession(): void {
     doJoinSession(this.session, this.joinCodeDraft, this.displayNameDraft);
