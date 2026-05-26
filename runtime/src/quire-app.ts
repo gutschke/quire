@@ -19,6 +19,7 @@ import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
 import './ui/regions/session-wrap-marks';
+import { buildWrapMarksEntries } from './ui/regions/session-wrap-marks';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
@@ -1540,11 +1541,14 @@ export class QuireApp extends LitElement {
       }
       bulletsByPcId[pcId] = overlay;
     }
-    const entries = pcIds.map((pcId) => ({
-      pcId,
-      name: recordMap[pcId].name ?? pcId,
-      bullets: bulletsByPcId[pcId]
-    }));
+    // Use the exported helper so it stays load-bearing (verification
+    // ac7a1cdcc81285f0c flagged the prior inline build as dead-code
+    // adjacent to a tested export).
+    const entries = buildWrapMarksEntries(
+      recordMap,
+      bulletsByPcId,
+      pcIds
+    );
     return html`<session-wrap-marks
       .pcs=${entries}
       .onSetMarkBullet=${(
@@ -2725,12 +2729,15 @@ export class QuireApp extends LitElement {
   private renderBody(): TemplateResult {
     // Phase B P5 (2026-05-26): when the DM has switched to
     // session-wrap-marks mode, replace the normal body with the
-    // end-of-session sheet.  Coord-only — the mode toggle button
-    // is in the DM aside, and the materializer-side pc-edit on
-    // markBullets is already gated.  Players who somehow land on
-    // this mode (via URL) see the same sheet read-only; their
-    // pc-edits would no-op via the existing trust gap (tolerable
-    // under the threat model).
+    // end-of-session sheet.  Coord-only via the mode-toggle
+    // button in the DM aside.  Players who land here via URL see
+    // the read-only DM-only fallback.  NOTE: applyPcEditEvent
+    // does NOT gate markBullets.* edits to coord (see the
+    // pc-edit universal-write trust gap noted in design/STATUS.md);
+    // any peer could in theory author a markBullets edit and have
+    // it materialize.  Tolerated by the current civilized-players
+    // threat model.  If a future feature requires per-PC write
+    // authority, that gap fix would also harden this surface.
     if (this.appMode === 'session-wrap-marks') {
       return this.renderSessionWrapMarks();
     }

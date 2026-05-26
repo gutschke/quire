@@ -1,12 +1,13 @@
 /**
  * App-mode state machine.
  *
- * Five modes per `quire/design/ui.md`:
- *   - 'pre-session'   — DM solo, players joining; campaign loader visible
- *   - 'in-session'    — default; play with shared session active
- *   - 'post-session'  — wrap-session diff review (living-document)
- *   - 'authoring'     — markdown editor + frontmatter form (DM)
- *   - 'solo-browse'   — implicit when no live session; binder view
+ * Six modes per `quire/design/ui.md` + Phase B P5:
+ *   - 'pre-session'         — DM solo, players joining; campaign loader visible
+ *   - 'in-session'          — default; play with shared session active
+ *   - 'post-session'        — wrap-session diff review (living-document)
+ *   - 'session-wrap-marks'  — Phase B P5: end-of-session advancement-marks roster sheet
+ *   - 'authoring'           — markdown editor + frontmatter form (DM)
+ *   - 'solo-browse'         — implicit when no live session; binder view
  *
  * Mode is encoded in the URL as `?mode=...` so a reload preserves it:
  *

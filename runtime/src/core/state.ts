@@ -729,7 +729,15 @@ export function filterForViewer(
   for (const [pcId, edits] of Object.entries(state.pcEdits)) {
     const safe: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(edits)) {
-      if (dmOnlyFieldSet.has(field)) continue;
+      // Phase B P3 verification (run ac7a1cdcc81285f0c) follow-up:
+      // strip dotted sub-field overlays too.  Without this, edits
+      // to `tax.active`, `threadDebt.rung`, `alignmentDrift.marks`
+      // (DM-only state via the parent field's DM_ONLY membership)
+      // would leak to player viewers since the per-field key
+      // doesn't match the set.  Compare the prefix-before-first-dot.
+      const topLevel =
+        field.indexOf('.') >= 0 ? field.slice(0, field.indexOf('.')) : field;
+      if (dmOnlyFieldSet.has(topLevel)) continue;
       safe[field] = value;
     }
     filteredPcEdits[pcId] = safe;

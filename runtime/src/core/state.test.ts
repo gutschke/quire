@@ -1276,36 +1276,39 @@ describe('filterForViewer (P0-4)', () => {
     expect('dmNotes' in filtered.pcEdits['pc-mei']).toBe(false);
   });
 
-  it('Task #295: pcEdits projection strips every DM-only field', () => {
+  it('Task #295 + Phase B P3 verification: pcEdits projection strips DM-only fields AND their dotted sub-fields', () => {
     const s = dmState();
     // One-of-each across the DM_ONLY_CHARACTER_FIELDS list.
     s.pcEdits['pc-mei'] = {
       harm: 2, // KEEP
       stress: 1, // KEEP
-      'stats.int': 3, // KEEP
-      magicPhase: 'tax', // STRIP
-      knowsTheyCanCast: true, // STRIP
-      'tax.active': true, // STRIP-NOT — tax.* is dotted, only the literal "tax" matches DM_ONLY
-      'threadDebt.rung': 'noticed', // STRIP-NOT — same as above
-      'alignmentDrift.marks': 2, // STRIP-NOT — same as above
+      'stats.int': 3, // KEEP (`stats` is not DM-only)
+      magicPhase: 'tax', // STRIP (top-level DM-only)
+      knowsTheyCanCast: true, // STRIP (top-level DM-only)
+      'tax.active': true, // STRIP (dotted sub-field of DM-only `tax`)
+      'threadDebt.rung': 'noticed', // STRIP (dotted sub-field of DM-only `threadDebt`)
+      'alignmentDrift.marks': 2, // STRIP (dotted sub-field of DM-only `alignmentDrift`)
       dmNotes: 'a paragraph' // STRIP
     };
     const filtered = filterForViewer(s, 'alice');
     const edits = filtered.pcEdits['pc-mei'];
+    // Player-visible fields survive.
     expect(edits.harm).toBe(2);
     expect(edits.stress).toBe(1);
     expect(edits['stats.int']).toBe(3);
-    // The literal-field DM-only entries are gone.
+    // Top-level DM-only entries gone.
     expect('magicPhase' in edits).toBe(false);
     expect('knowsTheyCanCast' in edits).toBe(false);
     expect('dmNotes' in edits).toBe(false);
-    // Dotted sub-field edits are NOT in DM_ONLY_CHARACTER_FIELDS
-    // (which is keyed on top-level field names).  The whole-field
-    // gate at the synthesizedPcs projection already protects the
-    // rendered record; the dotted overlays would write into a
-    // stripped parent at render-time anyway.  This test pins the
-    // behavior so future drift gets caught.
-    expect(edits['tax.active']).toBe(true);
+    // Verification a4d73ff05b8fad993 follow-up: dotted sub-field
+    // overlays are now ALSO stripped — `tax.active`,
+    // `threadDebt.rung`, `alignmentDrift.marks` were prior-art
+    // leaks because the projection's set-based field-name check
+    // only matched literal names.  Fixed by comparing the
+    // before-first-dot prefix.
+    expect('tax.active' in edits).toBe(false);
+    expect('threadDebt.rung' in edits).toBe(false);
+    expect('alignmentDrift.marks' in edits).toBe(false);
   });
 
   it('Task #295: DM-as-viewer sees pcEdits unchanged (identity fast-path)', () => {

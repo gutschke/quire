@@ -1733,6 +1733,23 @@ export const quireAppStyles = css`
     }
 
     /* ====================================================== */
+    /* Phase B P4 (2026-05-26): player-rail language chip-list. */
+    .player-rail-language-chips {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+    }
+    .player-rail-language-chip {
+      padding: 0.1rem 0.55rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 999px;
+      background: light-dark(#f1f5f9, #1e293b);
+      font-size: 0.88em;
+    }
+
     /* Phase B P3 Tier B (2026-05-26): dm-pc-detail DM-only card. */
     .dm-pc-detail {
       border-color: light-dark(#d97706, #f59e0b);
