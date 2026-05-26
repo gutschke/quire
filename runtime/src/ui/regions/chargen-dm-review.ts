@@ -527,6 +527,17 @@ export class ChargenDmReview extends LitElement {
   onDismissResyncFailure: ((slot: number) => void) | null = null;
 
   /**
+   * P-R12 (2026-05-25): per-slot "joining at session N" map.
+   * Default 1 (no catch-up).  When > 1, the controller seeds the
+   * pc-create payload's startingMarks + startingAdvancements.
+   */
+  @property({ attribute: false })
+  joiningSession: ReadonlyMap<number, number> = new Map();
+
+  @property({ attribute: false })
+  onSetJoiningSession: ((slot: number, n: number) => void) | null = null;
+
+  /**
    * Wave 3c (2026-05-25): revise-dialog state.  Replaces the legacy
    * window.prompt with an inline modal that accepts an optional
    * reason + lets the DM pin specific chargen questions so the
@@ -1712,6 +1723,7 @@ export class ChargenDmReview extends LitElement {
           >
             Review backstory + answers
           </button>
+          ${this.renderJoiningSessionPicker(slot, accepted)}
           ${this.renderAcceptReviseActions(slot, accepted)}
         </div>
       `;
@@ -1817,6 +1829,57 @@ export class ChargenDmReview extends LitElement {
    * controller filters this too).  Revise is always available so
    * the DM can clear a bad result and re-synthesize.
    */
+  /**
+   * P-R12 (2026-05-25): mid-campaign join picker.  When the DM is
+   * adding a PC after session 1, this lets them say "this PC is
+   * joining at session N" so the engine seeds catch-up marks +
+   * advancements (N - 1 of each).  Hidden after accept (the
+   * value is locked into the pc-create event) + when no
+   * onSetJoiningSession callback is wired.
+   *
+   * Defaults to 1.  Picker is intentionally minimal — a `<input
+   * type=number>` with a tiny aria-labelled hint.  TTRPG-R4's
+   * "ONE thing missing for first-table" wanted at minimum a way
+   * to seed marks; this is that minimum.
+   */
+  private renderJoiningSessionPicker(
+    slot: number,
+    accepted: boolean
+  ): TemplateResult | typeof nothing {
+    if (accepted) return nothing;
+    if (!this.onSetJoiningSession) return nothing;
+    const current = this.joiningSession.get(slot) ?? 1;
+    return html`
+      <div class="chargen-dm-review-joining-session">
+        <label>
+          <span class="muted">Joining at session #</span>
+          <input
+            type="number"
+            class="chargen-dm-review-joining-input"
+            min="1"
+            max="20"
+            step="1"
+            .value=${String(current)}
+            aria-label="Session number this PC joins at (for catch-up marks)"
+            @change=${(e: Event) => {
+              const n = Number((e.target as HTMLInputElement).value);
+              if (Number.isFinite(n) && n >= 1 && n <= 20) {
+                this.onSetJoiningSession?.(slot, Math.floor(n));
+              }
+            }}
+          />
+          ${current > 1
+            ? html`<span class="muted chargen-dm-review-joining-hint">
+                seeds ${current - 1} marks + ${current - 1} advancements
+              </span>`
+            : html`<span class="muted chargen-dm-review-joining-hint">
+                no catch-up (default)
+              </span>`}
+        </label>
+      </div>
+    `;
+  }
+
   private renderAcceptReviseActions(
     slot: number,
     accepted: boolean

@@ -1498,6 +1498,62 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     expect(env.pcCreates[0].name).toBe('Mai Tanaka');
     expect(env.pcCreates[0].pronouns).toBe('they/them');
   });
+
+  it('P-R12: setJoiningSessionForSlot stores N when > 1, clears when 1', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.joiningSessionForSlot(1)).toBe(1);
+    ctrl.setJoiningSessionForSlot(1, 3);
+    expect(ctrl.joiningSessionForSlot(1)).toBe(3);
+    ctrl.setJoiningSessionForSlot(1, 1);
+    expect(ctrl.joiningSessionForSlot(1)).toBe(1);
+  });
+
+  it('P-R12: setJoiningSessionForSlot rejects out-of-range / non-integer', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setJoiningSessionForSlot(1, 5);
+    ctrl.setJoiningSessionForSlot(1, 0); // rejected
+    expect(ctrl.joiningSessionForSlot(1)).toBe(5);
+    ctrl.setJoiningSessionForSlot(1, 21); // rejected
+    expect(ctrl.joiningSessionForSlot(1)).toBe(5);
+    ctrl.setJoiningSessionForSlot(1, 2.5); // rejected
+    expect(ctrl.joiningSessionForSlot(1)).toBe(5);
+  });
+
+  it('P-R12: acceptSlot seeds startingMarks + startingAdvancements from joining session', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    seedResult(ctrl, 1);
+    ctrl.setJoiningSessionForSlot(1, 3);
+    ctrl.acceptSlot(1);
+    expect(env.pcCreates.length).toBe(1);
+    const payload = env.pcCreates[0] as Record<string, unknown>;
+    expect(payload.startingMarks).toBe(2);
+    expect(payload.startingAdvancements).toBe(2);
+  });
+
+  it('P-R12: acceptSlot omits catch-up fields when joining at session 1', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    seedResult(ctrl, 1);
+    // No setJoiningSessionForSlot — default is 1.
+    ctrl.acceptSlot(1);
+    const payload = env.pcCreates[0] as Record<string, unknown>;
+    expect(payload.startingMarks).toBeUndefined();
+    expect(payload.startingAdvancements).toBeUndefined();
+  });
+
+  it('P-R12: clearSynth removes any staged joining-session value', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResult(ctrl, 1);
+    ctrl.setJoiningSessionForSlot(1, 4);
+    ctrl.clearSynth(1);
+    expect(ctrl.joiningSessionForSlot(1)).toBe(1);
+  });
 });
 
 describe('ChargenController — patchInPlace (Wave 3a)', () => {

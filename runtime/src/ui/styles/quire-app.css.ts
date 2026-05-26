@@ -742,6 +742,34 @@ export const quireAppStyles = css`
       opacity: 1;
       border-color: light-dark(#dc2626, #f87171);
     }
+    /* P-R12: "joining at session N" picker (catch-up advancement) */
+    .chargen-dm-review-joining-session {
+      margin: 0.5rem 0;
+      padding: 0.4rem 0.6rem;
+      background: light-dark(#f8fafc, #1e293b);
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      font-size: 0.88em;
+    }
+    .chargen-dm-review-joining-session label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .chargen-dm-review-joining-input {
+      width: 4rem;
+      padding: 0.2rem 0.35rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      font: inherit;
+      text-align: center;
+    }
+    .chargen-dm-review-joining-hint {
+      font-size: 0.9em;
+      font-style: italic;
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

@@ -148,6 +148,12 @@ export interface ChargenHost {
     skills: string[];
     backstory: string;
     causedByResponseId?: string;
+    /**
+     * P-R12 (2026-05-25): catch-up advancement for mid-campaign PCs.
+     * Both default to 0; the engine clamps the upper bound at 20.
+     */
+    startingAdvancements?: number;
+    startingMarks?: number;
   }): boolean;
   /**
    * Phase 3b-1: bind a slot to a pcId via the existing
@@ -267,6 +273,15 @@ export class ChargenController implements ReactiveController {
    * controller as the single source of truth.
    */
   private readonly _resyncInFlight = new Set<number>();
+
+  /**
+   * P-R12 (2026-05-25): "joining at session N" picker per-slot.
+   * Default 1 (no catch-up).  When N > 1, acceptSlot seeds the
+   * pc-create payload's startingMarks (N - 1) + advancement bump
+   * so the late-joining PC isn't mechanically behind the party.
+   * Cleared on accept / clearSynth / revise.
+   */
+  private readonly _joiningSession = new Map<number, number>();
 
   /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
@@ -736,6 +751,21 @@ export class ChargenController implements ReactiveController {
     // record — the loader-overlay resolves in one pass.  Both
     // events come from the same peer in the same materialize call,
     // so the per-peer monotonic seq guarantees ordering on replay.
+    // P-R12 (2026-05-25): seed catch-up marks/advancements for a
+    // mid-campaign join.  Default joiningSession=1 means "joining
+    // at session 1" → marks=0 (fresh PC baseline).  joiningSession=3
+    // means "joining mid-S3" → marks=2 + 1 catch-up advancement.
+    // The rule-of-thumb matches the TTRPG-R4 recommendation; the
+    // DM can override in-session via pc-edit if a different cadence
+    // fits the campaign.
+    const joiningSession = this._joiningSession.get(slot) ?? 1;
+    const catchUp =
+      joiningSession > 1
+        ? {
+            startingMarks: Math.max(0, joiningSession - 1),
+            startingAdvancements: Math.max(0, joiningSession - 1)
+          }
+        : {};
     const appended = this.env.appendPcCreate({
       pcId,
       name: r.name,
@@ -744,7 +774,8 @@ export class ChargenController implements ReactiveController {
       stats: statsLower,
       skills: r.skillMastery,
       backstory: r.backstory,
-      causedByResponseId: r.responseId
+      causedByResponseId: r.responseId,
+      ...catchUp
     });
     if (!appended) return; // host gated (non-coord, no session) — preserve invariant
 
@@ -835,6 +866,7 @@ export class ChargenController implements ReactiveController {
     this._pronounPatchedSlots.delete(slot);
     this._originalBackstoryForResync.delete(slot);
     this._resyncFailures.delete(slot);
+    this._joiningSession.delete(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
       trimmedReason
@@ -1416,6 +1448,29 @@ export class ChargenController implements ReactiveController {
     return this._resyncInFlight.has(slot);
   }
 
+  /**
+   * P-R12 (2026-05-25): "joining at session N" setter for a slot.
+   * Default (no entry) → session 1 / no catch-up.  Clamped to
+   * [1, 20] — outside that range is rejected silently.
+   */
+  setJoiningSessionForSlot(slot: number, n: number): void {
+    if (!Number.isInteger(n) || n < 1 || n > 20) return;
+    if (n === 1) {
+      this._joiningSession.delete(slot);
+    } else {
+      this._joiningSession.set(slot, n);
+    }
+    this.host.requestUpdate();
+  }
+
+  joiningSessionForSlot(slot: number): number {
+    return this._joiningSession.get(slot) ?? 1;
+  }
+
+  joiningSessionMap(): ReadonlyMap<number, number> {
+    return new Map(this._joiningSession);
+  }
+
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */
   clearSynth(slot: number): void {
     const had = this._synthResults.has(slot) || this._acceptedSlots.has(slot);
@@ -1425,6 +1480,7 @@ export class ChargenController implements ReactiveController {
     this._pronounPatchedSlots.delete(slot);
     this._originalBackstoryForResync.delete(slot);
     this._resyncFailures.delete(slot);
+    this._joiningSession.delete(slot);
     if (had) this.host.requestUpdate();
   }
 

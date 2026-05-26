@@ -1596,6 +1596,53 @@ describe('<chargen-dm-review> — Wave 3 polish (post-R4 fixes)', () => {
     expect(el.querySelector('.chargen-dm-review-stat-hint')).toBeNull();
   });
 
+  it('P-R12: joining-session picker renders when callback wired + not accepted', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onSetJoiningSession = () => {};
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-joining-input'
+    );
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe('1');
+  });
+
+  it('P-R12: changing the joining-session input fires onSetJoiningSession', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    const calls: Array<[number, number]> = [];
+    el.onSetJoiningSession = (slot, n) => calls.push([slot, n]);
+    await el.updateComplete;
+    const input = el.querySelector<HTMLInputElement>(
+      '.chargen-dm-review-joining-input'
+    )!;
+    input.value = '3';
+    input.dispatchEvent(new Event('change'));
+    expect(calls).toEqual([[1, 3]]);
+  });
+
+  it('P-R12: joining-session hint reflects the staged value', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.joiningSession = new Map([[1, 3]]);
+    el.onSetJoiningSession = () => {};
+    await el.updateComplete;
+    const hint = el.querySelector('.chargen-dm-review-joining-hint');
+    expect(hint?.textContent).toMatch(/seeds 2 marks/);
+  });
+
+  it('P-R12: picker hides on accepted slots (locked into pc-create)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.acceptedSlots = new Set([1]);
+    el.onSetJoiningSession = () => {};
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-joining-input')
+    ).toBeNull();
+  });
+
   it('UX-R5 fix: chip-add button reads "+ tag" / "+ skill" instead of bare +', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mei')]]);

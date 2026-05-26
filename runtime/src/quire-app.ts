@@ -1333,6 +1333,9 @@ export class QuireApp extends LitElement {
         .resyncFailures=${this.chargen.resyncFailuresMap()}
         .onDismissResyncFailure=${(slot: number) =>
           this.chargen.dismissResyncFailure(slot)}
+        .joiningSession=${this.chargen.joiningSessionMap()}
+        .onSetJoiningSession=${(slot: number, n: number) =>
+          this.chargen.setJoiningSessionForSlot(slot, n)}
         .onDismissPronounPatchHint=${(slot: number) =>
           this.chargen.dismissPronounPatchHint(slot)}
         .onRetirePc=${(payload: {
