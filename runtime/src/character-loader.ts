@@ -314,26 +314,19 @@ export type DmPc = CharacterRecord;
  * scope projection has stripped DM-only fields.  Used as INTENT
  * documentation on props / args whose viewer-scope is `player`.
  *
- * **Compile-time enforcement does NOT work today**: CharacterRecord
- * carries an `[key: string]: unknown` index signature (forward-
- * compat for unknown JSON fields), which means TypeScript's `Omit`
- * doesn't actually drop the named DM-only fields — the index
- * signature re-includes them as `unknown`.  Reading
- * `pc.knowsTheyCanCast` on a `PlayerVisiblePc` returns `unknown`
- * rather than a compile error.
+ * **Now compile-time enforced** (V-10-strict, completed 2026-05-26):
+ * the previous `[key: string]: unknown` index signature was removed,
+ * so this `Omit` actually drops the named DM-only fields at the
+ * type level.  Reading `pc.knowsTheyCanCast` on a `PlayerVisiblePc`
+ * is now a TypeScript error rather than `unknown`.  Forward-compat
+ * extras live under the typed `extras?` bag.
  *
- * The load-bearing guard is `stripDmOnlyFromCharacter` (runtime
- * delete) + the materializer-level wipe in `filterForViewer`.  The
- * type alias is a documentation hook — same shape as
- * CharacterRecord at the type level.
- *
- * Follow-up (V-10-strict, deferred): move forward-compat extras
- * into a separate `extras: Record<string, unknown>` bag.  Removing
- * the index signature would unlock real compile-time enforcement
- * of the field-strip.  Out of scope for P1b — would touch every
- * downstream consumer that reads dynamic keys.
+ * The load-bearing runtime guard is still
+ * `stripDmOnlyFromCharacter` (runtime delete) + the materializer-
+ * level wipe in `filterForViewer` — type-level enforcement is
+ * defense-in-depth alongside, not a replacement.
  */
-export type PlayerVisiblePc = CharacterRecord;
+export type PlayerVisiblePc = Omit<CharacterRecord, DmOnlyCharacterField>;
 
 /**
  * Phase B P1b: pure function that strips every DM-only field from a

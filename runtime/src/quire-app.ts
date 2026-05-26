@@ -1849,7 +1849,26 @@ export class QuireApp extends LitElement {
     }
     while (tags.length < 3) tags.push(`promoted from ${npcId}`);
     if (tags.length > 5) tags.length = 5;
-    this.session.append('seat-add', { v: 1, slot });
+    // QA sanity-check BLOCKING-1 mitigation step 2: promote to a
+    // HIDDEN seat by default (#301 firewall).  This gives the DM
+    // time to rewrite the placeholder backstory + audit any other
+    // fields that came from the NPC sheet before players see the
+    // PC.  DM clicks Reveal on the Stage Roster tile when ready.
+    this.session.append('seat-add', { v: 1, slot, revealed: false });
+    // QA sanity-check (run af29809d2760df714) BLOCKING-1: an
+    // earlier draft of this method passed `r.backstory` / `r.description`
+    // straight into the player-visible pc-create payload.  NPC sheets
+    // in `characters/npcs/*.json` typically carry DM-private framing
+    // ("works for The Quiet", "secretly Yui's brother") in those
+    // fields — which would have rendered on the promoted PC's
+    // player-bound sheet.  Fix: backstory becomes a neutral
+    // placeholder the DM is expected to overwrite (via the
+    // chargen-dm-review edit dialog or M4 living-doc) BEFORE the
+    // seat is revealed.  Until then, the PC is functional but
+    // player-side prose is intentionally bland.
+    const promoteStub =
+      `(Promoted from NPC ${npcId} — DM should rewrite this backstory ` +
+      `to remove any DM-private framing before revealing the seat.)`;
     this.session.append('pc-create', {
       v: 1,
       pcId: newPcId,
@@ -1865,12 +1884,7 @@ export class QuireApp extends LitElement {
         cha: typeof npcStats.cha === 'number' ? npcStats.cha : 0
       },
       skills: Array.isArray(r.skills) ? r.skills : [],
-      backstory:
-        typeof r.backstory === 'string' && r.backstory.length > 0
-          ? r.backstory
-          : typeof r.description === 'string' && r.description.length > 0
-            ? r.description
-            : `Promoted from NPC ${npcId}.`
+      backstory: promoteStub
     });
     this.session.append('pc-slot-bind', {
       v: 1,
@@ -3179,6 +3193,25 @@ export class QuireApp extends LitElement {
           inFictionReason: reason,
           reason: 'departed'
         });
+        // QA sanity-check SHOULD-FIX-3: verify the retire actually
+        // landed before yielding.  EventLog.append → materialize is
+        // synchronous through SessionController, so by the time the
+        // next line runs the seat should be bound-retired.  If
+        // some future validator drift drops the event silently,
+        // bail without yielding — better to leave the DM in coord
+        // with PC bound-active than to lose coord with stale state.
+        const slotEntry = Object.values(this.session.view().shared.pcSlots).find(
+          (seat) => seat.pcId === p.pcId
+        );
+        if (slotEntry && slotEntry.state !== 'bound-retired') {
+          // Retire was silently rejected.  Surface as an error and
+          // re-open the prompt so the DM can investigate or retry.
+          this.aiError =
+            `Retire of ${p.pcName} was not accepted by the engine — yield aborted.  ` +
+            `Try again or pick a different PC fate.`;
+          // Keep the prompt open with current selections.
+          return false;
+        }
       }
       // fate === 'keep' → no PC event.
     }

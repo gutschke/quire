@@ -3219,6 +3219,101 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
     expect(state.pcRetireRejections).toHaveLength(0);
   });
 
+  it('SHOULD-FIX-2: non-coord viewer sees ONLY their own retire requests + rejections', () => {
+    // QA sanity-check: defense-in-depth strip in filterForViewer.
+    // Build a 3-peer scenario where two players each have requests
+    // pending + bob also has a rejection.  Project for each viewer
+    // and check they only see their own entries.
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('peer-join', { name: 'Alice' });
+    const bob = new EventLog('bob');
+    bob.append('peer-join', { name: 'Bob' });
+    const carol = new EventLog('carol');
+    carol.append('peer-join', { name: 'Carol' });
+    for (const ev of bob.events()) dm.apply(ev);
+    for (const ev of carol.events()) dm.apply(ev);
+    // Two PCs, two players bound.
+    dm.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    dm.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'reggie' });
+    for (const ev of dm.events()) {
+      bob.apply(ev);
+      carol.apply(ev);
+    }
+    bob.append('peer-rename', { pcId: 'mei' });
+    carol.append('peer-rename', { pcId: 'reggie' });
+    for (const ev of bob.events()) {
+      if (ev.peerId === 'bob' && ev.kind === 'peer-rename') dm.apply(ev);
+    }
+    for (const ev of carol.events()) {
+      if (ev.peerId === 'carol' && ev.kind === 'peer-rename') dm.apply(ev);
+    }
+    // Both players request retire.
+    bob.apply(
+      dm.events()[dm.events().length - 1]
+    ); // sync carol's rename to bob
+    const bobReq = bob.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: "Mei realizes the Quiet has been speaking through her",
+      reason: 'departed'
+    });
+    dm.apply(bobReq);
+    carol.apply(bobReq);
+    const carolReq = carol.append('pc-retire-request', {
+      v: 1,
+      pcId: 'reggie',
+      inFictionReason: "Reggie wants to go home",
+      reason: 'departed'
+    });
+    dm.apply(carolReq);
+    // DM rejects bob's request with a spoilery note.
+    dm.append('pc-retire-reject', {
+      v: 1,
+      requestingPeerId: 'bob',
+      pcId: 'mei',
+      note: 'the prophecy needs her one more scene'
+    });
+    const state = materialize(dm.events());
+    expect(state.pcRetireRequests).toHaveLength(1); // bob's was cleared on reject
+    expect(state.pcRetireRejections).toHaveLength(1);
+    // Bob's view: sees his own rejection but NOT carol's request.
+    const bobView = filterForViewer(state, 'bob');
+    expect(bobView.pcRetireRequests).toEqual([]);
+    expect(bobView.pcRetireRejections).toHaveLength(1);
+    expect(bobView.pcRetireRejections[0].requestingPeerId).toBe('bob');
+    // Carol's view: sees her own pending request, NOT bob's rejection
+    // (and definitely not bob's spoilery in-fiction reason).
+    const carolView = filterForViewer(state, 'carol');
+    expect(carolView.pcRetireRequests).toHaveLength(1);
+    expect(carolView.pcRetireRequests[0].requestingPeerId).toBe('carol');
+    expect(carolView.pcRetireRejections).toEqual([]);
+  });
+
+  it('SHOULD-FIX-5: pc-retire-reject with empty requestingPeerId is dropped', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('pc-retire-reject', {
+      v: 1,
+      requestingPeerId: '',
+      pcId: 'mei'
+    });
+    const state = materialize(dm.events());
+    expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  it('SHOULD-FIX-5: pc-retire-reject with oversized requestingPeerId is dropped', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('pc-retire-reject', {
+      v: 1,
+      requestingPeerId: 'x'.repeat(81),
+      pcId: 'mei'
+    });
+    const state = materialize(dm.events());
+    expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
   it('a fresh request after a rejection clears the stale rejection pip', () => {
     const { alice, bob } = bobOwnsMei();
     const first = bob.append('pc-retire-request', {

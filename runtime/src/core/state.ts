@@ -667,6 +667,20 @@ export function filterForViewer(
     }
     filteredPcEdits[pcId] = safe;
   }
+  // QA sanity-check (run af29809d2760df714) SHOULD-FIX-2: project
+  // pcRetireRequests + pcRetireRejections so a non-coord viewer
+  // sees ONLY their own pending request / rejection.  Other
+  // players' in-fiction reasons can carry spoilers ("Mei realizes
+  // the Quiet has been speaking through her") — even though no
+  // current surface reads other peers' entries, defense-in-depth
+  // strips them here so a future surface can't leak them by
+  // forgetting the local-peer filter.
+  const filteredPcRetireRequests = state.pcRetireRequests.filter(
+    (r) => r.requestingPeerId === viewerPeerId
+  );
+  const filteredPcRetireRejections = state.pcRetireRejections.filter(
+    (r) => r.requestingPeerId === viewerPeerId
+  );
   return {
     ...state,
     // DM-only fields wiped:
@@ -678,6 +692,8 @@ export function filterForViewer(
     synthesizedPcs: filteredSynthesizedPcs,
     pcSlots: filteredPcSlots,
     pcEdits: filteredPcEdits,
+    pcRetireRequests: filteredPcRetireRequests,
+    pcRetireRejections: filteredPcRetireRejections,
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -2081,11 +2097,24 @@ function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
   // never offers re-bind on bound slots), not the materializer.
   // Materializer stays permissive so corrupt-replay paths are
   // recoverable.
-  state.pcSlots[p.slot] = {
+  //
+  // QA sanity-check (run af29809d2760df714) follow-up: preserve
+  // the `revealed: false` flag across the bind so a seat staged
+  // hidden via seat-add(revealed:false) STAYS hidden after a
+  // subsequent pc-slot-bind (the canonical NPC→PC promotion
+  // sequence + the future "DM stages chargen for a hidden seat"
+  // workflow).  Without this, the bind would silently re-reveal
+  // and break the firewall.
+  const prior = state.pcSlots[p.slot];
+  const seat: Seat = {
     state: 'bound-active',
     pcId: p.pcId,
     controllerPeerId: event.peerId
   };
+  if (prior?.revealed === false) {
+    seat.revealed = false;
+  }
+  state.pcSlots[p.slot] = seat;
 }
 
 /**
@@ -2365,6 +2394,13 @@ function applyPcRetireRejectEvent(
     note?: unknown;
   };
   if (typeof p.requestingPeerId !== 'string') return;
+  // QA sanity-check SHOULD-FIX-5: bounded length on the peer id so
+  // a malformed payload can't pollute pcRetireRejections.  Same
+  // shape as peer-name's 80-char cap (peer ids are short pairing
+  // codes; 80 is generous).
+  if (p.requestingPeerId.length === 0 || p.requestingPeerId.length > 80) {
+    return;
+  }
   if (!isCharacterId(p.pcId)) return;
   const note =
     typeof p.note === 'string' && p.note.length <= 200 ? p.note : undefined;

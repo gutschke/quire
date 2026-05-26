@@ -69,6 +69,43 @@ function injectCampaign(app: QuireApp, npcIds: string[]): void {
 }
 
 describe('QuireApp P-R10 — promoteNpcToPc integration', () => {
+  it('promotes to a HIDDEN seat (player firewall) — QA sanity-check BLOCKING-1', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    injectCampaign(app, ['yui']);
+    const loadSpy = vi.spyOn(charLoader, 'loadCharacter').mockResolvedValue({
+      kind: 'npc',
+      id: 'yui',
+      record: {
+        $schemaVersion: '0.1.0',
+        name: 'Yui',
+        // DM-private framing the player must NOT see.
+        backstory: 'Secretly Mei\'s sister; works for The Quiet.',
+        description: 'Hidden agenda: betray the table in episode 5.',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 }
+      },
+      source: { owner: 'x', repo: 'y', ref: 'main' }
+    });
+    const slot = await app.promoteNpcToPc('yui');
+    expect(slot).toBe(1);
+    await flush();
+    const v = app.sessionView!;
+    // Seat is hidden until the DM clicks Reveal.
+    expect(v.shared.pcSlots[1]?.revealed).toBe(false);
+    // Backstory does NOT contain the DM-private framing — replaced
+    // with a neutral placeholder.
+    const newPcId = Object.keys(v.shared.synthesizedPcs).find((id) =>
+      id.startsWith('pc-from-yui-')
+    )!;
+    const rec = v.shared.synthesizedPcs[newPcId];
+    expect(rec.backstory).not.toMatch(/Secretly Mei/);
+    expect(rec.backstory).not.toMatch(/Hidden agenda/);
+    expect(rec.backstory).not.toMatch(/The Quiet/);
+    expect(rec.backstory).toMatch(/Promoted from NPC/);
+    loadSpy.mockRestore();
+  });
+
   it('materializes the new PC into synthesizedPcs (regression for nested-record bug)', async () => {
     const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
     app.startHosting();
