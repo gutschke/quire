@@ -593,6 +593,12 @@ export class AiPanel extends LitElement {
           this.onSubmit?.(this.promptDraft);
         }}
       >
+        <!-- Wave A5 (2026-05-26): visual disambiguator vs the chat
+             panel input.  Literal "ai (DM)>" glyph tells the DM at
+             a glance which input has focus — closes the accidental-
+             disclosure threat (a DM about to chat a player who
+             intended an AI query) with a one-character cue. -->
+        <span class="ai-input-glyph" aria-hidden="true">ai (DM)&gt;</span>
         <textarea
           rows="3"
           .value=${this.promptDraft}

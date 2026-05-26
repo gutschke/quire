@@ -385,7 +385,13 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
     vi.restoreAllMocks();
   });
 
-  it('passes the user prompt unchanged when no campaign is loaded', async () => {
+  it('Wave A4 (2026-05-26) firewall: DM-typed prompt is wrapped in untrusted_content even with no campaign', async () => {
+    // Pre-Wave-A4 the prompt was passed verbatim ("hello, no
+    // context").  The firewall hardening now wraps the DM's typed
+    // prompt in `<untrusted_content source="dm-ai-prompt">…</…>`
+    // because the DM may paste in player chat / scratch text
+    // containing prompt-injection.  Same convention P2 established
+    // for player chargen answers.
     const app = mountApp();
     app.startHosting();
     await flush();
@@ -402,7 +408,9 @@ describe('QuireApp AI campaign-context (M3b followup)', () => {
       }
     };
     await app.submitAiPrompt('hello, no context');
-    expect(receivedPrompt).toBe('hello, no context');
+    expect(receivedPrompt).toContain('<untrusted_content source="dm-ai-prompt">');
+    expect(receivedPrompt).toContain('hello, no context');
+    expect(receivedPrompt).toContain('</untrusted_content>');
   });
 
   it('prepends wrapped campaign content when an episode is loaded (public scope)', async () => {

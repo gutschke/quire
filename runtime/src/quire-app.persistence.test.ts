@@ -414,4 +414,73 @@ describe('QuireApp persistence — localStorage autosave', () => {
       )
     ).toBe(true);
   });
+
+  // ---------------------------------------------------------------
+  // Wave A1 (2026-05-26) firewall hardening regression tests.
+  // ---------------------------------------------------------------
+
+  it('Wave A1 firewall: DM (coord) autosave doc contains DM-only events (resilience)', async () => {
+    // The acting DM's own device keeps the full event log so they
+    // can recover from a crash.  buildShareableSaveDocument is
+    // identity for the coord viewer.
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app);
+    await app.startHosting();
+    await flush();
+    // Append a DM-only event (scratch-note is coord-only).
+    (
+      app as unknown as { appendScratchNote: (s: string) => boolean }
+    ).appendScratchNote('DM private — Mei is the Quiet vessel');
+    await flush();
+    const doc = (
+      app as unknown as { buildShareableSaveDocument: () => { events: Array<{ kind: string }> } | null }
+    ).buildShareableSaveDocument()!;
+    const kinds = new Set(doc.events.map((e) => e.kind));
+    expect(kinds.has('scratch-note')).toBe(true);
+  });
+
+  it('Wave A1 firewall: non-coord (player) autosave doc STRIPS DM-only events', async () => {
+    // Two-peer session: HOST (coord) and PLAYER (joined via join
+    // code).  HOST appends a scratch-note (DM-only event kind).
+    // PLAYER's autosave path now uses buildShareableSaveDocument
+    // which filters those events out so the player's localStorage
+    // doesn't leak DM material when the device is shared / picked
+    // up by a non-player.
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    injectCampaign(host);
+    await host.startHosting();
+    await flush();
+    const player = mountApp(inMemoryFactory(network, 'PLAYER'));
+    injectCampaign(player);
+    (player as unknown as { sessionFactory: TransportFactory }).sessionFactory = {
+      createHost: async () => ({
+        transport: new InMemoryTransport('PLAYER', network),
+        pairingCode: 'PLAYER'
+      }),
+      createGuest: async () => ({
+        transport: new InMemoryTransport('PLAYER', network)
+      })
+    };
+    player.joinCodeDraft = 'HOST';
+    player.joinSession();
+    await flush();
+    // HOST emits a DM-only event.
+    (
+      host as unknown as { appendScratchNote: (s: string) => boolean }
+    ).appendScratchNote('DM secret: the Quiet has a name');
+    await flush();
+    // Verify the player can see the session as active before
+    // building the doc.
+    expect(player.sessionView?.status).toBe('active');
+    const doc = player.buildShareableSaveDocument();
+    expect(doc).not.toBeNull();
+    const kinds = new Set(doc!.events.map((e) => e.kind));
+    expect(kinds.has('scratch-note')).toBe(false);
+    // Belt-and-suspenders: scan event payloads for the secret text.
+    const allTexts = doc!.events
+      .map((e) => JSON.stringify(e))
+      .join(' ');
+    expect(allTexts).not.toContain('the Quiet has a name');
+  });
 });

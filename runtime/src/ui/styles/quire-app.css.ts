@@ -3064,6 +3064,34 @@ export const quireAppStyles = css`
          width and refuses to shrink. */
       flex: 0 0 auto;
     }
+    /* Wave A5 (2026-05-26): one-character disambiguator glyph on
+       the chat input so DM can never confuse it with the AI input
+       at a glance.  Mirrors the .ai-input-glyph below; same font
+       treatment so the two read as the same control-family. */
+    .chat-input-glyph,
+    .ai-input-glyph {
+      flex: 0 0 auto;
+      align-self: center;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 0.15rem 0.35rem;
+      border-radius: 3px;
+      color: light-dark(#475569, #cbd5e1);
+      background: light-dark(#f1f5f9, #1e293b);
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      user-select: none;
+    }
+    .ai-input-glyph {
+      /* DM-amber tint to pair with the AI panel's existing
+         DM-private framing.  Tells the eye "this is the private
+         AI input, not the player-visible chat input." */
+      color: light-dark(#92400e, #fcd34d);
+      background: light-dark(#fef3c7, #422006);
+      border-color: light-dark(#fde68a, #92400e);
+      align-self: flex-start;
+      margin-top: 0.35rem;
+    }
 
     .chat-error {
       color: light-dark(#a01010, #ff7070);

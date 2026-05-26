@@ -86,6 +86,13 @@ export class ChatPanel extends LitElement {
             this.onSubmit?.(this.chatDraft);
           }}
         >
+          <!-- Wave A5 (2026-05-26): visual disambiguator vs the
+               AI panel input.  The literal "chat>" glyph tells the
+               DM at a glance which input box has focus when they
+               tab through Aside — closes the accidental-disclosure
+               threat (a DM about to send an AI query into player
+               chat) with a one-character cue. -->
+          <span class="chat-input-glyph" aria-hidden="true">chat&gt;</span>
           <input
             type="text"
             .value=${this.chatDraft}

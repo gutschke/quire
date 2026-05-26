@@ -21,6 +21,7 @@
  */
 
 import type { AiProvider, AiStructuredCallSchema } from './broker';
+import { wrapUntrusted } from './context';
 
 const HINTS_SCHEMA = {
   type: 'object',
@@ -186,8 +187,16 @@ function buildUserPrompt(
     }
   }
   if (dmGuidance && dmGuidance.trim().length > 0) {
+    // Wave A4 (2026-05-26) firewall hardening: dmGuidance is DM-
+    // typed but the DM may paste in player chat / scratch text
+    // containing prompt-injection.  Wrap in `<untrusted_content>`
+    // sentinel — same convention P2 established for player
+    // answers.  Any `</untrusted_content>` substring in the wrapped
+    // body is escaped to `<!--UC_CLOSE-->` by wrapUntrusted itself.
     lines.push('');
-    lines.push(`DM guidance: ${dmGuidance.trim()}`);
+    lines.push(
+      `DM guidance:\n${wrapUntrusted(dmGuidance.trim(), 'dm-guidance')}`
+    );
   }
   lines.push('');
   lines.push(

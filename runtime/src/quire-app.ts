@@ -93,6 +93,7 @@ import {
 import { loadEpisode, loadScene, type LoadedEpisode } from './episode-loader';
 import {
   loadCharacter,
+  stripDmOnlyFromCharacter,
   CharacterLoadError,
   type LoadedCharacter,
   type CharacterKind,
@@ -116,6 +117,7 @@ import { anthropicProvider } from './ai/providers/anthropic';
 import { geminiProvider } from './ai/providers/gemini';
 import type { AiResponse } from './ai/schema';
 import type { ContextScope } from './ai/context';
+import { wrapUntrusted } from './ai/context';
 import {
   promptHashFor,
   responseHashFor,
@@ -441,6 +443,37 @@ export class QuireApp extends LitElement {
   private pcCharacterCache = new Map<string, LoadedCharacter>();
   private pcCharacterInFlight = new Set<string>();
 
+  /**
+   * Wave A2 (2026-05-26) firewall hardening per QA-audit BLOCKER-2:
+   * disk-loaded character records carry DM-only fields verbatim
+   * (`magicPhase`, `knowsTheyCanCast`, `tax`, `threadDebt`,
+   * `accidentalGrants`, `alignmentDrift`, `dmNotes`).  The
+   * `filterForViewer` projection in `state.ts` only protects
+   * records in `state.synthesizedPcs` — records loaded from disk
+   * bypass it.  `character-loader.ts:340` explicitly calls out the
+   * gap: "loader's records aren't routed through state.ts".
+   *
+   * This wrapper strips on the way INTO the cache when the local
+   * viewer isn't the coord.  Defense-in-depth so downstream
+   * consumers (boundCharacter, AI write controller, displayName
+   * helpers) can't accidentally leak DM-only fields to the player.
+   * The coord (DM) cache still holds full records for editing.
+   */
+  private cacheCharacterForLocalViewer(
+    pcId: string,
+    loaded: LoadedCharacter
+  ): void {
+    if (this.isCoordinator()) {
+      this.pcCharacterCache.set(pcId, loaded);
+      return;
+    }
+    const stripped: LoadedCharacter = {
+      ...loaded,
+      record: stripDmOnlyFromCharacter(loaded.record) as CharacterRecord
+    };
+    this.pcCharacterCache.set(pcId, stripped);
+  }
+
   private loadCharacterByPcId(pcId: string): void {
     if (pcId === '' || this.pcCharacterCache.has(pcId)) return;
     if (this.pcCharacterInFlight.has(pcId)) return;
@@ -455,7 +488,7 @@ export class QuireApp extends LitElement {
     // overlay-check here is sufficient for the chargen-accept path.
     const overlay = this.resolvePcFromOverlay(pcId, campaign);
     if (overlay) {
-      this.pcCharacterCache.set(pcId, overlay);
+      this.cacheCharacterForLocalViewer(pcId, overlay);
       this.requestUpdate();
       return;
     }
@@ -466,7 +499,7 @@ export class QuireApp extends LitElement {
     void loadCharacter(campaign.base.source, 'pc', pcId)
       .then((character) => {
         this.pcCharacterInFlight.delete(pcId);
-        this.pcCharacterCache.set(pcId, character);
+        this.cacheCharacterForLocalViewer(pcId, character);
         this.requestUpdate();
       })
       .catch(() => {
@@ -615,7 +648,17 @@ export class QuireApp extends LitElement {
    * callback so the controller doesn't need direct access to
    * session/campaign internals.
    */
-  private autosave = new AutosaveController(this, () => this.buildSaveDocument());
+  // Wave A1 (2026-05-26) firewall hardening per QA-audit BLOCKER-1:
+  // autosave now routes through buildShareableSaveDocument so a
+  // non-coord peer's localStorage doesn't store DM-only events
+  // (scratch-note, npc-pin, thread-debt-set, ai-response, caster-
+  // state-set).  The DM (coord) still gets the full save — the
+  // function is identity for the acting coord and filters for every
+  // other viewer.  Resilience for the DM is preserved; the "kid /
+  // spouse picks up the player's laptop" threat is closed.
+  private autosave = new AutosaveController(this, () =>
+    this.buildShareableSaveDocument()
+  );
   private campaignDiscoveryInFlight: boolean = false;
   /**
    * AI provider / key / model / system-prompt state is encapsulated
@@ -1377,7 +1420,14 @@ export class QuireApp extends LitElement {
         <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
         <quire-rail slot="rail">${dmRail ? dmRail : this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
-        <quire-aside slot="aside">${dmAside}${this.renderAiPanel()}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderChatSpoilerLintModal()}</quire-aside>
+        <!-- Wave A5 (2026-05-26): Aside ordering per ui.md spec.
+             Roster sits between chat and AI so the two text-input
+             panels (chat-panel + ai-panel) are NEVER visually
+             adjacent — closes the chat/AI-confusion accidental-
+             disclosure threat with zero new chrome.  Stack order:
+             dm-aside (pinned NPCs / debt) → roster → chat-panel →
+             ai-panel (Aside-bottom per ui.md L196). -->
+        <quire-aside slot="aside">${dmAside}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}${this.renderChatSpoilerLintModal()}</quire-aside>
         <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
       </quire-shell>
     `;
@@ -1517,7 +1567,11 @@ export class QuireApp extends LitElement {
       if (seat.state !== 'bound-active') continue;
       const pcId = seat.pcId;
       if (!pcId) continue;
-      const record = v.shared.synthesizedPcs[pcId];
+      // Wave A3 (2026-05-26) firewall hardening: read from
+      // filteredShared (viewer-scoped) so a non-coord wrap-marks
+      // view never touches DM-only fields.  Identity fast-path for
+      // the DM keeps behavior unchanged; convention violator fix.
+      const record = v.filteredShared.synthesizedPcs[pcId];
       if (!record) continue;
       pcIds.push(pcId);
       recordMap[pcId] = record;
@@ -1527,7 +1581,7 @@ export class QuireApp extends LitElement {
         (record.markBullets as
           | import('./character-loader').AdvancementMarkBullets
           | undefined) ?? {};
-      const edits = v.shared.pcEdits[pcId] ?? {};
+      const edits = v.filteredShared.pcEdits[pcId] ?? {};
       const overlay: import('./character-loader').AdvancementMarkBullets = {
         ...baseBullets
       };
@@ -1936,11 +1990,16 @@ export class QuireApp extends LitElement {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return { pcs: [] };
     const pcs: import('./ai/complementarity-hints').RosterSnapshot['pcs'] = [];
-    for (const seat of Object.values(v.shared.pcSlots)) {
+    // Wave A3 (2026-05-26) firewall hardening: AI prompt assembly
+    // MUST read from filteredShared so a non-coord caller's
+    // complementarity-hints request can never push DM-only fields
+    // (magicPhase / knowsTheyCanCast / tax) into the prompt.
+    // Identity fast-path for the DM keeps behavior unchanged.
+    for (const seat of Object.values(v.filteredShared.pcSlots)) {
       if (seat.state !== 'bound-active') continue;
       const pcId = seat.pcId;
       if (!pcId) continue;
-      const record = v.shared.synthesizedPcs[pcId];
+      const record = v.filteredShared.synthesizedPcs[pcId];
       if (!record) continue;
       const stats = record.stats ?? {};
       const order: Array<['STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA', number]> = [
@@ -4183,14 +4242,29 @@ export class QuireApp extends LitElement {
     // local peer's bound PC is a chargen-synthesized record, resolve
     // synchronously from session state — no network hit, no async
     // race.  Mirrors the same check in `loadCharacterByPcId`.
+    // Wave A2 (2026-05-26) firewall hardening: when the local
+    // viewer is a player, strip DM-only fields from boundCharacter
+    // before storing.  The player's OWN PC's knowsTheyCanCast /
+    // magicPhase / tax / threadDebt / accidentalGrants are DM-
+    // controlled facts they don't surface on their own sheet
+    // (Realization is delivered verbally at the table; the player
+    // doesn't toggle their own knowsTheyCanCast).
+    const stripForPlayer = (c: LoadedCharacter): LoadedCharacter =>
+      this.isCoordinator()
+        ? c
+        : {
+            ...c,
+            record: stripDmOnlyFromCharacter(c.record) as CharacterRecord
+          };
     const overlayChar = this.resolvePcFromOverlay(myPcId, campaign);
     if (overlayChar) {
-      this.boundCharacter = overlayChar;
+      const safe = stripForPlayer(overlayChar);
+      this.boundCharacter = safe;
       this.boundCampaign = campaign;
       // Mirror into the per-pcId cache so the DM-review surface's
       // display-name lookup hits the same record without a second
       // resolve.
-      this.pcCharacterCache.set(myPcId, overlayChar);
+      this.cacheCharacterForLocalViewer(myPcId, overlayChar);
       return;
     }
     // Fire async load.  Failure clears the cache silently — the
@@ -4201,7 +4275,7 @@ export class QuireApp extends LitElement {
         // Re-check the binding hasn't changed since we kicked off
         // the fetch.
         if (this.boundCharacterFor === key) {
-          this.boundCharacter = character;
+          this.boundCharacter = stripForPlayer(character);
           this.boundCampaign = campaign;
         }
       })
@@ -4634,9 +4708,15 @@ export class QuireApp extends LitElement {
           })
         : [];
       const contextBlock = wrapCampaignContext(contextFiles);
+      // Wave A4 (2026-05-26) firewall hardening: wrap the DM's
+      // typed prompt in `<untrusted_content>` sentinel.  DM-typed
+      // means the DM may paste a player message, a scratch note,
+      // or world text containing prompt-injection.  Same convention
+      // backstory-synthesis-prompt established for player answers.
+      const wrappedUser = wrapUntrusted(user, 'dm-ai-prompt');
       const composedPrompt = contextBlock
-        ? `${contextBlock}\n\n---\n\n${user}`
-        : user;
+        ? `${contextBlock}\n\n---\n\n${wrappedUser}`
+        : wrappedUser;
       const result = await broker.complete({
         prompt: composedPrompt,
         scope,
@@ -4888,11 +4968,15 @@ export class QuireApp extends LitElement {
    * Build the current save document for the loaded campaign +
    * active session.  Returns null when no session OR no campaign.
    *
-   * Full event log — used by autosave (resilience: every player's
-   * device keeps the complete log so we never lose DM material if
-   * a single device fails).  USER-INITIATED file downloads go
-   * through buildShareableSaveDocument instead, which strips
-   * DM-only events for non-coord viewers.
+   * Full event log — used ONLY by paths that genuinely need the
+   * coord-only-on-coord-device archive (currently: tests + future
+   * coord-side full-archive export).  Autosave (Wave A1 fix) and
+   * user-initiated file download both go through
+   * buildShareableSaveDocument so a non-coord viewer's persisted
+   * copy strips DM-only events.  The "every player's device keeps
+   * the complete log for resilience" rationale was overridden by
+   * the locked threat model treating outsiders (kid / spouse on a
+   * player's laptop) as in-scope.
    */
   buildSaveDocument(): SaveDocument | null {
     if (!this.session || this.sessionView?.status !== 'active') return null;
@@ -4908,17 +4992,17 @@ export class QuireApp extends LitElement {
 
   /**
    * Build a save document suitable for SHARING — the JSON that
-   * lands in a user-initiated download.  Per the Quire threat
-   * model (see design/security.md + memory: project_quire_threat_model):
+   * lands in a user-initiated download AND the JSON the autosave
+   * writes to localStorage.  Per the Quire threat model + Wave A1
+   * audit (2026-05-26):
    *
-   *   - players STORING DM notes in their device's autosave is
-   *     explicitly wanted (resilience against single-device data
-   *     loss);
-   *   - players READING DM notes (rendered, or surfaced in a file
-   *     they downloaded + opened in a text editor) is the bug.
-   *
-   * The currently-acting DM gets the full save; everyone else
-   * gets DM-only events filtered out.
+   *   - the currently-acting DM gets the full save (resilience for
+   *     the DM device itself);
+   *   - every other peer gets DM-only events filtered out so a
+   *     player's autosave / saved-file can't leak scratch notes,
+   *     NPC pins, thread-debt, caster-state, or AI audit even when
+   *     the device is shared / handed off / picked up by a non-
+   *     player (kid / spouse / IT).
    */
   buildShareableSaveDocument(): SaveDocument | null {
     if (!this.session || this.sessionView?.status !== 'active') return null;
