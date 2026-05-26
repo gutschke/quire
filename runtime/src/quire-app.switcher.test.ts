@@ -59,17 +59,23 @@ function bindPc(
   const session = (app as unknown as { session: { append: Function } })
     .session;
   session.append('seat-add', { v: 1, slot });
+  // pc-create payload is FLAT — name/pronouns/tags/stats/skills/
+  // backstory at the top level (per applyPcCreateEvent in
+  // core/state.ts).  An earlier draft of this helper nested
+  // everything under `record` and the materializer silently dropped
+  // the event; the test still passed because the switcher only
+  // reads pcId from pcSlots (set by pc-slot-bind) and falls back to
+  // pcId for name when synthesizedPcs is empty.  Fixed alongside
+  // #302 so future tests get real records.
   session.append('pc-create', {
     v: 1,
     pcId,
-    record: {
-      $schemaVersion: '0.1.0',
-      name,
-      stats: { str: 0, dex: 1, con: 0, int: 2, wis: 1, cha: -1 },
-      harm: 0,
-      stress: 0
-    },
-    sourceCampaign: 'underleaf'
+    name,
+    pronouns: '',
+    tags: ['test', 'archivist', 'helper'],
+    stats: { str: 0, dex: 1, con: 0, int: 2, wis: 1, cha: -1 },
+    skills: [],
+    backstory: `Test backstory for ${name}.`
   });
   session.append('pc-slot-bind', { v: 1, slot, pcId });
 }

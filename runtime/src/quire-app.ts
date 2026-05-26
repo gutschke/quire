@@ -537,6 +537,48 @@ export class QuireApp extends LitElement {
   @state() resumePromptDoc: SaveDocument | null = null;
   @state() reclaimConfirmShown: boolean = false;
   /**
+   * #302 (2026-05-26): PC-fate prompt state for the outgoing DM at
+   * coord-yield time.  Per the TTRPG-R8 verdict (P-R8 reboot):
+   * when the local peer is the coord and ALSO has a bound PC, they
+   * need a one-time prompt to decide what happens to that PC after
+   * they yield — Keep playing / Sideline / Retire.  The prompt fires
+   * in two scenarios:
+   *
+   *   1. Voluntary yield: DM clicks "Yield DM role".  The modal
+   *      opens before the yield event fires; the chosen action +
+   *      yield are emitted together.
+   *   2. Reactive: another peer reclaims while the DM had a PC.
+   *      The local peer's coord status flips before the modal can
+   *      gate the yield; we still show the prompt so the DM can
+   *      pick the PC's fate retrospectively.
+   *
+   * Cleared on submit / cancel / session-leave.  Null means no
+   * prompt is open.
+   */
+  @state() yieldPcFatePrompt: {
+    pcId: string;
+    pcName: string;
+    /** True for voluntary path — modal closes by emitting coord-yield. */
+    voluntary: boolean;
+    fate: 'keep' | 'sideline' | 'retire';
+    /** Retire's in-fiction reason draft. */
+    retireReason: string;
+  } | null = null;
+  /**
+   * #302: tracking variables for the reactive coord-loss detection.
+   * Compared in `updated()` against the new sessionView so a
+   * coord→non-coord transition with bound pcId opens the prompt.
+   */
+  private prevCoordStatus: 'coord' | 'non-coord' | 'no-session' = 'no-session';
+  /**
+   * #302: set by `submitYieldPcFatePrompt` on the voluntary path to
+   * tell the reactive `updated()` hook to skip the auto-open it
+   * would otherwise fire on the same coord→non-coord transition.
+   * Cleared once consumed so a subsequent reclaim still triggers
+   * the reactive prompt.
+   */
+  private _skipNextReactiveYield = false;
+  /**
    * Debounced autosave to localStorage encapsulated in the
    * AutosaveController (P0-9).  Constructor takes a buildDoc
    * callback so the controller doesn't need direct access to
@@ -945,6 +987,53 @@ export class QuireApp extends LitElement {
     this.unsubscribeSession = null;
     this.session?.leave();
     this.session = null;
+  }
+
+  /**
+   * #302 (2026-05-26): Lit-lifecycle hook that watches for a
+   * coord→non-coord transition.  When the local peer just lost
+   * coord AND had a bound PC, opens the yield PC-fate prompt
+   * reactively (so the outgoing DM can still pick what happens to
+   * their PC after the reclaim).
+   *
+   * Tracks the prior coord-status in a private field; updated()
+   * compares old vs new on every reactive update.  No new event
+   * kind needed — the prompt's submit reuses peer-rename / pc-retire.
+   */
+  override updated(changed: Map<string, unknown>): void {
+    super.updated(changed);
+    if (!changed.has('sessionView')) return;
+    const v = this.sessionView;
+    const newStatus: 'coord' | 'non-coord' | 'no-session' =
+      !v || v.status !== 'active'
+        ? 'no-session'
+        : v.peerId && v.filteredShared.coordinator === v.peerId
+          ? 'coord'
+          : 'non-coord';
+    const prev = this.prevCoordStatus;
+    this.prevCoordStatus = newStatus;
+    if (prev === 'coord' && newStatus === 'non-coord' && v && v.peerId) {
+      // Reactive trigger: was coord, no longer am, still in active
+      // session.  Open the PC-fate prompt if I had a bound PC.
+      if (this._skipNextReactiveYield) {
+        // Voluntary submit just fired; the user already decided.
+        this._skipNextReactiveYield = false;
+      } else {
+        const me = v.filteredShared.peers[v.peerId];
+        const pcId = me?.pcId;
+        if (pcId && !this.yieldPcFatePrompt) {
+          const pcName =
+            v.filteredShared.synthesizedPcs[pcId]?.name ?? pcId;
+          this.yieldPcFatePrompt = {
+            pcId,
+            pcName,
+            voluntary: false,
+            fate: 'keep',
+            retireReason: ''
+          };
+        }
+      }
+    }
   }
 
   /** Resolve a route into the right loaded state, fetching as needed. */
@@ -1697,19 +1786,55 @@ export class QuireApp extends LitElement {
       .toString(16)
       .padStart(6, '0');
     const newPcId = `pc-from-${npcId}-${rand}`;
-    // Copy the NPC record into a PC-shaped CharacterRecord.  The
-    // schema is permissive; PC-required defaults land below.
-    const record = { ...loaded.record };
-    if (typeof record.harm !== 'number') record.harm = 0;
-    if (typeof record.stress !== 'number') record.stress = 0;
-    // Slot + create + bind in event-log order so the
-    // synthesizedPcs map has the record before pc-slot-bind lands.
+    // Copy NPC fields into the flat pc-create payload shape.  The
+    // materializer (applyPcCreateEvent in core/state.ts) validates a
+    // FLAT shape — name/pronouns/tags/stats/skills/backstory all at
+    // the top level — not nested under `record`.  Earlier versions
+    // of this method nested the record and silently failed
+    // validation; fix landed alongside the #302 tests that caught
+    // it.  PC-required defaults applied where the NPC didn't carry
+    // them (stats neutral, harm/stress 0, tags non-empty).
+    const r = loaded.record;
+    const npcStats = r.stats ?? {};
+    // pc-create requires 3-5 tags per the materializer's strict
+    // validation.  Pad with role / disposition / generic fallback so
+    // even a sparse NPC sheet promotes cleanly.  DM can edit later.
+    const rawTags = Array.isArray(r.tags) ? r.tags : [];
+    const tags: string[] = [...rawTags];
+    if (typeof r.role === 'string' && r.role.length > 0 && !tags.includes(r.role)) {
+      tags.push(r.role);
+    }
+    if (
+      typeof r.disposition === 'string' &&
+      r.disposition.length > 0 &&
+      !tags.includes(r.disposition)
+    ) {
+      tags.push(r.disposition);
+    }
+    while (tags.length < 3) tags.push(`promoted from ${npcId}`);
+    if (tags.length > 5) tags.length = 5;
     this.session.append('seat-add', { v: 1, slot });
     this.session.append('pc-create', {
       v: 1,
       pcId: newPcId,
-      record,
-      sourceCampaign: this.slugFor(campaign)
+      name: typeof r.name === 'string' && r.name.length > 0 ? r.name : npcId,
+      pronouns: typeof r.pronouns === 'string' ? r.pronouns : '',
+      tags,
+      stats: {
+        str: typeof npcStats.str === 'number' ? npcStats.str : 0,
+        dex: typeof npcStats.dex === 'number' ? npcStats.dex : 0,
+        con: typeof npcStats.con === 'number' ? npcStats.con : 0,
+        int: typeof npcStats.int === 'number' ? npcStats.int : 0,
+        wis: typeof npcStats.wis === 'number' ? npcStats.wis : 0,
+        cha: typeof npcStats.cha === 'number' ? npcStats.cha : 0
+      },
+      skills: Array.isArray(r.skills) ? r.skills : [],
+      backstory:
+        typeof r.backstory === 'string' && r.backstory.length > 0
+          ? r.backstory
+          : typeof r.description === 'string' && r.description.length > 0
+            ? r.description
+            : `Promoted from NPC ${npcId}.`
     });
     this.session.append('pc-slot-bind', {
       v: 1,
@@ -2883,6 +3008,7 @@ export class QuireApp extends LitElement {
         .onLoad=${(f: File) => this.loadFromFile(f)}
       ></session-bar>
       ${this.renderReclaimConfirmation()}
+      ${this.renderYieldPrompt()}
       ${this.renderResumePrompt()}
     `;
   }
@@ -2900,8 +3026,20 @@ export class QuireApp extends LitElement {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return html``;
     if (!v.peerId) return html``;
-    // M3a.1 — player-visible affordance (only non-DM peers see it).
-    if (v.filteredShared.coordinator === v.peerId) return html``;
+    // #302 (2026-05-26): coord-self sees a "Yield DM role" button
+    // instead of Reclaim.  Click opens a confirm that ALSO asks
+    // about PC fate when the DM has a bound PC.
+    if (v.filteredShared.coordinator === v.peerId) {
+      return html`
+        <button
+          class="reclaim-button"
+          @click=${() => this.openYieldPrompt()}
+          title="Hand off the DM role to another peer"
+        >
+          Yield DM role
+        </button>
+      `;
+    }
     // Currently we're a non-coordinator.  Allow taking over.
     return html`
       <button
@@ -2913,6 +3051,209 @@ export class QuireApp extends LitElement {
       >
         Reclaim DM
       </button>
+    `;
+  }
+
+  /**
+   * #302 (2026-05-26): open the yield prompt.  Coord-only — pre-
+   * checks pcId so the prompt can decide whether to show the
+   * 3-radio PC-fate picker (only relevant when the DM has a bound
+   * PC).  Voluntary path; the reactive path (someone reclaimed me
+   * while I had a PC) opens the prompt in `updated()`.
+   */
+  private openYieldPrompt(): void {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return;
+    if (v.filteredShared.coordinator !== v.peerId) return;
+    const me = v.filteredShared.peers[v.peerId];
+    const pcId = me?.pcId;
+    if (!pcId) {
+      // No bound PC → bypass the picker entirely.  Yield immediately
+      // after a one-line confirm (same shape as the existing
+      // reclaim confirmation so the UX is symmetric).
+      this.yieldPcFatePrompt = {
+        pcId: '',
+        pcName: '',
+        voluntary: true,
+        fate: 'keep',
+        retireReason: ''
+      };
+      return;
+    }
+    const pcName =
+      v.filteredShared.synthesizedPcs[pcId]?.name ?? pcId;
+    this.yieldPcFatePrompt = {
+      pcId,
+      pcName,
+      voluntary: true,
+      fate: 'keep',
+      retireReason: ''
+    };
+  }
+
+  /**
+   * #302: submit the yield prompt.  Emits the chosen PC-fate event
+   * (if any) FIRST while the peer is still coord (so coord-only
+   * events like pc-retire materialize), then coordinator-yield.
+   *
+   * Reactive path (voluntary=false) skips the yield event — the
+   * peer already lost coord — and just applies the PC action.
+   */
+  submitYieldPcFatePrompt(): boolean {
+    const p = this.yieldPcFatePrompt;
+    if (!p) return false;
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return false;
+    // PC-fate action.
+    if (p.pcId) {
+      if (p.fate === 'sideline') {
+        this.session.rename({ pcId: '' });
+      } else if (p.fate === 'retire') {
+        const reason = p.retireReason.trim();
+        if (reason.length === 0 || reason.length > 200) return false;
+        // pc-retire requires coord authority at the materializer
+        // level — but coordHolders is sticky, so a peer who WAS
+        // coord can still author pc-retire after yielding.  Emit
+        // BEFORE the yield to keep the audit clean.
+        this.session.append('pc-retire', {
+          v: 1,
+          pcId: p.pcId,
+          state: 'bound-retired',
+          inFictionReason: reason,
+          reason: 'departed'
+        });
+      }
+      // fate === 'keep' → no PC event.
+    }
+    // Yield (only on voluntary path; reactive path the peer already
+    // lost coord).
+    if (p.voluntary && v.filteredShared.coordinator === v.peerId) {
+      // Suppress the reactive auto-open that the resulting
+      // coord→non-coord transition would otherwise trigger — the
+      // DM already decided their PC's fate on this exact prompt.
+      this._skipNextReactiveYield = true;
+      this.session.append('coordinator-yield', {});
+    }
+    this.yieldPcFatePrompt = null;
+    return true;
+  }
+
+  /**
+   * #302: cancel the yield prompt without emitting anything.  For
+   * the reactive path this means the DM lost coord but didn't
+   * decide their PC's fate yet — the binding stays as-is (Keep
+   * default), so cancel === Keep.
+   */
+  dismissYieldPcFatePrompt(): void {
+    this.yieldPcFatePrompt = null;
+  }
+
+  setYieldPcFate(fate: 'keep' | 'sideline' | 'retire'): void {
+    if (!this.yieldPcFatePrompt) return;
+    this.yieldPcFatePrompt = { ...this.yieldPcFatePrompt, fate };
+  }
+
+  setYieldRetireReason(reason: string): void {
+    if (!this.yieldPcFatePrompt) return;
+    this.yieldPcFatePrompt = {
+      ...this.yieldPcFatePrompt,
+      retireReason: reason
+    };
+  }
+
+  /**
+   * #302: render the yield + PC-fate prompt modal.  Three radios
+   * for Keep / Sideline / Retire when pcId is set; a plain confirm
+   * when pcId is empty.  Reactive path (voluntary=false) renders
+   * the same modal with "Already lost DM role — what about <PC>?"
+   * framing instead of "About to yield…".
+   */
+  private renderYieldPrompt(): TemplateResult {
+    const p = this.yieldPcFatePrompt;
+    if (!p) return html``;
+    const canSubmit =
+      p.fate !== 'retire' || p.retireReason.trim().length > 0;
+    const headline = p.voluntary
+      ? p.pcId
+        ? html`<p>
+            Yielding DM role.  What should happen to
+            <strong>${p.pcName}</strong>?
+          </p>`
+        : html`<p>Yield DM role?  The next player to click Reclaim picks it up.</p>`
+      : html`<p>
+          You're no longer DM.  What should happen to
+          <strong>${p.pcName}</strong>?
+        </p>`;
+    const radios = p.pcId
+      ? html`
+          <fieldset class="yield-pc-fate-fieldset">
+            <legend>Pick a PC fate</legend>
+            <label>
+              <input
+                type="radio"
+                name="yield-pc-fate"
+                ?checked=${p.fate === 'keep'}
+                @change=${() => this.setYieldPcFate('keep')}
+              />
+              <span>Keep playing — <strong>${p.pcName}</strong> stays bound to me.</span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="yield-pc-fate"
+                ?checked=${p.fate === 'sideline'}
+                @change=${() => this.setYieldPcFate('sideline')}
+              />
+              <span
+                >Sideline — clear my binding; ${p.pcName} sits at the
+                table until rebound.</span
+              >
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="yield-pc-fate"
+                ?checked=${p.fate === 'retire'}
+                @change=${() => this.setYieldPcFate('retire')}
+              />
+              <span>Retire — ${p.pcName} leaves the story.</span>
+            </label>
+            ${p.fate === 'retire'
+              ? html`<label class="yield-pc-fate-reason-label">
+                  In-fiction reason (player-safe)
+                  <input
+                    type="text"
+                    class="yield-pc-fate-reason"
+                    maxlength="200"
+                    placeholder="e.g., she stepped back to care for her sister"
+                    .value=${p.retireReason}
+                    @input=${(e: Event) =>
+                      this.setYieldRetireReason(
+                        (e.target as HTMLInputElement).value
+                      )}
+                  />
+                </label>`
+              : nothing}
+          </fieldset>
+        `
+      : nothing;
+    return html`
+      <div class="reclaim-modal yield-pc-fate-modal" role="alertdialog">
+        ${headline}${radios}
+        <div class="reclaim-modal-actions">
+          <button @click=${() => this.dismissYieldPcFatePrompt()}>
+            Cancel
+          </button>
+          <button
+            class="reclaim-button-confirm"
+            ?disabled=${!canSubmit}
+            @click=${() => this.submitYieldPcFatePrompt()}
+          >
+            ${p.voluntary ? 'Yield' : 'Confirm'}
+          </button>
+        </div>
+      </div>
     `;
   }
 

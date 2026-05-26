@@ -2098,6 +2098,43 @@ export const quireAppStyles = css`
       font-weight: 600;
     }
 
+    /* #302 (2026-05-26): yield PC-fate prompt — same chrome as
+       reclaim-modal but with the 3-radio fieldset.  Reactive path
+       fires on coord→non-coord transition; voluntary path opens via
+       the "Yield DM role" button. */
+    .yield-pc-fate-fieldset {
+      margin: 0.6rem 0;
+      padding: 0.5rem 0.7rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+    }
+    .yield-pc-fate-fieldset legend {
+      padding: 0 0.4rem;
+      font-size: 0.85em;
+    }
+    .yield-pc-fate-fieldset label {
+      display: block;
+      margin: 0.3rem 0;
+      cursor: pointer;
+    }
+    .yield-pc-fate-reason-label {
+      display: block;
+      margin: 0.45rem 0 0.2rem;
+      font-size: 0.85em;
+    }
+    .yield-pc-fate-reason {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 0.2rem;
+      padding: 0.35rem 0.5rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+    }
+
     .resume-prompt {
       margin: 0 0 1rem;
       padding: 0.6rem 0.8rem;

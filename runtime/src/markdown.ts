@@ -385,7 +385,14 @@ export async function renderMarkdownParagraphs(
  */
 export type PcSlotBindings = Readonly<Record<number, string>>;
 
-const PC_SLOT_RE = /\{\{pc:([1-9])\}\}/g;
+// P-R2 (Phase B', 2026-05-25) dropped the hardcoded 1..9 cap from
+// the engine — `pc-slot-bind` now accepts any slot ≥ 1.  Update the
+// renderer regex accordingly so `{{pc:10}}` and beyond substitute
+// instead of silently rendering literal.  The capture group still
+// requires at least one digit, no leading zeros (so `{{pc:01}}`
+// stays literal — matches the materializer's slot validation in
+// `applyPcSlotBindEvent`).
+const PC_SLOT_RE = /\{\{pc:([1-9]\d*)\}\}/g;
 
 /**
  * Substitute `{{pc:N}}` placeholders in sanitized HTML.  Pure

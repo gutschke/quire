@@ -427,9 +427,26 @@ describe('substitutePcSlots', () => {
     expect(substitutePcSlots('{{pc:1}}', { 1: '' })).toBe('PC1');
   });
 
-  it('only matches digits 1-9 (not 0, not multi-digit)', () => {
-    // Out-of-range slot numbers are left literal so a typo is visible.
-    expect(substitutePcSlots('{{pc:0}} {{pc:10}}')).toBe('{{pc:0}} {{pc:10}}');
+  it('does not match {{pc:0}} or leading-zero forms (slot floor is 1)', () => {
+    // Slot 0 is reserved sentinel territory (per applyPcSlotBindEvent's
+    // `slot >= 1` guard).  Leading-zero forms like `{{pc:01}}` also
+    // stay literal so a typo is visible.
+    expect(substitutePcSlots('{{pc:0}} {{pc:01}}')).toBe(
+      '{{pc:0}} {{pc:01}}'
+    );
+  });
+
+  it('substitutes multi-digit slots (#294 drive-by: engine dropped 1..9 cap)', () => {
+    // P-R2 (Phase B', 2026-05-25) dropped the hardcoded 1..9 cap
+    // from `applyPcSlotBindEvent`.  This regex update keeps the
+    // renderer in sync — `{{pc:10}}`, `{{pc:42}}`, etc. now
+    // substitute when the binding is set, instead of silently
+    // rendering as literal.  TTRPG-expert flagged this drift
+    // during the #294 review.
+    expect(substitutePcSlots('{{pc:10}} {{pc:42}}', { 10: 'Yui', 42: 'Z' }))
+      .toBe('Yui Z');
+    // Unbound multi-digit slot falls back to `PCN`.
+    expect(substitutePcSlots('{{pc:12}}')).toBe('PC12');
   });
 
   it('substitutes every occurrence of the same slot', () => {
