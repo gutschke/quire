@@ -65,7 +65,22 @@ export type RejectRetireRequestCallback = (
   note: string
 ) => boolean;
 
-type SubTab = 'active' | 'retired' | 'archived';
+/**
+ * P-R10 (2026-05-25): one NPC available for promotion in the
+ * Browse NPCs sub-tab.  Promotion makes a new PC seat with the
+ * NPC's record copied (stats + description); the NPC entry in
+ * the campaign manifest stays put (the DM can manually retire
+ * the NPC if they prefer).
+ */
+export interface BrowseNpcEntry {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
+export type PromoteNpcCallback = (npcId: string) => void;
+
+type SubTab = 'active' | 'retired' | 'archived' | 'browse-npcs';
 
 @customElement('stage-roster')
 export class StageRoster extends LitElement {
@@ -132,6 +147,16 @@ export class StageRoster extends LitElement {
   @property({ attribute: false })
   onRejectRetireRequest: RejectRetireRequestCallback | null = null;
 
+  /**
+   * P-R10: NPCs the DM can promote to playable PCs.  Empty array
+   * + null callback → the Browse NPCs sub-tab still renders (empty
+   * state), but no Promote buttons appear.  When the callback is
+   * set, each entry sprouts a Promote button.
+   */
+  @property({ attribute: false }) npcsList: BrowseNpcEntry[] = [];
+  @property({ attribute: false }) onPromoteNpc: PromoteNpcCallback | null =
+    null;
+
   @state() private activeSubTab: SubTab = 'active';
 
   /**
@@ -161,6 +186,13 @@ export class StageRoster extends LitElement {
             ${this.renderTabButton('active', 'Active', active.length)}
             ${this.renderTabButton('retired', 'Retired', retired.length)}
             ${this.renderTabButton('archived', 'Archived', archived.length)}
+            ${this.onPromoteNpc !== null || this.npcsList.length > 0
+              ? this.renderTabButton(
+                  'browse-npcs',
+                  'NPCs',
+                  this.npcsList.length
+                )
+              : nothing}
           </nav>
         </header>
         <div class="stage-roster-body" role="tabpanel">
@@ -168,7 +200,9 @@ export class StageRoster extends LitElement {
             ? this.renderActiveList(active)
             : this.activeSubTab === 'retired'
               ? this.renderRetiredList(retired)
-              : this.renderArchivedList(archived)}
+              : this.activeSubTab === 'archived'
+                ? this.renderArchivedList(archived)
+                : this.renderBrowseNpcs()}
         </div>
       </section>
     `;
@@ -482,6 +516,56 @@ export class StageRoster extends LitElement {
     }
     return html`<ol class="stage-roster-list">
       ${slots.map(([slot, seat]) => this.renderInactiveTile(slot, seat))}
+    </ol>`;
+  }
+
+  /**
+   * P-R10: Browse NPCs sub-tab.  Lists campaign NPCs with a
+   * Promote button per entry; click fires `onPromoteNpc(npcId)`
+   * which kicks off the host's load + pc-create + seat-add +
+   * pc-slot-bind sequence.  No confirmation modal here — the host
+   * can choose to confirm or surface a toast on its side.
+   *
+   * Empty state when the list is empty (campaign has no NPCs).
+   */
+  private renderBrowseNpcs(): TemplateResult {
+    if (this.npcsList.length === 0) {
+      return html`<p class="muted stage-roster-empty">
+        No NPCs in this campaign yet.
+      </p>`;
+    }
+    return html`<ol class="stage-roster-list stage-roster-npc-list">
+      ${this.npcsList.map(
+        (entry) => html`<li class="stage-roster-item" data-npc-id=${entry.id}>
+          <div class="stage-roster-npc-head">
+            <strong class="stage-roster-npc-name"
+              >${entry.name ?? entry.id}</strong
+            >
+            ${entry.name && entry.name !== entry.id
+              ? html`<span class="stage-roster-npc-id muted"
+                  >· ${entry.id}</span
+                >`
+              : nothing}
+          </div>
+          ${entry.description
+            ? html`<p class="stage-roster-npc-desc muted">
+                ${entry.description.length > 200
+                  ? entry.description.slice(0, 200) + '…'
+                  : entry.description}
+              </p>`
+            : nothing}
+          ${this.onPromoteNpc
+            ? html`<button
+                type="button"
+                class="stage-roster-npc-promote"
+                title="Promote ${entry.name ?? entry.id} to a playable PC (allocates a new seat)"
+                @click=${() => this.onPromoteNpc?.(entry.id)}
+              >
+                Promote to PC →
+              </button>`
+            : nothing}
+        </li>`
+      )}
     </ol>`;
   }
 

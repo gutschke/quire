@@ -2954,6 +2954,39 @@ export const quireAppStyles = css`
       font-weight: 500;
     }
 
+    /* P-R10: Browse NPCs sub-tab — list of NPC tiles with Promote. */
+    .stage-roster-npc-list {
+      gap: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    .stage-roster-npc-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.4rem;
+    }
+    .stage-roster-npc-id {
+      font-size: 0.8em;
+    }
+    .stage-roster-npc-desc {
+      margin: 0.3rem 0;
+      font-size: 0.85em;
+    }
+    .stage-roster-npc-promote {
+      padding: 0.3rem 0.8rem;
+      border: 1px solid light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      font-weight: 500;
+    }
+
     .ai-panel {
       border-color: light-dark(#c8b8d8, #4a3a5a);
       background: light-dark(#fbf8fd, #1f1a25);

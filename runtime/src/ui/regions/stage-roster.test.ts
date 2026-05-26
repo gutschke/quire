@@ -429,6 +429,81 @@ describe('<stage-roster>', () => {
     });
   });
 
+  // ---- P-R10: Browse NPCs sub-tab + promote ----
+  describe('P-R10 — Browse NPCs sub-tab', () => {
+    it('hides the NPCs tab when no NPCs and no callback', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      await el.updateComplete;
+      const tabs = el.querySelectorAll('.stage-roster-tab');
+      // Active / Retired / Archived only.
+      expect(tabs.length).toBe(3);
+    });
+
+    it('shows the NPCs tab when onPromoteNpc is wired', async () => {
+      const el = mount();
+      el.npcsList = [{ id: 'yui', name: 'Yui Tanaka' }];
+      el.onPromoteNpc = () => {};
+      await el.updateComplete;
+      const tabs = el.querySelectorAll('.stage-roster-tab');
+      expect(tabs.length).toBe(4);
+      expect(tabs[3].textContent).toMatch(/NPCs.*1/s);
+    });
+
+    it('Browse NPCs tab lists each NPC with name + description', async () => {
+      const el = mount();
+      el.npcsList = [
+        {
+          id: 'yui',
+          name: 'Yui Tanaka',
+          description: 'A wiry archivist who claims she does not remember.'
+        },
+        { id: 'reggie', name: 'Reggie' }
+      ];
+      el.onPromoteNpc = () => {};
+      await el.updateComplete;
+      el
+        .querySelectorAll<HTMLButtonElement>('.stage-roster-tab')[3]
+        .click();
+      await el.updateComplete;
+      const items = el.querySelectorAll('.stage-roster-item');
+      expect(items.length).toBe(2);
+      expect(items[0].textContent).toMatch(/Yui Tanaka/);
+      expect(items[0].textContent).toMatch(/archivist/);
+    });
+
+    it('clicking Promote fires onPromoteNpc with the npcId', async () => {
+      const calls: string[] = [];
+      const el = mount();
+      el.npcsList = [{ id: 'yui', name: 'Yui' }];
+      el.onPromoteNpc = (id) => calls.push(id);
+      await el.updateComplete;
+      el
+        .querySelectorAll<HTMLButtonElement>('.stage-roster-tab')[3]
+        .click();
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.stage-roster-npc-promote')!
+        .click();
+      expect(calls).toEqual(['yui']);
+    });
+
+    it('shows empty-state when the NPC list is empty', async () => {
+      const el = mount();
+      el.onPromoteNpc = () => {};
+      await el.updateComplete;
+      el
+        .querySelectorAll<HTMLButtonElement>('.stage-roster-tab')[3]
+        .click();
+      await el.updateComplete;
+      expect(el.querySelector('.stage-roster-empty')?.textContent).toMatch(
+        /No NPCs/
+      );
+    });
+  });
+
   it('sorts seats by slot integer', async () => {
     const el = mount();
     el.pcSlots = {

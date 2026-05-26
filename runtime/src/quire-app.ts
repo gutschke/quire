@@ -1647,6 +1647,79 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * P-R10 (2026-05-25): promote a campaign NPC to a playable PC.
+   * Coord-only.  Fetches the NPC record, allocates the lowest
+   * unused slot integer, derives a unique pcId, and emits the
+   * canonical pc-create + seat-add + pc-slot-bind triple — same
+   * triple chargen accept uses, so the new PC behaves identically
+   * to a chargen-synthesized one at every read site.
+   *
+   * The NPC entry stays in `campaign.characters.npcs` — the DM
+   * may want to keep the NPC sheet for parallel narration, or
+   * manually retire it.  Future work: a "convert" mode that also
+   * removes the NPC from the manifest via M4 living-doc.
+   *
+   * Returns the allocated slot integer on success, null otherwise.
+   * Surfaces failures via `aiError` (the closest existing toast
+   * surface for ad-hoc DM-side errors).
+   */
+  async promoteNpcToPc(npcId: string): Promise<number | null> {
+    if (!this.session) return null;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return null;
+    if (typeof npcId !== 'string' || npcId.length === 0) return null;
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return null;
+    // Load the NPC record (read-only fetch; not cached today).
+    let loaded;
+    try {
+      loaded = await loadCharacter(
+        campaign.base.source,
+        'npc',
+        npcId
+      );
+    } catch (e) {
+      this.aiError = `Could not load NPC "${npcId}": ${(e as Error).message}`;
+      return null;
+    }
+    // Compute the lowest unused slot integer (ignores
+    // bound-retired / bound-archived which still occupy slots).
+    const taken = new Set<number>();
+    for (const slotStr of Object.keys(v.shared.pcSlots)) {
+      taken.add(Number(slotStr));
+    }
+    let slot = 1;
+    while (taken.has(slot)) slot++;
+    // Derive a unique pcId from the NPC id.  Random suffix protects
+    // against re-promotion (DM promotes the same NPC twice) +
+    // against an existing pc with the same id.
+    const rand = Math.floor(Math.random() * 0xffffff)
+      .toString(16)
+      .padStart(6, '0');
+    const newPcId = `pc-from-${npcId}-${rand}`;
+    // Copy the NPC record into a PC-shaped CharacterRecord.  The
+    // schema is permissive; PC-required defaults land below.
+    const record = { ...loaded.record };
+    if (typeof record.harm !== 'number') record.harm = 0;
+    if (typeof record.stress !== 'number') record.stress = 0;
+    // Slot + create + bind in event-log order so the
+    // synthesizedPcs map has the record before pc-slot-bind lands.
+    this.session.append('seat-add', { v: 1, slot });
+    this.session.append('pc-create', {
+      v: 1,
+      pcId: newPcId,
+      record,
+      sourceCampaign: this.slugFor(campaign)
+    });
+    this.session.append('pc-slot-bind', {
+      v: 1,
+      slot,
+      pcId: newPcId
+    });
+    return slot;
+  }
+
+  /**
    * P-R11 (2026-05-25): coord-authored rejection of a pending
    * player retire request.  Removes the pending entry + adds an
    * audit-visible rejection note so the player's rail surfaces
@@ -2599,6 +2672,26 @@ export class QuireApp extends LitElement {
         }
       }
     }
+    // P-R10: NPC list for the Browse NPCs sub-tab.  Coord-only;
+    // pulled from the campaign manifest (the same source the
+    // /campaign overview reads).  Each entry shows what the DM has
+    // for context — name, optional one-line description.  The
+    // promote callback below fires the load + pc-create + seat-add
+    // + pc-slot-bind sequence asynchronously.
+    const npcsList: Array<
+      import('./ui/regions/stage-roster').BrowseNpcEntry
+    > = [];
+    const campaignForStage = this.getCurrentCampaign();
+    if (
+      v?.status === 'active' &&
+      this.isCoordinator() &&
+      campaignForStage
+    ) {
+      const npcIds = campaignForStage.base.manifest.characters?.npcs ?? [];
+      for (const npcId of npcIds) {
+        npcsList.push({ id: npcId });
+      }
+    }
     // P-R11: pending retire requests, keyed by pcId.  Coord-only —
     // we render the strip for the DM's eyes.  Names are resolved via
     // the existing peer-name lookup so the DM sees "Bob requested…"
@@ -2621,6 +2714,12 @@ export class QuireApp extends LitElement {
       .pcSlots=${slots}
       .synthesizedPcs=${synthesized}
       .dmNotesByPcId=${dmNotesByPcId}
+      .npcsList=${npcsList}
+      .onPromoteNpc=${this.isCoordinator()
+        ? (npcId: string) => {
+            void this.promoteNpcToPc(npcId);
+          }
+        : null}
       .pendingRetireRequests=${pendingRetireRequests}
       .onAcceptRetireRequest=${this.isCoordinator()
         ? (pcId: string,
