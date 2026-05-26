@@ -39,6 +39,7 @@ import type { CampaignCharCreationQuestion } from '../../campaign-loader';
 import type { Seat } from '../../core/state';
 import '../components/quire-modal';
 import '../components/chip-editor';
+import '../components/seat-card';
 
 /**
  * Phase B-prime (2026-05-25): the 9-slot grid that pre-dated this
@@ -1449,6 +1450,10 @@ export class ChargenDmReview extends LitElement {
     const quickOpen = this.quickGenOpen.has(slot);
     const quickInFlight = this.quickGenInFlight.has(slot);
     const dragOver = this.dragOverSeat === slot;
+    // Phase 3c (2026-05-25): seat header is now <seat-card>'s
+    // job.  Body (chargen-specific actions / status / synth
+    // result) renders into the primitive's <slot>.
+    const boundName = bound ? this.displayNameLookup?.(boundPcId) ?? boundPcId : '';
     return html`
       <li
         class="chargen-dm-review-seat ${accepted
@@ -1460,50 +1465,16 @@ export class ChargenDmReview extends LitElement {
         @dragleave=${(e: DragEvent) => this.handleDragLeave(slot, e)}
         @drop=${(e: DragEvent) => void this.handleDrop(slot, e)}
       >
-        <header class="chargen-dm-review-seat-head">
-          <span class="chargen-dm-review-seat-pill">PC${slot}</span>
-          <span class="chargen-dm-review-seat-name">
-            ${bound
-              ? this.renderBoundName(boundPcId)
-              : html`<span class="muted">open</span>`}
-          </span>
-          ${seat?.state === 'bound-retired'
-            ? html`<span
-                class="chargen-dm-review-seat-tag chargen-dm-review-seat-tag-retired"
-                title="${seat.inFictionRetireReason ?? 'Retired from the story'}"
-                >retired</span
-              >`
-            : nothing}
-          ${seat?.state === 'bound-archived'
-            ? html`<span
-                class="chargen-dm-review-seat-tag chargen-dm-review-seat-tag-archived"
-                title="${seat.inFictionRetireReason ?? 'Archived from the roster'}"
-                >archived</span
-              >`
-            : nothing}
-          ${this.isSeatRemovable(slot)
-            ? html`<button
-                type="button"
-                class="chargen-dm-review-seat-remove"
-                title="Remove this empty seat (undoable for 4 seconds)"
-                aria-label="Remove PC${slot}"
-                @click=${() => this.handleRemoveSeat(slot)}
-              >
-                ×
-              </button>`
-            : nothing}
-          ${this.isSeatRetirable(slot)
-            ? html`<button
-                type="button"
-                class="chargen-dm-review-seat-retire"
-                title="Retire this PC from the story (with an in-fiction reason)"
-                aria-label="Retire PC${slot}"
-                @click=${() => this.openRetireDialog(slot)}
-              >
-                Retire…
-              </button>`
-            : nothing}
-        </header>
+        <seat-card
+          .slotNumber=${slot}
+          .seat=${seat ?? null}
+          .boundName=${boundName}
+          .boundId=${boundPcId ?? ''}
+          ?canRemove=${this.isSeatRemovable(slot)}
+          ?canRetire=${this.isSeatRetirable(slot)}
+          .onRemove=${(s: number) => this.handleRemoveSeat(s)}
+          .onRetire=${(s: number) => this.openRetireDialog(s)}
+        >
         <div class="chargen-dm-review-seat-actions">
           <button
             type="button"
@@ -1559,6 +1530,7 @@ export class ChargenDmReview extends LitElement {
         ${quickOpen ? this.renderQuickGenForm(slot, quickInFlight) : nothing}
         ${url ? this.renderInviteResult(slot, url) : nothing}
         ${synth ? this.renderSynthResult(slot, synth) : nothing}
+        </seat-card>
       </li>
     `;
   }
@@ -1619,26 +1591,11 @@ export class ChargenDmReview extends LitElement {
     `;
   }
 
-  /**
-   * P3U-12: render the bound seat's display name.  Lit auto-escapes
-   * interpolated content, so a hostile `name` field in the
-   * character JSON cannot inject HTML.  Falls back to the raw pcId
-   * (in a code-tag) while the lookup resolves OR if the character
-   * file has no name field.
+  /*
+   * Phase 3c (2026-05-25): renderBoundName extracted into
+   * <seat-card>'s `boundName` + `boundId` props.  The XSS-via-
+   * Lit-escape guarantee comes from the primitive's interpolation.
    */
-  private renderBoundName(pcId: string): TemplateResult {
-    const name = this.displayNameLookup?.(pcId) ?? null;
-    if (name && name !== pcId) {
-      return html`<span class="chargen-dm-review-seat-display-name"
-        >${name}</span
-      ><code
-        class="chargen-dm-review-seat-id"
-        title="Character id"
-        >(${pcId})</code
-      >`;
-    }
-    return html`<code title="Character id">${pcId}</code>`;
-  }
 
   private renderInviteResult(slot: number, url: string): TemplateResult {
     return html`
