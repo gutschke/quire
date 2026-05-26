@@ -870,7 +870,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // → 34 + 3 = 37.
     // P-R7 (2026-05-25): added pc-switch (audit-only) → 39.
     // P-R11 (2026-05-25): added pc-retire-request + pc-retire-reject → 41.
-    expect(KNOWN_EVENT_KINDS.size).toBe(41);
+    // #301 (2026-05-26): added seat-reveal → 42.
+    expect(KNOWN_EVENT_KINDS.size).toBe(42);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -2950,6 +2951,109 @@ describe('filterForViewer — Phase B-prime DM-only seat metadata strip', () => 
     filterForViewer(state, 'bob');
     expect(state.pcSlots[1]?.retireReason).toBe('departed');
     expect(state.pcSlots[1]?.retiredScene).toBe('ep1/scene-3');
+  });
+});
+
+// =====================================================================
+// #301 (2026-05-26): unrevealed-seat spoiler firewall — per-seat
+// revealed flag.  Default ⇒ visible; `revealed: false` on seat-add
+// hides the slot from non-coord views entirely; `seat-reveal` flips
+// to visible (sticky once revealed).
+// =====================================================================
+
+describe('materialize — seat reveal gate (#301)', () => {
+  it('seat-add with revealed:false marks the seat hidden', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-add', { v: 1, slot: 5, revealed: false });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[5]?.state).toBe('unbound');
+    expect(state.pcSlots[5]?.revealed).toBe(false);
+  });
+
+  it('seat-add without the revealed field defaults to visible', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-add', { v: 1, slot: 5 });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[5]?.revealed).toBeUndefined();
+  });
+
+  it('filterForViewer drops unrevealed seats from non-coord view', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('peer-join', { name: 'Alice' });
+    const bob = new EventLog('bob');
+    bob.append('peer-join', { name: 'Bob' });
+    for (const ev of bob.events()) dm.apply(ev);
+    dm.append('seat-add', { v: 1, slot: 1 });
+    dm.append('seat-add', { v: 1, slot: 9, revealed: false });
+    const state = materialize(dm.events());
+    expect(Object.keys(state.pcSlots).sort()).toEqual(['1', '9']);
+    const playerView = filterForViewer(state, 'bob');
+    // Bob doesn't see slot 9 at all.
+    expect(Object.keys(playerView.pcSlots)).toEqual(['1']);
+    expect(playerView.pcSlots[9]).toBeUndefined();
+  });
+
+  it('DM-as-viewer sees unrevealed seats (identity fast-path)', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-add', { v: 1, slot: 9, revealed: false });
+    const state = materialize(dm.events());
+    const dmView = filterForViewer(state, 'alice');
+    expect(dmView).toBe(state);
+    expect(dmView.pcSlots[9]?.revealed).toBe(false);
+  });
+
+  it('seat-reveal flips revealed:false → revealed (player can now see)', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('peer-join', { name: 'Alice' });
+    const bob = new EventLog('bob');
+    bob.append('peer-join', { name: 'Bob' });
+    for (const ev of bob.events()) dm.apply(ev);
+    dm.append('seat-add', { v: 1, slot: 9, revealed: false });
+    // Reveal.
+    dm.append('seat-reveal', { v: 1, slot: 9 });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[9]?.revealed).toBeUndefined();
+    const playerView = filterForViewer(state, 'bob');
+    // Now visible to Bob.
+    expect(playerView.pcSlots[9]).toBeDefined();
+  });
+
+  it('seat-reveal from a non-coord peer is dropped', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('peer-join', { name: 'Alice' });
+    const bob = new EventLog('bob');
+    bob.append('peer-join', { name: 'Bob' });
+    for (const ev of bob.events()) dm.apply(ev);
+    dm.append('seat-add', { v: 1, slot: 9, revealed: false });
+    for (const ev of dm.events()) bob.apply(ev);
+    // Bob (non-coord) tries to reveal.
+    const hostile = bob.append('seat-reveal', { v: 1, slot: 9 });
+    dm.apply(hostile);
+    const state = materialize(dm.events());
+    expect(state.pcSlots[9]?.revealed).toBe(false);
+  });
+
+  it('seat-reveal on an already-revealed seat is a no-op', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-add', { v: 1, slot: 9 });
+    dm.append('seat-reveal', { v: 1, slot: 9 });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[9]?.revealed).toBeUndefined();
+  });
+
+  it('seat-reveal on a missing slot is a no-op', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-reveal', { v: 1, slot: 99 });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[99]).toBeUndefined();
   });
 });
 

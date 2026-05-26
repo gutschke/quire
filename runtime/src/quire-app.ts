@@ -1736,6 +1736,42 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * #301 (2026-05-26): allocate the lowest unused slot integer as
+   * an UNREVEALED seat (`revealed: false`).  Players never see it
+   * until the DM later clicks Reveal on the resulting Active tile
+   * (which fires `seat-reveal`).  Coord-only.
+   */
+  addHiddenSeat(): number | null {
+    if (!this.session) return null;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return null;
+    const taken = new Set<number>();
+    for (const slotStr of Object.keys(v.shared.pcSlots)) {
+      taken.add(Number(slotStr));
+    }
+    let slot = 1;
+    while (taken.has(slot)) slot++;
+    this.session.append('seat-add', { v: 1, slot, revealed: false });
+    return slot;
+  }
+
+  /**
+   * #301: flip an unrevealed seat to revealed.  Sticky — the engine
+   * won't un-reveal a revealed seat through this path; the only
+   * way "back to hidden" is removing the seat entirely (rare).
+   */
+  revealSeat(slot: number): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    const seat = v.shared.pcSlots[slot];
+    if (!seat || seat.revealed !== false) return false;
+    this.session.append('seat-reveal', { v: 1, slot });
+    return true;
+  }
+
+  /**
    * P-R10 (2026-05-25): promote a campaign NPC to a playable PC.
    * Coord-only.  Fetches the NPC record, allocates the lowest
    * unused slot integer, derives a unique pcId, and emits the
@@ -2835,11 +2871,31 @@ export class QuireApp extends LitElement {
         };
       }
     }
+    // #301: build the set of pcIds whose seat is currently hidden
+    // from players.  Coord-only — players never see the unfiltered
+    // pcSlots, so `seat.revealed === false` here means "I'm the DM
+    // looking at my own staged seat."  Active tiles render a 🔒
+    // badge + Reveal button for these.
+    const hiddenSeatPcIds = new Set<string>();
+    if (v?.status === 'active' && this.isCoordinator()) {
+      for (const seat of Object.values(v.shared.pcSlots)) {
+        if (seat.revealed === false && seat.pcId) {
+          hiddenSeatPcIds.add(seat.pcId);
+        }
+      }
+    }
     return html`<stage-roster
       .pcSlots=${slots}
       .synthesizedPcs=${synthesized}
       .dmNotesByPcId=${dmNotesByPcId}
       .npcsList=${npcsList}
+      .hiddenSeatPcIds=${hiddenSeatPcIds}
+      .onAddHiddenSeat=${this.isCoordinator()
+        ? () => this.addHiddenSeat()
+        : null}
+      .onRevealSeat=${this.isCoordinator()
+        ? (slot: number) => this.revealSeat(slot)
+        : null}
       .onPromoteNpc=${this.isCoordinator()
         ? (npcId: string) => {
             void this.promoteNpcToPc(npcId);

@@ -80,6 +80,31 @@ export interface BrowseNpcEntry {
 
 export type PromoteNpcCallback = (npcId: string) => void;
 
+/**
+ * #301 (2026-05-26): allocate an unrevealed seat (revealed: false).
+ * Used to stage a future-twist PC without players seeing the slot
+ * appear in their lobby/roster.  Returns the allocated slot integer
+ * or null (no session / non-coord).
+ */
+export type AddHiddenSeatCallback = () => number | null;
+
+/**
+ * #301: flip an unrevealed seat to revealed.  Called from the
+ * Stage Roster Active tile when the DM is ready to introduce the
+ * staged PC to the table.  Returns true on dispatch.
+ */
+export type RevealSeatCallback = (slot: number) => boolean;
+
+/**
+ * #301: seats are reported with their revealed flag so the Stage
+ * Roster Active tile can mark hidden ones with a lock badge + Reveal
+ * button.  Tile renders normally (DM sees full state) — the
+ * projection strip lives engine-side in `filterForViewer`.
+ */
+export interface HiddenSeatInfo {
+  isHidden: boolean;
+}
+
 type SubTab = 'active' | 'retired' | 'archived' | 'browse-npcs';
 
 @customElement('stage-roster')
@@ -156,6 +181,19 @@ export class StageRoster extends LitElement {
   @property({ attribute: false }) npcsList: BrowseNpcEntry[] = [];
   @property({ attribute: false }) onPromoteNpc: PromoteNpcCallback | null =
     null;
+
+  /**
+   * #301 (2026-05-26): pcIds whose seat is currently hidden from
+   * players (revealed === false on the engine side).  Active-tile
+   * renderer marks these with a 🔒 badge + Reveal button.  Empty
+   * map / undefined → no special treatment (all seats visible).
+   */
+  @property({ attribute: false })
+  hiddenSeatPcIds: Set<string> = new Set();
+  @property({ attribute: false })
+  onAddHiddenSeat: AddHiddenSeatCallback | null = null;
+  @property({ attribute: false })
+  onRevealSeat: RevealSeatCallback | null = null;
 
   @state() private activeSubTab: SubTab = 'active';
 
@@ -242,15 +280,41 @@ export class StageRoster extends LitElement {
     slots: Array<[number, SeatCardSeat]>
   ): TemplateResult | typeof nothing {
     if (slots.length === 0) {
-      return html`<p class="muted stage-roster-empty">
-        No active PCs.  Add one from the chargen panel.
-      </p>`;
+      return html`<div>
+        <p class="muted stage-roster-empty">
+          No active PCs.  Add one from the chargen panel.
+        </p>
+        ${this.renderAddHiddenSeat()}
+      </div>`;
     }
     return html`
       <ol class="stage-roster-list">
         ${slots.map(([slot, seat]) => this.renderActiveTile(slot, seat))}
       </ol>
+      ${this.renderAddHiddenSeat()}
     `;
+  }
+
+  /**
+   * #301: small "Add hidden seat" affordance at the bottom of the
+   * Active sub-tab.  Only renders when the host wired
+   * `onAddHiddenSeat` (DM view, active session).  Stays separate
+   * from the regular ⊕ in dm-roster-strip so the common-case (add
+   * a normal seat) doesn't get cluttered with the rare workflow.
+   */
+  private renderAddHiddenSeat(): TemplateResult | typeof nothing {
+    if (!this.onAddHiddenSeat) return nothing;
+    return html`<p class="stage-roster-add-hidden-row">
+      <button
+        type="button"
+        class="stage-roster-add-hidden-btn"
+        title="Stage a future-twist PC.  The seat is invisible to
+players until you click Reveal."
+        @click=${() => this.onAddHiddenSeat?.()}
+      >
+        🔒 + Add hidden seat
+      </button>
+    </p>`;
   }
 
   private renderActiveTile(
@@ -270,10 +334,44 @@ export class StageRoster extends LitElement {
         .onRetire=${(s: number) => this.onRetirePc?.(s)}
       >
         ${this.renderActiveBody(record)}
+        ${this.renderHiddenSeatStrip(slot, pcId)}
         ${this.renderRetireRequestStrip(pcId)}
         ${this.renderDmNotes(pcId)}
       </seat-card>
     </li>`;
+  }
+
+  /**
+   * #301 (2026-05-26): hidden-seat badge + Reveal button.  Renders
+   * only when the local viewer's seat for this pcId is unrevealed
+   * (per `hiddenSeatPcIds`).  Players never get this branch — the
+   * engine projection has already stripped the whole seat by the
+   * time the projection reaches a player viewer.
+   */
+  private renderHiddenSeatStrip(
+    slot: number,
+    pcId: string
+  ): TemplateResult | typeof nothing {
+    if (!pcId) return nothing;
+    if (!this.hiddenSeatPcIds.has(pcId)) return nothing;
+    if (!this.onRevealSeat) {
+      // Read-only badge — host might want to show "hidden" without
+      // a reveal action (e.g. transitional state).
+      return html`<p class="stage-roster-hidden-row muted">
+        🔒 Hidden from players
+      </p>`;
+    }
+    return html`<p class="stage-roster-hidden-row">
+      <span class="stage-roster-hidden-tag">🔒 Hidden from players</span>
+      <button
+        type="button"
+        class="stage-roster-hidden-reveal"
+        title="Make this PC visible to all players from now on (sticky — can't be re-hidden)"
+        @click=${() => this.onRevealSeat?.(slot)}
+      >
+        Reveal
+      </button>
+    </p>`;
   }
 
   /**

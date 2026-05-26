@@ -504,6 +504,82 @@ describe('<stage-roster>', () => {
     });
   });
 
+  // ---- #301: hidden-seat firewall UI ----
+  describe('#301 — hidden seats', () => {
+    it('renders 🔒 badge + Reveal button on a hidden Active tile', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.hiddenSeatPcIds = new Set(['mei']);
+      el.onRevealSeat = () => true;
+      await el.updateComplete;
+      const row = el.querySelector('.stage-roster-hidden-row');
+      expect(row).not.toBeNull();
+      expect(row?.textContent).toMatch(/Hidden from players/);
+      expect(el.querySelector('.stage-roster-hidden-reveal')).not.toBeNull();
+    });
+
+    it('clicking Reveal fires onRevealSeat with the slot integer', async () => {
+      const calls: number[] = [];
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.hiddenSeatPcIds = new Set(['mei']);
+      el.onRevealSeat = (slot) => {
+        calls.push(slot);
+        return true;
+      };
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.stage-roster-hidden-reveal')!
+        .click();
+      expect(calls).toEqual([1]);
+    });
+
+    it('does not render badge for visible seats', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.hiddenSeatPcIds = new Set(); // empty
+      el.onRevealSeat = () => true;
+      await el.updateComplete;
+      expect(el.querySelector('.stage-roster-hidden-row')).toBeNull();
+    });
+
+    it('Add hidden seat button renders when callback is wired', async () => {
+      const calls: boolean[] = [];
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.onAddHiddenSeat = () => {
+        calls.push(true);
+        return 9;
+      };
+      await el.updateComplete;
+      const btn = el.querySelector<HTMLButtonElement>(
+        '.stage-roster-add-hidden-btn'
+      );
+      expect(btn).not.toBeNull();
+      btn!.click();
+      expect(calls).toEqual([true]);
+    });
+
+    it('Add hidden seat button hidden when no callback', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      await el.updateComplete;
+      expect(
+        el.querySelector('.stage-roster-add-hidden-btn')
+      ).toBeNull();
+    });
+  });
+
   it('sorts seats by slot integer', async () => {
     const el = mount();
     el.pcSlots = {

@@ -2991,6 +2991,52 @@ export const quireAppStyles = css`
       font-weight: 500;
     }
 
+    /* #301 (2026-05-26): hidden-seat strip + Add hidden seat row. */
+    .stage-roster-hidden-row {
+      margin: 0.4rem 0 0;
+      padding: 0.3rem 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      border-left: 3px solid light-dark(#7c3aed, #a78bfa);
+      background: light-dark(#f5f3ff, #1e1b2e);
+      border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .stage-roster-hidden-tag {
+      flex: 1;
+      color: light-dark(#5b21b6, #c4b5fd);
+      font-weight: 500;
+    }
+    .stage-roster-hidden-reveal {
+      padding: 0.25rem 0.7rem;
+      border: 1px solid light-dark(#7c3aed, #a78bfa);
+      background: light-dark(#ede9fe, #2e1b4e);
+      color: light-dark(#5b21b6, #c4b5fd);
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      font-weight: 500;
+    }
+    .stage-roster-add-hidden-row {
+      margin: 0.7rem 0 0;
+      text-align: center;
+    }
+    .stage-roster-add-hidden-btn {
+      padding: 0.3rem 0.8rem;
+      border: 1px dashed light-dark(#7c3aed, #a78bfa);
+      background: transparent;
+      color: light-dark(#5b21b6, #c4b5fd);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .stage-roster-add-hidden-btn:hover {
+      background: light-dark(#f5f3ff, #1e1b2e);
+    }
+
     /* P-R10: Browse NPCs sub-tab — list of NPC tiles with Promote. */
     .stage-roster-npc-list {
       gap: 0.5rem;

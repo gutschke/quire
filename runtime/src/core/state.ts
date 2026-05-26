@@ -233,6 +233,22 @@ export interface Seat {
   retiredScene?: string;
   /** Epoch-ms when retirement landed (for chronological display). */
   retiredAt?: number;
+  /**
+   * #301 (2026-05-26): per-seat reveal gate.  When `revealed === false`,
+   * `filterForViewer` drops this seat entirely from non-coord views —
+   * players don't see the slot exist at all.  Lets the DM stage a
+   * future-twist PC (NPC-becomes-PC reveal, late-joining guest, etc.)
+   * without the seat appearing in lobby/roster/switcher and spoiling
+   * the surprise.
+   *
+   * Default semantics: `undefined === true` (omitted ⇒ revealed) so
+   * legacy saves + existing seat-add events continue to behave
+   * identically.  Only explicit `revealed: false` triggers the
+   * projection strip.  Flips to true via the `seat-reveal` event;
+   * sticky once revealed (can't be un-revealed without removing the
+   * seat).
+   */
+  revealed?: boolean;
 }
 
 /**
@@ -611,6 +627,13 @@ export function filterForViewer(
   const filteredPcSlots: Record<number, Seat> = {};
   for (const [slotStr, seat] of Object.entries(state.pcSlots)) {
     const slot = Number(slotStr);
+    // #301 (2026-05-26): unrevealed seats are stripped ENTIRELY
+    // from the non-coord projection.  The slot integer goes
+    // missing — players don't see the gap as "something hidden",
+    // they see the seat as not-yet-existing.  Sticky-N tolerates
+    // gaps already (retired/archived seats leave their integer
+    // bound), so the renderer doesn't need to compact.
+    if (seat.revealed === false) continue;
     const out: Seat = { state: seat.state };
     if (seat.pcId !== undefined) out.pcId = seat.pcId;
     if (seat.controllerPeerId !== undefined) {
@@ -620,6 +643,9 @@ export function filterForViewer(
     if (seat.inFictionRetireReason !== undefined) {
       out.inFictionRetireReason = seat.inFictionRetireReason;
     }
+    // The revealed flag itself isn't projected — its only role is
+    // gating visibility, and the seat being present in the map IS
+    // the player-visible signal.
     // DM-only fields STRIPPED: retireReason, retiredScene, retiredAt.
     filteredPcSlots[slot] = out;
   }
@@ -1223,7 +1249,12 @@ export const KNOWN_EVENT_KINDS = new Set([
   // pre-filled from the request); reject surfaces a player-visible
   // declined-with-note pip.
   'pc-retire-request',
-  'pc-retire-reject'
+  'pc-retire-reject',
+  // #301 (2026-05-26): flip an unrevealed seat to revealed.  Pairs
+  // with the optional `revealed: false` field on `seat-add` to let
+  // the DM stage a future-twist PC without the slot appearing in
+  // player views until the moment of reveal.
+  'seat-reveal'
 ]);
 
 /**
@@ -2074,7 +2105,9 @@ interface SeatAddPayload {
 function applySeatAddEvent(state: SessionState, event: QuireEvent): void {
   if (!state.coordHolders.has(event.peerId)) return;
   if (!isPayloadV1(event.payload)) return;
-  const p = event.payload as Partial<SeatAddPayload>;
+  const p = event.payload as Partial<SeatAddPayload> & {
+    revealed?: unknown;
+  };
   if (typeof p.slot !== 'number') return;
   if (!Number.isFinite(p.slot)) return;
   if (!Number.isInteger(p.slot)) return;
@@ -2086,7 +2119,40 @@ function applySeatAddEvent(state: SessionState, event: QuireEvent): void {
   if (typeof p.controllerPeerId === 'string' && p.controllerPeerId.length > 0) {
     seat.controllerPeerId = p.controllerPeerId;
   }
+  // #301: explicit revealed=false marks the seat hidden from the
+  // player projection.  Omitted / true ⇒ visible (default).
+  if (p.revealed === false) {
+    seat.revealed = false;
+  }
   state.pcSlots[p.slot] = seat;
+}
+
+/**
+ * #301 (2026-05-26): flip an unrevealed seat to revealed.  Coord-
+ * authored.  Idempotent — re-revealing an already-revealed seat is
+ * a no-op.  Sticky: once revealed, can't be un-revealed via this
+ * event (engine refuses; matches the scene-reveal semantics).
+ */
+interface SeatRevealPayload {
+  v: 1;
+  slot: number;
+}
+function applySeatRevealEvent(state: SessionState, event: QuireEvent): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SeatRevealPayload>;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot)) return;
+  if (!Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  const seat = state.pcSlots[p.slot];
+  if (!seat) return;
+  if (seat.revealed === false) {
+    // Mutate in place — Seat is a plain object reference.  The
+    // shared state's identity changes per materialize() pass so
+    // subscribers re-render correctly.
+    delete seat.revealed;
+  }
 }
 
 /**
@@ -2383,7 +2449,9 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'pc-switch': applyAuditOnlyEvent,
   // P-R11 (2026-05-25): player → DM retire workflow.
   'pc-retire-request': applyPcRetireRequestEvent,
-  'pc-retire-reject': applyPcRetireRejectEvent
+  'pc-retire-reject': applyPcRetireRejectEvent,
+  // #301 (2026-05-26): flip an unrevealed seat to revealed.
+  'seat-reveal': applySeatRevealEvent
 };
 
 /**
