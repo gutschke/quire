@@ -1256,6 +1256,261 @@ describe('filterForViewer (P0-4)', () => {
   });
 });
 
+/**
+ * P-R9 (2026-05-25): regression tests for the spoiler-firewall
+ * during a pre-realization PC swap.
+ *
+ * "Pre-realization" = before the magic-system arc reaches the
+ * "knowsTheyCanCast" beat in Underleaf.  When a PC is replaced
+ * mid-arc (a player drops, a DM swaps in a guest), the engine
+ * MUST guarantee:
+ *
+ *   1. The departed PC's DM-only state (knowsTheyCanCast,
+ *      accidentalGrants, threadDebt, magicPhase, dmNotes,
+ *      alignmentDrift, tax) does NOT leak into the new PC's
+ *      player-bound projection — even though sticky-N preserves
+ *      the slot integer that links them.
+ *   2. The departed PC's retire metadata (retireReason enum,
+ *      retiredScene) does NOT leak via the player-bound seat
+ *      projection — only the player-safe inFictionRetireReason
+ *      survives.
+ *   3. Other PCs' DM-only state from the same session is
+ *      unaffected by the swap (defense-in-depth — no cross-PC
+ *      bleed introduced by the swap event itself).
+ *
+ * These tests guard the locked threat-model assumption (civilized
+ * players + accidental-DM-disclosure protection) by catching any
+ * future code path that would leak swap-time state.
+ */
+describe('filterForViewer — P-R9 pre-realization PC swap (spoiler firewall)', () => {
+  function setupWithDmOnly(): SessionState {
+    const s = emptyState();
+    s.coordHolders.add('dm');
+    s.coordinator = 'dm';
+    s.peers['dm'] = { peerId: 'dm', name: 'DM', joinedAt: 1 };
+    s.peers['alice'] = { peerId: 'alice', name: 'Alice', joinedAt: 2 };
+    // Departed PC: bound at slot 1, deep in the magic arc.
+    s.synthesizedPcs['pc-mei'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mei Tanaka',
+      pronouns: 'she/her',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Knowledge'],
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      backstory: 'Mei grew up in the Mission.',
+      harm: 0,
+      stress: 0,
+      foci: [],
+      advancements: 1,
+      marks: 2,
+      magicPhase: 'accidental',
+      knowsTheyCanCast: false,
+      accidentalGrants: [
+        { ts: 100, note: 'extinguished a candle', sceneId: 'ep1/s2' }
+      ],
+      tax: { active: true, sessionsRemaining: 2 },
+      threadDebt: { rung: 'noticed' },
+      dmNotes: 'has the Quiet but does not know yet',
+      alignmentDrift: { marks: 2, lastUpdated: 100 }
+    };
+    s.threadDebt['pc-mei'] = 'noticed';
+    return s;
+  }
+
+  it('swap-out: departed PC retired, slot kept, no DM-only fields leak', () => {
+    const s = setupWithDmOnly();
+    // DM retires Mei via pc-retire (state.pcSlots[1] flips to bound-retired).
+    s.pcSlots[1] = {
+      state: 'bound-retired',
+      pcId: 'pc-mei',
+      inFictionRetireReason: 'left after the betrayal',
+      retireReason: 'departed',
+      retiredScene: 'ep1/scene-quiet-call', // DM-only scene-id (spoiler!)
+      retiredAt: 200
+    };
+    const filtered = filterForViewer(s, 'alice');
+    const seat = filtered.pcSlots[1];
+    // Player-safe label survives.
+    expect(seat?.inFictionRetireReason).toBe('left after the betrayal');
+    // DM-only metadata STRIPPED.
+    expect(seat?.retireReason).toBeUndefined();
+    expect(seat?.retiredScene).toBeUndefined();
+    expect(seat?.retiredAt).toBeUndefined();
+    // Departed PC's DM-only character fields ALSO stripped.
+    const meiProj = filtered.synthesizedPcs['pc-mei'];
+    expect(meiProj).toBeDefined();
+    const meiAny = meiProj as Record<string, unknown>;
+    expect(meiAny.knowsTheyCanCast).toBeUndefined();
+    expect(meiAny.accidentalGrants).toBeUndefined();
+    expect(meiAny.magicPhase).toBeUndefined();
+    expect(meiAny.tax).toBeUndefined();
+    expect(meiAny.threadDebt).toBeUndefined();
+    expect(meiAny.dmNotes).toBeUndefined();
+    expect(meiAny.alignmentDrift).toBeUndefined();
+    // Per-session threadDebt map ALSO wiped.
+    expect(filtered.threadDebt).toEqual({});
+  });
+
+  it('swap-in: new PC at the same slot (sticky-N) — no inherited DM-only state', () => {
+    const s = setupWithDmOnly();
+    // Mei retired.
+    s.pcSlots[1] = {
+      state: 'bound-retired',
+      pcId: 'pc-mei',
+      inFictionRetireReason: 'left',
+      retireReason: 'departed'
+    };
+    // New guest PC bound at slot 2 (the slot Mei's old player would
+    // have controlled — but sticky-N means slot 1 stays Mei forever
+    // and the new player gets a fresh integer).
+    s.synthesizedPcs['pc-guest'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Guest Chen',
+      pronouns: 'they/them',
+      stats: { str: 1, dex: 1, con: 1, int: 2, wis: 0, cha: 0 },
+      skills: ['Insight', 'Influence'],
+      tags: ['journalist', 'late-night-radio host', 'three roommates'],
+      backstory: 'Guest just moved to Oakland.',
+      harm: 0,
+      stress: 0,
+      foci: [],
+      advancements: 1, // catch-up seed from late-add
+      marks: 2
+      // No knowsTheyCanCast / accidentalGrants / etc. — fresh PC.
+    };
+    s.pcSlots[2] = {
+      state: 'bound-active',
+      pcId: 'pc-guest',
+      controllerPeerId: 'alice'
+    };
+    const filtered = filterForViewer(s, 'alice');
+    // Guest's projection should ALSO have no DM-only fields (defense-
+    // in-depth: stripDmOnlyFromCharacter is idempotent on records
+    // that never had them, but verifying the guard fires).
+    const guestProj = filtered.synthesizedPcs['pc-guest'];
+    const guestAny = guestProj as Record<string, unknown>;
+    expect(guestAny.knowsTheyCanCast).toBeUndefined();
+    expect(guestAny.accidentalGrants).toBeUndefined();
+    expect(guestAny.magicPhase).toBeUndefined();
+    expect(guestAny.dmNotes).toBeUndefined();
+    // The new PC's catch-up advancements ARE visible (not DM-only).
+    expect(guestProj.advancements).toBe(1);
+    // Mei's projection (slot 1) does NOT carry over to slot 2 / the
+    // new PC's record — the materializer never read across PC ids
+    // and the projection is per-record.
+    expect(guestAny.threadDebt).toBeUndefined();
+  });
+
+  it('same-slot re-bind: pc-slot-bind to a different pcId does NOT carry over DM-only state', () => {
+    // This is the literal "swap a PC at the same slot integer" case,
+    // even though sticky-N discourages it.  If a DM (or replay) re-
+    // binds slot 1 from pc-mei to pc-replacement, the player's view
+    // of slot 1's *new* PC must not inherit Mei's magic state.
+    const s = setupWithDmOnly();
+    s.pcSlots[1] = {
+      state: 'bound-active',
+      pcId: 'pc-mei',
+      controllerPeerId: 'alice'
+    };
+    // Same-slot rebind: slot 1 now holds a fresh PC.
+    s.synthesizedPcs['pc-replacement'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Mai Chen',
+      pronouns: 'they/them',
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech', 'Insight'],
+      tags: ['hacker', 'insomniac', 'wears headphones'],
+      backstory: 'Mai works the graveyard shift.',
+      harm: 0,
+      stress: 0,
+      foci: [],
+      advancements: 0,
+      marks: 0
+    };
+    s.pcSlots[1] = {
+      state: 'bound-active',
+      pcId: 'pc-replacement',
+      controllerPeerId: 'alice'
+    };
+    const filtered = filterForViewer(s, 'alice');
+    // The new PC's record is the projection target — Mei's old
+    // record is no longer referenced by the slot, but it's still in
+    // synthesizedPcs (records aren't deleted; sticky-N could re-
+    // reference via {{pc:1}} in archived narrative).  Both records
+    // must be DM-only-stripped in the player view.
+    const replProj = filtered.synthesizedPcs['pc-replacement'];
+    const replAny = replProj as Record<string, unknown>;
+    expect(replAny.knowsTheyCanCast).toBeUndefined();
+    expect(replAny.accidentalGrants).toBeUndefined();
+    expect(replAny.dmNotes).toBeUndefined();
+    // Mei's record (still in the map) ALSO stripped.
+    const meiProj = filtered.synthesizedPcs['pc-mei'];
+    const meiAny = meiProj as Record<string, unknown>;
+    expect(meiAny.knowsTheyCanCast).toBeUndefined();
+    expect(meiAny.accidentalGrants).toBeUndefined();
+    expect(meiAny.magicPhase).toBeUndefined();
+  });
+
+  it('cross-PC isolation: swap of PC1 does NOT touch PC2 dm-only state', () => {
+    const s = setupWithDmOnly();
+    // Add a second PC also in mid-magic-arc.
+    s.synthesizedPcs['pc-reggie'] = {
+      $schemaVersion: '0.1.0',
+      name: 'Reggie Okeke',
+      pronouns: 'he/him',
+      stats: { str: 1, dex: 0, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Knowledge', 'Tech'],
+      tags: ['paramedic', 'night-shift', 'collects vinyl'],
+      backstory: 'Reggie has been on the truck for ten years.',
+      harm: 0,
+      stress: 0,
+      foci: [],
+      advancements: 1,
+      marks: 2,
+      magicPhase: 'accidental',
+      knowsTheyCanCast: false
+    };
+    s.pcSlots[2] = {
+      state: 'bound-active',
+      pcId: 'pc-reggie',
+      controllerPeerId: 'alice'
+    };
+    // Retire PC1.
+    s.pcSlots[1] = {
+      state: 'bound-retired',
+      pcId: 'pc-mei',
+      inFictionRetireReason: 'left',
+      retireReason: 'departed'
+    };
+    const filtered = filterForViewer(s, 'alice');
+    // Player CANNOT see PC2's magic state either — same DM-only
+    // strip applies across the synthesizedPcs map.
+    const reggieProj = filtered.synthesizedPcs['pc-reggie'];
+    const reggieAny = reggieProj as Record<string, unknown>;
+    expect(reggieAny.knowsTheyCanCast).toBeUndefined();
+    expect(reggieAny.magicPhase).toBeUndefined();
+    // But player-visible fields survive (sanity check):
+    expect(reggieProj.name).toBe('Reggie Okeke');
+    expect(reggieProj.advancements).toBe(1);
+  });
+
+  it('DM viewer (coord) sees ALL DM-only state — projection is for non-coords only', () => {
+    const s = setupWithDmOnly();
+    s.pcSlots[1] = {
+      state: 'bound-retired',
+      pcId: 'pc-mei',
+      inFictionRetireReason: 'left',
+      retireReason: 'departed',
+      retiredScene: 'ep1/scene-quiet-call'
+    };
+    const filtered = filterForViewer(s, 'dm');
+    expect(filtered).toBe(s); // strict identity — DM gets unmutated state
+    expect(filtered.synthesizedPcs['pc-mei'].knowsTheyCanCast).toBe(false);
+    expect(filtered.synthesizedPcs['pc-mei'].magicPhase).toBe('accidental');
+    expect(filtered.pcSlots[1]?.retiredScene).toBe('ep1/scene-quiet-call');
+  });
+});
+
 describe('materialize — caster-state-set (M3c.1)', () => {
   it('coordinator can set a PC caster ladder + tax + spam-counter', () => {
     const log = new EventLog('alice');
