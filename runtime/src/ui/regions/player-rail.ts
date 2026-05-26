@@ -43,6 +43,7 @@ import {
 import { routeToSearch, type AppRoute } from '../../routing';
 import '../field-renderers/track-bar';
 import '../field-renderers/stat-grid';
+import '../field-renderers/foci-card';
 
 type StatKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 
@@ -145,6 +146,16 @@ export class PlayerRail extends LitElement {
    */
   @property({ attribute: false }) onSetTrackValue:
     | SetTrackValueCallback
+    | null = null;
+  /**
+   * Phase B P1d (2026-05-26): callback for the `<foci-card>` status
+   * cycle button.  Host translates this into a focus-status pc-edit
+   * (or AI-write proposal).  Today the chargen + pc-edit flows don't
+   * yet support array writes on `foci`, so a host might NO-OP this
+   * until that surface lands; the component still cycles visually.
+   */
+  @property({ attribute: false }) onSetFocusStatus:
+    | import('../field-renderers/foci-card').SetFocusStatusCallback
     | null = null;
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
   /**
@@ -347,22 +358,11 @@ export class PlayerRail extends LitElement {
             `
           : nothing}
         ${r.foci?.length
-          ? html`
-              <h3>Foci</h3>
-              <ul>
-                ${r.foci.map(
-                  (f) => html`
-                    <li>
-                      <strong>${f.name}</strong>${f.domain
-                        ? html` — ${f.domain}`
-                        : nothing}${f.condition
-                        ? html` (${f.condition})`
-                        : nothing}
-                    </li>
-                  `
-                )}
-              </ul>
-            `
+          ? html`<foci-card
+              .foci=${r.foci}
+              .editablePcId=${editable ? character.id : null}
+              .onSetFocusStatus=${this.onSetFocusStatus}
+            ></foci-card>`
           : nothing}
         ${r.signature?.length
           ? html`

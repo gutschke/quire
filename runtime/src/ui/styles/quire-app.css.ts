@@ -1733,6 +1733,94 @@ export const quireAppStyles = css`
     }
 
     /* ====================================================== */
+    /* Phase B P1d (2026-05-26): foci-card field-renderer. */
+    .foci-card {
+      margin-top: 0.6rem;
+    }
+    .foci-card-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .foci-card-item {
+      padding: 0.4rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-left: 3px solid light-dark(#16a34a, #4ade80);
+      border-radius: 4px;
+      background: light-dark(#f0fdf4, #022c22);
+    }
+    .foci-card-item.foci-card-status-broken {
+      border-left-color: light-dark(#dc2626, #ef4444);
+      background: light-dark(#fef2f2, #2a0e0e);
+    }
+    .foci-card-item.foci-card-status-faded {
+      border-left-color: light-dark(#94a3b8, #64748b);
+      background: light-dark(#f8fafc, #1e293b);
+      opacity: 0.85;
+    }
+    .foci-card-item.foci-card-status-corrupted {
+      border-left-color: light-dark(#7c3aed, #a78bfa);
+      background: light-dark(#f5f3ff, #1e1b2e);
+    }
+    .foci-card-item.foci-card-status-transformed {
+      border-left-color: light-dark(#d97706, #f59e0b);
+      background: light-dark(#fffbeb, #1c1917);
+    }
+    .foci-card-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin: 0;
+    }
+    .foci-card-name {
+      flex: 1;
+    }
+    .foci-card-status-chip {
+      font-size: 0.78em;
+      padding: 0.1rem 0.5rem;
+      border-radius: 999px;
+      background: light-dark(#dcfce7, #052e16);
+      color: light-dark(#15803d, #bbf7d0);
+      text-transform: lowercase;
+    }
+    button.foci-card-status-chip {
+      border: 1px solid currentColor;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.78em;
+    }
+    .foci-card-status-chip-broken {
+      background: light-dark(#fee2e2, #450a0a);
+      color: light-dark(#dc2626, #fca5a5);
+    }
+    .foci-card-status-chip-faded {
+      background: light-dark(#e2e8f0, #1e293b);
+      color: light-dark(#475569, #94a3b8);
+    }
+    .foci-card-status-chip-corrupted {
+      background: light-dark(#ede9fe, #2e1b4e);
+      color: light-dark(#5b21b6, #c4b5fd);
+    }
+    .foci-card-status-chip-transformed {
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fbbf24);
+    }
+    .foci-card-domain,
+    .foci-card-boundfor,
+    .foci-card-condition,
+    .foci-card-notes {
+      margin: 0.2rem 0 0;
+      font-size: 0.88em;
+    }
+    .foci-card-field-label {
+      font-weight: 500;
+      font-size: 0.85em;
+      opacity: 0.75;
+    }
+
     /* Phase B P1d (2026-05-23): field-renderer components.    */
     /* ====================================================== */
 
