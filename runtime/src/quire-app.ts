@@ -1832,23 +1832,22 @@ export class QuireApp extends LitElement {
     // them (stats neutral, harm/stress 0, tags non-empty).
     const r = loaded.record;
     const npcStats = r.stats ?? {};
-    // pc-create requires 3-5 tags per the materializer's strict
-    // validation.  Pad with role / disposition / generic fallback so
-    // even a sparse NPC sheet promotes cleanly.  DM can edit later.
-    const rawTags = Array.isArray(r.tags) ? r.tags : [];
-    const tags: string[] = [...rawTags];
-    if (typeof r.role === 'string' && r.role.length > 0 && !tags.includes(r.role)) {
-      tags.push(r.role);
-    }
-    if (
-      typeof r.disposition === 'string' &&
-      r.disposition.length > 0 &&
-      !tags.includes(r.disposition)
-    ) {
-      tags.push(r.disposition);
-    }
-    while (tags.length < 3) tags.push(`promoted from ${npcId}`);
-    if (tags.length > 5) tags.length = 5;
+    // QA verification (run ac428a0d30ced0e3d) widened-surface
+    // follow-up: an earlier draft also passed `r.tags`, `r.role`,
+    // and `r.disposition` through unchanged.  NPC tags like
+    // `"secret-quiet-cultist"` would leak post-reveal.  Same
+    // mitigation as backstory: replace with neutral placeholders
+    // and rely on the hidden-seat default (revealed:false) plus
+    // the DM rewriting in the edit dialog before clicking Reveal.
+    // Name + pronouns + stats stay (numbers + an identifying label
+    // are not spoiler-bearing under the threat model; if the NPC's
+    // name itself is a spoiler — e.g. "Mei's Sister" — the DM
+    // renames before reveal).
+    const tags: string[] = [
+      `promoted from ${npcId}`,
+      'newcomer to the table',
+      'audit + rewrite before reveal'
+    ];
     // QA sanity-check BLOCKING-1 mitigation step 2: promote to a
     // HIDDEN seat by default (#301 firewall).  This gives the DM
     // time to rewrite the placeholder backstory + audit any other

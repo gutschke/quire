@@ -614,8 +614,23 @@ export function filterForViewer(
   // GitHub fetches) bypass this projection.  Those reads must
   // call `stripDmOnlyFromCharacter` themselves at the render
   // boundary.  See P3/P4 for the render-side enforcement.
+  // QA verification (run ac428a0d30ced0e3d) follow-up: a
+  // synthesizedPc whose seat is hidden (revealed===false) should
+  // be stripped entirely from the player projection.  Without this,
+  // a player can read `filteredShared.synthesizedPcs[hiddenPcId]`
+  // even though `filteredShared.pcSlots` doesn't reference it —
+  // defeating the firewall whenever an attacker peer iterates the
+  // record map directly.  Build the set of pcIds whose ONLY seat
+  // is hidden, then skip them in the filtered map.
+  const hiddenSeatPcIds = new Set<string>();
+  for (const seat of Object.values(state.pcSlots)) {
+    if (seat.revealed === false && seat.pcId) {
+      hiddenSeatPcIds.add(seat.pcId);
+    }
+  }
   const filteredSynthesizedPcs: Record<string, CharacterRecord> = {};
   for (const [pcId, record] of Object.entries(state.synthesizedPcs)) {
+    if (hiddenSeatPcIds.has(pcId)) continue;
     filteredSynthesizedPcs[pcId] = stripDmOnlyFromCharacter(record);
   }
   // Phase B' (2026-05-25): strip DM-only seat metadata.  Player-bound

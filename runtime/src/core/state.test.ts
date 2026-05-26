@@ -3055,6 +3055,49 @@ describe('materialize — seat reveal gate (#301)', () => {
     const state = materialize(dm.events());
     expect(state.pcSlots[99]).toBeUndefined();
   });
+
+  it('QA verification: pc-slot-bind preserves revealed:false from prior seat-add', () => {
+    // Regression for the bug where pc-slot-bind blindly overwrote
+    // the seat and lost the hidden flag.  Surfaced during the
+    // promote-npc test fixup; the fix lives at state.ts ~2110.
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('seat-add', { v: 1, slot: 1, revealed: false });
+    // pc-slot-bind targeting the same slot.
+    dm.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const state = materialize(dm.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.pcSlots[1]?.pcId).toBe('mei');
+    expect(state.pcSlots[1]?.revealed).toBe(false);
+  });
+
+  it('QA verification: synthesizedPcs for a hidden seat is stripped from the player projection', () => {
+    const dm = new EventLog('alice');
+    dm.append('coordinator-claim', {});
+    dm.append('peer-join', { name: 'Alice' });
+    const bob = new EventLog('bob');
+    bob.append('peer-join', { name: 'Bob' });
+    for (const ev of bob.events()) dm.apply(ev);
+    dm.append('seat-add', { v: 1, slot: 1, revealed: false });
+    dm.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      skills: [],
+      backstory: 'X'
+    });
+    dm.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const state = materialize(dm.events());
+    // DM sees the full record.
+    expect(state.synthesizedPcs['mei']).toBeDefined();
+    const bobView = filterForViewer(state, 'bob');
+    // Bob sees no seat AND no synthesized PC for the hidden pcId.
+    expect(bobView.pcSlots[1]).toBeUndefined();
+    expect(bobView.synthesizedPcs['mei']).toBeUndefined();
+  });
 });
 
 // =====================================================================

@@ -103,6 +103,59 @@ describe('QuireApp P-R10 — promoteNpcToPc integration', () => {
     expect(rec.backstory).not.toMatch(/Hidden agenda/);
     expect(rec.backstory).not.toMatch(/The Quiet/);
     expect(rec.backstory).toMatch(/Promoted from NPC/);
+    // Tags also stubbed (QA verification follow-up widened-surface fix).
+    expect(rec.tags).not.toContain('secret-quiet-cultist');
+    expect(rec.tags?.[0]).toMatch(/Promoted from NPC|promoted from yui/);
+    loadSpy.mockRestore();
+  });
+
+  it('multi-peer firewall: guest peer cannot see the just-promoted PC', async () => {
+    // QA verification (run ac428a0d30ced0e3d) follow-up: dedicated
+    // end-to-end test that the seat is invisible to a real guest
+    // peer (not just `shared.pcSlots[1]?.revealed === false` in
+    // host state).
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    injectCampaign(host, ['yui']);
+    const loadSpy = vi.spyOn(charLoader, 'loadCharacter').mockResolvedValue({
+      kind: 'npc',
+      id: 'yui',
+      record: {
+        $schemaVersion: '0.1.0',
+        name: 'Yui',
+        // Spoilery tags + backstory — should NOT reach the guest.
+        tags: ['secret-quiet-cultist', 'plot-pivot-S5'],
+        backstory: 'Hidden agenda: betray the table in episode 5.',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 }
+      },
+      source: { owner: 'x', repo: 'y', ref: 'main' }
+    });
+    const guest = mountApp(inMemoryFactory(network, 'GUEST'));
+    guest.joinCodeDraft = 'HOST';
+    guest.joinSession();
+    await flush();
+    await flush();
+    expect(guest.sessionView?.status).toBe('active');
+    await host.promoteNpcToPc('yui');
+    await flush();
+    await flush();
+    // Host sees their freshly-promoted hidden seat.
+    expect(host.sessionView!.shared.pcSlots[1]?.revealed).toBe(false);
+    // Guest sees no seat at slot 1 at all.
+    expect(guest.sessionView!.filteredShared.pcSlots[1]).toBeUndefined();
+    // And no synthesized PC under the guest's filteredShared either.
+    const guestPcs = guest.sessionView!.filteredShared.synthesizedPcs;
+    const matching = Object.keys(guestPcs).filter((id) =>
+      id.startsWith('pc-from-yui-')
+    );
+    // QA verification follow-up: the synthesizedPcs entry for a
+    // hidden seat is ALSO stripped from the player projection.
+    // Without this, a guest could read the placeholder record by
+    // iterating filteredShared.synthesizedPcs directly even though
+    // no slot references it.  Defense-in-depth.
+    expect(matching.length).toBe(0);
     loadSpy.mockRestore();
   });
 
