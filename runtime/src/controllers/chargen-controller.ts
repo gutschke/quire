@@ -155,6 +155,15 @@ export interface ChargenHost {
      */
     startingAdvancements?: number;
     startingMarks?: number;
+    /**
+     * Phase B P2 (2026-05-26): AI-synthesized languages list +
+     * money-band tier.  Both optional; the materializer fills
+     * defaults (`['English']` / `'tight'`) when omitted.  Validated
+     * (8-entry × 40-char cap on languages; enum check on moneyBand)
+     * at the materializer boundary.
+     */
+    languages?: string[];
+    moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
   }): boolean;
   /**
    * Phase 3b-1: bind a slot to a pcId via the existing
@@ -809,6 +818,17 @@ export class ChargenController implements ReactiveController {
       joiningSession > 1
         ? { startingMarks: Math.max(0, joiningSession - 1) }
         : {};
+    // Phase B P2 (2026-05-26): forward the AI-synthesized languages
+    // + money-band when present.  Materializer fills sane defaults
+    // (`['English']` / `'tight'`) when omitted; spread-conditional
+    // keeps the payload terse for the legacy-no-P2 case.
+    const phaseB: {
+      languages?: string[];
+      moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
+    } = {};
+    if (r.languages !== undefined) phaseB.languages = [...r.languages];
+    if (r.moneyBand !== undefined) phaseB.moneyBand = r.moneyBand;
+
     const appended = this.env.appendPcCreate({
       pcId,
       name: r.name,
@@ -818,7 +838,8 @@ export class ChargenController implements ReactiveController {
       skills: r.skillMastery,
       backstory: r.backstory,
       causedByResponseId: r.responseId,
-      ...catchUp
+      ...catchUp,
+      ...phaseB
     });
     if (!appended) return; // host gated (non-coord, no session) — preserve invariant
 
@@ -833,6 +854,28 @@ export class ChargenController implements ReactiveController {
     this.env.appendScratchNote(
       `DM accepted synthesized PC for slot ${slot}: name="${r.name}", responseId=${r.responseId}.`
     );
+    // Phase B P2 (2026-05-26) UX-expert audit hook: when the DM
+    // accepts a synth that includes AI-inferred Phase-B fields with
+    // no source citation in the player's answers, append a separate
+    // audit-only note.  This is the structured record for "DM
+    // single-clicked through an AI extrapolation that the player
+    // didn't explicitly request" — useful at end-of-session diff
+    // review and for retro debugging of "where did this language /
+    // moneyBand come from?"  Heuristic-only (no answers lookup at
+    // this layer); a richer "free-provenance" tag could come from
+    // the diff-lens column in the future.
+    const inferredFields: string[] = [];
+    if (r.languages !== undefined && r.languages.length > 0) {
+      inferredFields.push(`languages=${JSON.stringify(r.languages)}`);
+    }
+    if (r.moneyBand !== undefined) {
+      inferredFields.push(`moneyBand=${r.moneyBand}`);
+    }
+    if (inferredFields.length > 0) {
+      this.env.appendScratchNote(
+        `Phase-B fields accepted for slot ${slot}: ${inferredFields.join(', ')}.`
+      );
+    }
     this.host.requestUpdate();
   }
 
@@ -1545,7 +1588,14 @@ export class ChargenController implements ReactiveController {
     const drift = this._preAcceptOriginals.get(slot);
     if (!drift || Object.keys(drift).length === 0) return null;
     const editedFields = Object.keys(drift) as Array<
-      'name' | 'pronouns' | 'tags' | 'skillMastery' | 'stats'
+      | 'name'
+      | 'pronouns'
+      | 'tags'
+      | 'skillMastery'
+      | 'stats'
+      | 'languages'
+      | 'moneyBand'
+      | 'backstory'
     >;
     // Post-R5 fix (QA-BUG-5): voice-anchor uses the AI's ORIGINAL
     // backstory (pre-Patch) when one was stashed.  If the DM ran
@@ -1557,16 +1607,31 @@ export class ChargenController implements ReactiveController {
     const previousBackstory =
       this._originalBackstoryForResync.get(slot) ??
       synth.response.backstory;
+    // Phase B P2 (2026-05-26) verification fix (B1): include
+    // languages + moneyBand in lockedFields so DM edits to either
+    // field survive a re-sync.  Pre-fix, the AI silently dropped
+    // them — see TTRPG-craft P2 review verdict.  Filter editedFields
+    // to the prompt-supported subset (drop 'backstory' because the
+    // prompt task line doesn't have a callout for it).
+    const editedForPrompt = editedFields.filter(
+      (f) => f !== 'backstory'
+    ) as ResyncContext['editedFields'];
     const resync: ResyncContext = {
       lockedFields: {
         name: synth.response.name,
         pronouns: synth.response.pronouns,
         tags: synth.response.tags,
         skillMastery: synth.response.skillMastery,
-        stats: synth.response.stats
+        stats: synth.response.stats,
+        ...(synth.response.languages !== undefined
+          ? { languages: synth.response.languages }
+          : {}),
+        ...(synth.response.moneyBand !== undefined
+          ? { moneyBand: synth.response.moneyBand }
+          : {})
       },
       previousBackstory,
-      editedFields
+      editedFields: editedForPrompt
     };
     this._resyncInFlight.add(slot);
     // Clear any prior failure banner — we're trying again.

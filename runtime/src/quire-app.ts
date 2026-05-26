@@ -418,6 +418,10 @@ export class QuireApp extends LitElement {
     skills: string[];
     backstory: string;
     causedByResponseId?: string;
+    startingAdvancements?: number;
+    startingMarks?: number;
+    languages?: string[];
+    moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
   }): boolean {
     if (!this.session) return false;
     const v = this.sessionView;

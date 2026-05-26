@@ -266,6 +266,41 @@ export interface PcBackstorySynthesisResponse {
    * parse per [[project-quire-ai-player-facing-scope]].
    */
   backstory: string;
+  /**
+   * Phase B P2 (2026-05-26): languages the PC speaks fluently.
+   * AI generates at chargen by inferring from the player's
+   * heritage / family / where-they-grew-up answers.  Default
+   * `['English']`; the AI may add ONE inherited language when the
+   * player's text explicitly names it or names a place where it
+   * would be obvious (TTRPG-craft guardrail per the P2 review:
+   * don't assume mom-from-Taiwan means the PC speaks Mandarin —
+   * the PC might be third-gen English-only).
+   *
+   * Optional in the schema so existing parse paths keep working;
+   * `applyPcCreateEvent` validates the shape if present and falls
+   * back to defaults if omitted.
+   */
+  languages?: string[];
+  /**
+   * Phase B P2 (2026-05-26): fictional wealth tier (broke / tight /
+   * comfortable / well-off / wealthy — see rules.md).  AI infers
+   * from job / housing / life-circumstance answers; default
+   * `tight` per the TTRPG-craft conservative-bias guardrail
+   * (under-shoot wealth rather than overshoot — the Underleaf
+   * frame prizes precarity texture).  `well-off` / `wealthy` MUST
+   * NOT be inferred from a "good job" answer alone; require
+   * explicit player signal.
+   *
+   * Optional in the schema; `applyPcCreateEvent` validates the
+   * enum if present.  Foci / conditions / DM-only fields stay
+   * out of this schema entirely — see P2 review verdicts.
+   */
+  moneyBand?:
+    | 'broke'
+    | 'tight'
+    | 'comfortable'
+    | 'well-off'
+    | 'wealthy';
   /** Raw provider text/JSON for the audit chain. */
   raw: string;
   /** Tokens consumed by the prompt half of this exchange. */
@@ -349,6 +384,29 @@ export function isPcBackstorySynthesisResponse(
   if (!Array.isArray(r.skillMastery)) return false;
   if (!r.skillMastery.every((s) => typeof s === 'string' && s.length > 0))
     return false;
+  // Phase B P2 (2026-05-26): languages + moneyBand are optional —
+  // older AI providers / pre-extension callers may omit them.  When
+  // present, validate the shape so downstream renderers can rely on
+  // the type assertion.  When absent, the materializer fills
+  // defaults (`['English']` / `'tight'`).
+  if (r.languages !== undefined) {
+    if (!Array.isArray(r.languages)) return false;
+    if (!r.languages.every((l) => typeof l === 'string' && l.length > 0)) {
+      return false;
+    }
+  }
+  if (r.moneyBand !== undefined) {
+    if (typeof r.moneyBand !== 'string') return false;
+    if (
+      r.moneyBand !== 'broke' &&
+      r.moneyBand !== 'tight' &&
+      r.moneyBand !== 'comfortable' &&
+      r.moneyBand !== 'well-off' &&
+      r.moneyBand !== 'wealthy'
+    ) {
+      return false;
+    }
+  }
   // raw / tokens / responseId are broker-filled; tolerate absence here
   // so a pre-normalization provider parse can still satisfy the shape.
   return true;

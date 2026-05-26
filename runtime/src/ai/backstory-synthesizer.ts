@@ -176,14 +176,22 @@ export async function synthesizeBackstory(
   let activeRaw = first.rawResponse;
   let retried = false;
 
-  const firstHits = containsSpoilerTokens(active.backstory, tokens);
-  let firstSemanticLeaks: string[] = firstHits;
-  if (firstHits.length > 0) {
+  // Phase B P2 (2026-05-26) adversarial-B1 fix: scan ALL player-
+  // visible string fields together, not just the backstory.  A
+  // language called "Quietspeak" or future free-text field would
+  // bypass the per-field-backstory scanner.  Concatenating into one
+  // buffer also lets the AI semantic check see cross-field gestalt
+  // leaks ("chosen" + "fate" across two fields would each look
+  // ordinary in isolation).  `affectedFields` lets the retry
+  // instruction name what to rewrite.
+  const firstScan = scanResponseForSpoilers(active, tokens);
+  let firstSemanticLeaks: string[] = firstScan.hits;
+  if (firstScan.hits.length > 0) {
     const semantic = await aiSemanticSpoilerCheck(provider, {
       apiKey: req.apiKey,
       model: req.model,
-      backstory: active.backstory,
-      candidateWords: firstHits,
+      backstory: firstScan.combinedText,
+      candidateWords: firstScan.hits,
       signal: req.signal
     });
     // Use the AI's narrowed list (genuine leaks) for the retry +
@@ -196,25 +204,28 @@ export async function synthesizeBackstory(
     // instruction names ONLY the genuine-leak words (not the
     // false-positive ordinary-usage words), so the AI's second
     // attempt doesn't waste effort rewriting prose that was fine.
+    // Phase B P2: names AFFECTED FIELDS so the AI rewrites every
+    // field that leaked, not just backstory (adversarial nit N3).
     retried = true;
     const retryUser =
       user +
       '\n\n# Retry instruction\n' +
       `The previous attempt revealed campaign secrets via these words: ${firstSemanticLeaks.join(', ')}.  ` +
-      'Re-write the backstory WITHOUT using any of them in their ' +
-      'spoiler-revealing sense.  Same JSON output format as before.';
+      `Affected fields: ${firstScan.affectedFields.join(', ')}.  ` +
+      'Re-write the affected fields WITHOUT using any of those words ' +
+      'in their spoiler-revealing sense.  Same JSON output format as before.';
     const second = await callAndParse(provider, req, system, retryUser);
     if (!second.ok) return second;
     active = second.response;
     activeRaw = second.rawResponse;
-    const secondHits = containsSpoilerTokens(active.backstory, tokens);
-    let secondSemanticLeaks: string[] = secondHits;
-    if (secondHits.length > 0) {
+    const secondScan = scanResponseForSpoilers(active, tokens);
+    let secondSemanticLeaks: string[] = secondScan.hits;
+    if (secondScan.hits.length > 0) {
       const semantic = await aiSemanticSpoilerCheck(provider, {
         apiKey: req.apiKey,
         model: req.model,
-        backstory: active.backstory,
-        candidateWords: secondHits,
+        backstory: secondScan.combinedText,
+        candidateWords: secondScan.hits,
         signal: req.signal
       });
       secondSemanticLeaks = semantic.leakingWords;
@@ -384,3 +395,53 @@ async function callAndParse(
 // needed.  Step-1 shim's JSON.parse handles the legacy-mock test
 // path (which now treats fenced/prose responses as `truncated`,
 // surfaced to the synthesizer as `code: 'provider-refused'`).
+
+/**
+ * Phase B P2 (2026-05-26) adversarial-B1 fix: scan ALL player-
+ * visible string fields in the synth response for spoiler tokens,
+ * not just `backstory`.  Returns:
+ *   - `hits`: deduplicated list of token matches across all fields
+ *   - `combinedText`: concatenated buffer for the AI semantic check
+ *     (cross-field gestalt leaks visible there)
+ *   - `affectedFields`: which fields contained at least one hit
+ *     (drives the retry instruction so the AI rewrites the right
+ *     ones, not just backstory)
+ *
+ * `moneyBand` is an enum (5 fixed values, none of which are spoiler
+ * tokens) — included in the scan as defense-in-depth, but it can
+ * never legitimately fire.  Future free-text fields added to the
+ * synthesis schema MUST be added to this scanner too.
+ */
+export function scanResponseForSpoilers(
+  response: PcBackstorySynthesisResponse,
+  tokens: readonly string[]
+): {
+  hits: string[];
+  combinedText: string;
+  affectedFields: string[];
+} {
+  const buffers: Array<{ field: string; text: string }> = [];
+  if (typeof response.backstory === 'string' && response.backstory.length > 0) {
+    buffers.push({ field: 'backstory', text: response.backstory });
+  }
+  if (Array.isArray(response.languages) && response.languages.length > 0) {
+    buffers.push({ field: 'languages', text: response.languages.join(' ') });
+  }
+  if (typeof response.moneyBand === 'string' && response.moneyBand.length > 0) {
+    buffers.push({ field: 'moneyBand', text: response.moneyBand });
+  }
+  const allHits = new Set<string>();
+  const affectedSet = new Set<string>();
+  for (const { field, text } of buffers) {
+    const fieldHits = containsSpoilerTokens(text, tokens);
+    if (fieldHits.length > 0) {
+      affectedSet.add(field);
+      for (const t of fieldHits) allHits.add(t);
+    }
+  }
+  return {
+    hits: [...allHits],
+    combinedText: buffers.map((b) => b.text).join('\n\n'),
+    affectedFields: [...affectedSet]
+  };
+}

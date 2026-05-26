@@ -376,4 +376,72 @@ describe('isPcBackstorySynthesisResponse (CC-17)', () => {
       })
     ).toBe(false);
   });
+
+  // -------------------------------------------------------------------
+  // Phase B P2 (2026-05-26): languages + moneyBand optional fields.
+  // Older providers may omit them — the guard MUST treat absence as
+  // legal (the materializer fills defaults).  Presence triggers shape
+  // + enum validation.
+  // -------------------------------------------------------------------
+  describe('Phase B P2 — languages + moneyBand', () => {
+    it('tolerates absence of languages + moneyBand', () => {
+      expect(isPcBackstorySynthesisResponse(valid)).toBe(true);
+    });
+
+    it('accepts well-shaped languages array', () => {
+      expect(
+        isPcBackstorySynthesisResponse({
+          ...valid,
+          languages: ['English', 'Mandarin']
+        })
+      ).toBe(true);
+    });
+
+    it('rejects languages that is not an array', () => {
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, languages: 'English' })
+      ).toBe(false);
+    });
+
+    it('rejects languages with non-string entry', () => {
+      expect(
+        isPcBackstorySynthesisResponse({
+          ...valid,
+          languages: ['English', 42]
+        })
+      ).toBe(false);
+    });
+
+    it('rejects languages with empty-string entry', () => {
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, languages: ['English', ''] })
+      ).toBe(false);
+    });
+
+    it('accepts each of the 5 valid moneyBand values', () => {
+      for (const v of [
+        'broke',
+        'tight',
+        'comfortable',
+        'well-off',
+        'wealthy'
+      ]) {
+        expect(
+          isPcBackstorySynthesisResponse({ ...valid, moneyBand: v })
+        ).toBe(true);
+      }
+    });
+
+    it('rejects unknown moneyBand value', () => {
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, moneyBand: 'opulent' })
+      ).toBe(false);
+    });
+
+    it('rejects non-string moneyBand', () => {
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, moneyBand: 42 })
+      ).toBe(false);
+    });
+  });
 });

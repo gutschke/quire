@@ -364,6 +364,6 @@ describe('assembleUserPrompt — Wave 3b re-sync mode', () => {
     });
     expect(fresh).toContain('Synthesize a backstory');
     expect(resync).toContain('Re-synthesize the backstory');
-    expect(resync).toContain('MUST match the locked-in values verbatim');
+    expect(resync).toContain('MUST match any locked-in values');
   });
 });

@@ -990,6 +990,20 @@ interface PcCreatePayload {
    */
   startingAdvancements?: number;
   startingMarks?: number;
+  /**
+   * Phase B P2 (2026-05-26): optional languages from the AI
+   * synthesis.  When omitted, the materializer defaults to
+   * `['English']`.  When present, validated against the same
+   * per-field caps as `tags` (max 8 entries, each 1-80 chars).
+   */
+  languages?: string[];
+  /**
+   * Phase B P2 (2026-05-26): optional money-band enum from
+   * the AI synthesis.  When omitted, the materializer defaults
+   * to `'tight'` (conservative bias per the TTRPG-craft P2
+   * review: under-shoot wealth rather than overshoot).
+   */
+  moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
 }
 
 const PC_CREATE_MAX_NAME = 80;
@@ -1001,6 +1015,17 @@ const PC_CREATE_MAX_BACKSTORY = 8000;
 const PC_CREATE_STAT_MIN = -3;
 const PC_CREATE_STAT_MAX = 3;
 const PC_CREATE_MAX_SKILLS = 4;
+const PC_CREATE_MAX_LANG = 8;
+const PC_CREATE_MAX_LANG_LEN = 40;
+const PC_CREATE_VALID_MONEY_BANDS = [
+  'broke',
+  'tight',
+  'comfortable',
+  'well-off',
+  'wealthy'
+] as const;
+const PC_CREATE_DEFAULT_LANGUAGES: readonly string[] = ['English'];
+const PC_CREATE_DEFAULT_MONEY_BAND = 'tight';
 
 /**
  * Phase 3b-1: shared schema-version constant for both
@@ -2153,10 +2178,46 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     startingMarks = p.startingMarks;
   }
 
+  // ---- languages (optional, Phase B P2) ----
+  // Validated with the same defensive bounds as `tags`.  When the
+  // payload omits the field, the record falls back to
+  // PC_CREATE_DEFAULT_LANGUAGES (['English'] per the locked
+  // campaign-baseline default; campaign-config will override later).
+  let languages: string[] = [...PC_CREATE_DEFAULT_LANGUAGES];
+  if (p.languages !== undefined) {
+    if (!Array.isArray(p.languages)) return;
+    if (p.languages.length > PC_CREATE_MAX_LANG) return;
+    for (const l of p.languages) {
+      if (typeof l !== 'string' || l.length === 0) return;
+      if (l.length > PC_CREATE_MAX_LANG_LEN) return;
+    }
+    languages = [...p.languages];
+  }
+
+  // ---- moneyBand (optional, Phase B P2) ----
+  // Enum-validated against the locked 5-band ladder.  Defaults to
+  // 'tight' when omitted (TTRPG-craft P2 review: bias under-shoot,
+  // not overshoot — DM can promote at the gate; demotion is harder
+  // to justify in fiction).
+  let moneyBand: typeof PC_CREATE_VALID_MONEY_BANDS[number] =
+    PC_CREATE_DEFAULT_MONEY_BAND;
+  if (p.moneyBand !== undefined) {
+    if (typeof p.moneyBand !== 'string') return;
+    if (
+      !(PC_CREATE_VALID_MONEY_BANDS as readonly string[]).includes(p.moneyBand)
+    ) {
+      return;
+    }
+    moneyBand = p.moneyBand;
+  }
+
   // Build the CharacterRecord.  harm/stress/foci default per the
   // rules.md fresh-PC baseline; advancements/marks honor the
-  // optional catch-up seed for late-arriving PCs.  Subsequent
-  // `pc-edit` events overlay normally via `state.pcEdits[pcId]`.
+  // optional catch-up seed for late-arriving PCs.  foci stay empty
+  // — Phase B P2 spoiler-firewall: chargen PCs have `magicPhase:
+  // accidental` and no cast actions; foci appear at Realization.
+  // Subsequent `pc-edit` events overlay normally via
+  // `state.pcEdits[pcId]`.
   const record: CharacterRecord = {
     $schemaVersion: CHARACTER_SCHEMA_VERSION,
     name: p.name,
@@ -2168,6 +2229,8 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     harm: 0,
     stress: 0,
     foci: [],
+    languages,
+    moneyBand,
     advancements: startingAdvancements,
     marks: startingMarks
   };

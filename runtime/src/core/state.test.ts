@@ -2609,6 +2609,191 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
       expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
     }
   });
+
+  // ===================================================================
+  // Phase B P2 (2026-05-26): languages + moneyBand additive fields.
+  // ===================================================================
+  describe('Phase B P2 — languages + moneyBand', () => {
+    it('applies default languages + moneyBand when payload omits them', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append('pc-create', validPayload());
+      const state = materialize(log.events());
+      const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+      expect(record).toBeDefined();
+      expect(record.languages).toEqual(['English']);
+      expect(record.moneyBand).toBe('tight');
+    });
+
+    it('accepts AI-supplied languages array verbatim', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ languages: ['English', 'Mandarin'] })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1'].languages).toEqual([
+        'English',
+        'Mandarin'
+      ]);
+    });
+
+    it('accepts each of the 5 valid moneyBand values', () => {
+      const bands = [
+        'broke',
+        'tight',
+        'comfortable',
+        'well-off',
+        'wealthy'
+      ] as const;
+      for (let i = 0; i < bands.length; i++) {
+        const log = new EventLog('alice');
+        log.append('coordinator-claim', {});
+        log.append(
+          'pc-create',
+          validPayload({ pcId: `b${i}`, moneyBand: bands[i] })
+        );
+        const state = materialize(log.events());
+        expect(state.synthesizedPcs[`b${i}`].moneyBand).toBe(bands[i]);
+      }
+    });
+
+    it('rejects unknown moneyBand enum', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ moneyBand: 'opulent' as unknown as string })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects moneyBand that is not a string', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ moneyBand: 42 as unknown as string })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects languages array exceeding 8 entries', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      const tooMany = Array.from({ length: 9 }, (_, i) => `lang${i}`);
+      log.append('pc-create', validPayload({ languages: tooMany }));
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects language string longer than 40 chars', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ languages: ['x'.repeat(41)] })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects empty-string language entry', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append('pc-create', validPayload({ languages: ['English', ''] }));
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects languages with non-string entries', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ languages: ['English', 42 as unknown as string] })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('rejects languages that is not an array', () => {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ languages: 'English' as unknown as string[] })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('accepts empty languages array (legal — defaults stay applied to record)', () => {
+      // Payload-supplied empty array is technically valid (< maxItems
+      // boundary).  The materializer treats it as an explicit empty
+      // list — no default fallback because the caller intentionally
+      // sent it.  Documents the behavior so a future change doesn't
+      // accidentally "fill" empty arrays.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append('pc-create', validPayload({ languages: [] }));
+      const state = materialize(log.events());
+      const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+      expect(record).toBeDefined();
+      expect(record.languages).toEqual([]);
+    });
+
+    it('still keeps foci empty even if payload tries to inject them (spoiler firewall)', () => {
+      // Per TTRPG P2 verdict, foci stay OUT of chargen — phase=accidental
+      // PCs have no cast actions.  The materializer clobbers foci to []
+      // regardless of payload.  This is the TTRPG-firewall guard.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({
+          // Cast as unknown so the test can simulate a malicious /
+          // out-of-spec payload that tries to add foci.
+          foci: [{ id: 'magic-1', name: 'Forbidden' }] as unknown
+        } as Record<string, unknown>)
+      );
+      const state = materialize(log.events());
+      const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+      expect(record).toBeDefined();
+      expect(record.foci).toEqual([]);
+    });
+
+    it('verification T6: languages + moneyBand SURVIVE player projection (not DM-only)', () => {
+      // Spoiler-firewall positive control: the two new Phase B
+      // fields are player-visible texture; they MUST survive the
+      // viewer-scope projection so players see their own languages
+      // and money band on their rail.  Regression test against
+      // accidentally adding them to DM_ONLY_CHARACTER_FIELDS later.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({
+          languages: ['English', 'Mandarin'],
+          moneyBand: 'comfortable'
+        })
+      );
+      const state = materialize(log.events());
+      // Player-scope (non-coord) projection.
+      const playerView = filterForViewer(state, 'bob');
+      const record = playerView.synthesizedPcs['slot-1-a3f8b2c1'];
+      expect(record).toBeDefined();
+      expect(record.languages).toEqual(['English', 'Mandarin']);
+      expect(record.moneyBand).toBe('comfortable');
+      // Sanity-check the DM-only fields ARE still being stripped on
+      // the same projection (no firewall regression elsewhere).
+      expect((record as unknown as Record<string, unknown>).magicPhase).toBeUndefined();
+      expect((record as unknown as Record<string, unknown>).knowsTheyCanCast).toBeUndefined();
+    });
+  });
 });
 
 // =====================================================================

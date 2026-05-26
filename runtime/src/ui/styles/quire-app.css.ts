@@ -1561,11 +1561,23 @@ export const quireAppStyles = css`
        collapse to single-column until much narrower than the
        global 900px breakpoint. */
     .chargen-dm-review-modal-body .chargen-dm-review-diff {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 0.9fr);
       border: none;
       background: transparent;
       padding: 0;
       margin: 0;
+    }
+    @media (max-width: 980px) {
+      .chargen-dm-review-modal-body .chargen-dm-review-diff {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+      }
+      .chargen-dm-review-modal-body .chargen-dm-review-modal-provenance {
+        grid-column: 1 / -1;
+        border-left: none;
+        border-top: 1px solid light-dark(#e2e8f0, #334155);
+        padding-left: 0;
+        padding-top: 0.6rem;
+      }
     }
     @media (max-width: 700px) {
       .chargen-dm-review-modal-body .chargen-dm-review-diff {
@@ -1642,6 +1654,114 @@ export const quireAppStyles = css`
       border: 1px solid light-dark(#cbd5e1, #475569);
       background: light-dark(#ffffff, #0f172a);
       cursor: pointer;
+    }
+    /* Phase B P2 (2026-05-26): terse Phase-B field chips on the
+       chargen seat tile + the "Inferred N fields" pip.  Full editors
+       live in the review modal's third (Provenance) column. */
+    .chargen-dm-review-phaseb {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem 0.75rem;
+      margin-top: 0.35rem;
+      font-size: 0.85rem;
+    }
+    .chargen-dm-review-phaseb-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+    .chargen-dm-review-phaseb-label {
+      color: light-dark(#475569, #94a3b8);
+      font-weight: 500;
+    }
+    .chargen-dm-review-phaseb-chip {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 3px;
+      background: light-dark(#f1f5f9, #1e293b);
+      color: light-dark(#0f172a, #e2e8f0);
+      border: 1px solid light-dark(#e2e8f0, #334155);
+    }
+    .chargen-dm-review-phaseb-chip-money[data-band='broke'] {
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+      border-color: light-dark(#fca5a5, #991b1b);
+    }
+    .chargen-dm-review-phaseb-chip-money[data-band='tight'] {
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fde68a);
+      border-color: light-dark(#fde68a, #92400e);
+    }
+    .chargen-dm-review-phaseb-chip-money[data-band='comfortable'] {
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #bbf7d0);
+      border-color: light-dark(#bbf7d0, #166534);
+    }
+    .chargen-dm-review-phaseb-chip-money[data-band='well-off'],
+    .chargen-dm-review-phaseb-chip-money[data-band='wealthy'] {
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e40af, #bfdbfe);
+      border-color: light-dark(#bfdbfe, #1d4ed8);
+    }
+    .chargen-dm-review-phaseb-more {
+      color: light-dark(#64748b, #94a3b8);
+      font-style: italic;
+    }
+    .chargen-dm-review-phaseb-pip {
+      margin-left: auto;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      background: light-dark(#eef2ff, #1e1b4b);
+      color: light-dark(#3730a3, #c7d2fe);
+      border: 1px dashed light-dark(#c7d2fe, #4338ca);
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .chargen-dm-review-phaseb-pip:hover {
+      background: light-dark(#e0e7ff, #312e81);
+    }
+    .chargen-dm-review-phaseb-pip:focus-visible {
+      outline: 2px solid light-dark(#3730a3, #818cf8);
+      outline-offset: 1px;
+    }
+    /* Provenance column inside the review modal (Phase B P2). */
+    .chargen-dm-review-modal-provenance {
+      border-left: 1px solid light-dark(#e2e8f0, #334155);
+      padding-left: 1rem;
+      font-size: 0.85rem;
+      color: light-dark(#334155, #cbd5e1);
+    }
+    .chargen-dm-review-modal-provenance-field {
+      margin-bottom: 0.75rem;
+    }
+    .chargen-dm-review-modal-provenance-field strong {
+      display: block;
+      margin-bottom: 0.2rem;
+      color: light-dark(#0f172a, #f1f5f9);
+    }
+    .chargen-dm-review-prov-chip {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 3px;
+      font-size: 0.78rem;
+      margin-right: 0.3rem;
+      vertical-align: middle;
+    }
+    .chargen-dm-review-prov-chip[data-prov='sourced'] {
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #bbf7d0);
+      border: 1px solid light-dark(#bbf7d0, #166534);
+    }
+    .chargen-dm-review-prov-chip[data-prov='inferred'] {
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fde68a);
+      border: 1px solid light-dark(#fde68a, #92400e);
+    }
+    .chargen-dm-review-prov-chip[data-prov='free'] {
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+      border: 1px solid light-dark(#fca5a5, #991b1b);
     }
     /* Edit dialog (mirrors the review modal's outer shape).
        Phase 3b polish (2026-05-23): responsive sizing.  Prior

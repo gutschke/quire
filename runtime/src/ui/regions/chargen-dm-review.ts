@@ -1784,6 +1784,7 @@ export class ChargenDmReview extends LitElement {
           ${this.renderTagChips(r.tags, slot)}
           ${this.renderStatGrid(r.stats, slot)}
           ${this.renderSkillChips(r.skillMastery, slot)}
+          ${this.renderPhaseBTerseChips(slot, r)}
           ${this.renderPronounPatchHint(slot)}
           ${this.renderDriftBanner(slot)}
           ${warningCount > 0
@@ -2692,6 +2693,98 @@ export class ChargenDmReview extends LitElement {
     ></chip-editor>`;
   }
 
+  /**
+   * Phase B P2 (2026-05-26): terse Phase-B field chips on the seat
+   * tile (languages + moneyBand + "Inferred N fields" pip).  Full
+   * editors live in the review modal (third Provenance column).
+   * Falls back to nothing when the synth result didn't include
+   * either field (older provider / pre-P2 cache).
+   */
+  private renderPhaseBTerseChips(
+    slot: number,
+    r: PcBackstorySynthesisResponse
+  ): TemplateResult | typeof nothing {
+    // Phase B P2 verification fix (S4): show the materializer's
+    // default ('English' / 'tight') in the review surface when the
+    // AI omitted the field.  Without this fallback, the DM sees a
+    // blank state pre-accept but the committed record always has
+    // the defaults — a state mismatch.  Pip count uses what the AI
+    // actually provided (so "Inferred N fields" stays honest); chips
+    // render the effective committed value with an "(default)" hint
+    // when the AI didn't supply one.
+    const aiLangs = r.languages;
+    const aiMoney = r.moneyBand;
+    const effectiveLangs = aiLangs ?? ['English'];
+    const effectiveMoney = aiMoney ?? 'tight';
+    const inferredCount =
+      (aiLangs !== undefined ? 1 : 0) + (aiMoney !== undefined ? 1 : 0);
+    if (effectiveLangs.length === 0 && !effectiveMoney) return nothing;
+    const visibleLangs = effectiveLangs.slice(0, 3);
+    const hiddenLangCount = Math.max(
+      0,
+      effectiveLangs.length - visibleLangs.length
+    );
+    const langsAreDefault = aiLangs === undefined;
+    const moneyIsDefault = aiMoney === undefined;
+    return html`<div class="chargen-dm-review-phaseb" data-slot=${slot}>
+      ${effectiveLangs.length > 0
+        ? html`<span
+            class="chargen-dm-review-phaseb-row"
+            aria-label="Languages"
+          >
+            <span class="chargen-dm-review-phaseb-label">Languages</span>
+            ${visibleLangs.map(
+              (l) =>
+                html`<span class="chargen-dm-review-phaseb-chip">${l}</span>`
+            )}
+            ${hiddenLangCount > 0
+              ? html`<span class="chargen-dm-review-phaseb-more"
+                  >+${hiddenLangCount} more</span
+                >`
+              : nothing}
+            ${langsAreDefault
+              ? html`<span
+                  class="chargen-dm-review-phaseb-more"
+                  title="AI omitted the field; engine will commit this default"
+                  >(default)</span
+                >`
+              : nothing}
+          </span>`
+        : nothing}
+      ${effectiveMoney
+        ? html`<span
+            class="chargen-dm-review-phaseb-row"
+            aria-label="Money band"
+          >
+            <span class="chargen-dm-review-phaseb-label">Money</span>
+            <span
+              class="chargen-dm-review-phaseb-chip chargen-dm-review-phaseb-chip-money"
+              data-band=${effectiveMoney}
+              >${effectiveMoney}</span
+            >
+            ${moneyIsDefault
+              ? html`<span
+                  class="chargen-dm-review-phaseb-more"
+                  title="AI omitted the field; engine will commit this default"
+                  >(default)</span
+                >`
+              : nothing}
+          </span>`
+        : nothing}
+      <button
+        type="button"
+        class="chargen-dm-review-phaseb-pip"
+        title="Open the review modal to see field provenance and edit"
+        aria-label="${inferredCount} inferred field${
+          inferredCount === 1 ? '' : 's'
+        } — open modal"
+        @click=${() => this.openReviewModal(slot)}
+      >
+        Inferred ${inferredCount} field${inferredCount === 1 ? '' : 's'}
+      </button>
+    </div>`;
+  }
+
   private handleSkillAdd(
     slot: number,
     skills: readonly string[],
@@ -2784,8 +2877,139 @@ export class ChargenDmReview extends LitElement {
               : paragraphs.map((p) => html`<p>${p}</p>`)}
           </div>
         </div>
+        ${this.renderProvenanceColumn(slot, answers, items)}
       </div>
     `;
+  }
+
+  /**
+   * Phase B P2 (2026-05-26): third column in the review modal — per-
+   * field provenance chips so the DM can see at a glance which
+   * synthesized values are sourced from a player answer vs. AI-
+   * inferred vs. free invention.
+   *
+   * UX-expert verdict: default-on, low-visibility, no "Accept all"
+   * button (adversarial B3).  Each provenance chip is informational
+   * — the DM still uses the existing per-field edit affordances on
+   * the seat tile to alter values pre-accept.  When a field is
+   * `free` (no sourcing), the DM is implicitly accepting an AI
+   * extrapolation — audit-trail scratch-note is appended when that
+   * happens via the existing acceptSlot path.
+   *
+   * Provenance classification is intentionally a SIMPLE heuristic:
+   *   - `sourced`: the AI value appears verbatim (case-insensitive,
+   *     whole-word) inside any non-empty player answer.
+   *   - `inferred`: the field's questions exist in the campaign
+   *     manifest (so the AI had material to infer from) but no
+   *     verbatim match was found.
+   *   - `free`: no questions for that field AND no verbatim match;
+   *     the AI is making a stand-alone judgment call.
+   *
+   * The "sourced" chip cites the FIRST matching question id so the
+   * DM can jump back to the player's exact words; "inferred" chips
+   * cite the question class (heritage / wealth-context / etc.) when
+   * we know it.
+   */
+  private renderProvenanceColumn(
+    slot: number,
+    answers: Readonly<Record<string, string>> | null,
+    items: ReadonlyArray<{ id: string; label: string; display: string | null }>
+  ): TemplateResult | typeof nothing {
+    const synth = this.synthResults.get(slot);
+    if (!synth || !synth.ok) return nothing;
+    const r = synth.response;
+    const answeredItems = items.filter(
+      (it) => it.display !== null && it.display.length > 0
+    );
+    // Phase B P2 verification fix (S1): tighten the sourcing
+    // heuristic to a word-boundary match.  Pre-fix this used plain
+    // `.includes()` which classified "tight" (the moneyBand value)
+    // as sourced from an answer containing "money is tight right
+    // now" — but the AI band came from the default-bias, not the
+    // answer.  Word-boundary catches multi-word values (tags, names)
+    // while rejecting short-substring coincidences.  Single-token
+    // matches still risk false positives on common English; we
+    // tolerate that — the chip text says "from Qx" not "verbatim
+    // from Qx" and the DM has the original prose in the second
+    // column for verification.
+    const sourceFor = (
+      value: string
+    ): { qid: string; label: string } | null => {
+      if (value.length < 2 || answers === null) return null;
+      const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'iu');
+      for (const it of answeredItems) {
+        if (it.display && re.test(it.display)) {
+          return { qid: it.id, label: it.label };
+        }
+      }
+      return null;
+    };
+    const renderChip = (
+      kind: 'sourced' | 'inferred' | 'free',
+      detail: string
+    ): TemplateResult => html`<span
+      class="chargen-dm-review-prov-chip"
+      data-prov=${kind}
+      title=${detail}
+      >${kind === 'sourced'
+        ? `from ${detail}`
+        : kind === 'inferred'
+          ? `inferred from ${detail}`
+          : 'AI'}</span
+    >`;
+    const fieldRow = (
+      label: string,
+      kind: 'sourced' | 'inferred' | 'free',
+      detail: string,
+      value: string
+    ): TemplateResult => html`<div
+      class="chargen-dm-review-modal-provenance-field"
+    >
+      <strong>${label}</strong>
+      ${renderChip(kind, detail)}
+      <span class="muted">${value}</span>
+    </div>`;
+    const hasAnswers = answeredItems.length > 0;
+    const inferOrFree = (
+      v: string
+    ): { kind: 'sourced' | 'inferred' | 'free'; detail: string } => {
+      const src = sourceFor(v);
+      if (src) return { kind: 'sourced', detail: src.qid };
+      if (hasAnswers) return { kind: 'inferred', detail: 'answers' };
+      return { kind: 'free', detail: 'AI' };
+    };
+    const nameProv = inferOrFree(r.name);
+    const pronProv = inferOrFree(r.pronouns);
+    const moneyProv = r.moneyBand ? inferOrFree(r.moneyBand) : null;
+    return html`<div
+      class="chargen-dm-review-modal-provenance"
+      role="group"
+      aria-label="Field provenance"
+    >
+      <h4>Provenance</h4>
+      ${fieldRow('Name', nameProv.kind, nameProv.detail, r.name)}
+      ${fieldRow('Pronouns', pronProv.kind, pronProv.detail, r.pronouns)}
+      ${r.tags.map((t) => {
+        const p = inferOrFree(t);
+        return fieldRow('Tag', p.kind, p.detail, t);
+      })}
+      ${(r.languages ?? []).map((l) => {
+        const p = inferOrFree(l);
+        return fieldRow('Language', p.kind, p.detail, l);
+      })}
+      ${moneyProv
+        ? fieldRow('Money band', moneyProv.kind, moneyProv.detail, r.moneyBand ?? '')
+        : nothing}
+      <div class="chargen-dm-review-modal-provenance-field">
+        <strong>Backstory</strong>
+        ${renderChip(
+          hasAnswers ? 'inferred' : 'free',
+          hasAnswers ? 'answers' : 'AI'
+        )}
+        <span class="muted">prose synthesis</span>
+      </div>
+    </div>`;
   }
 
   /**

@@ -474,6 +474,99 @@ describe('synthesizeBackstory — spoiler firewall', () => {
       expect(result.persistentTokens).toContain('chosen');
     }
   });
+
+  // ---- Phase B P2 (2026-05-26) adversarial-B1 fix: scan ALL synth ----
+  // string fields, not just backstory.  Without these tests, a future
+  // refactor could regress the firewall on languages / moneyBand.
+
+  it('P2-B1: catches a spoiler token in `languages` even when backstory is clean', async () => {
+    // Backstory is squeaky-clean; the leak is in a language called
+    // "Quietspeak".  Pre-P2 the scanner only looked at backstory and
+    // this would slip through.
+    const leakInLang = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
+      backstory: `Ordinary Bay Area life. ${VALID_BACKSTORY_300}`,
+      languages: ['English', 'Quiet']
+    });
+    const clean = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
+      backstory: `Ordinary Bay Area life. ${VALID_BACKSTORY_300}`,
+      languages: ['English']
+    });
+    const { provider, calls } = mockProvider([leakInLang, clean], {
+      spoilerVerdicts: ['auto-leak']
+    });
+    const result = await synthesizeBackstory(provider, {
+      ...BASE_REQ,
+      spoilerTokens: ['quiet']
+    });
+    // First attempt's "Quietspeak" trips the substring scanner; retry
+    // wipes the language; final result is clean and `ok`.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.retried).toBe(true);
+      expect(result.response.languages).toEqual(['English']);
+    }
+    expect(calls.length).toBe(2);
+    // Retry instruction must mention `languages` so the AI knows
+    // which field to rewrite — adversarial nit N3.
+    expect(calls[1].user).toContain('Affected fields');
+    expect(calls[1].user).toContain('languages');
+  });
+
+  it('P2-B1: retry instruction wording is "Re-write the affected fields", not "Re-write the backstory"', async () => {
+    // Pre-P2 the retry string was "Re-write the backstory" — if the
+    // leak was in a non-backstory field, the AI would re-run the
+    // backstory generation without addressing the actual leak.  P2
+    // generalizes to "Re-write the affected fields".  Regression
+    // guard.
+    const leakInLang = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
+      backstory: `Ordinary Bay Area life. ${VALID_BACKSTORY_300}`,
+      languages: ['English', 'Quiet']
+    });
+    const { provider, calls } = mockProvider([leakInLang, leakInLang], {
+      spoilerVerdicts: ['auto-leak', 'auto-leak']
+    });
+    const result = await synthesizeBackstory(provider, {
+      ...BASE_REQ,
+      spoilerTokens: ['quiet']
+    });
+    expect(result.ok).toBe(false);
+    expect(calls.length).toBe(2);
+    expect(calls[1].user).toContain('Re-write the affected fields');
+    expect(calls[1].user).not.toContain('Re-write the backstory WITHOUT');
+    if (!result.ok && result.code === 'spoiler-leak-persistent') {
+      expect(result.persistentTokens).toContain('quiet');
+    }
+  });
+
+  it('P2-B1: ignores a clean response with non-spoiler languages + moneyBand', async () => {
+    const clean = JSON.stringify({
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+      ...SHEET_READY,
+      backstory: `Ordinary Bay Area life. ${VALID_BACKSTORY_300}`,
+      languages: ['English', 'Mandarin'],
+      moneyBand: 'tight'
+    });
+    const { provider, calls, spoilerCalls } = mockProvider([clean]);
+    const result = await synthesizeBackstory(provider, BASE_REQ);
+    expect(result.ok).toBe(true);
+    // No spoiler check needed (no substring hits anywhere).
+    expect(calls.length).toBe(1);
+    expect(spoilerCalls.length).toBe(0);
+  });
 });
 
 describe('synthesizeBackstory — validation failure', () => {

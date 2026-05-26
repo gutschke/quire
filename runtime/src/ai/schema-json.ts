@@ -120,6 +120,33 @@ export const PC_BACKSTORY_SYNTHESIS_SCHEMA = {
       maxLength: 8000,
       description:
         '250-400 words of markdown prose, 3-4 short paragraphs (word-count target; the character range here is conservative).'
+    },
+    // ---- Phase B P2 (2026-05-26) additive fields ----
+    // OPTIONAL.  Older provider responses without these keys still
+    // parse; the materializer fills sane defaults ('English' /
+    // 'tight').  Locked enum / length caps prevent open-ended
+    // free-text injection from leaking through the structured-decode
+    // boundary.  DM-only fields (magicPhase / tax / threadDebt /
+    // knowsTheyCanCast) MUST NOT be added here — the TTRPG firewall
+    // says chargen output stays player-safe; downstream synthesis
+    // never proposes those values.
+    languages: {
+      type: 'array',
+      minItems: 0,
+      maxItems: 8,
+      items: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 40
+      },
+      description:
+        'Languages the PC speaks (rules.md:21 ties to INT).  Default ["English"] when omitted; campaign-config can override later.'
+    },
+    moneyBand: {
+      type: 'string',
+      enum: ['broke', 'tight', 'comfortable', 'well-off', 'wealthy'],
+      description:
+        "Fictional money band, NOT numeric currency.  Bias toward 'tight' for fresh PCs unless the answers strongly indicate otherwise."
     }
   },
   required: ['name', 'pronouns', 'tags', 'stats', 'skillMastery', 'backstory'],

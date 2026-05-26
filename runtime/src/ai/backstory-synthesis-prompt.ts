@@ -69,6 +69,16 @@ Prefer: specific nouns, concrete places, named small objects, the texture of an 
 - For stats, distribute the fixed starting array: one stat at +2, three stats at +1, two stats at 0. Respect the player's "where the +2 lives" answer if they gave one; otherwise pick the +2 to match the archetype + temperament.
 - For skillMastery, respect the player's "top skill category" answer if they gave one; then add 1-2 more that fit the archetype.
 - Target 250-400 words for the backstory, in 3-4 short paragraphs.
+
+# Languages (Phase B P2 — additive)
+- The default is ["English"].  Add at most ONE inherited language when the player's answers explicitly name a heritage country, a family language, or a place where another language is the obvious one (e.g. an answer mentioning "growing up speaking Mandarin at home").
+- DO NOT assume a heritage implies fluency — mom-from-Taiwan does not automatically mean the PC speaks Mandarin.  When the player gave no explicit signal, omit the field (the engine defaults to ["English"]).
+- Use plain English language names ("Mandarin", "Spanish", "Tagalog"), not dialect labels or constructed-language names.
+
+# Money band (Phase B P2 — additive)
+- Pick one of: broke / tight / comfortable / well-off / wealthy.
+- Default expectation is "tight" (fresh Underleaf PCs are usually ordinary-precarious).  Use "comfortable" only when the player's answers paint stable employment AND ownership / savings.  Use "well-off" or "wealthy" ONLY when the player's text explicitly signals affluence — never as inference from "good job" alone.  Use "broke" when the player's text describes precarity, debt, or housing instability.
+- Money band is fictional texture, NOT a numeric ledger.  Do not write "Maya has $32,000".
 `;
 
 /**
@@ -137,12 +147,28 @@ export interface ResyncContext {
       WIS: number;
       CHA: number;
     };
+    /**
+     * Phase B P2 (2026-05-26): languages + moneyBand are now part of
+     * the locked-fields contract.  If the DM edits the moneyBand or
+     * tweaks the languages list pre-accept, a subsequent re-sync MUST
+     * keep those values verbatim — otherwise the AI would silently
+     * drop the DM's edits at re-sync time (TTRPG-craft P2 review
+     * BLOCKER).
+     */
+    languages?: readonly string[];
+    moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
   };
   /** AI's previous backstory text — voice + structural anchor. */
   previousBackstory: string;
   /** Which fields the DM edited (drives prompt callouts so AI knows what to change). */
   editedFields: ReadonlyArray<
-    'name' | 'pronouns' | 'tags' | 'skillMastery' | 'stats'
+    | 'name'
+    | 'pronouns'
+    | 'tags'
+    | 'skillMastery'
+    | 'stats'
+    | 'languages'
+    | 'moneyBand'
   >;
 }
 
@@ -239,6 +265,14 @@ function formatResyncBlock(ctx: ResyncContext): string {
   parts.push(`- **tags**: ${JSON.stringify(ctx.lockedFields.tags)}`);
   parts.push(`- **skillMastery**: ${JSON.stringify(ctx.lockedFields.skillMastery)}`);
   parts.push(`- **stats**: ${JSON.stringify(ctx.lockedFields.stats)}`);
+  if (ctx.lockedFields.languages !== undefined) {
+    parts.push(
+      `- **languages**: ${JSON.stringify(ctx.lockedFields.languages)}`
+    );
+  }
+  if (ctx.lockedFields.moneyBand !== undefined) {
+    parts.push(`- **moneyBand**: ${ctx.lockedFields.moneyBand}`);
+  }
   if (ctx.editedFields.length > 0) {
     parts.push(
       '## DM edited:  ' +
@@ -268,8 +302,10 @@ function formatResyncTaskLine(ctx: ResyncContext): string {
       : '') +
     '.\n\n' +
     'Return the JSON object specified in the system prompt and ' +
-    'nothing else.  The JSON\'s name/pronouns/tags/skillMastery/stats ' +
-    'fields MUST match the locked-in values verbatim.'
+    'nothing else.  The JSON\'s name/pronouns/tags/skillMastery/stats' +
+    '/languages/moneyBand fields MUST match any locked-in values ' +
+    'verbatim (fields omitted from the locked-in block above are ' +
+    'free for you to refine).'
   );
 }
 
