@@ -868,7 +868,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
   it('total kind count is 37 (13 legacy + 18 M1 + 1 caster-state-set + 1 pc-slot-bind + 1 pc-create + 3 Phase B-prime lifecycle)', () => {
     // Phase B' (2026-05-25): added seat-add + pc-retire + pc-archive
     // → 34 + 3 = 37.
-    expect(KNOWN_EVENT_KINDS.size).toBe(38);
+    // P-R7 (2026-05-25): added pc-switch (audit-only) → 39.
+    expect(KNOWN_EVENT_KINDS.size).toBe(39);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {

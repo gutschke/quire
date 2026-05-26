@@ -1716,6 +1716,7 @@ export class QuireApp extends LitElement {
     const r = this.effectiveCharacter(bound);
     const editable = this.sessionView?.status === 'active';
     const claim = this.deriveClaimState(bound);
+    const switcherEntries = this.computeSwitcherEntries(bound.id);
     return html`
       <player-rail
         .character=${bound}
@@ -1726,6 +1727,10 @@ export class QuireApp extends LitElement {
         .claimState=${claim.state}
         .claimedBy=${claim.claimedBy}
         .pcSlotBindings=${this.currentPcSlotBindings()}
+        .switcherEntries=${switcherEntries}
+        .onSwitchToPc=${switcherEntries.length >= 2
+          ? (pcId: string) => this.switchBoundPcTo(pcId)
+          : null}
         .onBumpStat=${(
           pcId: string,
           key: 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha',
@@ -1743,6 +1748,99 @@ export class QuireApp extends LitElement {
         .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
       ></player-rail>
     `;
+  }
+
+  /**
+   * P-R7 (2026-05-25): build the name-row switcher entries for the
+   * local peer.  The list contains the local peer's current bound
+   * PC + every UNCLAIMED bound-active PC, all read from
+   * filteredShared so player-bound viewers don't see PCs the
+   * spoiler firewall would otherwise hide.  Returns [] for non-
+   * session contexts (the rail just shows the plain h1).
+   *
+   * Conservative default: PCs claimed by ANOTHER live peer are
+   * EXCLUDED to prevent accidental take-over via the switcher.
+   * The dedicated "Take over" affordance on the claim row still
+   * exists for the rare cross-player takeover case.
+   */
+  private computeSwitcherEntries(
+    currentPcId: string
+  ): import('./ui/regions/player-rail').SwitcherEntry[] {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return [];
+    const myPeerId = v.peerId;
+    const peerByPc: Record<string, { peerId: string; name?: string }> = {};
+    for (const peer of Object.values(v.filteredShared.peers)) {
+      if (peer.leftAt !== undefined) continue;
+      if (!peer.pcId) continue;
+      peerByPc[peer.pcId] = peer;
+    }
+    const slots = v.filteredShared.pcSlots;
+    const synthesized = v.filteredShared.synthesizedPcs;
+    const entries: import('./ui/regions/player-rail').SwitcherEntry[] = [];
+    // Sort by slot integer for deterministic order.  Filter by
+    // bound-active state so retired / archived / unbound seats
+    // never appear in the dropdown.
+    const sortedSlots = Object.keys(slots)
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    for (const slot of sortedSlots) {
+      const seat = slots[slot];
+      if (seat.state !== 'bound-active') continue;
+      const pcId = seat.pcId;
+      if (!pcId) continue;
+      const pcOwner = peerByPc[pcId];
+      const isCurrent = pcId === currentPcId;
+      const name = synthesized[pcId]?.name ?? pcId;
+      // Per TTRPG-R7 verdict (Option b): include PCs claimed by
+      // another peer too, but tag them with `takenBy` so the dropdown
+      // can render an inline "Take over from <name>" affirm step.
+      // The two-click confirm guards against accidental theft of a
+      // teammate's PC.
+      if (pcOwner && pcOwner.peerId !== myPeerId && !isCurrent) {
+        entries.push({
+          pcId,
+          name,
+          isCurrent: false,
+          takenBy: pcOwner.name ?? '(unnamed)'
+        });
+      } else {
+        entries.push({ pcId, name, isCurrent });
+      }
+    }
+    return entries;
+  }
+
+  /**
+   * P-R7: dispatch a peer-rename(pcId) when the player picks a
+   * different PC from the switcher.  Same mechanism the claim
+   * affordance uses; differs only in the UX surface.
+   *
+   * Per TTRPG-R7 verdict (BLOCKING-3a) also emit a `pc-switch`
+   * audit event with from/to pcIds + the scene path at switch
+   * time.  Post-session attribution uses this to answer "who
+   * controlled which PC when scene X happened" without
+   * reconstructing from peer-rename chronology.
+   */
+  switchBoundPcTo(pcId: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return false;
+    const me = v.filteredShared.peers[v.peerId];
+    const from = me?.pcId ?? '';
+    if (from === pcId) return false;
+    this.session.rename({ pcId });
+    const sceneState = this.appState;
+    const scene =
+      sceneState.kind === 'scene' ? sceneState.scene.path : '';
+    this.session.append('pc-switch', {
+      v: 1,
+      from,
+      to: pcId,
+      scene
+    });
+    return true;
   }
 
   /**

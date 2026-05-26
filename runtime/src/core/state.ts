@@ -1148,7 +1148,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // seats use the retire-flow instead — sticky-N preserves history.
   'seat-remove',
   'pc-retire',
-  'pc-archive'
+  'pc-archive',
+  // P-R7 (2026-05-25): audit-only event for player-rail name-row
+  // switcher.  Recorded alongside the state-changing peer-rename so
+  // post-session attribution can answer "who controlled which PC
+  // when scene X happened" without reconstructing from peer-rename
+  // chronology.  No materializer needed — the audit IS the event in
+  // the log.  Per TTRPG-R7 verdict, BLOCKING-3a.
+  'pc-switch'
 ]);
 
 /**
@@ -2180,8 +2187,23 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'map-blob-move': applyMapBlobEvent,
   'map-blob-remove': applyMapBlobEvent,
   'map-blob-reveal': applyMapBlobEvent,
-  'map-blob-unreveal': applyMapBlobEvent
+  'map-blob-unreveal': applyMapBlobEvent,
+  // P-R7: audit-only — peer-rename carries the state change; this
+  // event records the from/to + scene context for post-session
+  // attribution.  No state mutation.
+  'pc-switch': applyAuditOnlyEvent
 };
+
+/**
+ * P-R7 (2026-05-25): no-op materializer for audit-only events.
+ * The event lives in the log (replicates, persists, surfaces in
+ * the post-session living-doc AI) but mutates no shared state.
+ * Validates payload version to keep forward-compat with future
+ * v:2+ schemas that DO mutate state.
+ */
+function applyAuditOnlyEvent(_state: SessionState, event: QuireEvent): void {
+  if (!isPayloadV1(event.payload)) return;
+}
 
 function applyEventToState(state: SessionState, event: QuireEvent): void {
   const fn = MATERIALIZERS[event.kind];

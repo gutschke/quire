@@ -28,7 +28,7 @@
  */
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { LoadedCharacter, CharacterRecord } from '../../character-loader';
 import {
@@ -65,6 +65,23 @@ export type ToggleTrackBoxCallback = (
 ) => void;
 
 export type NavigateCallback = (e: Event, route: AppRoute) => void;
+
+/**
+ * P-R7 (2026-05-25): one entry in the player-rail name-row
+ * switcher dropdown.  The list is computed by the host
+ * (quire-app) from filteredShared so player-bound viewers never
+ * see PCs they shouldn't know about.
+ */
+export interface SwitcherEntry {
+  pcId: string;
+  name: string;
+  /** True when this is the local player's CURRENT bound PC. */
+  isCurrent: boolean;
+  /** True when this PC is bound by ANOTHER live peer (take-over). */
+  takenBy?: string;
+}
+
+export type SwitchToPcCallback = (pcId: string) => void;
 
 @customElement('player-rail')
 export class PlayerRail extends LitElement {
@@ -117,6 +134,42 @@ export class PlayerRail extends LitElement {
    * unbound slots fall back to the literal `PC<N>` form.
    */
   @property({ attribute: false }) pcSlotBindings: PcSlotBindings = {};
+  /**
+   * P-R7 (2026-05-25): PCs the local peer can switch to without
+   * leaving the rail.  Hosts compute this from filteredShared so
+   * the spoiler firewall stays intact (PCs hidden from the player
+   * by the viewer-scope projection never appear here).
+   *
+   * Empty array → no chevron, h1 renders as plain text (current
+   * behavior preserved when there's nothing to switch to).  Single
+   * entry === only this PC → no chevron either.  Two-or-more
+   * entries → name-row gets the ▾ affordance.
+   *
+   * Use cases per task #284 — M-pc-incapacitated (player's main
+   * PC is down this scene, switch to a fallback) and M-double-up
+   * (one peer rotating between two PCs they've agreed to play).
+   * Each switch dispatches the existing peer-rename(pcId) — no
+   * engine change required.
+   */
+  @property({ attribute: false }) switcherEntries: SwitcherEntry[] = [];
+  @property({ attribute: false }) onSwitchToPc: SwitchToPcCallback | null =
+    null;
+
+  /**
+   * P-R7: open/closed state for the switcher dropdown.  Local @state
+   * so successive opens don't ping the host; closes on selection +
+   * on Escape via the keydown handler attached during render.
+   */
+  @state() private switcherOpen = false;
+  /**
+   * P-R7 take-over inline confirm.  When the player clicks an
+   * entry owned by another peer, we don't immediately fire the
+   * switch — we replace the row with a "Confirm take-over from
+   * <name>" button.  Tracks which pcId is in the confirm state
+   * so a second click commits.  Closes the menu on commit or on
+   * a click outside the confirming entry.
+   */
+  @state() private takeOverConfirmPcId: string | null = null;
 
   override render(): TemplateResult {
     const character = this.character;
@@ -135,7 +188,7 @@ export class PlayerRail extends LitElement {
           >
           → ${kindLabel}
         </nav>
-        <h1>${r.name}</h1>
+        ${this.renderNameRow(r.name)}
         ${r.pronouns
           ? html`<p class="summary">${r.pronouns}</p>`
           : nothing}
@@ -247,6 +300,127 @@ export class PlayerRail extends LitElement {
           `
         : nothing}
     `;
+  }
+
+  /**
+   * P-R7: name row.  Plain `<h1>` when no switcher is available;
+   * `<h1>` + chevron-button + dropdown when 2+ switchable PCs are
+   * known to the host.  Clicking the chevron toggles the dropdown;
+   * clicking an entry fires `onSwitchToPc` and closes the dropdown.
+   * Escape also closes.  Plain-text fallback when `onSwitchToPc`
+   * is null (a player view that doesn't wire the switcher).
+   */
+  private renderNameRow(name: string): TemplateResult {
+    const entries = this.switcherEntries;
+    const canSwitch = !!this.onSwitchToPc && entries.length >= 2;
+    if (!canSwitch) {
+      return html`<h1>${name}</h1>`;
+    }
+    return html`
+      <div class="player-rail-name-row">
+        <h1>${name}</h1>
+        <button
+          type="button"
+          class="player-rail-name-switcher"
+          aria-haspopup="listbox"
+          aria-expanded=${this.switcherOpen ? 'true' : 'false'}
+          aria-label="Switch character"
+          title="Switch character"
+          @click=${() => {
+            this.switcherOpen = !this.switcherOpen;
+          }}
+          @keydown=${(e: KeyboardEvent) => {
+            if (e.key === 'Escape') this.switcherOpen = false;
+          }}
+        >
+          ▾
+        </button>
+        ${this.switcherOpen
+          ? html`<ul
+              class="player-rail-name-menu"
+              role="listbox"
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === 'Escape') this.switcherOpen = false;
+              }}
+            >
+              ${entries.map((entry) => this.renderSwitcherEntry(entry))}
+            </ul>`
+          : nothing}
+      </div>
+    `;
+  }
+
+  /**
+   * P-R7: render one entry in the switcher dropdown.  Three shapes:
+   *
+   *   - Current PC: disabled "current" tag.
+   *   - Unclaimed other PC: plain "Switch to <name>" button.
+   *   - Claimed by another peer + not yet confirming: shows
+   *     "Take over from <peer>" button; click puts the entry in
+   *     the confirm state.
+   *   - Claimed by another peer + currently confirming: shows the
+   *     red "Confirm take-over from <peer>" button; second click
+   *     commits the switch.  Per TTRPG-R7 verdict, inline-affirm
+   *     instead of a modal — the take-over is a deliberate
+   *     two-step action without breaking the player's focus.
+   */
+  private renderSwitcherEntry(entry: SwitcherEntry): TemplateResult {
+    const isTakenByOther = !!entry.takenBy && !entry.isCurrent;
+    const isConfirming =
+      isTakenByOther && this.takeOverConfirmPcId === entry.pcId;
+    return html`<li
+      class="player-rail-name-menu-item ${entry.isCurrent
+        ? 'player-rail-name-menu-item-current'
+        : ''} ${isConfirming
+        ? 'player-rail-name-menu-item-confirming'
+        : ''}"
+      role="option"
+      aria-selected=${entry.isCurrent ? 'true' : 'false'}
+    >
+      <button
+        type="button"
+        class="player-rail-name-menu-button ${isConfirming
+          ? 'player-rail-name-menu-button-confirm'
+          : ''}"
+        ?disabled=${entry.isCurrent}
+        @click=${() => this.handleSwitcherClick(entry, isConfirming)}
+      >
+        <span class="player-rail-name-menu-name">
+          ${isConfirming
+            ? `Confirm take-over from ${entry.takenBy}`
+            : entry.name}
+        </span>
+        ${entry.isCurrent
+          ? html`<span class="player-rail-name-menu-tag muted">current</span>`
+          : isTakenByOther && !isConfirming
+            ? html`<span class="player-rail-name-menu-tag muted"
+                >take over from ${entry.takenBy}</span
+              >`
+            : nothing}
+      </button>
+    </li>`;
+  }
+
+  private handleSwitcherClick(
+    entry: SwitcherEntry,
+    isConfirming: boolean
+  ): void {
+    if (entry.isCurrent) return;
+    const isTakenByOther = !!entry.takenBy;
+    if (isTakenByOther && !isConfirming) {
+      // First click on a taken PC: enter confirm state, leave menu
+      // open so the player can re-click to commit (or click elsewhere
+      // to cancel).
+      this.takeOverConfirmPcId = entry.pcId;
+      return;
+    }
+    this.handleSwitchTo(entry.pcId);
+  }
+
+  private handleSwitchTo(pcId: string): void {
+    this.switcherOpen = false;
+    this.takeOverConfirmPcId = null;
+    this.onSwitchToPc?.(pcId);
   }
 
   private renderClaimAffordance(): TemplateResult | typeof nothing {

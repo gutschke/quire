@@ -2699,6 +2699,91 @@ export const quireAppStyles = css`
       font-size: 0.85em;
     }
 
+    /* P-R7 (2026-05-25): player-rail name-row switcher.  Shows a
+       ▾ chevron next to the PC name when 2+ active PCs exist that
+       the player can switch to.  Dropdown lists active PCs with
+       optional "take over from <name>" inline-affirm. */
+    .player-rail-name-row {
+      position: relative;
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+    }
+    .player-rail-name-row h1 {
+      margin: 0;
+    }
+    .player-rail-name-switcher {
+      padding: 0.05rem 0.55rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 999px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      line-height: 1;
+    }
+    .player-rail-name-switcher:hover,
+    .player-rail-name-switcher[aria-expanded='true'] {
+      background: light-dark(#e2e8f0, #1e293b);
+    }
+    .player-rail-name-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      z-index: 30;
+      margin: 0.25rem 0 0;
+      padding: 0.3rem 0;
+      list-style: none;
+      min-width: 12rem;
+      max-width: 22rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#ffffff, #0f172a);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    }
+    .player-rail-name-menu-item {
+      padding: 0;
+      margin: 0;
+    }
+    .player-rail-name-menu-button {
+      display: flex;
+      width: 100%;
+      align-items: baseline;
+      gap: 0.4rem;
+      padding: 0.35rem 0.7rem;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      font: inherit;
+    }
+    .player-rail-name-menu-button:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .player-rail-name-menu-button:disabled {
+      cursor: default;
+      opacity: 0.7;
+    }
+    .player-rail-name-menu-button-confirm {
+      color: light-dark(#b45309, #fbbf24);
+      font-weight: 500;
+    }
+    .player-rail-name-menu-name {
+      flex: 1;
+    }
+    .player-rail-name-menu-tag {
+      font-size: 0.8em;
+    }
+    .player-rail-name-menu-item-current .player-rail-name-menu-button {
+      background: light-dark(#f8fafc, #1a2540);
+    }
+    .player-rail-name-menu-item-confirming
+      .player-rail-name-menu-button {
+      background: light-dark(#fef3c7, #422006);
+    }
+
     .ai-panel {
       border-color: light-dark(#c8b8d8, #4a3a5a);
       background: light-dark(#fbf8fd, #1f1a25);
