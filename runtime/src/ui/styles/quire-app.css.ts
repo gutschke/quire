@@ -545,6 +545,95 @@ export const quireAppStyles = css`
       opacity: 0.5;
       cursor: not-allowed;
     }
+    /* Wave 3c: revise dialog */
+    .chargen-dm-review-revise-modal {
+      max-width: 38rem;
+      padding: 1.2rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+    }
+    .chargen-dm-review-revise-modal::backdrop {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .chargen-dm-review-revise-body h3 {
+      margin: 0 0 0.5rem;
+    }
+    .chargen-dm-review-revise-label {
+      display: block;
+      margin: 0.7rem 0;
+    }
+    .chargen-dm-review-revise-reason {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.4rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    .chargen-dm-review-revise-pinset {
+      margin: 0.6rem 0;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      max-height: 18rem;
+      overflow-y: auto;
+    }
+    .chargen-dm-review-revise-pinset legend {
+      padding: 0 0.4rem;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-revise-pin-row {
+      display: grid;
+      grid-template-columns: auto 1fr 2fr;
+      gap: 0.5rem;
+      align-items: baseline;
+      padding: 0.3rem 0;
+      border-bottom: 1px dashed light-dark(#e2e8f0, #334155);
+    }
+    .chargen-dm-review-revise-pin-row:last-child {
+      border-bottom: none;
+    }
+    .chargen-dm-review-revise-pin-prompt {
+      font-weight: 500;
+    }
+    .chargen-dm-review-revise-pin-answer {
+      font-size: 0.88em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chargen-dm-review-revise-actions {
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      margin-top: 0.8rem;
+    }
+    .chargen-dm-review-revise-cancel,
+    .chargen-dm-review-revise-commit {
+      padding: 0.4rem 0.85rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .chargen-dm-review-revise-commit {
+      border-color: light-dark(#0b3d7f, #79b8f0);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      font-weight: 500;
+    }
+    .chargen-dm-review-revise-cancel:hover,
+    .chargen-dm-review-revise-commit:hover {
+      filter: brightness(1.08);
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

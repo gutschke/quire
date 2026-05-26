@@ -1784,6 +1784,36 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
     synthSpy.mockRestore();
   });
 
+  it('Wave 3c: requestReviseSlot records pinned-question IDs in the scratch note', async () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    // Need a synth result for revise to fire.
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    ctrl.requestReviseSlot(1, 'tag mismatch with hook', [
+      'archetype',
+      'intent-moment'
+    ]);
+    expect(env.scratchNotes.length).toBe(1);
+    expect(env.scratchNotes[0]).toMatch(/tag mismatch with hook/);
+    expect(env.scratchNotes[0]).toMatch(
+      /Kept answers for:.*archetype.*intent-moment/
+    );
+  });
+
+  it('Wave 3c: requestReviseSlot omits the pinned-list line when no pins', async () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    ctrl.requestReviseSlot(1, 'general redo');
+    expect(env.scratchNotes[0]).not.toMatch(/Kept answers/);
+  });
+
   it('does NOT clear drift on a failed re-sync (so DM can retry)', async () => {
     saveChargenState('o-r-main', 1, {
       chosenPath: 'qa',

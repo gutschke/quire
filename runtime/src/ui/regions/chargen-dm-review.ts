@@ -100,8 +100,17 @@ export type AcceptWithEditsCallback = (
 export type DisplayNameLookup = (pcId: string) => string | null;
 /** CC-24: DM accepts the synthesized PC. */
 export type AcceptCallback = (slot: number) => void;
-/** P3T-19: DM asks the player to revise. */
-export type ReviseCallback = (slot: number, reason: string) => void;
+/**
+ * P3T-19 / Wave 3c (2026-05-25): DM asks the player to revise.
+ * Optional `pinnedQuestionIds` list (Wave 3c) names answers the
+ * DM wants kept verbatim — the player only needs to re-answer
+ * the unpinned questions.
+ */
+export type ReviseCallback = (
+  slot: number,
+  reason: string,
+  pinnedQuestionIds?: readonly string[]
+) => void;
 /**
  * Phase B-prime (2026-05-25): DM allocates a new seat at the lowest
  * unused integer.  Host wires to the seat-add event emitter.
@@ -485,6 +494,16 @@ export class ChargenDmReview extends LitElement {
   @state() private resyncInFlight = new Set<number>();
 
   /**
+   * Wave 3c (2026-05-25): revise-dialog state.  Replaces the legacy
+   * window.prompt with an inline modal that accepts an optional
+   * reason + lets the DM pin specific chargen questions so the
+   * player only re-answers the unpinned ones.
+   */
+  @state() private reviseDialogSlot: number | null = null;
+  @state() private reviseReason: string = '';
+  @state() private pinnedQuestionIds = new Set<string>();
+
+  /**
    * Phase 3b polish: per-seat transient UI state for the pack-
    * import + quick-generate affordances.  Lives on the region (not
    * the controller) because it's purely UI — toggling the form
@@ -538,6 +557,118 @@ export class ChargenDmReview extends LitElement {
       ${this.renderReviewDialog()}
       ${this.renderEditDialog()}
       ${this.renderRetireDialog()}
+      ${this.renderReviseDialog()}
+    `;
+  }
+
+  /**
+   * Wave 3c (2026-05-25): replaces the legacy window.prompt with
+   * an inline revise dialog.  DM provides an optional reason +
+   * pins specific chargen questions whose answers should be kept;
+   * the player is asked to re-answer only the unpinned ones.
+   *
+   * Per the TTRPG-expert review: "revise-with-pinned-fields" was
+   * the top missing affordance — the all-or-nothing revise loop
+   * cost the player 15 minutes when only 2 of 13 questions needed
+   * rewriting.  This dialog respects the player's time.
+   */
+  private renderReviseDialog(): TemplateResult | typeof nothing {
+    const slot = this.reviseDialogSlot;
+    if (slot === null) return nothing;
+    const answers = this.answersLookup?.(slot) ?? {};
+    const questions = this.questions ?? [];
+    // Show only questions that actually have an answer — pinning a
+    // never-answered question would tell the player nothing useful.
+    const answeredQs = questions.filter(
+      (q) =>
+        typeof answers[q.id] === 'string' && answers[q.id].trim().length > 0
+    );
+    const seat = this.pcSlots?.[slot];
+    const displayName =
+      (seat?.pcId && this.displayNameLookup?.(seat.pcId)) ?? `PC${slot}`;
+    return html`
+      <dialog
+        class="chargen-dm-review-revise-modal"
+        open
+        @click=${(e: MouseEvent) => {
+          if (e.target === e.currentTarget) this.closeReviseDialog();
+        }}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === 'Escape') this.closeReviseDialog();
+        }}
+      >
+        <div class="chargen-dm-review-revise-body">
+          <h3>Ask ${displayName} to revise</h3>
+          <p class="muted">
+            The player is sent back to chargen.  Pin specific
+            questions to keep their existing answers; only the
+            unpinned questions will be asked again.
+          </p>
+          <label class="chargen-dm-review-revise-label">
+            Reason (sent to player + audit log)
+            <textarea
+              class="chargen-dm-review-revise-reason"
+              rows="2"
+              placeholder="e.g., your tag doesn't fit the rebel-cell hook — please redo that one"
+              aria-label="Revise reason"
+              .value=${this.reviseReason}
+              @input=${(e: Event) => {
+                this.reviseReason = (
+                  e.target as HTMLTextAreaElement
+                ).value;
+              }}
+            ></textarea>
+          </label>
+          ${answeredQs.length > 0
+            ? html`<fieldset class="chargen-dm-review-revise-pinset">
+                <legend>Keep these answers as-is</legend>
+                ${answeredQs.map(
+                  (q) => html`<label
+                    class="chargen-dm-review-revise-pin-row"
+                  >
+                    <input
+                      type="checkbox"
+                      ?checked=${this.pinnedQuestionIds.has(q.id)}
+                      @change=${() => this.toggleReviseQuestionPin(q.id)}
+                    />
+                    <span class="chargen-dm-review-revise-pin-prompt"
+                      >${q.prompt}</span
+                    >
+                    <span
+                      class="chargen-dm-review-revise-pin-answer muted"
+                      title=${answers[q.id]}
+                      >${(answers[q.id] ?? '').slice(0, 80)}${(
+                      answers[q.id] ?? ''
+                    ).length > 80
+                      ? '…'
+                      : ''}</span
+                    >
+                  </label>`
+                )}
+              </fieldset>`
+            : html`<p class="muted">
+                (No saved answers on this device — full re-answer.)
+              </p>`}
+          <div class="chargen-dm-review-revise-actions">
+            <button
+              type="button"
+              class="chargen-dm-review-revise-cancel"
+              @click=${() => this.closeReviseDialog()}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="chargen-dm-review-revise-commit"
+              @click=${() => this.commitRevise()}
+            >
+              ${this.pinnedQuestionIds.size === 0
+                ? 'Send full revise'
+                : `Send revise (kept ${this.pinnedQuestionIds.size})`}
+            </button>
+          </div>
+        </div>
+      </dialog>
     `;
   }
 
@@ -2563,11 +2694,33 @@ export class ChargenDmReview extends LitElement {
 
   private handleRevise(slot: number): void {
     if (!this.onRevise) return;
-    const reason =
-      window.prompt(
-        `Ask player at PC${slot} to revise — note for the audit log (optional):`
-      ) ?? '';
-    this.onRevise(slot, reason);
+    this.reviseDialogSlot = slot;
+    this.reviseReason = '';
+    this.pinnedQuestionIds = new Set<string>();
+  }
+
+  private closeReviseDialog(): void {
+    this.reviseDialogSlot = null;
+    this.reviseReason = '';
+    this.pinnedQuestionIds = new Set<string>();
+  }
+
+  private commitRevise(): void {
+    const slot = this.reviseDialogSlot;
+    if (slot === null || !this.onRevise) return;
+    const pinned = [...this.pinnedQuestionIds];
+    this.onRevise(slot, this.reviseReason, pinned);
+    this.closeReviseDialog();
+  }
+
+  private toggleReviseQuestionPin(qid: string): void {
+    const next = new Set(this.pinnedQuestionIds);
+    if (next.has(qid)) {
+      next.delete(qid);
+    } else {
+      next.add(qid);
+    }
+    this.pinnedQuestionIds = next;
   }
 
   private async handleGenerate(slot: number): Promise<void> {

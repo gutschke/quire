@@ -695,16 +695,30 @@ export class ChargenController implements ReactiveController {
    * DM provides (the region's prompt asks for one).  Used when the
    * DM wants the player to revise an answer before re-synthesizing.
    */
-  requestReviseSlot(slot: number, reason?: string): void {
+  requestReviseSlot(
+    slot: number,
+    reason?: string,
+    pinnedQuestionIds?: readonly string[]
+  ): void {
     if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
     this._preAcceptOriginals.delete(slot);
     const trimmedReason = reason?.trim() ?? '';
-    const msg = trimmedReason
-      ? `DM asked player at slot ${slot} to revise.  Reason: ${trimmedReason}`
-      : `DM asked player at slot ${slot} to revise.`;
-    this.env.appendScratchNote(msg);
+    const parts: string[] = [
+      trimmedReason
+        ? `DM asked player at slot ${slot} to revise.  Reason: ${trimmedReason}`
+        : `DM asked player at slot ${slot} to revise.`
+    ];
+    // Wave 3c: when the DM pinned some questions, record the list
+    // in the scratch note so the audit trail (and eventually the
+    // player-side chargen pre-fill) can reference it.
+    if (pinnedQuestionIds && pinnedQuestionIds.length > 0) {
+      parts.push(
+        `Kept answers for: ${pinnedQuestionIds.join(', ')}.`
+      );
+    }
+    this.env.appendScratchNote(parts.join('  '));
     this.host.requestUpdate();
   }
 

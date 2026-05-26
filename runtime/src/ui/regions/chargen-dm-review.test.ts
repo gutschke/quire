@@ -395,38 +395,97 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
     ).toBe(1);
   });
 
-  it('Revise click prompts for a reason and forwards to onRevise', async () => {
+  it('Wave 3c: Revise click opens the inline dialog (replaces window.prompt)', async () => {
     const el = mountWith9Seats();
-    const calls: Array<[number, string]> = [];
+    const calls: Array<[number, string, readonly string[] | undefined]> = [];
     el.synthResults = new Map([[1, okResult()]]);
     el.onAccept = () => {};
-    el.onRevise = (slot, reason) => calls.push([slot, reason]);
-    const origPrompt = window.prompt;
-    window.prompt = () => 'Item is too vague';
-    try {
-      await el.updateComplete;
-      el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
-      expect(calls).toEqual([[1, 'Item is too vague']]);
-    } finally {
-      window.prompt = origPrompt;
-    }
+    el.onRevise = (slot, reason, pinned) => calls.push([slot, reason, pinned]);
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
+    await el.updateComplete;
+    const dialog = el.querySelector('.chargen-dm-review-revise-modal');
+    expect(dialog).not.toBeNull();
+    // Type a reason.
+    const ta = el.querySelector<HTMLTextAreaElement>(
+      '.chargen-dm-review-revise-reason'
+    )!;
+    ta.value = 'Item is too vague';
+    ta.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-revise-commit'
+    )!.click();
+    expect(calls.length).toBe(1);
+    expect(calls[0][0]).toBe(1);
+    expect(calls[0][1]).toBe('Item is too vague');
+    // No pins → empty array.
+    expect(calls[0][2]).toEqual([]);
   });
 
-  it('Revise with cancelled prompt forwards an empty reason', async () => {
+  it('Wave 3c: Cancelling the revise dialog does NOT fire onRevise', async () => {
     const el = mountWith9Seats();
-    const calls: Array<[number, string]> = [];
+    const calls: unknown[] = [];
     el.synthResults = new Map([[2, okResult()]]);
     el.onAccept = () => {};
-    el.onRevise = (slot, reason) => calls.push([slot, reason]);
-    const origPrompt = window.prompt;
-    window.prompt = () => null; // user cancelled the dialog
-    try {
-      await el.updateComplete;
-      el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
-      expect(calls).toEqual([[2, '']]);
-    } finally {
-      window.prompt = origPrompt;
-    }
+    el.onRevise = () => {
+      calls.push(true);
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-revise'
+    )!.click();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-revise-cancel'
+    )!.click();
+    await el.updateComplete;
+    expect(calls).toEqual([]);
+    expect(
+      el.querySelector('.chargen-dm-review-revise-modal')
+    ).toBeNull();
+  });
+
+  it('Wave 3c: pinning a question forwards its id in the pinned list', async () => {
+    const el = mountWith9Seats();
+    const calls: Array<[number, string, readonly string[] | undefined]> = [];
+    el.synthResults = new Map([[1, okResult()]]);
+    el.onAccept = () => {};
+    el.onRevise = (slot, reason, pinned) => calls.push([slot, reason, pinned]);
+    el.questions = [
+      {
+        id: 'archetype',
+        kind: 'mc',
+        prompt: 'Pick archetype',
+        required: true,
+        options: [{ value: 'hacker', label: 'Hacker' }]
+      },
+      {
+        id: 'intent-moment',
+        kind: 'short-answer',
+        prompt: 'Tell a moment',
+        required: true
+      }
+    ];
+    el.answersLookup = () => ({
+      archetype: 'hacker',
+      'intent-moment': 'I held the line.'
+    });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-revise')!.click();
+    await el.updateComplete;
+    // Tick the first checkbox (archetype).
+    const checkboxes = el.querySelectorAll<HTMLInputElement>(
+      '.chargen-dm-review-revise-pin-row input[type="checkbox"]'
+    );
+    expect(checkboxes.length).toBe(2);
+    checkboxes[0].click();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-revise-commit'
+    )!.click();
+    expect(calls.length).toBe(1);
+    expect(calls[0][2]).toEqual(['archetype']);
   });
 });
 

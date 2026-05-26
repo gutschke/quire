@@ -1335,8 +1335,12 @@ export class QuireApp extends LitElement {
           scene?: string;
         }) => this.appendPcRetire(payload)}
         .preAcceptDrift=${this.chargen.preAcceptDriftMap()}
-        .onRevise=${(slot: number, reason: string) =>
-          this.chargen.requestReviseSlot(slot, reason)}
+        .onRevise=${(
+          slot: number,
+          reason: string,
+          pinnedQuestionIds?: readonly string[]
+        ) =>
+          this.chargen.requestReviseSlot(slot, reason, pinnedQuestionIds)}
       ></chargen-dm-review>
     `;
   }
