@@ -212,13 +212,29 @@ export class AiPanel extends LitElement {
             : nothing}
         </div>
         ${this.showSettings || !hasKey ? this.renderSettings() : nothing}
+        ${
+          // Post-R5 UX fix: when the AI has proposed unapplied
+          // writes, the accept-gate is the most safety-critical
+          // interaction in the panel (harm/stress writes affect
+          // persistent state).  Pin it above the prompt form so
+          // the DM sees it without scrolling — previously it was
+          // rendered LAST, below an arbitrarily tall dual-card
+          // response.  When nothing's unapplied, the strip falls
+          // back to its original position (chronologically
+          // after the response).
+          this.writeBatch && this.writeBatch.hasUnapplied
+            ? this.renderWriteBatch(this.writeBatch)
+            : nothing
+        }
         ${hasKey ? this.renderPromptForm() : nothing}
         ${this.error
           ? html`<p class="ai-error">${this.error}</p>`
           : nothing}
         ${this.renderRejectionBanner()}
         ${this.response ? this.renderDualCard(this.response) : nothing}
-        ${this.writeBatch ? this.renderWriteBatch(this.writeBatch) : nothing}
+        ${this.writeBatch && !this.writeBatch.hasUnapplied
+          ? this.renderWriteBatch(this.writeBatch)
+          : nothing}
       </section>
     `;
   }

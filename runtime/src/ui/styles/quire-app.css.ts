@@ -260,6 +260,22 @@ export const quireAppStyles = css`
     .chargen-dm-review-header-input-name {
       font-weight: 600;
     }
+    /* Post-R5 UX fix: faint pencil glyph next to click-to-edit
+       header values so the affordance is discoverable without
+       hover.  UX-R5 ranked this as a first-table blocker. */
+    .chargen-dm-review-header-edit-pencil {
+      font-size: 0.65em;
+      margin-left: 0.25rem;
+      opacity: 0.35;
+      vertical-align: 0.15em;
+      transition: opacity 0.12s ease-out;
+    }
+    .chargen-dm-review-header-edit:hover .chargen-dm-review-header-edit-pencil,
+    .chargen-dm-review-header-edit:focus-visible
+      .chargen-dm-review-header-edit-pencil {
+      opacity: 1;
+      color: light-dark(#0b3d7f, #79b8f0);
+    }
     /* Wave 2: drift banner — informational, not blocking.
        Post-Wave-2 polish: more vertical space below the banner so
        it visually separates from the Review/Accept actions row
@@ -368,6 +384,15 @@ export const quireAppStyles = css`
          glyph has visual context. */
       box-shadow: inset 0 0 0 1px light-dark(#16a34a55, #4ade8055);
     }
+    /* Post-R5 UX fix: hint text under the stat grid so DMs discover
+       the two-click swap interaction.  UX-R5: "the click-to-swap
+       interaction is invisible until you happen to click." */
+    .chargen-dm-review-stat-hint {
+      margin: 0.25rem 0 0;
+      font-size: 0.8em;
+      font-style: italic;
+      text-align: center;
+    }
     .chargen-dm-review-stat-confirm {
       display: flex;
       align-items: center;
@@ -418,20 +443,30 @@ export const quireAppStyles = css`
       opacity: 1;
       color: light-dark(#dc2626, #f87171);
     }
+    /* Post-R5 UX fix: clearly "add" affordance vs content chip.
+       UX-R5 finding: DMs read a bare plus chip as "this PC has a +
+       skill" mixed in with content chips.  Solution: dashed border,
+       italic muted text, leading gap, "+ add" / "+ skill" label. */
     .chargen-dm-review-chip-add {
       cursor: pointer;
       border: 1px dashed light-dark(#94a3b8, #475569);
       background: transparent;
-      color: inherit;
+      color: light-dark(#64748b, #94a3b8);
       font: inherit;
+      font-size: 0.85em;
+      font-style: italic;
       padding: 0.1rem 0.55rem;
       border-radius: 999px;
-      opacity: 0.7;
+      opacity: 0.8;
+      margin-left: 0.3rem;
+      transition: all 0.15s ease-out;
     }
     .chargen-dm-review-chip-add:hover {
       opacity: 1;
       border-style: solid;
+      border-color: light-dark(#475569, #94a3b8);
       background: light-dark(#f1f5f9, #1e293b);
+      color: light-dark(#0f172a, #e2e8f0);
     }
     .chargen-dm-review-chip-input {
       font: inherit;

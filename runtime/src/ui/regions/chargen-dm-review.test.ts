@@ -1563,6 +1563,54 @@ describe('<chargen-dm-review> — Wave 3 polish (post-R4 fixes)', () => {
     ).not.toBeNull();
   });
 
+  it('UX-R5 fix: header click-to-edit shows a pencil affordance', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei Tanaka')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const nameBtn = el.querySelector(
+      '.chargen-dm-review-header-edit-name'
+    );
+    const pencil = nameBtn?.querySelector(
+      '.chargen-dm-review-header-edit-pencil'
+    );
+    expect(pencil).not.toBeNull();
+    expect(pencil!.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('UX-R5 fix: stat-grid renders a swap hint when editable', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const hint = el.querySelector('.chargen-dm-review-stat-hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toMatch(/Click two cells to swap/);
+  });
+
+  it('UX-R5 fix: stat-grid does NOT render the swap hint when display-only', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    // No onEditPreAccept → not editable.
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-stat-hint')).toBeNull();
+  });
+
+  it('UX-R5 fix: chip-add button reads "+ tag" / "+ skill" instead of bare +', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.onEditPreAccept = () => true;
+    await el.updateComplete;
+    const tagAdd = el.querySelector(
+      '.chargen-dm-review-tags .chargen-dm-review-chip-add'
+    );
+    const skillAdd = el.querySelector(
+      '.chargen-dm-review-skills .chargen-dm-review-chip-add'
+    );
+    expect(tagAdd?.textContent?.trim()).toBe('+ tag');
+    expect(skillAdd?.textContent?.trim()).toBe('+ skill');
+  });
+
   it('UX-R4 fix #7: drift pip carries the aria-live; row list does not', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mai')]]);

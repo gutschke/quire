@@ -2012,6 +2012,9 @@ export class ChargenDmReview extends LitElement {
         ? html`<strong>${value}</strong>`
         : html`${value}`;
     }
+    // Post-R5 UX fix: render a faint pencil glyph so the click-to-edit
+    // affordance is discoverable without hover.  UX-R5 ranked this
+    // as a first-table blocker.
     return html`<button
       type="button"
       class="chargen-dm-review-header-edit chargen-dm-review-header-edit-${field}"
@@ -2019,7 +2022,11 @@ export class ChargenDmReview extends LitElement {
       aria-label="Edit ${field} (currently ${value})"
       @click=${() => this.openHeaderEdit(slot, field)}
     >
-      ${field === 'name' ? html`<strong>${value}</strong>` : html`${value}`}
+      ${field === 'name' ? html`<strong>${value}</strong>` : html`${value}`}<span
+        class="chargen-dm-review-header-edit-pencil"
+        aria-hidden="true"
+        >✎</span
+      >
     </button>`;
   }
 
@@ -2370,7 +2377,7 @@ export class ChargenDmReview extends LitElement {
                   this.addingChip = { slot: slot!, kind: 'tag' };
                 }}
               >
-                +
+                + tag
               </button>`
           : nothing}
       </div>
@@ -2535,6 +2542,13 @@ export class ChargenDmReview extends LitElement {
         ${cell('STR', 'STR')}${cell('DEX', 'DEX')}${cell('CON', 'CON')}
         ${cell('INT', 'INT')}${cell('WIS', 'WIS')}${cell('CHA', 'CHA')}
       </div>
+      ${editable
+        ? html`<div class="chargen-dm-review-stat-hint muted">
+            Click two cells to swap their values${playerPickKey
+              ? html` (player's ${playerPickKey} 🔒 confirms first)`
+              : nothing}.
+          </div>`
+        : nothing}
       ${this.renderPendingStatSwap(slot)}
     `;
   }
@@ -2694,7 +2708,7 @@ export class ChargenDmReview extends LitElement {
                     this.addingChip = { slot: slot!, kind: 'skill' };
                   }}
                 >
-                  +
+                  + skill
                 </button>`
           : nothing}
       </div>
