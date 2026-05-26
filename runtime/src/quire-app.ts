@@ -2257,6 +2257,11 @@ export class QuireApp extends LitElement {
           box: number,
           current: number
         ) => this.toggleTrackBox(pcId, field, box, current)}
+        .onSetTrackValue=${(
+          pcId: string,
+          field: 'harm' | 'stress',
+          value: number
+        ) => this.setTrackValue(pcId, field, value)}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
@@ -5224,6 +5229,11 @@ export class QuireApp extends LitElement {
           box: number,
           current: number
         ) => this.toggleTrackBox(pcId, field, box, current)}
+        .onSetTrackValue=${(
+          pcId: string,
+          field: 'harm' | 'stress',
+          value: number
+        ) => this.setTrackValue(pcId, field, value)}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleClaim=${() => this.toggleClaimCharacter(character)}
@@ -5367,6 +5377,22 @@ export class QuireApp extends LitElement {
     const next = box <= current ? box - 1 : box;
     if (next === current) return;
     this.submitPcEdit(pcId, field, next);
+  }
+
+  /**
+   * Phase B P1d (2026-05-26): cleaner track-set handler used by the
+   * new `<track-bar>` component (which computes the new fill level
+   * internally and fires `onSetValue(newValue)`).  We just dispatch
+   * the pc-edit.  Bound checks come from the same submitPcEdit path
+   * the legacy toggleTrackBox uses.
+   */
+  private setTrackValue(
+    pcId: string,
+    field: 'harm' | 'stress',
+    value: number
+  ): void {
+    const bounded = Math.max(0, Math.min(4, Math.floor(value)));
+    this.submitPcEdit(pcId, field, bounded);
   }
 
   private renderError(message: string, details?: string): TemplateResult {

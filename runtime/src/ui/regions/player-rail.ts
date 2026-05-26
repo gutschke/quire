@@ -33,9 +33,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type { LoadedCharacter, CharacterRecord } from '../../character-loader';
 import {
   HARM_MAX,
-  STRESS_MAX,
-  STAT_MIN,
-  STAT_MAX
+  STRESS_MAX
 } from '../../character-edits';
 import {
   renderMarkdown,
@@ -43,10 +41,8 @@ import {
   type PcSlotBindings
 } from '../../markdown';
 import { routeToSearch, type AppRoute } from '../../routing';
-
-function formatStat(value: number): string {
-  return value >= 0 ? `+${value}` : `${value}`;
-}
+import '../field-renderers/track-bar';
+import '../field-renderers/stat-grid';
 
 type StatKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 
@@ -62,6 +58,21 @@ export type ToggleTrackBoxCallback = (
   field: 'harm' | 'stress',
   box: number,
   current: number
+) => void;
+
+/**
+ * Phase B P1d (2026-05-26): cleaner track-set callback used by the
+ * `<track-bar>` component.  Component computes the new fill level
+ * internally (click box i when current = v → next per the
+ * toggle-fill rules in track-bar.ts) and fires this callback with
+ * the resolved value.  Caller just dispatches the pc-edit.  The
+ * legacy `ToggleTrackBoxCallback` stays for callers that still
+ * need the (box, current) signature.
+ */
+export type SetTrackValueCallback = (
+  pcId: string,
+  field: 'harm' | 'stress',
+  value: number
 ) => void;
 
 export type NavigateCallback = (e: Event, route: AppRoute) => void;
@@ -124,6 +135,17 @@ export class PlayerRail extends LitElement {
   @property({ type: Boolean }) editable: boolean = false;
   @property({ attribute: false }) onBumpStat: BumpStatCallback | null = null;
   @property({ attribute: false }) onToggleTrackBox: ToggleTrackBoxCallback | null = null;
+  /**
+   * Phase B P1d (2026-05-26): cleaner callback wired to the
+   * `<track-bar>` component's `onSetValue`.  Receives the
+   * already-resolved new fill level.  When set, the rail uses
+   * `<track-bar>` instead of the legacy inline track-box renderer.
+   * Both callbacks can co-exist during the migration window;
+   * track-bar wiring prefers `onSetTrackValue` when available.
+   */
+  @property({ attribute: false }) onSetTrackValue:
+    | SetTrackValueCallback
+    | null = null;
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
   /**
    * M3a.2 (P-M3a-pc-binding): claim affordances.  When a PC is
@@ -251,33 +273,62 @@ export class PlayerRail extends LitElement {
           ${typeof r.harm === 'number' || editable
             ? html`
                 <dt>Harm</dt>
-                <dd>${this.renderTrackBoxes(
-                  'harm',
-                  r.harm ?? 0,
-                  HARM_MAX,
-                  character.id,
-                  editable
-                )}</dd>
+                <dd>
+                  ${this.onSetTrackValue
+                    ? html`<track-bar
+                        .kind=${'harm' as const}
+                        .value=${r.harm ?? 0}
+                        .editable=${editable}
+                        .onSetValue=${(newValue: number) =>
+                          this.onSetTrackValue?.(
+                            character.id,
+                            'harm',
+                            newValue
+                          )}
+                      ></track-bar>`
+                    : this.renderTrackBoxes(
+                        'harm',
+                        r.harm ?? 0,
+                        HARM_MAX,
+                        character.id,
+                        editable
+                      )}
+                </dd>
               `
             : nothing}
           ${typeof r.stress === 'number' || editable
             ? html`
                 <dt>Stress</dt>
-                <dd>${this.renderTrackBoxes(
-                  'stress',
-                  r.stress ?? 0,
-                  STRESS_MAX,
-                  character.id,
-                  editable
-                )}</dd>
+                <dd>
+                  ${this.onSetTrackValue
+                    ? html`<track-bar
+                        .kind=${'stress' as const}
+                        .value=${r.stress ?? 0}
+                        .editable=${editable}
+                        .onSetValue=${(newValue: number) =>
+                          this.onSetTrackValue?.(
+                            character.id,
+                            'stress',
+                            newValue
+                          )}
+                      ></track-bar>`
+                    : this.renderTrackBoxes(
+                        'stress',
+                        r.stress ?? 0,
+                        STRESS_MAX,
+                        character.id,
+                        editable
+                      )}
+                </dd>
               `
             : nothing}
         </dl>
         ${r.stats || editable
-          ? this.renderStatBlock(
-              r.stats ?? {},
-              editable ? character.id : null
-            )
+          ? html`<stat-grid
+              .stats=${r.stats ?? {}}
+              .editablePcId=${editable ? character.id : null}
+              .onBumpStat=${this.onBumpStat}
+            ></stat-grid>`
           : nothing}
         ${r.skills?.length
           ? html`
@@ -635,56 +686,8 @@ export class PlayerRail extends LitElement {
     }
   }
 
-  private renderStatBlock(
-    stats: Partial<Record<StatKey, number>>,
-    editablePcId: string | null
-  ): TemplateResult {
-    const rows: Array<[string, StatKey, number | undefined]> = [
-      ['STR', 'str', stats.str],
-      ['DEX', 'dex', stats.dex],
-      ['CON', 'con', stats.con],
-      ['INT', 'int', stats.int],
-      ['WIS', 'wis', stats.wis],
-      ['CHA', 'cha', stats.cha]
-    ];
-    return html`
-      <h3>Stats</h3>
-      <dl class="stat-grid">
-        ${rows.map(
-          ([label, key, val]) => html`
-            <dt>${label}</dt>
-            <dd>
-              ${typeof val === 'number' ? formatStat(val) : '—'}
-              ${editablePcId
-                ? html`
-                    <span class="stat-bumpers">
-                      <button
-                        type="button"
-                        aria-label="Decrease ${label}"
-                        ?disabled=${typeof val === 'number' && val <= STAT_MIN}
-                        @click=${() =>
-                          this.onBumpStat?.(editablePcId, key, val ?? 0, -1)}
-                      >
-                        −
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Increase ${label}"
-                        ?disabled=${typeof val === 'number' && val >= STAT_MAX}
-                        @click=${() =>
-                          this.onBumpStat?.(editablePcId, key, val ?? 0, +1)}
-                      >
-                        +
-                      </button>
-                    </span>
-                  `
-                : nothing}
-            </dd>
-          `
-        )}
-      </dl>
-    `;
-  }
+  // Phase B P1d (2026-05-26): renderStatBlock removed; replaced
+  // by <stat-grid> component which adds rule-hover tooltips.
 
   private renderTrackBoxes(
     field: 'harm' | 'stress',
