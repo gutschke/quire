@@ -44,6 +44,8 @@ import { routeToSearch, type AppRoute } from '../../routing';
 import '../field-renderers/track-bar';
 import '../field-renderers/stat-grid';
 import '../field-renderers/foci-card';
+import '../field-renderers/conditions-list';
+import '../field-renderers/money-band-selector';
 
 type StatKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
 
@@ -156,6 +158,23 @@ export class PlayerRail extends LitElement {
    */
   @property({ attribute: false }) onSetFocusStatus:
     | import('../field-renderers/foci-card').SetFocusStatusCallback
+    | null = null;
+  /**
+   * Phase B P4 (2026-05-26): callback for releasing a condition.
+   * Host translates into a future array-write pc-edit when that
+   * lands; today's host can NO-OP and the chip still highlights
+   * visually.
+   */
+  @property({ attribute: false }) onReleaseCondition:
+    | import('../field-renderers/conditions-list').ReleaseConditionCallback
+    | null = null;
+  /**
+   * Phase B P4 (2026-05-26): callback for changing the money band.
+   * Host wires to a pc-edit('moneyBand', value).  When null, the
+   * money-band-selector renders read-only.
+   */
+  @property({ attribute: false }) onSetMoneyBand:
+    | import('../field-renderers/money-band-selector').SetMoneyBandCallback
     | null = null;
   @property({ attribute: false }) onNavigate: NavigateCallback | null = null;
   /**
@@ -363,6 +382,30 @@ export class PlayerRail extends LitElement {
               .editablePcId=${editable ? character.id : null}
               .onSetFocusStatus=${this.onSetFocusStatus}
             ></foci-card>`
+          : nothing}
+        ${r.conditions?.length
+          ? html`<conditions-list
+              .conditions=${r.conditions}
+              .editablePcId=${editable ? character.id : null}
+              .onRelease=${this.onReleaseCondition}
+            ></conditions-list>`
+          : nothing}
+        ${r.languages?.length
+          ? html`
+              <h3>Languages</h3>
+              <ul class="player-rail-language-chips">
+                ${r.languages.map(
+                  (l) => html`<li class="player-rail-language-chip">${l}</li>`
+                )}
+              </ul>
+            `
+          : nothing}
+        ${r.moneyBand
+          ? html`<money-band-selector
+              .value=${r.moneyBand}
+              .editablePcId=${editable ? character.id : null}
+              .onSetBand=${this.onSetMoneyBand}
+            ></money-band-selector>`
           : nothing}
         ${r.signature?.length
           ? html`

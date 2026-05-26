@@ -2262,6 +2262,10 @@ export class QuireApp extends LitElement {
           field: 'harm' | 'stress',
           value: number
         ) => this.setTrackValue(pcId, field, value)}
+        .onSetMoneyBand=${(
+          pcId: string,
+          band: import('./character-loader').MoneyBand
+        ) => this.submitPcEdit(pcId, 'moneyBand', band)}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
@@ -5234,6 +5238,10 @@ export class QuireApp extends LitElement {
           field: 'harm' | 'stress',
           value: number
         ) => this.setTrackValue(pcId, field, value)}
+        .onSetMoneyBand=${(
+          pcId: string,
+          band: import('./character-loader').MoneyBand
+        ) => this.submitPcEdit(pcId, 'moneyBand', band)}
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleClaim=${() => this.toggleClaimCharacter(character)}
