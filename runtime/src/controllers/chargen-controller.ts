@@ -238,6 +238,16 @@ export class ChargenController implements ReactiveController {
   >();
 
   /**
+   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #5): track slots where
+   * the last patchInPlace touched pronouns.  The deterministic
+   * substitution leaves verb agreement intact ("she was" stays
+   * "they was") — surface a non-blocking hint so the DM knows to
+   * Re-sync if they care about clean prose.  Cleared on the next
+   * edit/dismiss/accept for the slot.
+   */
+  private readonly _pronounPatchedSlots = new Set<number>();
+
+  /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
    * Same lazy posture as pre-extraction — a regular play session
    * never imports these.
@@ -464,6 +474,9 @@ export class ChargenController implements ReactiveController {
       if (!(key in origAny)) origAny[key] = respAny[key];
       respAny[key] = patchAny[key];
     }
+    // Any further edit invalidates the prior pronoun-patch hint —
+    // the DM has moved on or the prose changed again.
+    this._pronounPatchedSlots.delete(slot);
     this.host.requestUpdate();
     return true;
   }
@@ -558,14 +571,50 @@ export class ChargenController implements ReactiveController {
     // were honored.  The backstory edit itself does NOT add a new
     // drift entry — it's a direct application of existing drift.
     result.response.backstory = text;
+    const pronounWasPatched = patchable.includes('pronouns');
     for (const field of patchable) {
       delete (drift as Record<string, unknown>)[field];
     }
     if (Object.keys(drift).length === 0) {
       this._preAcceptOriginals.delete(slot);
     }
+    // Wave 3 polish: mark the slot so the UI can hint about
+    // potential verb-agreement glitches the substitution doesn't
+    // catch.  Cleared on next edit/dismiss/accept/clear.
+    if (pronounWasPatched) {
+      this._pronounPatchedSlots.add(slot);
+    }
     this.host.requestUpdate();
     return true;
+  }
+
+  /**
+   * Wave 3 polish: read whether the slot's last patchInPlace touched
+   * pronouns.  UI uses this to render a "Re-sync to clean up verb
+   * agreement" hint.
+   */
+  wasPronounRecentlyPatched(slot: number): boolean {
+    return this._pronounPatchedSlots.has(slot);
+  }
+
+  /**
+   * Wave 3 polish: dismiss the pronoun-patch hint (e.g., DM saw it
+   * and moved on).  Also called automatically on next edit/dismiss/
+   * accept/clear for the slot.
+   */
+  dismissPronounPatchHint(slot: number): void {
+    if (this._pronounPatchedSlots.has(slot)) {
+      this._pronounPatchedSlots.delete(slot);
+      this.host.requestUpdate();
+    }
+  }
+
+  /**
+   * Wave 3 polish: full snapshot of slots with a pending pronoun-
+   * patch hint, for the UI property pass.
+   */
+  pronounPatchedSlotsSet(): ReadonlySet<number> {
+    return this._pronounPatchedSlots;
   }
 
   /**
@@ -704,6 +753,7 @@ export class ChargenController implements ReactiveController {
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
     this._preAcceptOriginals.delete(slot);
+    this._pronounPatchedSlots.delete(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
       trimmedReason
@@ -1223,6 +1273,7 @@ export class ChargenController implements ReactiveController {
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
     this._preAcceptOriginals.delete(slot);
+    this._pronounPatchedSlots.delete(slot);
     if (had) this.host.requestUpdate();
   }
 

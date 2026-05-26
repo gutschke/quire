@@ -361,6 +361,19 @@ export class ChargenDmReview extends LitElement {
   onResyncBackstory: ResyncBackstoryCallback | null = null;
 
   /**
+   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #5): slots whose last
+   * Patch-in-place touched pronouns.  Used to render a hint about
+   * potential verb-agreement glitches the deterministic
+   * substitution doesn't fix.
+   */
+  @property({ attribute: false })
+  pronounPatchedSlots: ReadonlySet<number> = new Set();
+
+  /** Dismiss-callback for the pronoun-patch hint. */
+  @property({ attribute: false })
+  onDismissPronounPatchHint: ((slot: number) => void) | null = null;
+
+  /**
    * P-R6 (2026-05-25): retire a bound-active PC.  Hidden when no
    * callback wired.
    */
@@ -589,13 +602,10 @@ export class ChargenDmReview extends LitElement {
     return html`
       <dialog
         class="chargen-dm-review-revise-modal"
-        open
-        @click=${(e: MouseEvent) => {
-          if (e.target === e.currentTarget) this.closeReviseDialog();
-        }}
-        @keydown=${(e: KeyboardEvent) => {
-          if (e.key === 'Escape') this.closeReviseDialog();
-        }}
+        @cancel=${() => this.closeReviseDialog()}
+        @click=${(e: MouseEvent) =>
+          this.handleDialogBackdropClick(e, () => this.closeReviseDialog())}
+        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
       >
         <div class="chargen-dm-review-revise-body">
           <h3>Ask ${displayName} to revise</h3>
@@ -690,13 +700,10 @@ export class ChargenDmReview extends LitElement {
     return html`
       <dialog
         class="chargen-dm-review-retire-modal"
-        open
-        @click=${(e: MouseEvent) => {
-          if (e.target === e.currentTarget) this.closeRetireDialog();
-        }}
-        @keydown=${(e: KeyboardEvent) => {
-          if (e.key === 'Escape') this.closeRetireDialog();
-        }}
+        @cancel=${() => this.closeRetireDialog()}
+        @click=${(e: MouseEvent) =>
+          this.handleDialogBackdropClick(e, () => this.closeRetireDialog())}
+        @mousedown=${(e: MouseEvent) => this.recordBackdropMouseDown(e)}
       >
         <div class="chargen-dm-review-retire-body">
           <h3>Retire ${displayName}?</h3>
@@ -813,7 +820,7 @@ export class ChargenDmReview extends LitElement {
     }
 
     const canAdd = this.computeNextAvailableSlot() !== null;
-    const hasActive = this.hasBoundActiveSeat();
+    const canStartPlaying = this.canShowStartPlaying();
     return html`
       ${this.renderRemoveUndoBanner()}
       ${this.renderPartyStatsNudge()}
@@ -840,7 +847,7 @@ export class ChargenDmReview extends LitElement {
               Seat cap reached (${this.seatCap}).  Retire a PC to
               free continuity, or raise the campaign's seat cap.
             </span>`}
-        ${hasActive
+        ${canStartPlaying
           ? html`<button
               type="button"
               class="chargen-dm-review-start-playing"
@@ -879,6 +886,26 @@ export class ChargenDmReview extends LitElement {
       if (seat.state === 'bound-active') return true;
     }
     return false;
+  }
+
+  /**
+   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #4): "Start playing →"
+   * shouldn't tempt the DM mid-review.  Hide the CTA when any
+   * seat has an in-flight synth OR a synth result waiting to be
+   * accepted/revised.  Surfaces only when nothing else is asking
+   * for attention.
+   */
+  private canShowStartPlaying(): boolean {
+    if (!this.hasBoundActiveSeat()) return false;
+    if (this.synthInFlight.size > 0) return false;
+    if (this.resyncInFlight.size > 0) return false;
+    // Any synth result that hasn't been accepted yet means the DM
+    // still has work pending.  Failure results (parse/spoiler/etc)
+    // also count — they need explicit DM action.
+    for (const slot of this.synthResults.keys()) {
+      if (!this.acceptedSlots.has(slot)) return false;
+    }
+    return true;
   }
 
   /**
@@ -1121,6 +1148,8 @@ export class ChargenDmReview extends LitElement {
   private openHeaderEdit(slot: number, field: 'name' | 'pronouns'): void {
     if (this.acceptedSlots.has(slot)) return;
     if (!this.onEditPreAccept) return;
+    // Wave 3 polish (UX-R4 fix #2): don't let edits race a re-sync.
+    if (this.resyncInFlight.has(slot)) return;
     this.editingHeader = { slot, field };
   }
 
@@ -1376,6 +1405,23 @@ export class ChargenDmReview extends LitElement {
       sync(
         this.editModalSlot !== null,
         'dialog.chargen-dm-review-edit-modal'
+      );
+    }
+    // Wave 3 polish (2026-05-25, UX-R4 fix #1): Retire + Revise
+    // dialogs also use showModal() now — previously they were `open`-
+    // attribute pseudo-modals that weren't in the top layer, missed
+    // native focus trap, and had a custom @keydown Esc handler that
+    // only fired when something inside had focus.
+    if (changed.has('retireDialogSlot')) {
+      sync(
+        this.retireDialogSlot !== null,
+        'dialog.chargen-dm-review-retire-modal'
+      );
+    }
+    if (changed.has('reviseDialogSlot')) {
+      sync(
+        this.reviseDialogSlot !== null,
+        'dialog.chargen-dm-review-revise-modal'
       );
     }
   }
@@ -1667,6 +1713,12 @@ export class ChargenDmReview extends LitElement {
         ${this.copiedFor === slot
           ? html`<span class="chargen-dm-review-invite-copied">Copied!</span>`
           : nothing}
+        <p class="muted chargen-dm-review-invite-note">
+          Heads up: generating a new invite for this seat invalidates
+          any prior link.  If you remove and re-add the seat, the
+          previous URL still routes to slot ${slot} — best to copy
+          a fresh one.
+        </p>
       </div>
     `;
   }
@@ -1693,6 +1745,7 @@ export class ChargenDmReview extends LitElement {
           ${this.renderTagChips(r.tags, slot)}
           ${this.renderStatGrid(r.stats, slot)}
           ${this.renderSkillChips(r.skillMastery, slot)}
+          ${this.renderPronounPatchHint(slot)}
           ${this.renderDriftBanner(slot)}
           ${warningCount > 0
             ? html`<div class="chargen-dm-review-synth-warnings">
@@ -1830,14 +1883,21 @@ export class ChargenDmReview extends LitElement {
   ): TemplateResult {
     const synth = this.synthResults.get(slot);
     const okResult = synth?.ok === true;
+    // Wave 3 polish (2026-05-25, UX-R4 fix #2): re-sync is async +
+    // takes 10-30s.  While it's in flight for this slot, gate
+    // anything that would mutate the in-progress result so the DM
+    // doesn't accidentally commit a stale-pre-resync value.
+    const resyncing = this.resyncInFlight.has(slot);
     return html`
       <div class="chargen-dm-review-synth-actions">
         ${okResult
           ? html`<button
               type="button"
               class="chargen-dm-review-accept"
-              ?disabled=${accepted || !this.onAccept}
-              title="Accept this synthesized PC; appends an audit note"
+              ?disabled=${accepted || !this.onAccept || resyncing}
+              title="${resyncing
+                ? 'Re-sync in flight — wait for the new backstory'
+                : 'Accept this synthesized PC; appends an audit note'}"
               @click=${() => this.onAccept?.(slot)}
             >
               ${accepted ? 'Accepted' : 'Accept this PC'}
@@ -1847,8 +1907,10 @@ export class ChargenDmReview extends LitElement {
           ? html`<button
               type="button"
               class="chargen-dm-review-revise"
-              ?disabled=${!this.onRevise}
-              title="Ask the player to revise an answer + clear this result"
+              ?disabled=${!this.onRevise || resyncing}
+              title="${resyncing
+                ? 'Re-sync in flight — wait for the new backstory'
+                : 'Ask the player to revise an answer + clear this result'}"
               @click=${() => this.handleRevise(slot)}
             >
               Ask player to revise
@@ -1951,6 +2013,40 @@ export class ChargenDmReview extends LitElement {
    * Per the chargen-authorship memory: drift is INFORMATIONAL, not
    * blocking.  The DM remains the authority.
    */
+  /**
+   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #5): non-blocking hint
+   * surfaced when the DM has just Patch-in-placed a pronoun delta.
+   * The deterministic substitution leaves verb agreement intact
+   * ("she was" stays "they was") — point this out so the DM can
+   * choose to Re-sync the prose if they care.  Dismisses on next
+   * edit OR an explicit dismiss click.
+   */
+  private renderPronounPatchHint(
+    slot: number
+  ): TemplateResult | typeof nothing {
+    if (!this.pronounPatchedSlots.has(slot)) return nothing;
+    return html`
+      <div class="chargen-dm-review-pronoun-hint" role="status">
+        <span>
+          ✎ Patched pronouns deterministically.  Verb agreement
+          (e.g., "she was" → "they was") may still need cleanup —
+          ${this.onResyncBackstory
+            ? 'click "Re-sync backstory" to let the AI tidy.'
+            : 'edit the backstory directly to fix.'}
+        </span>
+        <button
+          type="button"
+          class="chargen-dm-review-pronoun-hint-dismiss"
+          title="Dismiss this hint"
+          aria-label="Dismiss pronoun-patch hint"
+          @click=${() => this.onDismissPronounPatchHint?.(slot)}
+        >
+          ×
+        </button>
+      </div>
+    `;
+  }
+
   private renderDriftBanner(slot: number): TemplateResult | typeof nothing {
     const drift = this.preAcceptDrift.get(slot);
     if (!drift) return nothing;
@@ -1963,13 +2059,25 @@ export class ChargenDmReview extends LitElement {
     // Wave 3a: which fields are deterministically patchable.
     const patchable = fields.filter((f) => f === 'name' || f === 'pronouns');
     const hasUnpatchable = fields.length > patchable.length;
+    const resyncing = this.resyncInFlight.has(slot);
     return html`
-      <div class="chargen-dm-review-drift" role="status">
+      <div class="chargen-dm-review-drift">
         ${this.renderDriftPip(fields.length, patchable.length, hasUnpatchable)}
-        <ul class="chargen-dm-review-drift-list">
+        <ul class="chargen-dm-review-drift-list" aria-live="off">
           ${fields.map((field) => this.renderDriftRow(slot, field, drift, synth.response))}
         </ul>
         ${this.renderDriftActions(slot, patchable, hasUnpatchable)}
+        ${resyncing
+          ? html`<div
+              class="chargen-dm-review-drift-resync-status"
+              role="status"
+              aria-live="polite"
+            >
+              Re-syncing backstory… typically 10-20 seconds.  The new
+              backstory will replace the current one; other edits on
+              this seat are paused.
+            </div>`
+          : nothing}
       </div>
     `;
   }
@@ -1987,20 +2095,32 @@ export class ChargenDmReview extends LitElement {
     hasUnpatchable: boolean
   ): TemplateResult {
     if (hasUnpatchable && patchableCount > 0) {
-      return html`<div class="chargen-dm-review-drift-pip">
+      return html`<div
+        class="chargen-dm-review-drift-pip"
+        role="status"
+        aria-live="polite"
+      >
         ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
         synth.  Patch covers name + pronoun substitutions; the AI
         re-sync tool (for tag / stat / skill rewrites) arrives next.
       </div>`;
     }
     if (hasUnpatchable) {
-      return html`<div class="chargen-dm-review-drift-pip">
+      return html`<div
+        class="chargen-dm-review-drift-pip"
+        role="status"
+        aria-live="polite"
+      >
         ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
         synth.  Prose may now mismatch — the AI re-sync tool arrives
         next.
       </div>`;
     }
-    return html`<div class="chargen-dm-review-drift-pip">
+    return html`<div
+      class="chargen-dm-review-drift-pip"
+      role="status"
+      aria-live="polite"
+    >
       ✎ <strong>${total} edit${total === 1 ? '' : 's'}</strong> since
       synth.  Patch applies the substitution to the backstory text.
     </div>`;

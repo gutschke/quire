@@ -1662,6 +1662,46 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(1);
     expect(ctrl.patchInPlace(1)).toBe(false);
   });
+
+  it('Wave 3 polish (TTRPG-R4 fix #5): patching pronouns marks the slot for the hint', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'She was here.');
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(false);
+    ctrl.patchInPlace(1);
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(true);
+  });
+
+  it('Wave 3 polish: patching only name does NOT mark for pronoun hint', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'Mei was here.');
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    ctrl.patchInPlace(1);
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(false);
+  });
+
+  it('Wave 3 polish: dismissPronounPatchHint clears the flag', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'She was here.');
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    ctrl.patchInPlace(1);
+    ctrl.dismissPronounPatchHint(1);
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(false);
+  });
+
+  it('Wave 3 polish: any further edit clears the pronoun hint', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'She was here.');
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    ctrl.patchInPlace(1);
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(true);
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    expect(ctrl.wasPronounRecentlyPatched(1)).toBe(false);
+  });
 });
 
 describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {

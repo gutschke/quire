@@ -2226,6 +2226,40 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
     const b = materialize(log.events());
     expect(a.synthesizedPcs).toEqual(b.synthesizedPcs);
   });
+
+  it('Wave 3 polish (TTRPG-R4 fix #3): startingAdvancements + startingMarks seed catch-up', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ startingAdvancements: 2, startingMarks: 3 })
+    );
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record.advancements).toBe(2);
+    expect(record.marks).toBe(3);
+  });
+
+  it('Wave 3 polish: defaults to 0/0 when starting fields omitted', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload()); // no starting fields
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record.advancements).toBe(0);
+    expect(record.marks).toBe(0);
+  });
+
+  it('Wave 3 polish: rejects negative / non-integer / out-of-range starting values', () => {
+    for (const bad of [-1, 1.5, 100, 'two' as unknown]) {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append('pc-create', validPayload({ startingAdvancements: bad }));
+      const state = materialize(log.events());
+      // Bad payload → materializer rejects the whole event.
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    }
+  });
 });
 
 // =====================================================================

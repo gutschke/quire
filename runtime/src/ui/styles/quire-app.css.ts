@@ -634,6 +634,51 @@ export const quireAppStyles = css`
     .chargen-dm-review-revise-commit:hover {
       filter: brightness(1.08);
     }
+    /* Wave 3 polish: pronoun-patch hint pip */
+    .chargen-dm-review-pronoun-hint {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin: 0.4rem 0;
+      padding: 0.4rem 0.7rem;
+      background: light-dark(#eff6ff, #1e293b);
+      border: 1px solid light-dark(#93c5fd, #3b82f6);
+      border-radius: 4px;
+      font-size: 0.88em;
+      line-height: 1.35;
+    }
+    .chargen-dm-review-pronoun-hint-dismiss {
+      margin-left: auto;
+      padding: 0 0.4rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+      opacity: 0.6;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-pronoun-hint-dismiss:hover {
+      opacity: 1;
+      border-color: light-dark(#0b3d7f, #79b8f0);
+    }
+    /* Wave 3 polish: invite-URL re-issuance note */
+    .chargen-dm-review-invite-note {
+      flex-basis: 100%;
+      margin: 0.3rem 0 0;
+      font-size: 0.82em;
+      line-height: 1.4;
+    }
+    /* Wave 3 polish: re-sync-in-flight status line */
+    .chargen-dm-review-drift-resync-status {
+      margin-top: 0.5rem;
+      padding-top: 0.4rem;
+      border-top: 1px dashed light-dark(#facc15, #a16207);
+      font-size: 0.88em;
+      font-style: italic;
+      opacity: 0.85;
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

@@ -754,6 +754,17 @@ interface PcCreatePayload {
    * (no AI involvement); future audit tooling can trace the chain.
    */
   causedByResponseId?: string;
+  /**
+   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #3): starting
+   * advancements + marks for a late-arriving PC.  When omitted,
+   * both default to 0 (the fresh-PC baseline).  Mid-campaign
+   * adds use this to seed a catch-up advancement so the new PC
+   * isn't mechanically behind the rest of the party.  The full
+   * "joining at session N" picker UX lands in P-R12; this field
+   * is the engine half so campaigns / future UX can wire it.
+   */
+  startingAdvancements?: number;
+  startingMarks?: number;
 }
 
 const PC_CREATE_MAX_NAME = 80;
@@ -1862,10 +1873,39 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     if (typeof p.causedByResponseId !== 'string') return;
     if (p.causedByResponseId.length > 200) return;
   }
+  // ---- startingAdvancements / startingMarks (optional) ----
+  // Wave 3 polish: catch-up seed for late-arriving PCs.  Bounded
+  // defensively (0..20 for both) so corrupt payloads can't write
+  // absurd values.  Defaults to 0 when omitted (fresh-PC baseline).
+  let startingAdvancements = 0;
+  if (p.startingAdvancements !== undefined) {
+    if (
+      typeof p.startingAdvancements !== 'number' ||
+      !Number.isInteger(p.startingAdvancements) ||
+      p.startingAdvancements < 0 ||
+      p.startingAdvancements > 20
+    ) {
+      return;
+    }
+    startingAdvancements = p.startingAdvancements;
+  }
+  let startingMarks = 0;
+  if (p.startingMarks !== undefined) {
+    if (
+      typeof p.startingMarks !== 'number' ||
+      !Number.isInteger(p.startingMarks) ||
+      p.startingMarks < 0 ||
+      p.startingMarks > 20
+    ) {
+      return;
+    }
+    startingMarks = p.startingMarks;
+  }
 
-  // Build the CharacterRecord.  harm/stress/foci/advancements/marks
-  // default per the rules.md fresh-PC baseline; subsequent `pc-edit`
-  // events overlay normally via `state.pcEdits[pcId]`.
+  // Build the CharacterRecord.  harm/stress/foci default per the
+  // rules.md fresh-PC baseline; advancements/marks honor the
+  // optional catch-up seed for late-arriving PCs.  Subsequent
+  // `pc-edit` events overlay normally via `state.pcEdits[pcId]`.
   const record: CharacterRecord = {
     $schemaVersion: CHARACTER_SCHEMA_VERSION,
     name: p.name,
@@ -1877,8 +1917,8 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     harm: 0,
     stress: 0,
     foci: [],
-    advancements: 0,
-    marks: 0
+    advancements: startingAdvancements,
+    marks: startingMarks
   };
   state.synthesizedPcs[p.pcId] = record;
 }

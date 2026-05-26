@@ -1420,6 +1420,39 @@ describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
     expect(calls).toEqual([1]);
   });
 
+  it('Wave 3 polish: Accept + Revise buttons disable during re-sync (UX-R4 fix #2)', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    let resolve!: () => void;
+    el.onResyncBackstory = () =>
+      new Promise<void>((r) => {
+        resolve = r;
+      });
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync'
+    )!.click();
+    await el.updateComplete;
+    const accept = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-accept'
+    )!;
+    const revise = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-revise'
+    )!;
+    expect(accept.disabled).toBe(true);
+    expect(revise.disabled).toBe(true);
+    expect(
+      el.querySelector('.chargen-dm-review-drift-resync-status')
+    ).not.toBeNull();
+    resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
   it('shows the in-flight label + disables during the AI call', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mei')]]);
@@ -1450,6 +1483,89 @@ describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
       '.chargen-dm-review-drift-resync'
     );
     if (after) expect(after.disabled).toBe(false);
+  });
+});
+
+describe('<chargen-dm-review> — Wave 3 polish (post-R4 fixes)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('TTRPG-R4 fix #4: Start-playing CTA hides when a synth result is unaccepted', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('a'), 2: unbound() };
+    // PC2 has a synth result waiting — DM shouldn\'t see Start playing
+    // until they accept or revise.
+    el.synthResults = new Map([[2, okResult('B')]]);
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-start-playing')
+    ).toBeNull();
+  });
+
+  it('TTRPG-R4 fix #4: Start-playing CTA appears when all results accepted', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('a'), 2: bound('b') };
+    el.synthResults = new Map([[2, okResult('B')]]);
+    el.acceptedSlots = new Set([2]);
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-start-playing')
+    ).not.toBeNull();
+  });
+
+  it('TTRPG-R4 fix #5: pronoun-patch hint renders when slot in pronounPatchedSlots', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.pronounPatchedSlots = new Set([1]);
+    el.onResyncBackstory = async () => {};
+    await el.updateComplete;
+    const hint = el.querySelector('.chargen-dm-review-pronoun-hint');
+    expect(hint).not.toBeNull();
+    expect(hint!.textContent).toMatch(/Patched pronouns/);
+    expect(hint!.textContent).toMatch(/verb agreement/i);
+  });
+
+  it('TTRPG-R4 fix #5: dismissing the pronoun hint fires onDismissPronounPatchHint', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.pronounPatchedSlots = new Set([1]);
+    const dismissed: number[] = [];
+    el.onDismissPronounPatchHint = (slot) => dismissed.push(slot);
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-pronoun-hint-dismiss'
+    )!.click();
+    expect(dismissed).toEqual([1]);
+  });
+
+  it('UX-R4 fix #3: invite-result row shows a re-issuance note', async () => {
+    const el = mountWith9Seats();
+    el.onGenerate = async () => 'https://example.com/?invite=abc';
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-generate'
+    )!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-invite-note')
+    ).not.toBeNull();
+  });
+
+  it('UX-R4 fix #7: drift pip carries the aria-live; row list does not', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei' }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onPatchInPlace = () => true;
+    await el.updateComplete;
+    const pip = el.querySelector('.chargen-dm-review-drift-pip');
+    expect(pip?.getAttribute('aria-live')).toBe('polite');
+    expect(pip?.getAttribute('role')).toBe('status');
+    const list = el.querySelector('.chargen-dm-review-drift-list');
+    expect(list?.getAttribute('aria-live')).toBe('off');
   });
 });
 

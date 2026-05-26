@@ -1328,6 +1328,9 @@ export class QuireApp extends LitElement {
         .onResyncBackstory=${async (slot: number) => {
           await this.chargen.resyncBackstoryForSlot(slot);
         }}
+        .pronounPatchedSlots=${this.chargen.pronounPatchedSlotsSet()}
+        .onDismissPronounPatchHint=${(slot: number) =>
+          this.chargen.dismissPronounPatchHint(slot)}
         .onRetirePc=${(payload: {
           pcId: string;
           inFictionReason: string;
