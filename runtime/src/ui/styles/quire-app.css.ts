@@ -445,6 +445,106 @@ export const quireAppStyles = css`
     .chargen-dm-review-chip-add-empty {
       font-size: 0.85em;
     }
+    /* P-R6: retire flow */
+    .chargen-dm-review-seat-retire {
+      margin-left: 0.3rem;
+      padding: 0.15rem 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-seat-retire:hover {
+      background: light-dark(#fef9c3, #1e293b);
+    }
+    .chargen-dm-review-seat-tag {
+      margin-left: 0.4rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      font-size: 0.75em;
+      font-weight: 500;
+    }
+    .chargen-dm-review-seat-tag-retired {
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fcd34d);
+    }
+    .chargen-dm-review-seat-tag-archived {
+      background: light-dark(#e2e8f0, #1e293b);
+      color: light-dark(#475569, #94a3b8);
+    }
+    .chargen-dm-review-retire-modal {
+      max-width: 32rem;
+      padding: 1.2rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+    }
+    .chargen-dm-review-retire-modal::backdrop {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .chargen-dm-review-retire-body h3 {
+      margin: 0 0 0.5rem;
+    }
+    .chargen-dm-review-retire-label {
+      display: block;
+      margin: 0.7rem 0;
+    }
+    .chargen-dm-review-retire-reason-text {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.4rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    .chargen-dm-review-retire-fieldset {
+      margin: 0.6rem 0;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+    }
+    .chargen-dm-review-retire-fieldset legend {
+      padding: 0 0.4rem;
+      font-size: 0.85em;
+    }
+    .chargen-dm-review-retire-fieldset label {
+      display: inline-block;
+      margin-right: 1rem;
+    }
+    .chargen-dm-review-retire-actions {
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      margin-top: 0.8rem;
+    }
+    .chargen-dm-review-retire-cancel,
+    .chargen-dm-review-retire-commit {
+      padding: 0.4rem 0.85rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .chargen-dm-review-retire-commit {
+      border-color: light-dark(#dc2626, #f87171);
+      background: light-dark(#fee2e2, #450a0a);
+      color: light-dark(#dc2626, #fecaca);
+      font-weight: 500;
+    }
+    .chargen-dm-review-retire-commit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

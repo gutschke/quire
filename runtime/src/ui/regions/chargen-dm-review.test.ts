@@ -1304,6 +1304,139 @@ describe('<chargen-dm-review> — Wave 3a Patch-in-place', () => {
   });
 });
 
+describe('<chargen-dm-review> — P-R6 retire flow', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders Retire button on bound-active seats when callback wired', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    el.onRetirePc = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-retire')).not.toBeNull();
+  });
+
+  it('hides Retire button when no callback wired', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-retire')).toBeNull();
+  });
+
+  it('hides Retire button on unbound seats', async () => {
+    const el = mount();
+    el.pcSlots = { 1: unbound() };
+    el.onRetirePc = () => true;
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-seat-retire')).toBeNull();
+  });
+
+  it('shows "retired" tag on bound-retired seats', async () => {
+    const el = mount();
+    el.pcSlots = {
+      1: {
+        state: 'bound-retired',
+        pcId: 'mei-pc',
+        inFictionRetireReason: 'left after a hard betrayal'
+      }
+    };
+    await el.updateComplete;
+    const tag = el.querySelector('.chargen-dm-review-seat-tag-retired');
+    expect(tag).not.toBeNull();
+    expect(tag!.textContent).toMatch(/retired/);
+  });
+
+  it('clicking Retire opens the dialog', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    el.onRetirePc = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    expect(el.querySelector('dialog.chargen-dm-review-retire-modal')).not.toBeNull();
+  });
+
+  it('commit is disabled until an in-fiction reason is typed', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    el.onRetirePc = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    const commit = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-retire-commit'
+    )!;
+    expect(commit.disabled).toBe(true);
+    const ta = el.querySelector<HTMLTextAreaElement>(
+      '.chargen-dm-review-retire-reason-text'
+    )!;
+    ta.value = 'left the city';
+    ta.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    expect(commit.disabled).toBe(false);
+  });
+
+  it('commit fires onRetirePc with the typed reason + selected enum', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    const calls: Array<Record<string, unknown>> = [];
+    el.onRetirePc = (payload) => {
+      calls.push(payload);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    const ta = el.querySelector<HTMLTextAreaElement>(
+      '.chargen-dm-review-retire-reason-text'
+    )!;
+    ta.value = 'left the city after a betrayal';
+    ta.dispatchEvent(new Event('input'));
+    // Pick 'died'
+    const radio = el.querySelector<HTMLInputElement>(
+      'input[name="retire-reason"][value="died"]'
+    )!;
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-retire-commit'
+    )!.click();
+    expect(calls.length).toBe(1);
+    expect(calls[0].pcId).toBe('mei-pc');
+    expect(calls[0].inFictionReason).toBe('left the city after a betrayal');
+    expect(calls[0].reason).toBe('died');
+  });
+
+  it('Cancel closes the dialog without firing onRetirePc', async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    const calls: unknown[] = [];
+    el.onRetirePc = () => {
+      calls.push(true);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-retire-cancel'
+    )!.click();
+    await el.updateComplete;
+    expect(calls).toEqual([]);
+    expect(el.querySelector('dialog.chargen-dm-review-retire-modal')).toBeNull();
+  });
+});
+
 describe('<chargen-dm-review> — Wave 2 stat swap-pair editor', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

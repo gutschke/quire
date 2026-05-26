@@ -89,12 +89,18 @@ describe('checkBundleSize', () => {
     expect(r.violations).toHaveLength(2);
   });
 
-  it('the gate is regression-protected: synthesizing a 110001-byte main chunk fails', () => {
+  it('the gate is regression-protected: synthesizing a one-byte-over-cap main chunk fails', () => {
     // This is the test the plan calls out — the gate must trigger on
     // exactly-over-cap input so a future PR can't silently disable
-    // it via a typo in classifyChunk or the cap constant.
+    // it via a typo in classifyChunk or the cap constant.  Cap value
+    // is read from MAIN_CHUNK_CAP_BYTES (single source of truth)
+    // so a future bump only requires touching the constant.
     const r = checkBundleSize([
-      { filename: 'index-x.js', gzipBytes: 110 * 1024 + 1, kind: 'main' }
+      {
+        filename: 'index-x.js',
+        gzipBytes: MAIN_CHUNK_CAP_BYTES + 1,
+        kind: 'main'
+      }
     ]);
     expect(r.ok).toBe(false);
   });

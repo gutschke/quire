@@ -1325,6 +1325,12 @@ export class QuireApp extends LitElement {
           field: keyof import('./ai/schema').PcBackstorySynthesisResponse
         ) => this.chargen.dismissPreAcceptDrift(slot, field)}
         .onPatchInPlace=${(slot: number) => this.chargen.patchInPlace(slot)}
+        .onRetirePc=${(payload: {
+          pcId: string;
+          inFictionReason: string;
+          reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
+          scene?: string;
+        }) => this.appendPcRetire(payload)}
         .preAcceptDrift=${this.chargen.preAcceptDriftMap()}
         .onRevise=${(slot: number, reason: string) =>
           this.chargen.requestReviseSlot(slot, reason)}
@@ -1455,6 +1461,70 @@ export class QuireApp extends LitElement {
     // integers; this is the campaign-policy gate.
     if (slot > this.currentSeatCap()) return false;
     this.session.append('seat-add', { v: 1, slot });
+    return true;
+  }
+
+  /**
+   * P-R6 (2026-05-25): emit a `pc-retire` event flipping a bound-
+   * active seat to bound-retired with the DM-authored narrative
+   * metadata.  Coord-only.  Returns true on append.
+   */
+  appendPcRetire(payload: {
+    pcId: string;
+    inFictionReason: string;
+    reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
+    scene?: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!payload.pcId || payload.pcId.length === 0) return false;
+    if (
+      typeof payload.inFictionReason !== 'string' ||
+      payload.inFictionReason.trim().length === 0
+    ) {
+      return false;
+    }
+    this.session.append('pc-retire', {
+      v: 1,
+      pcId: payload.pcId,
+      state: 'bound-retired',
+      inFictionReason: payload.inFictionReason.trim(),
+      reason: payload.reason,
+      ...(payload.scene ? { scene: payload.scene } : {})
+    });
+    return true;
+  }
+
+  /**
+   * P-R6 (2026-05-25): emit a `pc-archive` event flipping a seat
+   * (bound-active or bound-retired) to bound-archived.  Same shape
+   * as pc-retire; the engine routes both to one materializer.
+   */
+  appendPcArchive(payload: {
+    pcId: string;
+    inFictionReason: string;
+    reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
+    scene?: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!payload.pcId || payload.pcId.length === 0) return false;
+    if (
+      typeof payload.inFictionReason !== 'string' ||
+      payload.inFictionReason.trim().length === 0
+    ) {
+      return false;
+    }
+    this.session.append('pc-archive', {
+      v: 1,
+      pcId: payload.pcId,
+      state: 'bound-archived',
+      inFictionReason: payload.inFictionReason.trim(),
+      reason: payload.reason,
+      ...(payload.scene ? { scene: payload.scene } : {})
+    });
     return true;
   }
 

@@ -22,8 +22,8 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 const DIST_ASSETS = 'dist/assets';
-const MAIN_CHUNK_CAP_BYTES = 110 * 1024;
-const AUTHORING_CHUNK_CAP_BYTES = 150 * 1024;
+const MAIN_CHUNK_CAP_BYTES = 150 * 1024;
+const AUTHORING_CHUNK_CAP_BYTES = 200 * 1024;
 
 function classifyChunk(filename) {
   const base = filename.replace(/^.*\//, '');

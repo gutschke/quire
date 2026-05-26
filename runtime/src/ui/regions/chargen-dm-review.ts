@@ -144,6 +144,16 @@ export type DismissDriftCallback = (
  */
 export type PatchInPlaceCallback = (slot: number) => boolean;
 /**
+ * P-R6 (2026-05-25): DM retires a bound PC.  Host wires to
+ * quire-app.appendPcRetire.  Returns true on append.
+ */
+export type RetirePcCallback = (payload: {
+  pcId: string;
+  inFictionReason: string;
+  reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
+  scene?: string;
+}) => boolean;
+/**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no
  * answers are saved on this device.
@@ -327,6 +337,13 @@ export class ChargenDmReview extends LitElement {
   onPatchInPlace: PatchInPlaceCallback | null = null;
 
   /**
+   * P-R6 (2026-05-25): retire a bound-active PC.  Hidden when no
+   * callback wired.
+   */
+  @property({ attribute: false })
+  onRetirePc: RetirePcCallback | null = null;
+
+  /**
    * Wave 2 (2026-05-25): per-slot map of original AI values for
    * any field the DM has edited pre-accept.  The drift banner uses
    * this for "Name: Mei → Mai" before/after rendering.  Empty map
@@ -434,6 +451,18 @@ export class ChargenDmReview extends LitElement {
   } | null = null;
 
   /**
+   * P-R6 (2026-05-25): which bound seat is the DM retiring (modal
+   * open).  null = no dialog open.
+   */
+  @state() private retireDialogSlot: number | null = null;
+  @state() private retireInFictionReason: string = '';
+  @state() private retireReason:
+    | 'died'
+    | 'departed'
+    | 'converted-to-npc'
+    | 'other' = 'departed';
+
+  /**
    * Phase 3b polish: per-seat transient UI state for the pack-
    * import + quick-generate affordances.  Lives on the region (not
    * the controller) because it's purely UI — toggling the form
@@ -486,6 +515,102 @@ export class ChargenDmReview extends LitElement {
       </section>
       ${this.renderReviewDialog()}
       ${this.renderEditDialog()}
+      ${this.renderRetireDialog()}
+    `;
+  }
+
+  /**
+   * P-R6 (2026-05-25): retire-PC dialog.  Mandatory in-fiction
+   * reason (player-safe label that lands on the player's roster
+   * tile) + reason enum (DM-private metadata).  Scene-id field
+   * deferred to follow-up — the materializer accepts it but the
+   * lobby surface doesn't track current-scene context yet.
+   */
+  private renderRetireDialog(): TemplateResult | typeof nothing {
+    const slot = this.retireDialogSlot;
+    if (slot === null) return nothing;
+    const seat = this.pcSlots?.[slot];
+    if (!seat?.pcId) return nothing;
+    const displayName =
+      this.displayNameLookup?.(seat.pcId) ?? seat.pcId;
+    const canCommit = this.retireInFictionReason.trim().length > 0;
+    return html`
+      <dialog
+        class="chargen-dm-review-retire-modal"
+        open
+        @click=${(e: MouseEvent) => {
+          if (e.target === e.currentTarget) this.closeRetireDialog();
+        }}
+        @keydown=${(e: KeyboardEvent) => {
+          if (e.key === 'Escape') this.closeRetireDialog();
+        }}
+      >
+        <div class="chargen-dm-review-retire-body">
+          <h3>Retire ${displayName}?</h3>
+          <p class="muted">
+            The PC leaves the active roster.  Their slot stays
+            reserved (sticky-N), so future <code>{{pc:${slot}}}</code>
+            references still resolve to ${displayName}.
+          </p>
+          <label class="chargen-dm-review-retire-label">
+            How does this read in fiction? <span aria-hidden="true">*</span>
+            <textarea
+              class="chargen-dm-review-retire-reason-text"
+              rows="3"
+              placeholder="e.g., left the city after a hard betrayal"
+              aria-label="In-fiction retirement reason"
+              autofocus
+              .value=${this.retireInFictionReason}
+              @input=${(e: Event) => {
+                this.retireInFictionReason = (
+                  e.target as HTMLTextAreaElement
+                ).value;
+              }}
+            ></textarea>
+          </label>
+          <fieldset class="chargen-dm-review-retire-fieldset">
+            <legend>Reason (DM-only)</legend>
+            ${(
+              [
+                ['died', 'Died'],
+                ['departed', 'Departed'],
+                ['converted-to-npc', 'Converted to NPC'],
+                ['other', 'Other']
+              ] as const
+            ).map(
+              ([val, label]) => html`<label>
+                <input
+                  type="radio"
+                  name="retire-reason"
+                  value=${val}
+                  ?checked=${this.retireReason === val}
+                  @change=${() => {
+                    this.retireReason = val;
+                  }}
+                />
+                ${label}
+              </label>`
+            )}
+          </fieldset>
+          <div class="chargen-dm-review-retire-actions">
+            <button
+              type="button"
+              class="chargen-dm-review-retire-cancel"
+              @click=${() => this.closeRetireDialog()}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="chargen-dm-review-retire-commit"
+              ?disabled=${!canCommit}
+              @click=${() => this.commitRetire()}
+            >
+              Retire ${displayName}
+            </button>
+          </div>
+        </div>
+      </dialog>
     `;
   }
 
@@ -740,6 +865,45 @@ export class ChargenDmReview extends LitElement {
     if (this.acceptedSlots.has(slot)) return false;
     if (this.quickGenInFlight.has(slot)) return false;
     return true;
+  }
+
+  /**
+   * P-R6 (2026-05-25): the seat is "retirable" when it's bound-
+   * active and the host has wired the retire callback.  Already-
+   * retired/archived seats hide the verb (they can be archived
+   * separately — Wave 3 polish).
+   */
+  private isSeatRetirable(slot: number): boolean {
+    if (!this.onRetirePc) return false;
+    const seat = this.pcSlots?.[slot];
+    if (!seat || seat.state !== 'bound-active') return false;
+    if (!seat.pcId) return false;
+    return true;
+  }
+
+  private openRetireDialog(slot: number): void {
+    this.retireDialogSlot = slot;
+    this.retireInFictionReason = '';
+    this.retireReason = 'departed';
+  }
+
+  private closeRetireDialog(): void {
+    this.retireDialogSlot = null;
+    this.retireInFictionReason = '';
+  }
+
+  private commitRetire(): void {
+    const slot = this.retireDialogSlot;
+    if (slot === null || !this.onRetirePc) return;
+    const seat = this.pcSlots?.[slot];
+    if (!seat?.pcId) return;
+    if (this.retireInFictionReason.trim().length === 0) return;
+    const ok = this.onRetirePc({
+      pcId: seat.pcId,
+      inFictionReason: this.retireInFictionReason,
+      reason: this.retireReason
+    });
+    if (ok) this.closeRetireDialog();
   }
 
   private handleRemoveSeat(slot: number): void {
@@ -1153,6 +1317,20 @@ export class ChargenDmReview extends LitElement {
               ? this.renderBoundName(boundPcId)
               : html`<span class="muted">open</span>`}
           </span>
+          ${seat?.state === 'bound-retired'
+            ? html`<span
+                class="chargen-dm-review-seat-tag chargen-dm-review-seat-tag-retired"
+                title="${seat.inFictionRetireReason ?? 'Retired from the story'}"
+                >retired</span
+              >`
+            : nothing}
+          ${seat?.state === 'bound-archived'
+            ? html`<span
+                class="chargen-dm-review-seat-tag chargen-dm-review-seat-tag-archived"
+                title="${seat.inFictionRetireReason ?? 'Archived from the roster'}"
+                >archived</span
+              >`
+            : nothing}
           ${this.isSeatRemovable(slot)
             ? html`<button
                 type="button"
@@ -1162,6 +1340,17 @@ export class ChargenDmReview extends LitElement {
                 @click=${() => this.handleRemoveSeat(slot)}
               >
                 ×
+              </button>`
+            : nothing}
+          ${this.isSeatRetirable(slot)
+            ? html`<button
+                type="button"
+                class="chargen-dm-review-seat-retire"
+                title="Retire this PC from the story (with an in-fiction reason)"
+                aria-label="Retire PC${slot}"
+                @click=${() => this.openRetireDialog(slot)}
+              >
+                Retire…
               </button>`
             : nothing}
         </header>
