@@ -61,6 +61,14 @@ export interface SeatCardSeat {
   state: 'unbound' | 'bound-active' | 'bound-retired' | 'bound-archived';
   pcId?: string;
   inFictionRetireReason?: string;
+  /**
+   * #294 (2026-05-26): player-safe "seat memory" — a one-line
+   * legacy authored by the DM at retire time (or backfilled later
+   * via `seat-memory-edit`).  When present, the seat-card surfaces
+   * it under the retired/archived tag as the seat's primary
+   * narrative anchor.  Player-safe by construction.
+   */
+  seatMemory?: string;
 }
 
 @customElement('seat-card')
@@ -156,6 +164,18 @@ export class SeatCard extends LitElement {
             </button>`
           : nothing}
       </header>
+      ${seat?.seatMemory &&
+      (seat.state === 'bound-retired' || seat.state === 'bound-archived')
+        ? html`<p
+            class="chargen-dm-review-seat-memory"
+            title="Seat memory — a player-safe legacy line authored by the DM"
+          >
+            <span aria-hidden="true">“</span>${seat.seatMemory}<span
+              aria-hidden="true"
+              >”</span
+            >
+          </p>`
+        : nothing}
       <slot></slot>
     `;
   }

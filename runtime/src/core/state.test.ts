@@ -872,7 +872,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // P-R11 (2026-05-25): added pc-retire-request + pc-retire-reject → 41.
     // #301 (2026-05-26): added seat-reveal → 42.
     // #253 (2026-05-26): added chargen-pack-deliver + chargen-pack-clear → 44.
-    expect(KNOWN_EVENT_KINDS.size).toBe(44);
+    // #294 (2026-05-26): added seat-memory-edit → 45.
+    expect(KNOWN_EVENT_KINDS.size).toBe(45);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -3076,6 +3077,219 @@ describe('materialize — pc-retire / pc-archive (Phase B-prime)', () => {
     });
     const state = materialize(log.events());
     expect(state.pcSlots[1]?.inFictionRetireReason).toBe('first reason');
+  });
+});
+
+describe('materialize — pc-retire seatMemory + seat-memory-edit (#294)', () => {
+  function setupRetiredSeat(opts?: {
+    seatMemory?: string;
+  }): { log: EventLog } {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'left after a hard betrayal',
+      reason: 'departed',
+      ...(opts?.seatMemory !== undefined ? { seatMemory: opts.seatMemory } : {})
+    });
+    return { log };
+  }
+
+  it('accepts an optional seatMemory at retire time', () => {
+    const { log } = setupRetiredSeat({
+      seatMemory: 'The medic whose silence said more than her words'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBe(
+      'The medic whose silence said more than her words'
+    );
+  });
+
+  it('omits seatMemory when payload omits the field', () => {
+    const { log } = setupRetiredSeat();
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBeUndefined();
+  });
+
+  it('rejects the retire event when seatMemory exceeds 200 chars', () => {
+    const { log } = setupRetiredSeat({ seatMemory: 'x'.repeat(201) });
+    const state = materialize(log.events());
+    // Retire payload rejected; seat stays bound-active.
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+  });
+
+  it('rejects retire event when seatMemory is not a string', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'reason',
+      reason: 'departed',
+      seatMemory: 42 as unknown as string
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+  });
+
+  it('seat-memory-edit: coord can backfill memory on a retired seat', () => {
+    const { log } = setupRetiredSeat();
+    log.append('seat-memory-edit', {
+      v: 1,
+      slot: 1,
+      text: 'The scout who never quite trusted the party'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBe(
+      'The scout who never quite trusted the party'
+    );
+  });
+
+  it('seat-memory-edit: empty string clears the memory', () => {
+    const { log } = setupRetiredSeat({ seatMemory: 'placeholder' });
+    log.append('seat-memory-edit', { v: 1, slot: 1, text: '' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBeUndefined();
+  });
+
+  it('seat-memory-edit: rejected on a bound-active seat (memory is for terminal states only)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('seat-memory-edit', {
+      v: 1,
+      slot: 1,
+      text: 'should not stick to an active seat'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBeUndefined();
+  });
+
+  it('seat-memory-edit: rejected on missing seat', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-memory-edit', { v: 1, slot: 99, text: 'phantom' });
+    const state = materialize(log.events());
+    expect(state.pcSlots[99]).toBeUndefined();
+  });
+
+  it('seat-memory-edit: non-coord (bob) attempts overwrite — silently dropped', () => {
+    // Set up via alice (coord); merge events from bob (non-coord)
+    // attempting the edit.  Materializer must drop bob's event.
+    const alice = new EventLog('alice');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Bob' });
+    alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    alice.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'reason',
+      reason: 'departed'
+    });
+    const bob = new EventLog('bob');
+    bob.append('seat-memory-edit', {
+      v: 1,
+      slot: 1,
+      text: 'bob should not be able to write this'
+    });
+    const merged = [...alice.events(), ...bob.events()];
+    const state = materialize(merged);
+    expect(state.pcSlots[1]?.seatMemory).toBeUndefined();
+  });
+
+  it('seat-memory-edit: text > 200 chars rejected', () => {
+    const { log } = setupRetiredSeat({ seatMemory: 'original' });
+    log.append('seat-memory-edit', {
+      v: 1,
+      slot: 1,
+      text: 'x'.repeat(201)
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBe('original');
+  });
+
+  it('preserves seatMemory across bound-retired → bound-archived state flip', () => {
+    const { log } = setupRetiredSeat({
+      seatMemory: 'The chair memory'
+    });
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'left for good',
+      reason: 'departed'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-archived');
+    expect(state.pcSlots[1]?.seatMemory).toBe('The chair memory');
+  });
+
+  it('verification B1: re-emitted pc-retire on already-retired seat is idempotent — seatMemory NOT overwritten (canonical edit path is seat-memory-edit)', () => {
+    // Documents the intended behavior the verifier called out: the
+    // `pc-retire` materializer's same-state guard bails before
+    // touching seatMemory.  The retire UI gates the Retire button to
+    // bound-active seats so this only happens in adversarial /
+    // corrupted replays; the canonical post-retire edit path is the
+    // dedicated `seat-memory-edit` event.  Pin so a future refactor
+    // doesn't accidentally leak the original-memory through a
+    // re-emit.
+    const { log } = setupRetiredSeat({
+      seatMemory: 'first memory'
+    });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'still left after a hard betrayal',
+      reason: 'departed',
+      seatMemory: 'attempted overwrite via re-emit'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBe('first memory');
+    // In-fiction reason also preserved (locked by the prior test in
+    // the pc-retire block).
+    expect(state.pcSlots[1]?.inFictionRetireReason).toBe(
+      'left after a hard betrayal'
+    );
+  });
+
+  it('archive event with explicit seatMemory in payload overrides prior memory', () => {
+    const { log } = setupRetiredSeat({ seatMemory: 'before' });
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'left for good',
+      reason: 'departed',
+      seatMemory: 'after archive'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.seatMemory).toBe('after archive');
+  });
+
+  it('filterForViewer: seatMemory SURVIVES player projection (player-safe by construction)', () => {
+    const { log } = setupRetiredSeat({
+      seatMemory: 'The medic whose silence said more than her words'
+    });
+    const state = materialize(log.events());
+    const playerView = filterForViewer(state, 'bob');
+    expect(playerView.pcSlots[1]?.seatMemory).toBe(
+      'The medic whose silence said more than her words'
+    );
+    // Sanity: DM-only retireReason + retiredScene + retiredAt still
+    // stripped on the same projection.
+    expect(playerView.pcSlots[1]?.retireReason).toBeUndefined();
+    expect(playerView.pcSlots[1]?.retiredScene).toBeUndefined();
+    expect(playerView.pcSlots[1]?.retiredAt).toBeUndefined();
   });
 });
 

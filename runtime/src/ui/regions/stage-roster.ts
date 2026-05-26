@@ -195,7 +195,21 @@ export class StageRoster extends LitElement {
   @property({ attribute: false })
   onRevealSeat: RevealSeatCallback | null = null;
 
+  /**
+   * #294 (2026-05-26): coord-side callback to edit a seat's player-
+   * safe memory.  Empty text clears.  Returns true on append.
+   */
+  @property({ attribute: false })
+  onEditSeatMemory: ((slot: number, text: string) => boolean) | null = null;
+
   @state() private activeSubTab: SubTab = 'active';
+
+  /**
+   * #294 (2026-05-26): per-slot inline-editor state for the Retired
+   * tab.  When a slot is in the map, the tile renders a textarea +
+   * Save/Cancel actions in place of the static memory paragraph.
+   */
+  @state() private memoryEditDrafts: Record<number, string> = {};
 
   /**
    * Task #295: per-PC "notes panel open" toggle.  Defaults closed
@@ -673,6 +687,10 @@ players until you click Reveal."
   ): TemplateResult {
     const pcId = seat.pcId ?? '';
     const name = this.displayNameLookup?.(pcId) ?? pcId;
+    const editingMemory = Object.prototype.hasOwnProperty.call(
+      this.memoryEditDrafts,
+      slot
+    );
     return html`<li class="stage-roster-item" data-slot=${slot}>
       <seat-card
         .slotNumber=${slot}
@@ -685,8 +703,90 @@ players until you click Reveal."
               ${seat.inFictionRetireReason}
             </p>`
           : nothing}
+        ${this.onEditSeatMemory
+          ? editingMemory
+            ? this.renderSeatMemoryEditor(slot)
+            : html`<button
+                type="button"
+                class="stage-roster-memory-edit"
+                title="${seat.seatMemory
+                  ? `Edit the seat memory (player-visible; shown to all peers, including any future occupant of seat ${slot})`
+                  : `Author a one-line legacy for this seat (player-visible; shown to all peers, including any future occupant of seat ${slot})`}"
+                @click=${() => this.openSeatMemoryEditor(slot, seat)}
+              >
+                ${seat.seatMemory ? 'Edit memory' : 'Add memory'}
+              </button>`
+          : nothing}
       </seat-card>
     </li>`;
+  }
+
+  /**
+   * #294 (2026-05-26): inline editor for a retired/archived seat's
+   * memory.  Save commits via `onEditSeatMemory`; Cancel discards
+   * the draft.  Capped at 200 chars (matches the engine).
+   */
+  private renderSeatMemoryEditor(slot: number): TemplateResult {
+    const draft = this.memoryEditDrafts[slot] ?? '';
+    return html`<div class="stage-roster-memory-editor" data-slot=${slot}>
+      <label class="stage-roster-memory-label">
+        Seat memory
+        <span class="stage-roster-memory-hint">
+          Shown to all players, including any future occupant of
+          seat ${slot}.  Empty saves clear the memory.
+        </span>
+        <textarea
+          class="stage-roster-memory-text"
+          rows="2"
+          maxlength="200"
+          placeholder="e.g., the medic whose silence said more than her words"
+          aria-label="Seat memory for PC${slot}"
+          .value=${draft}
+          @input=${(e: Event) => {
+            this.memoryEditDrafts = {
+              ...this.memoryEditDrafts,
+              [slot]: (e.target as HTMLTextAreaElement).value
+            };
+          }}
+        ></textarea>
+      </label>
+      <div class="stage-roster-memory-actions">
+        <button
+          type="button"
+          class="stage-roster-memory-save"
+          @click=${() => this.commitSeatMemoryEdit(slot)}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          class="stage-roster-memory-cancel"
+          @click=${() => this.cancelSeatMemoryEdit(slot)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>`;
+  }
+
+  private openSeatMemoryEditor(slot: number, seat: SeatCardSeat): void {
+    this.memoryEditDrafts = {
+      ...this.memoryEditDrafts,
+      [slot]: seat.seatMemory ?? ''
+    };
+  }
+
+  private cancelSeatMemoryEdit(slot: number): void {
+    const next = { ...this.memoryEditDrafts };
+    delete next[slot];
+    this.memoryEditDrafts = next;
+  }
+
+  private commitSeatMemoryEdit(slot: number): void {
+    if (!this.onEditSeatMemory) return;
+    const draft = this.memoryEditDrafts[slot] ?? '';
+    const ok = this.onEditSeatMemory(slot, draft.trim());
+    if (ok) this.cancelSeatMemoryEdit(slot);
   }
 }
 

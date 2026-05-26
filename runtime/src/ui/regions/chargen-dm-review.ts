@@ -184,6 +184,13 @@ export type RetirePcCallback = (payload: {
   inFictionReason: string;
   reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
   scene?: string;
+  /**
+   * #294 (2026-05-26): optional player-safe "seat memory" — the
+   * DM's one-line legacy for the seat.  Empty/undefined means "no
+   * memory set"; the UI tile then displays only the in-fiction
+   * reason.  Cap: 200 chars.
+   */
+  seatMemory?: string;
 }) => boolean;
 /**
  * P3T-16: load the player's saved chargen answers for a slot.
@@ -549,6 +556,13 @@ export class ChargenDmReview extends LitElement {
     | 'departed'
     | 'converted-to-npc'
     | 'other' = 'departed';
+  /**
+   * #294 (2026-05-26): optional "seat memory" the DM may author at
+   * retire time.  Player-safe BY CONSTRUCTION — the textarea label
+   * tells the DM "this text is shown to all players including future
+   * successors".  Empty = no memory persisted.
+   */
+  @state() private retireSeatMemory: string = '';
 
   /**
    * Wave 3b (2026-05-25): which slots have a re-sync AI call in
@@ -810,6 +824,27 @@ export class ChargenDmReview extends LitElement {
               .value=${this.retireInFictionReason}
               @input=${(e: Event) => {
                 this.retireInFictionReason = (
+                  e.target as HTMLTextAreaElement
+                ).value;
+              }}
+            ></textarea>
+          </label>
+          <label class="chargen-dm-review-retire-label">
+            Seat memory (optional)
+            <span class="chargen-dm-review-retire-hint">
+              A one-line legacy for this seat — shown to all players,
+              including any future occupant of seat ${slot}.  Leave
+              blank to skip.
+            </span>
+            <textarea
+              class="chargen-dm-review-retire-memory-text"
+              rows="2"
+              maxlength="200"
+              placeholder="e.g., the medic whose silence said more than her words"
+              aria-label="Seat memory (player-visible)"
+              .value=${this.retireSeatMemory}
+              @input=${(e: Event) => {
+                this.retireSeatMemory = (
                   e.target as HTMLTextAreaElement
                 ).value;
               }}
@@ -1152,11 +1187,13 @@ export class ChargenDmReview extends LitElement {
     this.retireDialogSlot = slot;
     this.retireInFictionReason = '';
     this.retireReason = 'departed';
+    this.retireSeatMemory = '';
   }
 
   private closeRetireDialog(): void {
     this.retireDialogSlot = null;
     this.retireInFictionReason = '';
+    this.retireSeatMemory = '';
   }
 
   private commitRetire(): void {
@@ -1165,10 +1202,15 @@ export class ChargenDmReview extends LitElement {
     const seat = this.pcSlots?.[slot];
     if (!seat?.pcId) return;
     if (this.retireInFictionReason.trim().length === 0) return;
+    // #294: include the optional seat memory in the payload.  Trim
+    // it; empty string is treated as "not supplied" so the
+    // materializer doesn't persist an empty string.
+    const memory = this.retireSeatMemory.trim();
     const ok = this.onRetirePc({
       pcId: seat.pcId,
       inFictionReason: this.retireInFictionReason,
-      reason: this.retireReason
+      reason: this.retireReason,
+      ...(memory.length > 0 ? { seatMemory: memory } : {})
     });
     if (ok) this.closeRetireDialog();
   }

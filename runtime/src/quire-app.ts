@@ -1672,6 +1672,7 @@ export class QuireApp extends LitElement {
           inFictionReason: string;
           reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
           scene?: string;
+          seatMemory?: string;
         }) => this.appendPcRetire(payload)}
         .preAcceptDrift=${this.chargen.preAcceptDriftMap()}
         .onRevise=${(
@@ -1838,6 +1839,8 @@ export class QuireApp extends LitElement {
     inFictionReason: string;
     reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
     scene?: string;
+    /** #294: optional player-safe "seat memory" one-liner. */
+    seatMemory?: string;
   }): boolean {
     if (!this.session) return false;
     const v = this.sessionView;
@@ -1849,14 +1852,40 @@ export class QuireApp extends LitElement {
     ) {
       return false;
     }
+    const trimmedMemory = payload.seatMemory?.trim() ?? '';
     this.session.append('pc-retire', {
       v: 1,
       pcId: payload.pcId,
       state: 'bound-retired',
       inFictionReason: payload.inFictionReason.trim(),
       reason: payload.reason,
-      ...(payload.scene ? { scene: payload.scene } : {})
+      ...(payload.scene ? { scene: payload.scene } : {}),
+      ...(trimmedMemory.length > 0 ? { seatMemory: trimmedMemory } : {})
     });
+    return true;
+  }
+
+  /**
+   * #294 (2026-05-26): coord-only seat-memory edit on a retired or
+   * archived seat.  Empty string clears the memory.  Returns true on
+   * append; refuses (returns false) when off-session / non-coord /
+   * the slot is missing / the slot isn't in a terminal state.
+   */
+  appendSeatMemoryEdit(slot: number, text: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1) return false;
+    if (typeof text !== 'string' || text.length > 200) return false;
+    // Verifier S1 fix: skip the no-op append when the DM opens the
+    // editor on a seat with no memory, types nothing, and hits Save.
+    // Empty-on-empty would otherwise broadcast a noise event and a
+    // tiny info-leak (peers see "DM opened/closed the memory editor
+    // on slot N").  Returns true so the UI still treats the call as
+    // a successful commit (closes the editor).
+    const current = v.filteredShared.pcSlots[slot]?.seatMemory ?? '';
+    if (current.length === 0 && text.length === 0) return true;
+    this.session.append('seat-memory-edit', { v: 1, slot, text });
     return true;
   }
 
@@ -3258,6 +3287,10 @@ export class QuireApp extends LitElement {
         : null}
       .onRevealSeat=${this.isCoordinator()
         ? (slot: number) => this.revealSeat(slot)
+        : null}
+      .onEditSeatMemory=${this.isCoordinator()
+        ? (slot: number, text: string) =>
+            this.appendSeatMemoryEdit(slot, text)
         : null}
       .onPromoteNpc=${this.isCoordinator()
         ? (npcId: string) => {

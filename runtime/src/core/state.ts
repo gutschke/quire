@@ -269,6 +269,19 @@ export interface Seat {
   /** Epoch-ms when retirement landed (for chronological display). */
   retiredAt?: number;
   /**
+   * #294 (2026-05-26): "seat memory" — player-safe one-line essence
+   * authored by the DM at retire time (optional).  Persists on the
+   * seat after retire so future readers of `{{pc:N}}` references in
+   * archived narrative + the Stage roster's Retired tab can see
+   * "the medic whose silence said more than her words" instead of
+   * just the raw display name.  Player-safe BY CONSTRUCTION (the
+   * UI tells the DM "this text is shown to all players") so it
+   * survives `filterForViewer` unchanged.  Editable later via the
+   * `seat-memory-edit` event.  Capped at 200 chars to keep it a
+   * sentence, not an essay.
+   */
+  seatMemory?: string;
+  /**
    * #301 (2026-05-26): per-seat reveal gate.  When `revealed === false`,
    * `filterForViewer` drops this seat entirely from non-coord views —
    * players don't see the slot exist at all.  Lets the DM stage a
@@ -709,6 +722,13 @@ export function filterForViewer(
     // Player-safe: in-fiction reason stays.
     if (seat.inFictionRetireReason !== undefined) {
       out.inFictionRetireReason = seat.inFictionRetireReason;
+    }
+    // #294 (2026-05-26): seat memory is player-safe by construction
+    // (DM authors it knowing the UI labels it player-visible).  Flows
+    // to player projection so future readers of {{pc:N}} references
+    // and the Retired tile see the one-liner.
+    if (seat.seatMemory !== undefined) {
+      out.seatMemory = seat.seatMemory;
     }
     // The revealed flag itself isn't projected — its only role is
     // gating visibility, and the seat being present in the map IS
@@ -1402,7 +1422,13 @@ export const KNOWN_EVENT_KINDS = new Set([
   // `chargen-pack-deliver` is player-authored; `chargen-pack-clear`
   // is coord-authored (DM accepts after local import, or dismisses).
   'chargen-pack-deliver',
-  'chargen-pack-clear'
+  'chargen-pack-clear',
+  // #294 (2026-05-26): edit the player-safe "seat memory" on a
+  // retired or archived seat.  Authored by the coord; DM may
+  // backfill or revise the one-liner that future readers of
+  // `{{pc:N}}` will see at the seat's Retired tile.  Idempotent —
+  // re-emitting with the same text is a no-op.
+  'seat-memory-edit'
 ]);
 
 /**
@@ -2506,6 +2532,13 @@ interface PcRetireOrArchivePayload {
   reason: RetireReason;
   /** DM-private optional scene-id where retirement happened. */
   scene?: string;
+  /**
+   * #294 (2026-05-26): optional player-safe "seat memory" — a
+   * one-line essence the DM authors at retire time.  When omitted,
+   * the seat falls back to displaying the `inFictionReason` alone.
+   * Editable later via `seat-memory-edit`.  Cap: 200 chars.
+   */
+  seatMemory?: string;
 }
 function applyPcRetireOrArchiveEvent(
   state: SessionState,
@@ -2531,6 +2564,14 @@ function applyPcRetireOrArchiveEvent(
   if (p.scene !== undefined) {
     if (typeof p.scene !== 'string') return;
     if (p.scene.length > 200) return;
+  }
+  // #294: optional seat memory.  Player-safe one-liner; cap at 200
+  // chars (matches inFictionReason / scene caps).  Empty string IS
+  // legal (DM may want to clear an older memory); the materializer
+  // stores it as-is, and the UI treats empty as "no memory set".
+  if (p.seatMemory !== undefined) {
+    if (typeof p.seatMemory !== 'string') return;
+    if (p.seatMemory.length > 200) return;
   }
   // Find the seat by pcId.  Sticky-N: a PC has at most one seat.
   let targetSlot: number | undefined;
@@ -2571,6 +2612,17 @@ function applyPcRetireOrArchiveEvent(
     retiredAt: event.ts
   };
   if (wasHidden) newSeat.revealed = false;
+  // #294: preserve any pre-existing seatMemory across a state flip
+  // (bound-retired ↔ bound-archived) so the DM doesn't lose the
+  // memory by archiving a retired seat.  When the retire payload
+  // explicitly supplies seatMemory, it wins (DM is updating it
+  // alongside the state change).
+  if (p.seatMemory !== undefined) {
+    if (p.seatMemory.length > 0) newSeat.seatMemory = p.seatMemory;
+    // Explicit '' clears the memory — honor it.
+  } else if (typeof prior.seatMemory === 'string' && prior.seatMemory.length > 0) {
+    newSeat.seatMemory = prior.seatMemory;
+  }
   state.pcSlots[targetSlot] = newSeat;
   // P-R11: when this retire was driven by a player's pending request,
   // clear the request so it doesn't keep pinging the DM.  Also clear
@@ -2583,6 +2635,60 @@ function applyPcRetireOrArchiveEvent(
   state.pcRetireRejections = state.pcRetireRejections.filter(
     (r) => r.pcId !== p.pcId
   );
+}
+
+/**
+ * #294 (2026-05-26): edit the player-safe "seat memory" on a
+ * retired or archived seat.  Coord-only.  Refuses silently when
+ * the seat doesn't exist or isn't in a terminal state — the
+ * memory is for retired/archived seats only (active seats have
+ * the live PC's name + tags doing the work).  Empty string IS
+ * legal (the DM may want to clear the memory); the materializer
+ * drops the field when empty so the seat reads "no memory set"
+ * rather than carrying a literal empty string forever.
+ *
+ * LWW per event-log order: when two coords edit concurrently, the
+ * event appended later (peer/seq tie-break in EventLog) wins.
+ * This is the canonical edit path for retired/archived seats —
+ * the `pc-retire` materializer's same-state guard bails BEFORE
+ * touching seatMemory, so re-emitting pc-retire with a different
+ * seatMemory is a no-op (intentional: the retire UI gates the
+ * retire button to bound-active seats only, so this only happens
+ * in adversarial / corrupted replays).
+ */
+interface SeatMemoryEditPayload {
+  v: 1;
+  slot: number;
+  /** Player-safe one-liner.  Empty string clears.  ≤ 200 chars. */
+  text: string;
+}
+function applySeatMemoryEditEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SeatMemoryEditPayload>;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot) || !Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  if (typeof p.text !== 'string') return;
+  if (p.text.length > 200) return;
+  const seat = state.pcSlots[p.slot];
+  if (!seat) return;
+  if (
+    seat.state !== 'bound-retired' &&
+    seat.state !== 'bound-archived'
+  ) {
+    // Memory only applies to terminal-state seats.  Reject silently
+    // for active / unbound — those should use the live PC's edits.
+    return;
+  }
+  if (p.text.length === 0) {
+    delete seat.seatMemory;
+  } else {
+    seat.seatMemory = p.text;
+  }
 }
 
 /**
@@ -2771,7 +2877,10 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'seat-reveal': applySeatRevealEvent,
   // #253 (2026-05-26): live WebRTC chargen pack delivery.
   'chargen-pack-deliver': applyChargenPackDeliverEvent,
-  'chargen-pack-clear': applyChargenPackClearEvent
+  'chargen-pack-clear': applyChargenPackClearEvent,
+  // #294 (2026-05-26): edit the player-safe "seat memory" on a
+  // retired or archived seat.
+  'seat-memory-edit': applySeatMemoryEditEvent
 };
 
 /**

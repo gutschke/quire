@@ -510,6 +510,106 @@ export const quireAppStyles = css`
       background: light-dark(#e2e8f0, #1e293b);
       color: light-dark(#475569, #94a3b8);
     }
+    /* #294 (2026-05-26): the player-safe "seat memory" line under
+       the retired/archived seat-card.  Italicized to read as a
+       legacy quote; muted to keep the active roster's identity
+       chips dominant. */
+    .chargen-dm-review-seat-memory {
+      margin: 0.35rem 0 0;
+      font-style: italic;
+      font-size: 0.9rem;
+      color: light-dark(#475569, #94a3b8);
+      line-height: 1.35;
+    }
+    .chargen-dm-review-retire-hint {
+      display: block;
+      font-size: 0.78rem;
+      color: light-dark(#64748b, #94a3b8);
+      margin-top: 0.15rem;
+    }
+    .chargen-dm-review-retire-memory-text {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.4rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    /* #294 (2026-05-26): Stage roster Retired tab seat-memory edit
+       affordances.  "Add memory" / "Edit memory" button sits under
+       the retire reason; clicking opens an inline textarea editor. */
+    .stage-roster-memory-edit {
+      margin-top: 0.3rem;
+      padding: 0.15rem 0.55rem;
+      border-radius: 3px;
+      background: light-dark(#f1f5f9, #1e293b);
+      color: light-dark(#0f172a, #e2e8f0);
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+    .stage-roster-memory-edit:hover {
+      background: light-dark(#e2e8f0, #334155);
+    }
+    .stage-roster-memory-editor {
+      margin-top: 0.4rem;
+      padding: 0.5rem;
+      background: light-dark(#f8fafc, #0b1220);
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+    }
+    .stage-roster-memory-label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .stage-roster-memory-hint {
+      display: block;
+      font-size: 0.75rem;
+      color: light-dark(#64748b, #94a3b8);
+      font-weight: 400;
+      margin-top: 0.1rem;
+    }
+    .stage-roster-memory-text {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.4rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    .stage-roster-memory-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-top: 0.4rem;
+      justify-content: flex-end;
+    }
+    .stage-roster-memory-save {
+      padding: 0.2rem 0.7rem;
+      border-radius: 3px;
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      border: 1px solid light-dark(#bfdbfe, #1d4ed8);
+      cursor: pointer;
+    }
+    .stage-roster-memory-cancel {
+      padding: 0.2rem 0.7rem;
+      border-radius: 3px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      cursor: pointer;
+    }
     .chargen-dm-review-retire-modal {
       max-width: 32rem;
       padding: 1.2rem;
