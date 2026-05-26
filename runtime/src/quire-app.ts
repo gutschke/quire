@@ -17,6 +17,7 @@ import './ui/regions/stage-roster';
 import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
+import './ui/regions/dm-roster-strip';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
 // region module still exists in the repo for git history; future
@@ -603,6 +604,20 @@ export class QuireApp extends LitElement {
       e.preventDefault();
       this.broadcastCurrentView();
       return;
+    }
+    // P-R4 (2026-05-25): F1 = add a new player seat (auto-fire).
+    // The DM-roster strip surfaces this as a ⊕ button + this
+    // hotkey.  Bypasses any modifier so Alt+F1 / Cmd+F1 don't
+    // trigger (avoids fighting browser help dialogs).
+    if (e.key === 'F1' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      // Only fire when a session is active — otherwise it's a no-op
+      // and the browser's help-open default kicks in.
+      const v = this.sessionView;
+      if (v?.status === 'active') {
+        e.preventDefault();
+        this.chargen.addSeat();
+        return;
+      }
     }
   };
 
@@ -1243,6 +1258,7 @@ export class QuireApp extends LitElement {
         peerId: p.peerId
       }));
     return html`
+      ${this.renderDmRosterStrip()}
       <dm-aside
         .campaignSlug=${slug}
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
@@ -1257,6 +1273,23 @@ export class QuireApp extends LitElement {
       ></dm-aside>
       ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
     `;
+  }
+
+  /**
+   * P-R4 (2026-05-25): always-visible compact roster strip at the
+   * top of the DM aside.  Reads filteredShared (no DM-only data
+   * needed).  ⊕ verb + F1 hotkey both fire chargen.addSeat().
+   */
+  private renderDmRosterStrip(): TemplateResult | typeof nothing {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    return html`<dm-roster-strip
+      .pcSlots=${v.filteredShared.pcSlots}
+      .synthesizedPcs=${v.filteredShared.synthesizedPcs}
+      .displayNameLookup=${(pcId: string) =>
+        this.chargen.displayNameForBound(pcId)}
+      .onAddSeat=${() => this.chargen.addSeat()}
+    ></dm-roster-strip>`;
   }
 
   /**

@@ -907,6 +907,113 @@ export const quireAppStyles = css`
       margin: 0.4rem 0 0;
       font-size: 0.9em;
     }
+    /* P-R4: in-session compact roster strip (DM aside) */
+    .dm-roster-strip {
+      padding: 0.5rem 0.7rem;
+      margin-bottom: 0.6rem;
+    }
+    .dm-roster-strip-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin-bottom: 0.4rem;
+    }
+    .dm-roster-strip-head h3 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+    .dm-roster-strip-add {
+      margin-left: auto;
+      padding: 0 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-size: 1.1em;
+      line-height: 1;
+      border-radius: 4px;
+    }
+    .dm-roster-strip-add:hover {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#0b3d7f, #79b8f0);
+    }
+    .dm-roster-strip-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .dm-roster-strip-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.4rem;
+      border-radius: 3px;
+      background: light-dark(#fafafa, #1d1d1d);
+      font-size: 0.88em;
+    }
+    .dm-roster-strip-row-dim {
+      opacity: 0.55;
+    }
+    .dm-roster-strip-pill {
+      flex-shrink: 0;
+      padding: 0.05rem 0.4rem;
+      background: light-dark(#e2e8f0, #1e293b);
+      border-radius: 999px;
+      font-size: 0.85em;
+      font-weight: 600;
+    }
+    .dm-roster-strip-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dm-roster-strip-stat {
+      flex-shrink: 0;
+      padding: 0 0.35rem;
+      border-radius: 3px;
+      background: light-dark(#f1f5f9, #1e293b);
+      font-size: 0.85em;
+      font-variant-numeric: tabular-nums;
+    }
+    .dm-roster-strip-stat-level-2 {
+      background: light-dark(#fef3c7, #422006);
+    }
+    .dm-roster-strip-stat-level-3 {
+      background: light-dark(#fee2e2, #450a0a);
+      color: light-dark(#dc2626, #fecaca);
+    }
+    .dm-roster-strip-stat-level-4 {
+      background: light-dark(#dc2626, #450a0a);
+      color: light-dark(#ffffff, #fecaca);
+      font-weight: 600;
+    }
+    .dm-roster-strip-state {
+      flex-shrink: 0;
+      padding: 0.05rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.78em;
+      font-weight: 500;
+    }
+    .dm-roster-strip-state-retired {
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fcd34d);
+    }
+    .dm-roster-strip-state-archived {
+      background: light-dark(#e2e8f0, #1e293b);
+      color: light-dark(#475569, #94a3b8);
+    }
+    .dm-roster-strip-empty {
+      margin: 0;
+      padding: 0.3rem 0;
+      font-style: italic;
+      font-size: 0.88em;
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;
