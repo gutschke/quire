@@ -443,5 +443,35 @@ describe('isPcBackstorySynthesisResponse (CC-17)', () => {
         isPcBackstorySynthesisResponse({ ...valid, moneyBand: 42 })
       ).toBe(false);
     });
+
+    it('threat-class: schema-mismatch — mixed-type languages (string, number, string) rejects', () => {
+      expect(
+        isPcBackstorySynthesisResponse({
+          ...valid,
+          languages: ['English', 42, 'Mandarin']
+        })
+      ).toBe(false);
+    });
+
+    it('threat-class: schema-mismatch — moneyBand uppercase variant NOT case-folded', () => {
+      // Type guard mirrors the materializer's case-sensitive enum.
+      // Without this pin, a "be lenient" patch could diverge the
+      // two layers (asymmetric failure).
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, moneyBand: 'WEALTHY' })
+      ).toBe(false);
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, moneyBand: 'Tight' })
+      ).toBe(false);
+    });
+
+    it('threat-class: schema-mismatch — moneyBand=null rejects (null is not absent)', () => {
+      // The guard's `!== undefined` check would pass null through
+      // to the typeof check; pin that the typeof string check
+      // catches it.
+      expect(
+        isPcBackstorySynthesisResponse({ ...valid, moneyBand: null })
+      ).toBe(false);
+    });
   });
 });

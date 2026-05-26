@@ -2179,4 +2179,256 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
     expect(ctrl.getPreAcceptDrift(1)?.tags).toBeDefined();
     synthSpy.mockRestore();
   });
+
+  // ---- Phase B P2 verification fixes ----
+
+  it('B1: re-sync passes languages + moneyBand in lockedFields so DM edits survive', async () => {
+    // Pre-fix: resyncBackstoryForSlot built lockedFields with only
+    // name/pronouns/tags/skillMastery/stats — languages/moneyBand
+    // were silently dropped, so the AI's re-sync would return the
+    // original 'tight' even if the DM had edited to 'comfortable'.
+    // Regression test that locks the B1 fix.
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue(resyncedResult());
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const baseFresh = freshSynthResult();
+    const synthWithPhaseB = {
+      ...baseFresh,
+      response: {
+        ...(baseFresh.ok ? baseFresh.response : null),
+        languages: ['English', 'Mandarin'],
+        moneyBand: 'comfortable'
+      }
+    } as SynthesizeBackstoryResult;
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, synthWithPhaseB);
+    ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(synthSpy).toHaveBeenCalledTimes(1);
+    const callArg = synthSpy.mock.calls[0][1];
+    expect(callArg.resync).toBeDefined();
+    expect(callArg.resync!.lockedFields.languages).toEqual([
+      'English',
+      'Mandarin'
+    ]);
+    expect(callArg.resync!.lockedFields.moneyBand).toBe('comfortable');
+    synthSpy.mockRestore();
+  });
+
+  it('B1: re-sync omits languages + moneyBand from lockedFields when synth never had them', async () => {
+    // The opposite case: original synth never carried Phase-B
+    // fields, so the re-sync should NOT inject undefined / phantom
+    // values into lockedFields.
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue(resyncedResult());
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult()); // no Phase-B fields
+    ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(synthSpy).toHaveBeenCalledTimes(1);
+    const callArg = synthSpy.mock.calls[0][1];
+    expect(callArg.resync).toBeDefined();
+    expect(callArg.resync!.lockedFields.languages).toBeUndefined();
+    expect(callArg.resync!.lockedFields.moneyBand).toBeUndefined();
+    synthSpy.mockRestore();
+  });
+});
+
+describe('ChargenController — race-safe acceptSlot (verification S2)', () => {
+  it('refuses accept with stale expectedResponseId after a re-sync', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          name: 'Mei Tanaka',
+          pronouns: 'she/her',
+          tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei v1.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-original'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult)
+      .mockResolvedValueOnce({
+        ok: true,
+        response: {
+          name: 'Casey Park',
+          pronouns: 'they/them',
+          tags: ['data analyst', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Insight'],
+          backstory: 'Casey v2.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-replaced'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    // DM opens modal, captures the responseId of the SHOWN synth.
+    const shownResponseId = ctrl.getSynthResult(4)?.ok
+      ? (ctrl.getSynthResult(4) as { response: { responseId: string } })
+          .response.responseId
+      : '';
+    expect(shownResponseId).toBe('syn-original');
+    // A re-sync (or fresh synth) lands while modal is open.
+    ctrl.editSynthFieldPreAccept(4, {
+      tags: ['data analyst', 't2', 't3']
+    });
+    await ctrl.resyncBackstoryForSlot(4);
+    // DM clicks Accept with the STALE expectedResponseId.  Must
+    // refuse + set the race-mismatch flag; must NOT emit pc-create.
+    ctrl.acceptSlot(4, shownResponseId);
+    expect(env.pcCreates.length).toBe(0);
+    expect(ctrl.hasAcceptRaceMismatch(4)).toBe(true);
+    expect(ctrl.isAccepted(4)).toBe(false);
+    synthSpy.mockRestore();
+  });
+
+  it('accepts when expectedResponseId matches the current synth result', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei Tanaka',
+          pronouns: 'she/her',
+          tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-current'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    ctrl.acceptSlot(4, 'syn-current');
+    expect(env.pcCreates.length).toBe(1);
+    expect(ctrl.hasAcceptRaceMismatch(4)).toBe(false);
+    expect(ctrl.isAccepted(4)).toBe(true);
+    synthSpy.mockRestore();
+  });
+
+  it('legacy accept (no expectedResponseId) still works without race-gate', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei Tanaka',
+          pronouns: 'she/her',
+          tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-any'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    // Legacy callers (hotkeys, tests) pass nothing — skip the gate.
+    ctrl.acceptSlot(4);
+    expect(env.pcCreates.length).toBe(1);
+    synthSpy.mockRestore();
+  });
+
+  it('phase-B audit scratch-note fires when languages + moneyBand present at accept', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei Tanaka',
+          pronouns: 'she/her',
+          tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'Mei.',
+          languages: ['English', 'Mandarin'],
+          moneyBand: 'comfortable',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(4);
+    ctrl.acceptSlot(4);
+    // Two scratch-notes: the legacy v1 receipt + the new Phase-B
+    // present-at-accept note.  S3-refined wording: "present at
+    // accept" (neutral) not "AI-inferred" (claim we can't justify
+    // without an answers lookup at this layer).
+    expect(env.scratchNotes.length).toBe(2);
+    expect(env.scratchNotes[0]).toMatch(/slot 4/);
+    expect(env.scratchNotes[1]).toMatch(/Phase-B fields present at accept/);
+    expect(env.scratchNotes[1]).toMatch(/languages=/);
+    expect(env.scratchNotes[1]).toMatch(/moneyBand=comfortable/);
+    expect(env.scratchNotes[1]).not.toMatch(/inferred/);
+    // The pc-create payload carried the new fields through to the
+    // materializer (T-controller-wire integration coverage).
+    expect(env.pcCreates[0].languages).toEqual(['English', 'Mandarin']);
+    expect(env.pcCreates[0].moneyBand).toBe('comfortable');
+    synthSpy.mockRestore();
+  });
 });

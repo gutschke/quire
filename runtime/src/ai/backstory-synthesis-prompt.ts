@@ -272,6 +272,15 @@ function formatResyncBlock(ctx: ResyncContext): string {
   }
   if (ctx.lockedFields.moneyBand !== undefined) {
     parts.push(`- **moneyBand**: ${ctx.lockedFields.moneyBand}`);
+    // Phase B P2 verification fix (S5): the system prompt's
+    // "Default expectation is 'tight'" guidance applies to FRESH
+    // synthesis, not re-sync.  An explicit DM-locked value beats
+    // the default-bias.  Spell that out so the AI doesn't
+    // soft-override 'comfortable' or 'wealthy' back to 'tight'
+    // citing precarity texture.
+    parts.push(
+      '  (The "Default expectation is tight" guidance from the system prompt is overridden by the locked-in moneyBand above — emit it verbatim regardless of the answers.)'
+    );
   }
   if (ctx.editedFields.length > 0) {
     parts.push(

@@ -321,6 +321,18 @@ export class ChargenController implements ReactiveController {
   private readonly _resyncInFlight = new Set<number>();
 
   /**
+   * Phase B P2 verification fix (S2): race-mismatch flag.  Set
+   * when `acceptSlot` was called with an `expectedResponseId` that
+   * doesn't match the current synth result (a re-sync landed
+   * between modal-open and click).  The UI consults
+   * `hasAcceptRaceMismatch(slot)` to surface a "synth landed mid-
+   * review — please re-review" banner.  Cleared on a successful
+   * accept, on `clearSynth`, and on a fresh synth via
+   * `synthesizeForSlot`.
+   */
+  private readonly _acceptRaceMismatch = new Set<number>();
+
+  /**
    * P-R12 (2026-05-25): "joining at session N" picker per-slot.
    * Default 1 (no catch-up).  When N > 1, acceptSlot seeds the
    * pc-create payload's startingMarks (N - 1) + advancement bump
@@ -408,6 +420,20 @@ export class ChargenController implements ReactiveController {
   /** True when the DM has accepted the slot's current synth result. */
   isAccepted(slot: number): boolean {
     return this._acceptedSlots.has(slot);
+  }
+
+  /**
+   * Phase B P2 verification fix (S2): true when an accept attempt
+   * was just refused because the synth result has been replaced by
+   * a re-sync mid-review.  The UI uses this to surface a banner
+   * asking the DM to re-review.  Cleared on next successful accept
+   * or fresh synth.
+   */
+  hasAcceptRaceMismatch(slot: number): boolean {
+    return this._acceptRaceMismatch.has(slot);
+  }
+  clearAcceptRaceMismatch(slot: number): void {
+    if (this._acceptRaceMismatch.delete(slot)) this.host.requestUpdate();
   }
 
   /**
@@ -768,7 +794,7 @@ export class ChargenController implements ReactiveController {
     return out;
   }
 
-  acceptSlot(slot: number): void {
+  acceptSlot(slot: number, expectedResponseId?: string): void {
     if (this._acceptedSlots.has(slot)) return;
     // Post-R5 fix (QA-BUG-3): refuse to commit while a re-sync is
     // in flight — the result is about to be replaced.  Belt-and-
@@ -778,6 +804,24 @@ export class ChargenController implements ReactiveController {
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return; // can't accept failures
     const r = result.response;
+    // Phase B P2 verification fix (S2): race-safe accept.  When the
+    // caller passed an expected responseId (the synth the DM saw
+    // at modal-open), refuse the commit if a re-sync has since
+    // replaced the result.  Without this gate, the DM clicks
+    // Accept on a Mei Tanaka they reviewed, but a re-sync's Casey
+    // Park lands and gets committed instead.  Optional for
+    // backward compatibility — older callers (hotkey paths, tests)
+    // pass nothing and get the legacy behavior.
+    if (
+      expectedResponseId !== undefined &&
+      r.responseId !== expectedResponseId
+    ) {
+      this._acceptRaceMismatch.add(slot);
+      this.host.requestUpdate();
+      return;
+    }
+    // Clear any prior race-mismatch flag for this slot.
+    this._acceptRaceMismatch.delete(slot);
 
     // Derive the pcId from slot + a short hash of responseId.
     const pcId = derivePcId(slot, r.responseId);
@@ -854,26 +898,26 @@ export class ChargenController implements ReactiveController {
     this.env.appendScratchNote(
       `DM accepted synthesized PC for slot ${slot}: name="${r.name}", responseId=${r.responseId}.`
     );
-    // Phase B P2 (2026-05-26) UX-expert audit hook: when the DM
-    // accepts a synth that includes AI-inferred Phase-B fields with
-    // no source citation in the player's answers, append a separate
-    // audit-only note.  This is the structured record for "DM
-    // single-clicked through an AI extrapolation that the player
-    // didn't explicitly request" — useful at end-of-session diff
-    // review and for retro debugging of "where did this language /
-    // moneyBand come from?"  Heuristic-only (no answers lookup at
-    // this layer); a richer "free-provenance" tag could come from
-    // the diff-lens column in the future.
-    const inferredFields: string[] = [];
+    // Phase B P2 (2026-05-26) audit hook (verifier S3 refined):
+    // when the synth response committed Phase-B fields, append a
+    // separate audit-only scratch-note recording the committed
+    // values.  This layer has NO answers lookup so it can't tell
+    // sourced-from-player from AI-free invention — the note is
+    // intentionally neutral ("present" not "inferred"); the diff-
+    // lens provenance column in the modal is where the DM actually
+    // sees field-level sourcing before clicking Accept.  Useful at
+    // end-of-session diff review for "where did this language /
+    // moneyBand come from?" forensics.
+    const phaseBPresent: string[] = [];
     if (r.languages !== undefined && r.languages.length > 0) {
-      inferredFields.push(`languages=${JSON.stringify(r.languages)}`);
+      phaseBPresent.push(`languages=${JSON.stringify(r.languages)}`);
     }
     if (r.moneyBand !== undefined) {
-      inferredFields.push(`moneyBand=${r.moneyBand}`);
+      phaseBPresent.push(`moneyBand=${r.moneyBand}`);
     }
-    if (inferredFields.length > 0) {
+    if (phaseBPresent.length > 0) {
       this.env.appendScratchNote(
-        `Phase-B fields accepted for slot ${slot}: ${inferredFields.join(', ')}.`
+        `Phase-B fields present at accept for slot ${slot}: ${phaseBPresent.join(', ')}.`
       );
     }
     this.host.requestUpdate();
@@ -1553,6 +1597,10 @@ export class ChargenController implements ReactiveController {
       // accepting the OLD result and then re-synthesizing would
       // otherwise leave the accept stale.
       this._acceptedSlots.delete(slot);
+      // Phase B P2 verification fix (S2): a fresh synth supersedes
+      // any prior accept-race banner — the DM will see the new
+      // result and either accept or re-review.
+      this._acceptRaceMismatch.delete(slot);
       // Wave 3b: when this was a successful re-sync, clear ALL
       // drift entries for the slot — the AI has folded them into
       // the new backstory, so the drift banner should disappear.
@@ -1696,6 +1744,16 @@ export class ChargenController implements ReactiveController {
   }
 
   /**
+   * Phase B P2 verification fix (S2): snapshot accessor used by the
+   * UI to render the race-mismatch banner.  Same fresh-snapshot
+   * posture as `resyncInFlightSet` so Lit's @property comparison
+   * detects the change.
+   */
+  acceptRaceMismatchSet(): ReadonlySet<number> {
+    return new Set(this._acceptRaceMismatch);
+  }
+
+  /**
    * P-R12 (2026-05-25): "joining at session N" setter for a slot.
    * Default (no entry) → session 1 / no catch-up.  Clamped to
    * [1, 20] — outside that range is rejected silently.
@@ -1727,6 +1785,7 @@ export class ChargenController implements ReactiveController {
     this._pronounPatchedSlots.delete(slot);
     this._originalBackstoryForResync.delete(slot);
     this._resyncFailures.delete(slot);
+    this._acceptRaceMismatch.delete(slot);
     this._joiningSession.delete(slot);
     if (had) this.host.requestUpdate();
   }

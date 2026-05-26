@@ -1725,6 +1725,34 @@ export const quireAppStyles = css`
       outline: 2px solid light-dark(#3730a3, #818cf8);
       outline-offset: 1px;
     }
+    /* Phase B P2 verification fix (S2): race-mismatch banner shown
+       when the DM tries to Accept but a re-sync has replaced the
+       synth result mid-review. */
+    .chargen-dm-review-race-banner {
+      margin: 0.5rem 0;
+      padding: 0.5rem 0.6rem;
+      border-radius: 4px;
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fde68a);
+      border: 1px solid light-dark(#fde68a, #92400e);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .chargen-dm-review-race-banner strong {
+      flex: 0 0 auto;
+    }
+    .chargen-dm-review-race-dismiss {
+      margin-left: auto;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      background: light-dark(#ffffff, #0f172a);
+      color: light-dark(#78350f, #fde68a);
+      border: 1px solid light-dark(#fde68a, #92400e);
+      cursor: pointer;
+      font-size: 0.78rem;
+    }
     /* Provenance column inside the review modal (Phase B P2). */
     .chargen-dm-review-modal-provenance {
       border-left: 1px solid light-dark(#e2e8f0, #334155);

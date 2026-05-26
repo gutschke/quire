@@ -101,8 +101,21 @@ export type AcceptWithEditsCallback = (
  * resolves will see the name.
  */
 export type DisplayNameLookup = (pcId: string) => string | null;
-/** CC-24: DM accepts the synthesized PC. */
-export type AcceptCallback = (slot: number) => void;
+/**
+ * CC-24: DM accepts the synthesized PC.
+ *
+ * Phase B P2 verification fix (S2): optional `expectedResponseId`
+ * gates the accept on the synth result the DM ACTUALLY reviewed.
+ * Without it, a re-sync that lands between modal-open and click
+ * silently commits the new result.  The controller checks the id
+ * against the current `_synthResults[slot].response.responseId`
+ * and refuses the accept when they differ (UI shows a "synth
+ * landed mid-review — please re-review" banner).
+ */
+export type AcceptCallback = (
+  slot: number,
+  expectedResponseId?: string
+) => void;
 /**
  * P3T-19 / Wave 3c (2026-05-25): DM asks the player to revise.
  * Optional `pinnedQuestionIds` list (Wave 3c) names answers the
@@ -564,6 +577,18 @@ export class ChargenDmReview extends LitElement {
 
   @property({ attribute: false })
   onDismissResyncFailure: ((slot: number) => void) | null = null;
+
+  /**
+   * Phase B P2 verification fix (S2): set of slots where the DM
+   * tried to Accept but a re-sync had landed mid-review, replacing
+   * the synth result.  The UI surfaces a banner so the DM
+   * re-reviews before clicking Accept again.  Lifted to the
+   * controller for the same reasons as `resyncInFlight`.
+   */
+  @property({ attribute: false })
+  acceptRaceMismatch: ReadonlySet<number> = new Set();
+  @property({ attribute: false })
+  onDismissAcceptRaceMismatch: ((slot: number) => void) | null = null;
 
   /**
    * P-R12 (2026-05-25): per-slot "joining at session N" map.
@@ -1983,7 +2008,27 @@ export class ChargenDmReview extends LitElement {
     // anything that would mutate the in-progress result so the DM
     // doesn't accidentally commit a stale-pre-resync value.
     const resyncing = this.resyncInFlight.has(slot);
+    const raceMismatch = this.acceptRaceMismatch.has(slot);
     return html`
+      ${raceMismatch
+        ? html`<div
+            class="chargen-dm-review-race-banner"
+            role="alert"
+            data-slot=${slot}
+          >
+            <strong>Synth landed mid-review.</strong>  The AI returned
+            a new result while you were looking at the previous one.
+            Please re-review before accepting.
+            <button
+              type="button"
+              class="chargen-dm-review-race-dismiss"
+              aria-label="Dismiss"
+              @click=${() => this.onDismissAcceptRaceMismatch?.(slot)}
+            >
+              Dismiss
+            </button>
+          </div>`
+        : nothing}
       <div class="chargen-dm-review-synth-actions">
         ${okResult
           ? html`<button
@@ -1993,7 +2038,16 @@ export class ChargenDmReview extends LitElement {
               title="${resyncing
                 ? 'Re-sync in flight — wait for the new backstory'
                 : 'Accept this synthesized PC; appends an audit note'}"
-              @click=${() => this.onAccept?.(slot)}
+              @click=${() => {
+                // Phase B P2 verification fix (S2): pass the
+                // responseId of the synth result the DM is looking
+                // at right now.  Controller refuses the commit when
+                // a re-sync has since replaced the result.
+                const synthAt = this.synthResults.get(slot);
+                const expectedId =
+                  synthAt && synthAt.ok ? synthAt.response.responseId : undefined;
+                this.onAccept?.(slot, expectedId);
+              }}
             >
               ${accepted ? 'Accepted' : 'Accept this PC'}
             </button>`

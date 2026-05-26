@@ -2766,6 +2766,87 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
       expect(record.foci).toEqual([]);
     });
 
+    it('threat-class: schema-mismatch — uppercase moneyBand variant ("WEALTHY") is rejected (no case-folding)', () => {
+      // Hostile-or-buggy provider: enum is case-sensitive per
+      // PC_CREATE_VALID_MONEY_BANDS.  An uppercase variant must NOT
+      // slip past — otherwise the player rail would render an
+      // unknown band token the rest of the engine has no styling for.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ moneyBand: 'WEALTHY' as unknown as string })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('threat-class: schema-mismatch — moneyBand=null is rejected (null is not absent)', () => {
+      // Explicit null is distinct from `undefined` — the
+      // materializer's `!== undefined` guard would let null through
+      // to the typeof string check.  Verify typeof catches it.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({ moneyBand: null as unknown as string })
+      );
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']).toBeUndefined();
+    });
+
+    it('threat-class: resource-exhaustion — boundary 8 languages × 40 chars accepted (caps are <=, not <)', () => {
+      // Off-by-one regression guard: caps should be inclusive at
+      // both axes.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      const langs = Array.from({ length: 8 }, (_, i) =>
+        `${String.fromCharCode(65 + i)}`.repeat(40)
+      );
+      log.append('pc-create', validPayload({ languages: langs }));
+      const state = materialize(log.events());
+      expect(state.synthesizedPcs['slot-1-a3f8b2c1']?.languages).toHaveLength(
+        8
+      );
+      for (const l of state.synthesizedPcs['slot-1-a3f8b2c1'].languages!) {
+        expect(l.length).toBe(40);
+      }
+    });
+
+    it('T4 + threat-class: materializer payload-injection — DM-only-shaped fields (dmNotes, alignmentDrift, knowsTheyCanCast) NEVER written to record', () => {
+      // A buggy or hostile controller could spread `dmNotes` or
+      // any DM-only field onto the pc-create payload.  The
+      // materializer reads field-by-field into a fixed
+      // CharacterRecord shape, so extras MUST be dropped.  Pin the
+      // firewall against any future "spread the payload" refactor.
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      log.append(
+        'pc-create',
+        validPayload({
+          dmNotes: 'AI says PC is destined for greatness',
+          alignmentDrift: { current: 'fallen', history: [] },
+          knowsTheyCanCast: true,
+          magicPhase: 'awakened',
+          tax: { active: true, since: 999 },
+          threadDebt: { rung: 'hunted' },
+          accidentalGrants: ['flame-grasp']
+        })
+      );
+      const state = materialize(log.events());
+      const record = state.synthesizedPcs[
+        'slot-1-a3f8b2c1'
+      ] as unknown as Record<string, unknown>;
+      expect(record).toBeDefined();
+      expect(record.dmNotes).toBeUndefined();
+      expect(record.alignmentDrift).toBeUndefined();
+      expect(record.knowsTheyCanCast).toBeUndefined();
+      expect(record.magicPhase).toBeUndefined();
+      expect(record.tax).toBeUndefined();
+      expect(record.threadDebt).toBeUndefined();
+      expect(record.accidentalGrants).toBeUndefined();
+    });
+
     it('verification T6: languages + moneyBand SURVIVE player projection (not DM-only)', () => {
       // Spoiler-firewall positive control: the two new Phase B
       // fields are player-visible texture; they MUST survive the

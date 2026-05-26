@@ -1630,7 +1630,8 @@ export class QuireApp extends LitElement {
               `Core concept (DM-supplied because no player answers exist): ${opts.hook}`,
             inlineAnswers: {}
           })}
-        .onAccept=${(slot: number) => this.chargen.acceptSlot(slot)}
+        .onAccept=${(slot: number, expectedResponseId?: string) =>
+          this.chargen.acceptSlot(slot, expectedResponseId)}
         .onAcceptWithEdits=${(
           slot: number,
           edits: { name: string; backstory: string }
@@ -1656,6 +1657,9 @@ export class QuireApp extends LitElement {
         .pronounPatchedSlots=${this.chargen.pronounPatchedSlotsSet()}
         .resyncInFlight=${this.chargen.resyncInFlightSet()}
         .resyncFailures=${this.chargen.resyncFailuresMap()}
+        .acceptRaceMismatch=${this.chargen.acceptRaceMismatchSet()}
+        .onDismissAcceptRaceMismatch=${(slot: number) =>
+          this.chargen.clearAcceptRaceMismatch(slot)}
         .onDismissResyncFailure=${(slot: number) =>
           this.chargen.dismissResyncFailure(slot)}
         .joiningSession=${this.chargen.joiningSessionMap()}
