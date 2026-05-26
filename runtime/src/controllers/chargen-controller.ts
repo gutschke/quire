@@ -508,15 +508,15 @@ export class ChargenController implements ReactiveController {
     }
     const origAny = original as Record<string, unknown>;
     // Post-R5 fix (QA-BUG-2): clone the synth-result before
-    // mutating it.  Previously we mutated `result.response` in
-    // place, which meant any external reference (test snapshots,
-    // future debug tools, replay harnesses) saw the post-edit
-    // value as if it were the original AI output.  Cloning makes
-    // the synth-result snapshot immutable to outside readers; the
-    // controller's own cache replaces the entry atomically.
-    const respClone: Record<string, unknown> = {
-      ...(result.response as unknown as Record<string, unknown>)
-    };
+    // mutating it so external references stay immutable.
+    // R6 QA-F1 fix: also deep-clone the nested mutable objects
+    // (stats / tags / skillMastery) so external holders of those
+    // sub-objects don't observe post-edit values either.  Other
+    // fields (name/pronouns/backstory/raw/responseId/tokensIn/
+    // tokensOut) are primitives — shallow spread is enough.
+    const respClone = deepCloneSynthResponse(
+      result.response
+    ) as unknown as Record<string, unknown>;
     const patchAny = patch as Record<string, unknown>;
     for (const key of Object.keys(patch)) {
       if (!(key in origAny)) origAny[key] = respClone[key];
@@ -649,8 +649,11 @@ export class ChargenController implements ReactiveController {
     if (!this._originalBackstoryForResync.has(slot)) {
       this._originalBackstoryForResync.set(slot, result.response.backstory);
     }
+    // R6 QA-F1 fix: same deep-clone discipline as
+    // editSynthFieldPreAccept so external refs to nested
+    // objects (stats / tags / skillMastery) stay immutable.
     const respClone: PcBackstorySynthesisResponse = {
-      ...result.response,
+      ...deepCloneSynthResponse(result.response),
       backstory: text
     };
     this._synthResults.set(slot, { ...result, response: respClone });
@@ -751,20 +754,23 @@ export class ChargenController implements ReactiveController {
     // record — the loader-overlay resolves in one pass.  Both
     // events come from the same peer in the same materialize call,
     // so the per-peer monotonic seq guarantees ordering on replay.
-    // P-R12 (2026-05-25): seed catch-up marks/advancements for a
-    // mid-campaign join.  Default joiningSession=1 means "joining
-    // at session 1" → marks=0 (fresh PC baseline).  joiningSession=3
-    // means "joining mid-S3" → marks=2 + 1 catch-up advancement.
-    // The rule-of-thumb matches the TTRPG-R4 recommendation; the
-    // DM can override in-session via pc-edit if a different cadence
-    // fits the campaign.
+    // P-R12 (2026-05-25, TTRPG-R6 fix): seed catch-up MARKS for a
+    // mid-campaign join.  Default joiningSession=1 → marks=0
+    // (fresh PC baseline).  joiningSession=3 → marks=2.
+    //
+    // R6 correction: an earlier draft seeded BOTH startingMarks=N-1
+    // AND startingAdvancements=N-1, which broke rules.md's
+    // 5-marks-per-advancement economy (each advancement normally
+    // costs 5 marks of play).  Seeding 2 advancements at S3
+    // would have been worth 10 sessions of marks — 5x too
+    // generous.  TTRPG-R6 verdict: seed marks only and let the
+    // PC convert them to advancements at end-of-session like
+    // everyone else.  The DM can pc-edit to override if a
+    // particular campaign uses a different cadence.
     const joiningSession = this._joiningSession.get(slot) ?? 1;
     const catchUp =
       joiningSession > 1
-        ? {
-            startingMarks: Math.max(0, joiningSession - 1),
-            startingAdvancements: Math.max(0, joiningSession - 1)
-          }
+        ? { startingMarks: Math.max(0, joiningSession - 1) }
         : {};
     const appended = this.env.appendPcCreate({
       pcId,
@@ -1523,6 +1529,26 @@ export class ChargenController implements ReactiveController {
  * Returns null when the responseId is empty or sanitizes to empty
  * (defensive guard against future provider weirdness).
  */
+/**
+ * R6 QA-F1 fix: deep-clone the mutable nested objects on a synth
+ * response so an external reference to (say) `result.response.stats`
+ * doesn't observe a later `editSynthFieldPreAccept({ stats: ... })`
+ * mutation.  The shallow `{...response}` spread used previously
+ * left stats/tags/skillMastery sharing identity with the original
+ * wrapper.  Other fields (name/pronouns/backstory/raw/responseId
+ * /tokensIn/tokensOut) are primitives — no need to clone.
+ */
+function deepCloneSynthResponse(
+  r: PcBackstorySynthesisResponse
+): PcBackstorySynthesisResponse {
+  return {
+    ...r,
+    stats: { ...r.stats },
+    tags: [...r.tags],
+    skillMastery: [...r.skillMastery]
+  };
+}
+
 function derivePcId(slot: number, responseId: string): string | null {
   if (!Number.isInteger(slot) || slot < 1 || slot > 9) return null;
   const safe = responseId.replace(/[^A-Za-z0-9_-]/g, '');

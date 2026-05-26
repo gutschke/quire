@@ -2841,11 +2841,19 @@ export class QuireApp extends LitElement {
     // session is active.  Existing callers that don't await still
     // work; the Lit event handlers + tests both flush microtasks
     // before asserting.
-    await doHostSession(
-      this.session,
-      this.displayNameDraft,
-      this.getCurrentCampaign()?.base.source
-    );
+    //
+    // R6 Engineering note: re-entrancy guard for double-click on
+    // Host (or Resume + Host in quick succession).  Without this,
+    // doHostSession would queue a second session.host() call
+    // before the first resolves.  Cheap insurance.
+    if (this.hostingInProgress) return;
+    this.hostingInProgress = true;
+    try {
+      await doHostSession(
+        this.session,
+        this.displayNameDraft,
+        this.getCurrentCampaign()?.base.source
+      );
     // If an autosave is staged for this campaign (or discoverable
     // in localStorage), replay it now that the session is active.
     // Previously the Resume modal called loadFromString directly
@@ -2858,12 +2866,25 @@ export class QuireApp extends LitElement {
       const source = this.getCurrentCampaign()?.base.source;
       if (source) docToReplay = this.autosave.checkResume(source);
     }
-    if (docToReplay) {
-      const json = stringifySave(docToReplay);
-      this.resumePromptDoc = null;
-      this.loadFromString(json);
+      if (docToReplay) {
+        const json = stringifySave(docToReplay);
+        // QA-R6 F6 fix: clear resumePromptDoc AFTER loadFromString
+        // succeeds.  Previously cleared first → if doHostSession's
+        // catch-and-swallow path masked a host failure (session
+        // never went active), loadFromString would silently no-op
+        // and the DM would be left with no prompt to retry.  Now
+        // the prompt stays if the host failed; the DM can click
+        // Resume again.
+        const result = this.loadFromString(json);
+        if (result) this.resumePromptDoc = null;
+      }
+    } finally {
+      this.hostingInProgress = false;
     }
   }
+
+  /** R6 Engineering note: re-entrancy guard for startHosting. */
+  private hostingInProgress = false;
 
   joinSession(): void {
     doJoinSession(this.session, this.joinCodeDraft, this.displayNameDraft);

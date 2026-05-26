@@ -1521,7 +1521,11 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     expect(ctrl.joiningSessionForSlot(1)).toBe(5);
   });
 
-  it('P-R12: acceptSlot seeds startingMarks + startingAdvancements from joining session', () => {
+  it('P-R12 (R6 math fix): acceptSlot seeds startingMarks ONLY (advancements earned in play)', () => {
+    // TTRPG-R6 verdict: the earlier draft seeded both marks AND
+    // advancements at N-1 each, which broke rules.md's 5-marks-
+    // per-advancement economy.  Correct math: marks only;
+    // advancements accrue at end-of-session like everyone else.
     const { host } = makeHost();
     const env = makeEnv(makeCampaign());
     const ctrl = new ChargenController(host, env);
@@ -1531,7 +1535,8 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     expect(env.pcCreates.length).toBe(1);
     const payload = env.pcCreates[0] as Record<string, unknown>;
     expect(payload.startingMarks).toBe(2);
-    expect(payload.startingAdvancements).toBe(2);
+    // R6: advancements NOT seeded — would be 5x too generous.
+    expect(payload.startingAdvancements).toBeUndefined();
   });
 
   it('P-R12: acceptSlot omits catch-up fields when joining at session 1', () => {
@@ -1781,6 +1786,37 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const a = ctrl.pronounPatchedSlotsSet();
     const b = ctrl.pronounPatchedSlotsSet();
     expect(a).not.toBe(b);
+  });
+
+  it('R6 QA-F1: deep-clone protects nested stats from external-ref leak (BUG-2 follow-up)', () => {
+    // The R5 BUG-2 fix only shallow-cloned the response wrapper;
+    // external references to `result.response.stats` still
+    // observed post-edit mutations.  R6 deep-clones the nested
+    // mutable objects.
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    const before = (
+      ctrl as unknown as {
+        _synthResults: Map<number, { response: { stats: Record<string, number> } }>;
+      }
+    )._synthResults.get(1)!;
+    const beforeStatsRef = before.response.stats;
+    const beforeSTR = beforeStatsRef.STR;
+    ctrl.editSynthFieldPreAccept(1, {
+      stats: { STR: 2, DEX: 1, CON: 1, INT: 0, WIS: 1, CHA: 0 }
+    });
+    // The OLD stats ref should NOT have been mutated.
+    expect(beforeStatsRef.STR).toBe(beforeSTR);
+    // The CURRENT cached stats wrapper should have the new values.
+    const after = (
+      ctrl as unknown as {
+        _synthResults: Map<number, { response: { stats: Record<string, number> } }>;
+      }
+    )._synthResults.get(1)!;
+    expect(after.response.stats.STR).toBe(2);
+    // Identity: the after.response.stats is a fresh object.
+    expect(after.response.stats).not.toBe(beforeStatsRef);
   });
 
   it('post-R5 (QA-BUG-2): editSynthFieldPreAccept clones the synth-result before mutation', () => {

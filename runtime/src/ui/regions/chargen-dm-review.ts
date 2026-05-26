@@ -1852,7 +1852,7 @@ export class ChargenDmReview extends LitElement {
     return html`
       <div class="chargen-dm-review-joining-session">
         <label>
-          <span class="muted">Joining at session #</span>
+          <span class="muted">Joining mid-campaign?  Session #</span>
           <input
             type="number"
             class="chargen-dm-review-joining-input"
@@ -1870,7 +1870,10 @@ export class ChargenDmReview extends LitElement {
           />
           ${current > 1
             ? html`<span class="muted chargen-dm-review-joining-hint">
-                seeds ${current - 1} marks + ${current - 1} advancements
+                starts with ${current - 1} session-mark${current - 1 === 1
+                  ? ''
+                  : 's'} (advancements earned at end-of-session like
+                everyone else)
               </span>`
             : html`<span class="muted chargen-dm-review-joining-hint">
                 no catch-up (default)

@@ -1622,14 +1622,15 @@ describe('<chargen-dm-review> — Wave 3 polish (post-R4 fixes)', () => {
     expect(calls).toEqual([[1, 3]]);
   });
 
-  it('P-R12: joining-session hint reflects the staged value', async () => {
+  it('P-R12 (R6 text fix): joining-session hint reflects the staged value', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mei')]]);
     el.joiningSession = new Map([[1, 3]]);
     el.onSetJoiningSession = () => {};
     await el.updateComplete;
     const hint = el.querySelector('.chargen-dm-review-joining-hint');
-    expect(hint?.textContent).toMatch(/seeds 2 marks/);
+    expect(hint?.textContent).toMatch(/starts with 2 session-marks/);
+    expect(hint?.textContent).toMatch(/end-of-session/);
   });
 
   it('P-R12: picker hides on accepted slots (locked into pc-create)', async () => {

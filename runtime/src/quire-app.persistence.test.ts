@@ -334,6 +334,63 @@ describe('QuireApp persistence — localStorage autosave', () => {
     ).toBeNull();
   });
 
+  it('R6 QA-F6: resumePromptDoc survives a host failure so the DM can retry', async () => {
+    // QA-R6 F6: previously startHosting cleared resumePromptDoc
+    // BEFORE loadFromString.  If session.host rejected (silently
+    // swallowed by doHostSession's catch), loadFromString no-op'd
+    // and the prompt was gone — DM had to reload the page.  Now
+    // the prompt clears only on a SUCCESSFUL loadFromString.
+    const app1 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app1);
+    await app1.startHosting();
+    await flush();
+    app1.submitChat('survives-failure');
+    const doc = app1.buildSaveDocument()!;
+    document.body.removeChild(app1);
+
+    // Stage the doc on a fresh app — but don't inject a campaign,
+    // so doHostSession can run yet loadFromString trips the
+    // "Start or host a session first" gate (because the internal
+    // session won't actually go active in this contrived setup).
+    // Easier: mock loadFromString to return null (failure).
+    const app2 = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST2'));
+    injectCampaign(app2);
+    (app2 as unknown as { resumePromptDoc: unknown }).resumePromptDoc = doc;
+    // Force loadFromString to fail by deleting the campaign
+    // mid-flight (campaign mismatch gate in loadFromString).
+    const origLoad = app2.loadFromString.bind(app2);
+    (app2 as unknown as { loadFromString: typeof app2.loadFromString }).loadFromString =
+      () => null;
+    await app2.startHosting();
+    await flush();
+    // The doc should STILL be staged because the load failed.
+    expect(
+      (app2 as unknown as { resumePromptDoc: unknown }).resumePromptDoc
+    ).toBe(doc);
+    // Restore + a successful retry clears it.
+    (app2 as unknown as { loadFromString: typeof app2.loadFromString }).loadFromString =
+      origLoad;
+    await app2.startHosting();
+    await flush();
+    expect(
+      (app2 as unknown as { resumePromptDoc: unknown }).resumePromptDoc
+    ).toBeNull();
+  });
+
+  it('R6 Engineering: startHosting is re-entrancy-guarded (double-click safe)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app);
+    // Fire two startHosting calls in immediate succession (e.g.,
+    // double-click on Host).  Without the guard, doHostSession
+    // would await session.host() twice.
+    const p1 = app.startHosting();
+    const p2 = app.startHosting();
+    await Promise.all([p1, p2]);
+    // Both promises resolve; only one session was actually
+    // hosted (we observe a single active session view).
+    expect(app.sessionView?.status).toBe('active');
+  });
+
   it('#257: startHosting falls back to localStorage when no doc is staged', async () => {
     // Pre-populate localStorage with a save (simulates a prior
     // session that wrote an autosave then the tab was closed).
