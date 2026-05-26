@@ -199,6 +199,131 @@ describe('QuireApp chat surface', () => {
     expect(chat[0].text).toBe('/roll xyzzy');
   });
 
+  // Task #293 — DM-only chat-spoiler-lint.  When the coordinator's
+  // draft trips the substring scanner (the chargen-spoiler tokens like
+  // 'magic', 'fate', 'chosen', …), the send is held and a confirmation
+  // modal opens.  Per [[feedback_silent_player_firewall]], this surface
+  // is coordinator-only — a non-coord peer sees nothing here.
+  describe('chat-spoiler-lint (#293)', () => {
+    it('coordinator: substring-spoiler draft is held + lint state opens', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      const sent = app.submitChat('what does the chosen one need to know');
+      expect(sent).toBe(false); // deferred, not broadcast
+      expect(app.sessionView!.shared.chat).toEqual([]);
+      expect(app.chatSpoilerLint).not.toBeNull();
+      expect(app.chatSpoilerLint!.substringHits).toContain('chosen');
+      expect(app.chatSpoilerLint!.draft).toBe(
+        'what does the chosen one need to know'
+      );
+    });
+
+    it('clean draft sends immediately, no lint state', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(app.submitChat('coffee in 10 minutes?')).toBe(true);
+      expect(app.chatSpoilerLint).toBeNull();
+      expect(app.sessionView!.shared.chat).toHaveLength(1);
+    });
+
+    it('confirmChatSpoilerLintSend broadcasts the held draft', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      app.submitChat('beware her destiny');
+      expect(app.chatSpoilerLint).not.toBeNull();
+      expect(app.confirmChatSpoilerLintSend()).toBe(true);
+      expect(app.chatSpoilerLint).toBeNull();
+      expect(app.sessionView!.shared.chat).toHaveLength(1);
+      expect(app.sessionView!.shared.chat[0].text).toBe('beware her destiny');
+    });
+
+    it('routeChatSpoilerLintToAi forwards to submitAiPrompt, NOT to chat', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      let aiCalledWith: string | null = null;
+      app.submitAiPrompt = async (p: string) => {
+        aiCalledWith = p;
+        return null;
+      };
+      app.submitChat('describe the magic system');
+      expect(app.chatSpoilerLint).not.toBeNull();
+      expect(app.routeChatSpoilerLintToAi()).toBe(true);
+      expect(aiCalledWith).toBe('describe the magic system');
+      expect(app.chatSpoilerLint).toBeNull();
+      expect(app.sessionView!.shared.chat).toEqual([]);
+    });
+
+    it('dismissChatSpoilerLint restores the draft for editing', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      app.submitChat('the prophecy says she dies');
+      expect(app.chatSpoilerLint).not.toBeNull();
+      app.dismissChatSpoilerLint();
+      expect(app.chatSpoilerLint).toBeNull();
+      expect(app.chatDraft).toBe('the prophecy says she dies');
+      expect(app.sessionView!.shared.chat).toEqual([]);
+    });
+
+    it('non-coordinator skips the lint entirely (no DM-private content to leak)', async () => {
+      // A player typing 'magic' in chat has nothing to leak — they
+      // know what their own character knows.  Skip the lint so we
+      // don't waste an AI call on every guest message.
+      const network = new InMemoryNetwork();
+      mountApp(inMemoryFactory(network, 'HOST'));
+      const guestApp = mountApp(inMemoryFactory(network, 'GUEST'));
+      // Host the session from the first app, then join from the guest.
+      // The simplest setup: stand up a separate SessionController as
+      // the host so the guest app can join via the in-memory network.
+      const hostSession = new SessionController({
+        createHost: async () => {
+          const transport = new InMemoryTransport('HOSTPEER', network);
+          return { transport, pairingCode: 'HOSTPEER' };
+        },
+        createGuest: async () => {
+          throw new Error('unused');
+        }
+      });
+      await hostSession.host('DM');
+      await flush();
+      // Wire the guest app to join the existing host.
+      guestApp.sessionFactory = {
+        createHost: async () => {
+          throw new Error('unused');
+        },
+        createGuest: async () => {
+          const transport = new InMemoryTransport('GUESTPEER', network);
+          return { transport };
+        }
+      };
+      guestApp.joinCodeDraft = 'HOSTPEER';
+      guestApp.displayNameDraft = 'Player';
+      guestApp.joinSession();
+      await flush();
+      await flush();
+      expect(guestApp.sessionView?.status).toBe('active');
+      expect(guestApp.isCoordinator()).toBe(false);
+      // Player draft contains a spoiler token; should still broadcast.
+      const sent = guestApp.submitChat('I draw on the magic in the room');
+      expect(sent).toBe(true);
+      expect(guestApp.chatSpoilerLint).toBeNull();
+    });
+
+    it('confirmChatSpoilerLintSend is a no-op when no lint is pending', () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      expect(app.confirmChatSpoilerLintSend()).toBe(false);
+    });
+
+    it('routeChatSpoilerLintToAi is a no-op when no lint is pending', () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      expect(app.routeChatSpoilerLintToAi()).toBe(false);
+    });
+  });
+
   it('receives messages from a remote peer', async () => {
     const network = new InMemoryNetwork();
     // App acts as host.

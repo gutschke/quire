@@ -2410,6 +2410,87 @@ export const quireAppStyles = css`
       cursor: pointer;
     }
 
+    /* Task #293: chat-spoiler-lint modal — DM-only confirmation
+       when the coordinator's chat draft tripped the substring
+       spoiler scanner.  Amber-rail framing matches the dm-only
+       conventions used elsewhere (e.g. ai-card-dm).  Never visible
+       to players. */
+    .chat-spoiler-lint-modal {
+      max-width: 36rem;
+      padding: 1.2rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-left: 4px solid light-dark(#d97706, #f59e0b);
+      border-radius: 6px;
+      background: light-dark(#fffbeb, #1c1917);
+      color: inherit;
+    }
+    .chat-spoiler-lint-modal::backdrop {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .chat-spoiler-lint-body h3 {
+      margin: 0 0 0.5rem;
+      color: light-dark(#92400e, #fbbf24);
+    }
+    .chat-spoiler-lint-intro {
+      margin: 0.4rem 0 0.6rem;
+    }
+    .chat-spoiler-lint-draft {
+      margin: 0.5rem 0;
+      padding: 0.6rem 0.8rem;
+      border-left: 3px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#f8fafc, #0f172a);
+      font-style: italic;
+      white-space: pre-wrap;
+    }
+    .chat-spoiler-lint-status {
+      margin: 0.4rem 0 0.2rem;
+      font-size: 0.9em;
+    }
+    .chat-spoiler-lint-status-checking {
+      color: light-dark(#0369a1, #38bdf8);
+    }
+    .chat-spoiler-lint-status-clean {
+      color: light-dark(#15803d, #4ade80);
+    }
+    .chat-spoiler-lint-status-leak {
+      color: light-dark(#b45309, #fbbf24);
+      font-weight: 500;
+    }
+    .chat-spoiler-lint-status-failed {
+      color: light-dark(#475569, #94a3b8);
+    }
+    .chat-spoiler-lint-reason {
+      margin: 0.2rem 0 0.6rem;
+      font-size: 0.85em;
+    }
+    .chat-spoiler-lint-actions {
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      margin-top: 0.9rem;
+      flex-wrap: wrap;
+    }
+    .chat-spoiler-lint-edit,
+    .chat-spoiler-lint-route-ai,
+    .chat-spoiler-lint-send {
+      padding: 0.4rem 0.85rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .chat-spoiler-lint-route-ai {
+      border-color: light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      font-weight: 500;
+    }
+    .chat-spoiler-lint-send {
+      border-color: light-dark(#b45309, #f59e0b);
+    }
+
     .reveal-chips {
       display: inline-flex;
       flex-wrap: wrap;
