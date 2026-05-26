@@ -1163,6 +1163,59 @@ export const quireAppStyles = css`
       color: light-dark(#0369a1, #bae6fd);
       font-weight: 500;
     }
+    /* #254: AI complementarity hints in the quick-gen form. */
+    .chargen-dm-review-complement-btn,
+    .chargen-dm-review-complement-retry {
+      padding: 0.3rem 0.7rem;
+      border: 1px dashed light-dark(#7c3aed, #a78bfa);
+      background: transparent;
+      color: light-dark(#5b21b6, #c4b5fd);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+      align-self: flex-start;
+    }
+    .chargen-dm-review-complement-loading {
+      font-style: italic;
+      font-size: 0.9em;
+      margin: 0.3rem 0;
+    }
+    .chargen-dm-review-complement-failed {
+      color: light-dark(#7f1d1d, #fca5a5);
+      font-size: 0.88em;
+      margin: 0.3rem 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: baseline;
+    }
+    .chargen-dm-review-complement-chips {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin: 0.45rem 0;
+    }
+    .chargen-dm-review-complement-label {
+      font-size: 0.85em;
+      margin: 0 0 0.2rem;
+    }
+    .chargen-dm-review-complement-chip {
+      text-align: left;
+      padding: 0.4rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-left: 3px solid light-dark(#7c3aed, #a78bfa);
+      background: light-dark(#f5f3ff, #1e1b2e);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.88em;
+    }
+    .chargen-dm-review-complement-chip:hover {
+      background: light-dark(#ede9fe, #2e1b4e);
+    }
+
     /* #253: player-side "Send to DM" button — distinct from the
        file-download button. */
     .character-creation-send-button {

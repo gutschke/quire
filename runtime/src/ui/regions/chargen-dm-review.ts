@@ -320,6 +320,22 @@ export class ChargenDmReview extends LitElement {
    */
   @property({ attribute: false })
   onQuickGenerate: QuickGenerateCallback | null = null;
+  /**
+   * #254 (2026-05-26): per-slot AI complementarity hints state.
+   * Set by the host when the DM clicks "Suggest complements" in
+   * the quick-gen form.  Renders as a spinner / chip list / error.
+   */
+  @property({ attribute: false }) complementarityHints: Record<
+    number,
+    {
+      status: 'loading' | 'ok' | 'failed';
+      suggestions: { archetype: string; hook: string }[];
+      reason?: string;
+    }
+  > = {};
+  @property({ attribute: false }) onRequestComplementarityHints:
+    | ((slot: number, hookSoFar: string) => void)
+    | null = null;
 
   /**
    * Phase 3b polish (2026-05-23): DM hand-edits a spoiler-leak-
@@ -1633,6 +1649,7 @@ export class ChargenDmReview extends LitElement {
               )}
           ></textarea>
         </label>
+        ${this.renderComplementarityHints(slot, hook)}
         <button
           type="submit"
           class="chargen-dm-review-quickgen-submit"
@@ -1642,6 +1659,67 @@ export class ChargenDmReview extends LitElement {
         </button>
       </form>
     `;
+  }
+
+  /**
+   * #254: AI complementarity hints below the concept textarea.
+   * When the DM clicks "Suggest complements," fires the host
+   * callback; result chips render here.  Click a chip → fills the
+   * hook field.  Hidden entirely when no callback wired.
+   */
+  private renderComplementarityHints(
+    slot: number,
+    hook: string
+  ): TemplateResult | typeof nothing {
+    if (!this.onRequestComplementarityHints) return nothing;
+    const state = this.complementarityHints[slot];
+    if (!state) {
+      return html`<button
+        type="button"
+        class="chargen-dm-review-complement-btn"
+        title="Ask the AI to suggest a few archetype + hook combos that complement the existing roster"
+        @click=${() =>
+          this.onRequestComplementarityHints?.(slot, hook)}
+      >
+        ✨ Suggest complements
+      </button>`;
+    }
+    if (state.status === 'loading') {
+      return html`<p class="chargen-dm-review-complement-loading muted">
+        ✨ Asking the AI for complement ideas…
+      </p>`;
+    }
+    if (state.status === 'failed') {
+      return html`<p class="chargen-dm-review-complement-failed">
+        Couldn't fetch suggestions: ${state.reason ?? 'unknown'}.
+        <button
+          type="button"
+          class="chargen-dm-review-complement-retry"
+          @click=${() =>
+            this.onRequestComplementarityHints?.(slot, hook)}
+        >
+          Retry
+        </button>
+      </p>`;
+    }
+    return html`<div class="chargen-dm-review-complement-chips">
+      <p class="muted chargen-dm-review-complement-label">
+        Click a hint to fill the concept field:
+      </p>
+      ${state.suggestions.map(
+        (s) => html`<button
+          type="button"
+          class="chargen-dm-review-complement-chip"
+          title=${s.archetype}
+          @click=${() => {
+            this.setQuickGenField(slot, 'hook', s.hook);
+          }}
+        >
+          <strong>${s.archetype}</strong>
+          <span class="muted">— ${s.hook}</span>
+        </button>`
+      )}
+    </div>`;
   }
 
   /*

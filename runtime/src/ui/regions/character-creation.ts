@@ -571,7 +571,7 @@ export class CharacterCreation extends LitElement {
       switch (this.sendToDmFeedback) {
         case 'sent':
           return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-ok"
-            >✓ Sent to the DM — they'll see it on their next refresh.</span
+            >✓ Sent to the DM — they should see it instantly.</span
           >`;
         case 'send-failed':
           return html`<span class="character-creation-pack-feedback character-creation-pack-feedback-err"

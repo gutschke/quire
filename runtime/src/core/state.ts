@@ -2331,7 +2331,19 @@ function applyChargenPackDeliverEvent(
   if (typeof pack.campaignFingerprint !== 'string') return;
   if (typeof pack.slot !== 'number' || pack.slot !== p.slot) return;
   if (typeof pack.chosenPath !== 'string') return;
-  if (typeof pack.answers !== 'object' || pack.answers === null) return;
+  // Verification a8af6419725d20f92 NIT: reject arrays-as-objects
+  // for the `answers` field so a hostile pack with an array (which
+  // is `typeof 'object'`) doesn't slip past.  The chargen-pack
+  // module's per-field caps still apply when the importPack flow
+  // runs, but defense-in-depth at the materializer prevents
+  // shape-confused state from materializing.
+  if (
+    typeof pack.answers !== 'object' ||
+    pack.answers === null ||
+    Array.isArray(pack.answers)
+  ) {
+    return;
+  }
   if (typeof pack.packedAt !== 'number') return;
   // LWW: drop any existing entry from the same (sender, slot).
   const filtered = state.pendingChargenPacks.filter(

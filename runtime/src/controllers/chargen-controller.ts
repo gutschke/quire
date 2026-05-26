@@ -220,6 +220,21 @@ export class ChargenController implements ReactiveController {
   /** Transient feedback on the "Pack my character" download. */
   packFeedback: '' | 'packed' | 'pack-failed' = '';
   /**
+   * #254 (2026-05-26): AI complementarity hints per slot.  Maps
+   * slot → in-flight / result so the quick-gen form can show
+   * "Suggest complements" → spinner → chips → click to fill hook.
+   * Per-slot because the DM might invoke quick-gen for multiple
+   * seats in sequence.
+   */
+  complementarityHints: Map<
+    number,
+    {
+      status: 'loading' | 'ok' | 'failed';
+      suggestions: { archetype: string; hook: string }[];
+      reason?: string;
+    }
+  > = new Map();
+  /**
    * #253 (2026-05-26): transient feedback on the live "Send to DM"
    * pack delivery.  States:
    *   - 'sent'           — chargen-pack-deliver event accepted
@@ -1053,6 +1068,82 @@ export class ChargenController implements ReactiveController {
         this.host.requestUpdate();
       }
     }, PACK_FEEDBACK_CLEAR_MS);
+  }
+
+  /**
+   * #254 (2026-05-26): request AI complementarity hints for the
+   * quick-gen modal on `slot`.  Builds a roster snapshot from
+   * already-bound PCs (DM-only view; safe — we're the coord),
+   * calls the AI, and stores the result in
+   * `complementarityHints[slot]` for the UI to render as chips.
+   *
+   * Async-side-effect: the UI subscribes via host.requestUpdate.
+   * Returns immediately when no API key / already loading; caller
+   * doesn't need to await.
+   */
+  async requestComplementarityHintsForSlot(
+    slot: number,
+    rosterFactory: () => import('../ai/complementarity-hints').RosterSnapshot,
+    dmGuidance?: string
+  ): Promise<void> {
+    const apiKey = this.env.getAiApiKey();
+    const model = this.env.getAiModel();
+    if (apiKey.length === 0) {
+      this.complementarityHints.set(slot, {
+        status: 'failed',
+        suggestions: [],
+        reason: 'No API key configured — set one in the AI panel.'
+      });
+      this.host.requestUpdate();
+      return;
+    }
+    const existing = this.complementarityHints.get(slot);
+    if (existing?.status === 'loading') return;
+    this.complementarityHints.set(slot, {
+      status: 'loading',
+      suggestions: []
+    });
+    this.host.requestUpdate();
+    const providers = this.env.getAiProviders();
+    const provider = providers[this.env.getAiProvider()];
+    let roster: import('../ai/complementarity-hints').RosterSnapshot;
+    try {
+      roster = rosterFactory();
+    } catch {
+      roster = { pcs: [] };
+    }
+    const { requestComplementarityHints } = await import(
+      '../ai/complementarity-hints'
+    );
+    const result = await requestComplementarityHints(provider, {
+      apiKey,
+      model,
+      roster,
+      dmGuidance
+    });
+    this.complementarityHints.set(
+      slot,
+      result.ok
+        ? { status: 'ok', suggestions: result.suggestions }
+        : {
+            status: 'failed',
+            suggestions: [],
+            reason: result.reason ?? 'unknown failure'
+          }
+    );
+    this.host.requestUpdate();
+  }
+
+  /**
+   * #254: dismiss the hints panel for a slot (e.g., after the DM
+   * picked a chip, OR clicked away).  The UI also calls this
+   * when the quick-gen form is closed to clean up state.
+   */
+  dismissComplementarityHints(slot: number): void {
+    if (this.complementarityHints.has(slot)) {
+      this.complementarityHints.delete(slot);
+      this.host.requestUpdate();
+    }
   }
 
   /**

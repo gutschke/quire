@@ -280,10 +280,18 @@ function isAbortError(e: unknown): boolean {
 
 /**
  * Hostile-bundle regression (2026-05-26): clamp an NPC's stat
- * value into the [PC_CREATE_STAT_MIN, PC_CREATE_STAT_MAX] range
- * pc-create requires.  Non-number / NaN coerces to 0.  Used by
- * promoteNpcToPc so a +5/+5 boss NPC can still be promoted —
- * the DM rewrites baselines via the edit dialog afterward.
+ * value into the [STAT_MIN, STAT_MAX] range pc-create requires.
+ * Non-number / NaN coerces to 0.  Used by promoteNpcToPc so a
+ * +5/+5 boss NPC can still be promoted — the DM rewrites
+ * baselines via the edit dialog afterward.
+ *
+ * Note (verification a8af6419725d20f92 NIT): the pc-create
+ * materializer in core/state.ts uses parallel constants
+ * (PC_CREATE_STAT_MIN/MAX) that happen to equal STAT_MIN/MAX
+ * today.  If those ever diverge, this clamp would silently
+ * produce values the materializer rejects.  A static-assert
+ * check in state.test.ts would catch the drift; deferred until
+ * one side actually retunes.
  */
 function clampPromoteStat(value: unknown): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -1566,6 +1574,15 @@ export class QuireApp extends LitElement {
           ? (senderPeerId: string, slot: number) =>
               this.dismissChargenPack(senderPeerId, slot)
           : null}
+        .complementarityHints=${Object.fromEntries(
+          this.chargen.complementarityHints
+        )}
+        .onRequestComplementarityHints=${(slot: number, hookSoFar: string) =>
+          void this.chargen.requestComplementarityHintsForSlot(
+            slot,
+            () => this.buildRosterSnapshot(),
+            hookSoFar
+          )}
       ></chargen-dm-review>
     `;
   }
@@ -1758,6 +1775,62 @@ export class QuireApp extends LitElement {
       ...(payload.scene ? { scene: payload.scene } : {})
     });
     return true;
+  }
+
+  /**
+   * #254 (2026-05-26): build the roster snapshot the AI
+   * complementarity-hints helper consumes.  Coord-only (callers
+   * gate on isCoordinator); pulls every bound-active PC from
+   * shared state + summarizes stats as a dominant axis.
+   *
+   * "Dominant stat" is computed as the largest absolute value
+   * (positive or negative) — a -2 INT is as character-defining as
+   * a +2 STR.  Ties resolve to the first stat in declaration order
+   * so the result is deterministic.
+   */
+  private buildRosterSnapshot(): import('./ai/complementarity-hints').RosterSnapshot {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return { pcs: [] };
+    const pcs: import('./ai/complementarity-hints').RosterSnapshot['pcs'] = [];
+    for (const seat of Object.values(v.shared.pcSlots)) {
+      if (seat.state !== 'bound-active') continue;
+      const pcId = seat.pcId;
+      if (!pcId) continue;
+      const record = v.shared.synthesizedPcs[pcId];
+      if (!record) continue;
+      const stats = record.stats ?? {};
+      const order: Array<['STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA', number]> = [
+        ['STR', stats.str ?? 0],
+        ['DEX', stats.dex ?? 0],
+        ['CON', stats.con ?? 0],
+        ['INT', stats.int ?? 0],
+        ['WIS', stats.wis ?? 0],
+        ['CHA', stats.cha ?? 0]
+      ];
+      let domLabel: string = 'balanced';
+      let domMag = 0;
+      for (const [label, value] of order) {
+        const mag = Math.abs(value);
+        if (mag > domMag) {
+          domMag = mag;
+          domLabel = label;
+        }
+      }
+      if (domMag === 0) domLabel = 'balanced';
+      // The first tag is usually the role-defining one.  Limit to
+      // 5 so the AI prompt stays compact.
+      const tags = Array.isArray(record.tags)
+        ? record.tags.slice(0, 5).filter((t) => typeof t === 'string')
+        : [];
+      const archetype = tags[0] ?? 'unspecified';
+      pcs.push({
+        name: typeof record.name === 'string' ? record.name : pcId,
+        archetype,
+        dominantStat: domLabel,
+        tags
+      });
+    }
+    return { pcs };
   }
 
   /**
