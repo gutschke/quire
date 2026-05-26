@@ -19,6 +19,7 @@ import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
 import './ui/regions/session-wrap-marks';
+import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
 // region module still exists in the repo for git history; future
@@ -5360,7 +5361,51 @@ export class QuireApp extends LitElement {
         .onToggleClaim=${() => this.toggleClaimCharacter(character)}
       ></player-rail>
       ${this.renderRollPanel()}
+      ${this.renderDmPcDetail(character)}
     `;
+  }
+
+  /**
+   * Phase B P3 Tier B (2026-05-26): DM-only companion card below
+   * the player-rail showing DM-only state for the focused PC.
+   * Coord-only, PC-only.  Reads from the (unfiltered) shared
+   * state since the DM's filteredShared is identity-equal to
+   * shared.  Pulls dmNotes from the pcEdits overlay (mirrors the
+   * Stage Roster soft-notes path).
+   */
+  private renderDmPcDetail(
+    character: LoadedCharacter
+  ): TemplateResult | typeof nothing {
+    if (character.kind !== 'pc') return nothing;
+    if (!this.isCoordinator()) return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    const record = this.effectiveCharacter(character);
+    const edits = v.shared.pcEdits[character.id] ?? {};
+    const dmNotesEdit = (edits as Record<string, unknown>).dmNotes;
+    const dmNotes =
+      typeof dmNotesEdit === 'string'
+        ? dmNotesEdit
+        : typeof record.dmNotes === 'string'
+          ? record.dmNotes
+          : undefined;
+    const view: import('./ui/regions/dm-pc-detail').DmDetailView = {
+      pcName:
+        typeof record.name === 'string' && record.name.length > 0
+          ? record.name
+          : character.id
+    };
+    if (record.magicPhase !== undefined) view.magicPhase = record.magicPhase;
+    if (record.knowsTheyCanCast !== undefined)
+      view.knowsTheyCanCast = record.knowsTheyCanCast;
+    if (record.tax !== undefined) view.tax = record.tax;
+    if (record.threadDebt !== undefined) view.threadDebt = record.threadDebt;
+    if (record.accidentalGrants !== undefined)
+      view.accidentalGrants = record.accidentalGrants;
+    if (record.alignmentDrift !== undefined)
+      view.alignmentDrift = record.alignmentDrift;
+    if (dmNotes !== undefined) view.dmNotes = dmNotes;
+    return html`<dm-pc-detail .view=${view}></dm-pc-detail>`;
   }
 
   /**

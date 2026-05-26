@@ -1733,6 +1733,67 @@ export const quireAppStyles = css`
     }
 
     /* ====================================================== */
+    /* Phase B P3 Tier B (2026-05-26): dm-pc-detail DM-only card. */
+    .dm-pc-detail {
+      border-color: light-dark(#d97706, #f59e0b);
+      border-left-width: 3px;
+      background: light-dark(#fffbeb, #1c1917);
+    }
+    .dm-pc-detail h2 {
+      color: light-dark(#92400e, #fbbf24);
+    }
+    .dm-pc-detail-section {
+      margin-top: 0.7rem;
+    }
+    .dm-pc-detail-section h3 {
+      font-size: 0.95em;
+      margin: 0 0 0.3rem;
+    }
+    .dm-pc-detail-row {
+      margin: 0.15rem 0;
+      font-size: 0.9em;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .dm-pc-detail-label {
+      font-weight: 500;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .dm-pc-detail-drift-pips {
+      display: inline-flex;
+      gap: 0.2rem;
+    }
+    .dm-pc-detail-drift-pip {
+      width: 0.7rem;
+      height: 0.7rem;
+      border-radius: 999px;
+      border: 1px solid light-dark(#d97706, #f59e0b);
+      background: transparent;
+    }
+    .dm-pc-detail-drift-pip-filled {
+      background: light-dark(#d97706, #f59e0b);
+    }
+    .dm-pc-detail-grants {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .dm-pc-detail-grant {
+      font-size: 0.88em;
+    }
+    .dm-pc-detail-grant-ts {
+      font-size: 0.85em;
+    }
+    .dm-pc-detail-notes {
+      font-size: 0.9em;
+      margin: 0;
+      white-space: pre-wrap;
+    }
+
     /* Phase B P5 (2026-05-26): session-wrap-marks end-of-session sheet. */
     .session-wrap-marks-head {
       display: flex;
