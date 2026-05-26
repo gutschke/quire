@@ -83,6 +83,29 @@ export interface SwitcherEntry {
 
 export type SwitchToPcCallback = (pcId: string) => void;
 
+/**
+ * P-R11 (2026-05-25): submit a retire request to the DM.  Receives
+ * the in-fiction reason + the RetireReason enum; returns true when
+ * the request was appended (false outside an active session or for
+ * a viewer with no bound PC).
+ */
+export type RequestRetireCallback = (
+  reason: 'died' | 'departed' | 'converted-to-npc' | 'other',
+  inFictionReason: string
+) => boolean;
+
+/**
+ * P-R11: the player-visible pip state for the retire-request flow.
+ *   - 'none'     — no pending request (hide pip, show submit affordance)
+ *   - 'pending'  — request submitted; waiting for DM
+ *   - 'declined' — DM rejected; show note + re-submit affordance
+ */
+export interface RetireRequestPip {
+  status: 'none' | 'pending' | 'declined';
+  /** DM's note when status='declined' (player-safe). */
+  note?: string;
+}
+
 @customElement('player-rail')
 export class PlayerRail extends LitElement {
   // Light-DOM rendering so the legacy quireAppStyles cascade applies.
@@ -162,6 +185,26 @@ export class PlayerRail extends LitElement {
    */
   @state() private switcherOpen = false;
   /**
+   * P-R11 (2026-05-25): player retire-request pip + submit affordance.
+   * Hosts populate `retirePip` from filteredShared.pcRetireRequests +
+   * pcRetireRejections (filtered to the local peer + bound pcId) so
+   * the data flow stays inside the existing viewer-scope.  When null
+   * the entire surface is hidden (DM view, NPC sheet, no session).
+   */
+  @property({ attribute: false }) retirePip: RetireRequestPip | null = null;
+  @property({ attribute: false }) onRequestRetire:
+    | RequestRetireCallback
+    | null = null;
+  /**
+   * P-R11: inline-form @state — kept local so the host doesn't see
+   * the partial draft.  Opens via the "Request retire" button, closes
+   * on submit / cancel.
+   */
+  @state() private retireFormOpen = false;
+  @state() private retireFormReason: 'died' | 'departed' | 'converted-to-npc' | 'other' =
+    'departed';
+  @state() private retireFormText = '';
+  /**
    * P-R7 take-over inline confirm.  When the player clicks an
    * entry owned by another peer, we don't immediately fire the
    * switch — we replace the row with a "Confirm take-over from
@@ -193,6 +236,7 @@ export class PlayerRail extends LitElement {
           ? html`<p class="summary">${r.pronouns}</p>`
           : nothing}
         ${this.renderClaimAffordance()}
+        ${this.renderRetireRequest()}
       </header>
       <section class="card">
         <h2>Details</h2>
@@ -421,6 +465,127 @@ export class PlayerRail extends LitElement {
     this.switcherOpen = false;
     this.takeOverConfirmPcId = null;
     this.onSwitchToPc?.(pcId);
+  }
+
+  /**
+   * P-R11: player-side retire-request affordance.  Three states:
+   *
+   *   - none:     "Request retire…" button → opens inline form
+   *   - pending:  muted "Retire request pending DM review" pip
+   *   - declined: amber "DM declined: <note>" pip + retry button
+   *
+   * Hidden entirely when no retirePip data is supplied (e.g., DM
+   * view, NPC sheet, unbound viewer).
+   */
+  private renderRetireRequest(): TemplateResult | typeof nothing {
+    const pip = this.retirePip;
+    if (!pip || !this.onRequestRetire) return nothing;
+    if (this.retireFormOpen) return this.renderRetireForm();
+    switch (pip.status) {
+      case 'none':
+        return html`<p class="player-rail-retire">
+          <button
+            type="button"
+            class="player-rail-retire-open"
+            @click=${() => this.openRetireForm()}
+          >
+            Request retire…
+          </button>
+        </p>`;
+      case 'pending':
+        return html`<p class="player-rail-retire player-rail-retire-pending">
+          <span class="player-rail-retire-tag muted"
+            >Retire request pending DM review</span
+          >
+        </p>`;
+      case 'declined':
+        return html`<p class="player-rail-retire player-rail-retire-declined">
+          <span class="player-rail-retire-tag">DM declined</span>
+          ${pip.note
+            ? html`<span class="player-rail-retire-note">${pip.note}</span>`
+            : nothing}
+          <button
+            type="button"
+            class="player-rail-retire-open"
+            @click=${() => this.openRetireForm()}
+          >
+            Resubmit
+          </button>
+        </p>`;
+    }
+  }
+
+  private renderRetireForm(): TemplateResult {
+    const canSubmit = this.retireFormText.trim().length > 0;
+    return html`
+      <div class="player-rail-retire-form">
+        <label class="player-rail-retire-form-label">
+          Why is your PC retiring? (player-safe — visible to the DM)
+          <textarea
+            class="player-rail-retire-form-text"
+            rows="2"
+            maxlength="200"
+            placeholder="e.g. Mei steps away to look after her sister"
+            .value=${this.retireFormText}
+            @input=${(e: Event) => {
+              this.retireFormText = (e.target as HTMLTextAreaElement).value;
+            }}
+          ></textarea>
+        </label>
+        <label class="player-rail-retire-form-reason">
+          Reason
+          <select
+            .value=${this.retireFormReason}
+            @change=${(e: Event) => {
+              this.retireFormReason = (
+                e.target as HTMLSelectElement
+              ).value as typeof this.retireFormReason;
+            }}
+          >
+            <option value="departed">Departed</option>
+            <option value="died">Died</option>
+            <option value="converted-to-npc">Becomes an NPC</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <div class="player-rail-retire-form-actions">
+          <button
+            type="button"
+            class="player-rail-retire-form-cancel"
+            @click=${() => {
+              this.retireFormOpen = false;
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="player-rail-retire-form-submit"
+            ?disabled=${!canSubmit}
+            @click=${() => this.submitRetireForm()}
+          >
+            Send request
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  private openRetireForm(): void {
+    this.retireFormOpen = true;
+    this.retireFormText = '';
+    this.retireFormReason = 'departed';
+  }
+
+  private submitRetireForm(): void {
+    const ok = this.onRequestRetire?.(
+      this.retireFormReason,
+      this.retireFormText.trim()
+    );
+    if (ok) {
+      this.retireFormOpen = false;
+      this.retireFormText = '';
+    }
   }
 
   private renderClaimAffordance(): TemplateResult | typeof nothing {

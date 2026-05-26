@@ -869,7 +869,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // Phase B' (2026-05-25): added seat-add + pc-retire + pc-archive
     // → 34 + 3 = 37.
     // P-R7 (2026-05-25): added pc-switch (audit-only) → 39.
-    expect(KNOWN_EVENT_KINDS.size).toBe(39);
+    // P-R11 (2026-05-25): added pc-retire-request + pc-retire-reject → 41.
+    expect(KNOWN_EVENT_KINDS.size).toBe(41);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -2949,5 +2950,188 @@ describe('filterForViewer — Phase B-prime DM-only seat metadata strip', () => 
     filterForViewer(state, 'bob');
     expect(state.pcSlots[1]?.retireReason).toBe('departed');
     expect(state.pcSlots[1]?.retiredScene).toBe('ep1/scene-3');
+  });
+});
+
+// =====================================================================
+// P-R11 (2026-05-25): player-initiated retire request + DM accept/reject.
+// =====================================================================
+
+describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
+  /**
+   * Build merged event logs for a 2-peer scenario:
+   *   - alice = DM (coord; binds slot 1 → 'mei')
+   *   - bob   = player (peer-join, peer-rename to bind pcId='mei')
+   *   - charlie = third party for hostile-author tests
+   * Returns the merged ordered event log ready for materialize().
+   */
+  function bobOwnsMei(): {
+    alice: EventLog;
+    bob: EventLog;
+    charlie: EventLog;
+  } {
+    const alice = new EventLog('alice');
+    const bob = new EventLog('bob');
+    const charlie = new EventLog('charlie');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Alice' });
+    bob.append('peer-join', { name: 'Bob' });
+    charlie.append('peer-join', { name: 'Charlie' });
+    // Share peer-join + coord events.
+    for (const ev of alice.events()) {
+      bob.apply(ev);
+      charlie.apply(ev);
+    }
+    for (const ev of bob.events()) {
+      if (ev.peerId === 'bob') alice.apply(ev);
+    }
+    for (const ev of charlie.events()) {
+      if (ev.peerId === 'charlie') alice.apply(ev);
+    }
+    // DM binds Mei to slot 1.
+    const bind = alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    bob.apply(bind);
+    charlie.apply(bind);
+    // Bob binds himself to Mei via peer-rename.
+    const claim = bob.append('peer-rename', { pcId: 'mei' });
+    alice.apply(claim);
+    charlie.apply(claim);
+    return { alice, bob, charlie };
+  }
+
+  it('pc-retire-request from the seat controller appends a pending request', () => {
+    const { alice, bob } = bobOwnsMei();
+    const req = bob.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: 'Mei wants to leave the cell and never come back',
+      reason: 'departed'
+    });
+    alice.apply(req);
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(1);
+    expect(state.pcRetireRequests[0].requestingPeerId).toBe('bob');
+    expect(state.pcRetireRequests[0].pcId).toBe('mei');
+    expect(state.pcRetireRequests[0].reason).toBe('departed');
+  });
+
+  it('drops request from a peer who is NOT the PC controller', () => {
+    const { alice, charlie } = bobOwnsMei();
+    const req = charlie.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: 'sneaky',
+      reason: 'died'
+    });
+    alice.apply(req);
+    expect(materialize(alice.events()).pcRetireRequests).toHaveLength(0);
+  });
+
+  it('drops request with invalid reason enum / empty in-fiction text', () => {
+    const { alice, bob } = bobOwnsMei();
+    const empty = bob.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: '',
+      reason: 'departed'
+    });
+    const badEnum = bob.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: 'ok',
+      reason: 'made-up-reason' as never
+    });
+    alice.apply(empty);
+    alice.apply(badEnum);
+    expect(materialize(alice.events()).pcRetireRequests).toHaveLength(0);
+  });
+
+  it('duplicate requests from same peer replace the prior (LWW)', () => {
+    const { alice, bob } = bobOwnsMei();
+    const first = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'first try', reason: 'departed'
+    });
+    const second = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'revised', reason: 'died'
+    });
+    alice.apply(first);
+    alice.apply(second);
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(1);
+    expect(state.pcRetireRequests[0].inFictionReason).toBe('revised');
+    expect(state.pcRetireRequests[0].reason).toBe('died');
+  });
+
+  it('pc-retire (DM accept) clears the pending request for that pcId', () => {
+    const { alice, bob } = bobOwnsMei();
+    const req = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'go', reason: 'departed'
+    });
+    alice.apply(req);
+    alice.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'go',
+      reason: 'departed'
+    });
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(0);
+    expect(state.pcSlots[1]?.state).toBe('bound-retired');
+  });
+
+  it('pc-retire-reject (coord-authored) clears the request and records a rejection', () => {
+    const { alice, bob } = bobOwnsMei();
+    const req = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'too soon', reason: 'died'
+    });
+    alice.apply(req);
+    alice.append('pc-retire-reject', {
+      v: 1,
+      requestingPeerId: 'bob',
+      pcId: 'mei',
+      note: 'one more session — there is a scene I want her in'
+    });
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(0);
+    expect(state.pcRetireRejections).toHaveLength(1);
+    expect(state.pcRetireRejections[0].requestingPeerId).toBe('bob');
+    expect(state.pcRetireRejections[0].note).toMatch(/one more session/);
+  });
+
+  it('non-coord cannot author pc-retire-reject', () => {
+    const { alice, bob, charlie } = bobOwnsMei();
+    const req = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'go', reason: 'departed'
+    });
+    alice.apply(req);
+    charlie.apply(req);
+    const hostile = charlie.append('pc-retire-reject', {
+      v: 1, requestingPeerId: 'bob', pcId: 'mei'
+    });
+    alice.apply(hostile);
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(1);
+    expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  it('a fresh request after a rejection clears the stale rejection pip', () => {
+    const { alice, bob } = bobOwnsMei();
+    const first = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'go', reason: 'departed'
+    });
+    alice.apply(first);
+    alice.append('pc-retire-reject', {
+      v: 1, requestingPeerId: 'bob', pcId: 'mei', note: 'wait'
+    });
+    // Sync the rejection back to bob so his log seq increments past it.
+    for (const ev of alice.events()) bob.apply(ev);
+    const second = bob.append('pc-retire-request', {
+      v: 1, pcId: 'mei', inFictionReason: 'second try, please', reason: 'departed'
+    });
+    alice.apply(second);
+    const state = materialize(alice.events());
+    expect(state.pcRetireRequests).toHaveLength(1);
+    expect(state.pcRetireRejections).toHaveLength(0);
   });
 });

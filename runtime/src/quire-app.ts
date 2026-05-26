@@ -1647,6 +1647,57 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * P-R11 (2026-05-25): coord-authored rejection of a pending
+   * player retire request.  Removes the pending entry + adds an
+   * audit-visible rejection note so the player's rail surfaces
+   * "DM declined: <note>."
+   */
+  appendPcRetireReject(pcId: string, note: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!pcId || pcId.length === 0) return false;
+    const req = v.shared.pcRetireRequests.find((r) => r.pcId === pcId);
+    if (!req) return false;
+    const trimmed = typeof note === 'string' ? note.trim() : '';
+    this.session.append('pc-retire-reject', {
+      v: 1,
+      requestingPeerId: req.requestingPeerId,
+      pcId,
+      ...(trimmed.length > 0 ? { note: trimmed.slice(0, 200) } : {})
+    });
+    return true;
+  }
+
+  /**
+   * P-R11 (2026-05-25): player-authored request to retire their
+   * own bound PC.  The request is gated to the local peer's
+   * currently-bound pcId; the engine refuses requests for
+   * someone else's PC defense-in-depth.
+   */
+  appendPcRetireRequest(
+    reason: 'died' | 'departed' | 'converted-to-npc' | 'other',
+    inFictionReason: string
+  ): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return false;
+    const me = v.filteredShared.peers[v.peerId];
+    const pcId = me?.pcId;
+    if (!pcId) return false;
+    const trimmed =
+      typeof inFictionReason === 'string' ? inFictionReason.trim() : '';
+    if (trimmed.length === 0 || trimmed.length > 200) return false;
+    this.session.append('pc-retire-request', {
+      v: 1,
+      pcId,
+      inFictionReason: trimmed,
+      reason
+    });
+    return true;
+  }
+
+  /**
    * Wave 1 (2026-05-25): emit a `seat-remove` event dropping an
    * unbound, empty seat that was added accidentally.  Coord-only.
    * The engine refuses to remove bound seats (sticky-N preserves
@@ -1717,6 +1768,7 @@ export class QuireApp extends LitElement {
     const editable = this.sessionView?.status === 'active';
     const claim = this.deriveClaimState(bound);
     const switcherEntries = this.computeSwitcherEntries(bound.id);
+    const retirePip = this.computeRetirePip(bound.id);
     return html`
       <player-rail
         .character=${bound}
@@ -1730,6 +1782,13 @@ export class QuireApp extends LitElement {
         .switcherEntries=${switcherEntries}
         .onSwitchToPc=${switcherEntries.length >= 2
           ? (pcId: string) => this.switchBoundPcTo(pcId)
+          : null}
+        .retirePip=${retirePip}
+        .onRequestRetire=${retirePip && !this.isCoordinator()
+          ? (
+              reason: 'died' | 'departed' | 'converted-to-npc' | 'other',
+              note: string
+            ) => this.appendPcRetireRequest(reason, note)
           : null}
         .onBumpStat=${(
           pcId: string,
@@ -1810,6 +1869,40 @@ export class QuireApp extends LitElement {
       }
     }
     return entries;
+  }
+
+  /**
+   * P-R11 (2026-05-25): compute the player-rail retire-request pip
+   * for the local viewer's bound PC.  Only the player who controls
+   * the PC sees the pip; the DM-side accept/reject lives on the
+   * Stage Roster tile instead.  Returns null when the surface
+   * should be hidden entirely (DM view, NPC sheet, no session).
+   */
+  private computeRetirePip(
+    pcId: string
+  ): import('./ui/regions/player-rail').RetireRequestPip | null {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !v.peerId) return null;
+    // The DM-side accept/reject is on the Stage Roster; don't double-
+    // surface for the coord.  Players see the pip.
+    if (this.isCoordinator()) return null;
+    const me = v.filteredShared.peers[v.peerId];
+    if (!me?.pcId || me.pcId !== pcId) return null;
+    const pending = v.filteredShared.pcRetireRequests?.find(
+      (r) =>
+        r.requestingPeerId === v.peerId && r.pcId === pcId
+    );
+    if (pending) return { status: 'pending' };
+    const declined = v.filteredShared.pcRetireRejections?.find(
+      (r) =>
+        r.requestingPeerId === v.peerId && r.pcId === pcId
+    );
+    if (declined) {
+      return declined.note !== undefined
+        ? { status: 'declined', note: declined.note }
+        : { status: 'declined' };
+    }
+    return { status: 'none' };
   }
 
   /**
@@ -2506,10 +2599,43 @@ export class QuireApp extends LitElement {
         }
       }
     }
+    // P-R11: pending retire requests, keyed by pcId.  Coord-only —
+    // we render the strip for the DM's eyes.  Names are resolved via
+    // the existing peer-name lookup so the DM sees "Bob requested…"
+    // not a raw peer id.
+    const pendingRetireRequests: Record<
+      string,
+      import('./ui/regions/stage-roster').PendingRetireRequest
+    > = {};
+    if (v?.status === 'active' && this.isCoordinator()) {
+      for (const req of v.filteredShared.pcRetireRequests ?? []) {
+        pendingRetireRequests[req.pcId] = {
+          pcId: req.pcId,
+          requestingPeerName: this.displayNameFor(req.requestingPeerId),
+          inFictionReason: req.inFictionReason,
+          reason: req.reason
+        };
+      }
+    }
     return html`<stage-roster
       .pcSlots=${slots}
       .synthesizedPcs=${synthesized}
       .dmNotesByPcId=${dmNotesByPcId}
+      .pendingRetireRequests=${pendingRetireRequests}
+      .onAcceptRetireRequest=${this.isCoordinator()
+        ? (pcId: string,
+           reason: 'died' | 'departed' | 'converted-to-npc' | 'other',
+           inFictionReason: string) =>
+            this.appendPcRetire({
+              pcId,
+              reason,
+              inFictionReason
+            })
+        : null}
+      .onRejectRetireRequest=${this.isCoordinator()
+        ? (pcId: string, note: string) =>
+            this.appendPcRetireReject(pcId, note)
+        : null}
       .displayNameLookup=${(pcId: string) => this.chargen.displayNameForBound(pcId)}
       .onRetirePc=${(slot: number) => {
         const seat = slots[slot];

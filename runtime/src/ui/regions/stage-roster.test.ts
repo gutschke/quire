@@ -304,6 +304,131 @@ describe('<stage-roster>', () => {
     });
   });
 
+  // ---- P-R11: pending retire-request strip on Active tiles ----
+  describe('P-R11 — DM accept/reject for pending retire requests', () => {
+    function withRequest(extra?: Partial<StageRoster>): StageRoster {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.pendingRetireRequests = {
+        mei: {
+          pcId: 'mei',
+          requestingPeerName: 'Bob',
+          inFictionReason: 'Mei steps away to find her sister',
+          reason: 'departed'
+        }
+      };
+      el.onAcceptRetireRequest = () => true;
+      el.onRejectRetireRequest = () => true;
+      if (extra) Object.assign(el, extra);
+      return el;
+    }
+
+    it('hides the strip when no callbacks are wired (player view)', async () => {
+      const el = mount();
+      el.pcSlots = { 1: { state: 'bound-active', pcId: 'mei' } };
+      el.synthesizedPcs = { mei: record() };
+      el.displayNameLookup = () => 'Mei';
+      el.pendingRetireRequests = {
+        mei: {
+          pcId: 'mei',
+          requestingPeerName: 'Bob',
+          inFictionReason: 'go',
+          reason: 'departed'
+        }
+      };
+      // onAcceptRetireRequest + onRejectRetireRequest intentionally null
+      await el.updateComplete;
+      expect(el.querySelector('.stage-roster-retire-req')).toBeNull();
+    });
+
+    it('renders requesting peer name + in-fiction reason', async () => {
+      const el = withRequest();
+      await el.updateComplete;
+      const head = el.querySelector('.stage-roster-retire-req-head');
+      expect(head?.textContent).toMatch(/Bob/);
+      expect(head?.textContent).toMatch(/departed/);
+      const reason = el.querySelector('.stage-roster-retire-req-reason');
+      expect(reason?.textContent).toMatch(/sister/);
+    });
+
+    it('Accept fires onAcceptRetireRequest with the request fields', async () => {
+      const calls: Array<[string, string, string]> = [];
+      const el = withRequest({
+        onAcceptRetireRequest: (pcId, reason, txt) => {
+          calls.push([pcId, reason, txt]);
+          return true;
+        }
+      });
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.stage-roster-retire-req-accept'
+        )!
+        .click();
+      expect(calls).toEqual([
+        ['mei', 'departed', 'Mei steps away to find her sister']
+      ]);
+    });
+
+    it('Reject opens an inline note input and fires the reject callback', async () => {
+      const calls: Array<[string, string]> = [];
+      const el = withRequest({
+        onRejectRetireRequest: (pcId, note) => {
+          calls.push([pcId, note]);
+          return true;
+        }
+      });
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.stage-roster-retire-req-reject-open'
+        )!
+        .click();
+      await el.updateComplete;
+      const input = el.querySelector<HTMLInputElement>(
+        '.stage-roster-retire-req-reject-text'
+      )!;
+      input.value = 'one more session please';
+      input.dispatchEvent(new Event('input'));
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.stage-roster-retire-req-reject-submit'
+        )!
+        .click();
+      expect(calls).toEqual([['mei', 'one more session please']]);
+    });
+
+    it('Reject cancel restores the strip without firing the callback', async () => {
+      let called = false;
+      const el = withRequest({
+        onRejectRetireRequest: () => {
+          called = true;
+          return true;
+        }
+      });
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.stage-roster-retire-req-reject-open'
+        )!
+        .click();
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.stage-roster-retire-req-reject-cancel'
+        )!
+        .click();
+      expect(called).toBe(false);
+      await el.updateComplete;
+      expect(
+        el.querySelector('.stage-roster-retire-req-reject-text')
+      ).toBeNull();
+    });
+  });
+
   it('sorts seats by slot integer', async () => {
     const el = mount();
     el.pcSlots = {

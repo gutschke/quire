@@ -2784,6 +2784,176 @@ export const quireAppStyles = css`
       background: light-dark(#fef3c7, #422006);
     }
 
+    /* P-R11 (2026-05-25): player-rail retire-request pip + form. */
+    .player-rail-retire {
+      margin: 0.4rem 0 0;
+    }
+    .player-rail-retire-open {
+      padding: 0.25rem 0.7rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .player-rail-retire-pending {
+      padding: 0.3rem 0.6rem;
+      background: light-dark(#f1f5f9, #1e293b);
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+    .player-rail-retire-declined {
+      padding: 0.3rem 0.6rem;
+      border-left: 3px solid light-dark(#d97706, #f59e0b);
+      background: light-dark(#fffbeb, #1c1917);
+      border-radius: 4px;
+      font-size: 0.9em;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.4rem;
+    }
+    .player-rail-retire-tag {
+      font-weight: 500;
+    }
+    .player-rail-retire-note {
+      flex: 1;
+      font-style: italic;
+    }
+    .player-rail-retire-form {
+      margin: 0.4rem 0;
+      padding: 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      background: light-dark(#f8fafc, #0f172a);
+    }
+    .player-rail-retire-form-label,
+    .player-rail-retire-form-reason {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-size: 0.85em;
+    }
+    .player-rail-retire-form-text {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 0.2rem;
+      padding: 0.4rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+    }
+    .player-rail-retire-form-actions {
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      margin-top: 0.5rem;
+    }
+    .player-rail-retire-form-cancel,
+    .player-rail-retire-form-submit {
+      padding: 0.3rem 0.8rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .player-rail-retire-form-submit {
+      border-color: light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      font-weight: 500;
+    }
+    .player-rail-retire-form-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* P-R11: DM-side accept/reject strip on Stage Roster Active tiles. */
+    .stage-roster-retire-req {
+      margin-top: 0.45rem;
+      padding: 0.5rem 0.65rem;
+      border: 1px solid light-dark(#d97706, #f59e0b);
+      border-left-width: 3px;
+      border-radius: 4px;
+      background: light-dark(#fffbeb, #1c1917);
+    }
+    .stage-roster-retire-req-head {
+      margin: 0 0 0.3rem;
+      font-size: 0.9em;
+      color: light-dark(#92400e, #fbbf24);
+    }
+    .stage-roster-retire-req-reason {
+      margin: 0.2rem 0 0.45rem;
+      padding: 0.35rem 0.5rem;
+      border-left: 2px solid light-dark(#cbd5e1, #475569);
+      font-style: italic;
+      background: light-dark(#f8fafc, #0f172a);
+    }
+    .stage-roster-retire-req-actions {
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .stage-roster-retire-req-accept,
+    .stage-roster-retire-req-reject-open,
+    .stage-roster-retire-req-reject-cancel,
+    .stage-roster-retire-req-reject-submit {
+      padding: 0.25rem 0.7rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .stage-roster-retire-req-accept {
+      border-color: light-dark(#15803d, #4ade80);
+      background: light-dark(#dcfce7, #052e16);
+      color: light-dark(#15803d, #bbf7d0);
+      font-weight: 500;
+    }
+    .stage-roster-retire-req-reject {
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px dashed light-dark(#cbd5e1, #475569);
+    }
+    .stage-roster-retire-req-reject-label {
+      display: block;
+      font-size: 0.85em;
+    }
+    .stage-roster-retire-req-reject-text {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 0.2rem;
+      padding: 0.35rem 0.45rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+    }
+    .stage-roster-retire-req-reject-actions {
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      margin-top: 0.4rem;
+    }
+    .stage-roster-retire-req-reject-submit {
+      border-color: light-dark(#d97706, #f59e0b);
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fbbf24);
+      font-weight: 500;
+    }
+
     .ai-panel {
       border-color: light-dark(#c8b8d8, #4a3a5a);
       background: light-dark(#fbf8fd, #1f1a25);

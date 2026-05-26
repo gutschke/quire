@@ -41,6 +41,30 @@ export type DisplayNameLookup = (pcId: string) => string | null;
  */
 export type SetDmNotesCallback = (pcId: string, value: string) => boolean;
 
+/**
+ * P-R11 (2026-05-25): player-initiated retire request rendered on the
+ * DM-facing Active tile.  The DM clicks Accept (opens the existing
+ * retire dialog pre-filled with the player's reason) or Reject
+ * (opens an inline note input).
+ */
+export interface PendingRetireRequest {
+  pcId: string;
+  requestingPeerName: string;
+  inFictionReason: string;
+  reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
+}
+
+export type AcceptRetireRequestCallback = (
+  pcId: string,
+  reason: 'died' | 'departed' | 'converted-to-npc' | 'other',
+  inFictionReason: string
+) => boolean;
+
+export type RejectRetireRequestCallback = (
+  pcId: string,
+  note: string
+) => boolean;
+
 type SubTab = 'active' | 'retired' | 'archived';
 
 @customElement('stage-roster')
@@ -96,6 +120,18 @@ export class StageRoster extends LitElement {
   @property({ attribute: false })
   onSetDmNotes: SetDmNotesCallback | null = null;
 
+  /**
+   * P-R11: pending player retire requests, keyed by pcId.  Active
+   * tiles render an amber accept/reject strip when an entry is
+   * present.  Empty / absent → no strip.
+   */
+  @property({ attribute: false })
+  pendingRetireRequests: Record<string, PendingRetireRequest> = {};
+  @property({ attribute: false })
+  onAcceptRetireRequest: AcceptRetireRequestCallback | null = null;
+  @property({ attribute: false })
+  onRejectRetireRequest: RejectRetireRequestCallback | null = null;
+
   @state() private activeSubTab: SubTab = 'active';
 
   /**
@@ -103,6 +139,14 @@ export class StageRoster extends LitElement {
    * so the Active tab stays compact; the DM clicks 📝 to expand.
    */
   @state() private openNotesPcId: Set<string> = new Set();
+
+  /**
+   * P-R11: per-PC reject-note draft for the DM's "Reject" action.
+   * Keyed by pcId.  Empty / absent means "the DM hasn't started
+   * typing a reject reason."  Submitting clears the entry.
+   */
+  @state() private rejectNoteDrafts: Record<string, string> = {};
+  @state() private rejectOpenForPcId: string | null = null;
 
   override render(): TemplateResult {
     const slots = this.getSortedSlots();
@@ -192,9 +236,116 @@ export class StageRoster extends LitElement {
         .onRetire=${(s: number) => this.onRetirePc?.(s)}
       >
         ${this.renderActiveBody(record)}
+        ${this.renderRetireRequestStrip(pcId)}
         ${this.renderDmNotes(pcId)}
       </seat-card>
     </li>`;
+  }
+
+  /**
+   * P-R11: DM-facing accept/reject strip for a pending player
+   * retire request.  Renders nothing when no request is pending
+   * for this PC OR when the wiring isn't present (player view).
+   *
+   * Accept: passes the player's stated reason through to the host,
+   * which dispatches the existing pc-retire event.  Reject: opens
+   * an inline note input; submitting it dispatches pc-retire-reject.
+   */
+  private renderRetireRequestStrip(
+    pcId: string
+  ): TemplateResult | typeof nothing {
+    if (!pcId) return nothing;
+    if (!this.onAcceptRetireRequest || !this.onRejectRetireRequest) {
+      return nothing;
+    }
+    const req = this.pendingRetireRequests[pcId];
+    if (!req) return nothing;
+    const rejectOpen = this.rejectOpenForPcId === pcId;
+    const draft = this.rejectNoteDrafts[pcId] ?? '';
+    return html`<div class="stage-roster-retire-req">
+      <p class="stage-roster-retire-req-head">
+        <strong>${req.requestingPeerName}</strong> requested to retire
+        ${req.reason === 'died'
+          ? '(died)'
+          : req.reason === 'converted-to-npc'
+            ? '(becomes NPC)'
+            : req.reason === 'other'
+              ? '(other)'
+              : '(departed)'}
+      </p>
+      <blockquote class="stage-roster-retire-req-reason muted">
+        ${req.inFictionReason}
+      </blockquote>
+      <div class="stage-roster-retire-req-actions">
+        <button
+          type="button"
+          class="stage-roster-retire-req-accept"
+          @click=${() =>
+            this.onAcceptRetireRequest?.(
+              pcId,
+              req.reason,
+              req.inFictionReason
+            )}
+        >
+          Accept retire
+        </button>
+        ${rejectOpen
+          ? nothing
+          : html`<button
+              type="button"
+              class="stage-roster-retire-req-reject-open"
+              @click=${() => {
+                this.rejectOpenForPcId = pcId;
+              }}
+            >
+              Reject…
+            </button>`}
+      </div>
+      ${rejectOpen
+        ? html`<div class="stage-roster-retire-req-reject">
+            <label class="stage-roster-retire-req-reject-label">
+              Note for ${req.requestingPeerName} (optional)
+              <input
+                type="text"
+                class="stage-roster-retire-req-reject-text"
+                maxlength="200"
+                placeholder="e.g. one more scene — there's a beat I want for them"
+                .value=${draft}
+                @input=${(e: Event) => {
+                  this.rejectNoteDrafts = {
+                    ...this.rejectNoteDrafts,
+                    [pcId]: (e.target as HTMLInputElement).value
+                  };
+                }}
+              />
+            </label>
+            <div class="stage-roster-retire-req-reject-actions">
+              <button
+                type="button"
+                class="stage-roster-retire-req-reject-cancel"
+                @click=${() => {
+                  this.rejectOpenForPcId = null;
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="stage-roster-retire-req-reject-submit"
+                @click=${() => {
+                  this.onRejectRetireRequest?.(pcId, draft.trim());
+                  this.rejectOpenForPcId = null;
+                  const next = { ...this.rejectNoteDrafts };
+                  delete next[pcId];
+                  this.rejectNoteDrafts = next;
+                }}
+              >
+                Send rejection
+              </button>
+            </div>
+          </div>`
+        : nothing}
+    </div>`;
   }
 
   /**

@@ -161,6 +161,44 @@ export type RetireReason =
   | 'other';
 
 /**
+ * P-R11 (2026-05-25): a player-initiated request to retire their
+ * own PC.  The DM sees a pip + Accept/Reject; accept emits the
+ * existing `pc-retire` event with the player's narrative reason,
+ * reject emits `pc-retire-reject` with an optional note.
+ *
+ * The request is identified by `(requestingPeerId, pcId, ts)` —
+ * a player can't have two requests for the same PC at once (a
+ * duplicate event clobbers the prior entry's ts).
+ */
+export interface PcRetireRequest {
+  /** Peer who authored the request — also the seat's controller. */
+  requestingPeerId: PeerId;
+  /** The PC the player wants to retire. */
+  pcId: string;
+  /** Player-safe in-fiction reason (becomes pc-retire's reason on accept). */
+  inFictionReason: string;
+  /** Retire reason enum (becomes pc-retire's `reason` on accept). */
+  reason: RetireReason;
+  /** Epoch-ms request authored. */
+  ts: number;
+}
+
+/**
+ * P-R11: a DM's rejection of a player's request, surfaced to the
+ * requesting peer.  Cleared when the player submits a fresh request.
+ */
+export interface PcRetireRejection {
+  /** The peer the rejection is delivered to (the requesting player). */
+  requestingPeerId: PeerId;
+  /** The PC the rejected request was about. */
+  pcId: string;
+  /** Optional DM note explaining the rejection (player-safe). */
+  note?: string;
+  /** Epoch-ms rejection authored. */
+  ts: number;
+}
+
+/**
  * Phase B' (2026-05-25): a seat in the roster.  Slots are
  * sticky-N: once bound, the integer is reserved for that PC for
  * the life of the campaign.
@@ -422,6 +460,27 @@ export interface SessionState {
    */
   pcSlots: Record<number, Seat>;
   /**
+   * P-R11 (2026-05-25): pending player-initiated retire requests.
+   * Authored by the bound player via `pc-retire-request`; the DM
+   * sees a pip + Accept/Reject pair.  Accept emits the existing
+   * `pc-retire` event (with the player's narrative reason); reject
+   * emits `pc-retire-reject` with an optional note.
+   *
+   * Player-visible (the requesting player needs to see their own
+   * pending status; reject messages must reach them).  The list
+   * is short (typically 0-1 entries); per-PC append-only with the
+   * pc-retire and pc-retire-reject materializers responsible for
+   * removing settled entries.
+   */
+  pcRetireRequests: PcRetireRequest[];
+  /**
+   * P-R11: most recent rejected request per requesting peer.  The
+   * player's UI shows a "DM declined: <note>" pip when their last
+   * request was rejected.  Cleared by a subsequent successful
+   * request.  Player-visible.
+   */
+  pcRetireRejections: PcRetireRejection[];
+  /**
    * Phase 3b-1: PC records materialized from AI chargen synthesis.
    * Cluster-E `acceptSlot()` emits a `pc-create` event that lands a
    * full `CharacterRecord` here, keyed by the derived pcId.  The
@@ -463,7 +522,9 @@ export function emptyState(): SessionState {
     aiAudit: [],
     casterState: {},
     pcSlots: {},
-    synthesizedPcs: {}
+    synthesizedPcs: {},
+    pcRetireRequests: [],
+    pcRetireRejections: []
   };
 }
 
@@ -1155,7 +1216,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // when scene X happened" without reconstructing from peer-rename
   // chronology.  No materializer needed — the audit IS the event in
   // the log.  Per TTRPG-R7 verdict, BLOCKING-3a.
-  'pc-switch'
+  'pc-switch',
+  // P-R11 (2026-05-25): player-initiated retire request + DM
+  // accept/reject.  Request authored by the bound player; accept
+  // routes through the existing `pc-retire` event (coord-authored,
+  // pre-filled from the request); reject surfaces a player-visible
+  // declined-with-note pip.
+  'pc-retire-request',
+  'pc-retire-reject'
 ]);
 
 /**
@@ -2128,6 +2196,127 @@ function applyPcRetireOrArchiveEvent(
     retiredScene: p.scene,
     retiredAt: event.ts
   };
+  // P-R11: when this retire was driven by a player's pending request,
+  // clear the request so it doesn't keep pinging the DM.  Also clear
+  // any stale rejection records for the same (peer, pc) pair so the
+  // player's UI doesn't show "declined" alongside the accomplished
+  // retire.
+  state.pcRetireRequests = state.pcRetireRequests.filter(
+    (r) => r.pcId !== p.pcId
+  );
+  state.pcRetireRejections = state.pcRetireRejections.filter(
+    (r) => r.pcId !== p.pcId
+  );
+}
+
+/**
+ * P-R11 (2026-05-25): record a player's request to retire their own
+ * PC.  Player-authored — the event.peerId IS the requesting peer.
+ * Validates the seat is bound-active and that the peer actually
+ * controls it (no one else can request retire on someone else's PC).
+ * Duplicate requests for the same (peer, pc) replace the prior
+ * entry's timestamp so the DM sees the freshest request.
+ */
+function applyPcRetireRequestEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as {
+    v?: unknown;
+    pcId?: unknown;
+    inFictionReason?: unknown;
+    reason?: unknown;
+  };
+  if (!isCharacterId(p.pcId)) return;
+  if (
+    typeof p.inFictionReason !== 'string' ||
+    p.inFictionReason.length === 0 ||
+    p.inFictionReason.length > 200
+  ) {
+    return;
+  }
+  if (
+    p.reason !== 'died' &&
+    p.reason !== 'departed' &&
+    p.reason !== 'converted-to-npc' &&
+    p.reason !== 'other'
+  ) {
+    return;
+  }
+  // Authorship gate: requesting peer must own the PC via their own
+  // peer-rename pcId binding (the source of truth for who plays
+  // which PC at runtime — seat.controllerPeerId tracks the binding
+  // AUTHOR, typically the DM, not the actual player).  Defense-in-
+  // depth — the engine refuses to record requests for someone
+  // else's PC.
+  const requester = state.peers[event.peerId];
+  if (!requester || requester.pcId !== p.pcId) return;
+  // Also require the seat is bound-active (no requests on already-
+  // retired / archived seats).
+  let controllingSlot: number | undefined;
+  for (const [slotStr, seat] of Object.entries(state.pcSlots)) {
+    if (seat.pcId === p.pcId && seat.state === 'bound-active') {
+      controllingSlot = Number(slotStr);
+      break;
+    }
+  }
+  if (controllingSlot === undefined) return;
+  // Replace any prior request from the same peer for the same PC.
+  state.pcRetireRequests = state.pcRetireRequests.filter(
+    (r) => !(r.requestingPeerId === event.peerId && r.pcId === p.pcId)
+  );
+  state.pcRetireRequests.push({
+    requestingPeerId: event.peerId,
+    pcId: p.pcId,
+    inFictionReason: p.inFictionReason,
+    reason: p.reason,
+    ts: event.ts
+  });
+  // A fresh request clears any stale rejection for the same (peer, pc) —
+  // the player has moved on; the rejection pip should go away.
+  state.pcRetireRejections = state.pcRetireRejections.filter(
+    (r) => !(r.requestingPeerId === event.peerId && r.pcId === p.pcId)
+  );
+}
+
+/**
+ * P-R11 (2026-05-25): record the DM's rejection of a pending
+ * player request.  Coord-authored.  Removes the request from
+ * `pcRetireRequests` and records a `PcRetireRejection` so the
+ * requesting player's UI surfaces a "DM declined: <note>" pip.
+ */
+function applyPcRetireRejectEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as {
+    v?: unknown;
+    requestingPeerId?: unknown;
+    pcId?: unknown;
+    note?: unknown;
+  };
+  if (typeof p.requestingPeerId !== 'string') return;
+  if (!isCharacterId(p.pcId)) return;
+  const note =
+    typeof p.note === 'string' && p.note.length <= 200 ? p.note : undefined;
+  // Drop the matching request (idempotent: if no match, still record
+  // the rejection so the player at least sees the verdict).
+  state.pcRetireRequests = state.pcRetireRequests.filter(
+    (r) => !(r.requestingPeerId === p.requestingPeerId && r.pcId === p.pcId)
+  );
+  // Replace any prior rejection for the same (peer, pc).
+  state.pcRetireRejections = state.pcRetireRejections.filter(
+    (r) => !(r.requestingPeerId === p.requestingPeerId && r.pcId === p.pcId)
+  );
+  state.pcRetireRejections.push({
+    requestingPeerId: p.requestingPeerId,
+    pcId: p.pcId,
+    ...(note !== undefined ? { note } : {}),
+    ts: event.ts
+  });
 }
 
 function applyMapBlobEvent(_state: SessionState, event: QuireEvent): void {
@@ -2191,7 +2380,10 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   // P-R7: audit-only — peer-rename carries the state change; this
   // event records the from/to + scene context for post-session
   // attribution.  No state mutation.
-  'pc-switch': applyAuditOnlyEvent
+  'pc-switch': applyAuditOnlyEvent,
+  // P-R11 (2026-05-25): player → DM retire workflow.
+  'pc-retire-request': applyPcRetireRequestEvent,
+  'pc-retire-reject': applyPcRetireRejectEvent
 };
 
 /**

@@ -191,6 +191,125 @@ describe('<player-rail> P-R7 switcher', () => {
     expect(called).toBe('reggie');
   });
 
+  // ---- P-R11: retire-request pip + inline form ----
+  describe('P-R11 retire-request', () => {
+    function withPip(): PlayerRail {
+      const el = mount();
+      el.character = pc('mei', 'Mei Tanaka');
+      el.effective = el.character.record;
+      el.campaignName = 'Underleaf';
+      el.campaignSlug = 'underleaf';
+      el.retirePip = { status: 'none' };
+      el.onRequestRetire = () => true;
+      return el;
+    }
+
+    it('hides the affordance when retirePip is null', async () => {
+      const el = mount();
+      el.character = pc('mei', 'Mei');
+      el.effective = el.character.record;
+      await el.updateComplete;
+      expect(el.querySelector('.player-rail-retire')).toBeNull();
+    });
+
+    it("status='none' renders 'Request retire…' button", async () => {
+      const el = withPip();
+      await el.updateComplete;
+      const btn = el.querySelector<HTMLButtonElement>(
+        '.player-rail-retire-open'
+      );
+      expect(btn).not.toBeNull();
+      expect(btn?.textContent).toMatch(/Request retire/);
+    });
+
+    it("status='pending' shows a pending pip", async () => {
+      const el = withPip();
+      el.retirePip = { status: 'pending' };
+      await el.updateComplete;
+      expect(el.querySelector('.player-rail-retire-pending')).not.toBeNull();
+      expect(el.querySelector('.player-rail-retire-open')).toBeNull();
+    });
+
+    it("status='declined' shows the note + Resubmit button", async () => {
+      const el = withPip();
+      el.retirePip = {
+        status: 'declined',
+        note: 'one more scene please'
+      };
+      await el.updateComplete;
+      const declined = el.querySelector('.player-rail-retire-declined');
+      expect(declined).not.toBeNull();
+      expect(declined?.textContent).toMatch(/one more scene please/);
+      const btn = el.querySelector('.player-rail-retire-open');
+      expect(btn?.textContent).toMatch(/Resubmit/);
+    });
+
+    it('opens an inline form on Request retire click', async () => {
+      const el = withPip();
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.player-rail-retire-open')!
+        .click();
+      await el.updateComplete;
+      expect(el.querySelector('.player-rail-retire-form')).not.toBeNull();
+      // Submit disabled while text is empty.
+      const submit = el.querySelector<HTMLButtonElement>(
+        '.player-rail-retire-form-submit'
+      );
+      expect(submit?.disabled).toBe(true);
+    });
+
+    it('submitting fires onRequestRetire with the typed reason', async () => {
+      const el = withPip();
+      const calls: Array<[string, string]> = [];
+      el.onRequestRetire = (reason, txt) => {
+        calls.push([reason, txt]);
+        return true;
+      };
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.player-rail-retire-open')!
+        .click();
+      await el.updateComplete;
+      const ta = el.querySelector<HTMLTextAreaElement>(
+        '.player-rail-retire-form-text'
+      )!;
+      ta.value = 'Mei steps away to find her sister';
+      ta.dispatchEvent(new Event('input'));
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.player-rail-retire-form-submit'
+        )!
+        .click();
+      expect(calls).toEqual([
+        ['departed', 'Mei steps away to find her sister']
+      ]);
+    });
+
+    it('Cancel closes the form without firing the callback', async () => {
+      const el = withPip();
+      let called = false;
+      el.onRequestRetire = () => {
+        called = true;
+        return true;
+      };
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>('.player-rail-retire-open')!
+        .click();
+      await el.updateComplete;
+      el
+        .querySelector<HTMLButtonElement>(
+          '.player-rail-retire-form-cancel'
+        )!
+        .click();
+      await el.updateComplete;
+      expect(called).toBe(false);
+      expect(el.querySelector('.player-rail-retire-form')).toBeNull();
+    });
+  });
+
   it('Escape on the chevron closes the dropdown', async () => {
     const el = configure([
       { pcId: 'mei', name: 'Mei', isCurrent: true },
