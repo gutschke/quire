@@ -248,6 +248,27 @@ export class ChargenController implements ReactiveController {
   private readonly _pronounPatchedSlots = new Set<number>();
 
   /**
+   * Post-R5 fix (QA-BUG-5): when Patch-in-place runs and mutates
+   * the cached backstory, stash the AI's ORIGINAL prose so a
+   * later Re-sync uses it as the voice-anchor (instead of the
+   * deterministically-substituted version that may carry verb-
+   * agreement glitches the AI would faithfully preserve).
+   * Cleared on revise/clearSynth/resync-success (the resync
+   * itself produces a fresh original).
+   */
+  private readonly _originalBackstoryForResync = new Map<number, string>();
+
+  /**
+   * Post-R5 fix (QA-BUG-3): re-sync is async (10-30s).  While it's
+   * in flight, accept / revise / edit calls must be gated so a
+   * stale-pre-resync commit doesn't race the new AI output.
+   * Previously this lived ONLY on the UI element (lost across
+   * re-creation, bypassable by non-UI callers).  Lifted to the
+   * controller as the single source of truth.
+   */
+  private readonly _resyncInFlight = new Set<number>();
+
+  /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
    * Same lazy posture as pre-extraction — a regular play session
    * never imports these.
@@ -460,6 +481,9 @@ export class ChargenController implements ReactiveController {
     patch: Partial<PcBackstorySynthesisResponse>
   ): boolean {
     if (this._acceptedSlots.has(slot)) return false;
+    // Post-R5 fix (QA-BUG-3): no edits during re-sync — the AI is
+    // about to overwrite the response anyway.
+    if (this._resyncInFlight.has(slot)) return false;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return false;
     let original = this._preAcceptOriginals.get(slot);
@@ -468,15 +492,31 @@ export class ChargenController implements ReactiveController {
       this._preAcceptOriginals.set(slot, original);
     }
     const origAny = original as Record<string, unknown>;
-    const respAny = result.response as unknown as Record<string, unknown>;
+    // Post-R5 fix (QA-BUG-2): clone the synth-result before
+    // mutating it.  Previously we mutated `result.response` in
+    // place, which meant any external reference (test snapshots,
+    // future debug tools, replay harnesses) saw the post-edit
+    // value as if it were the original AI output.  Cloning makes
+    // the synth-result snapshot immutable to outside readers; the
+    // controller's own cache replaces the entry atomically.
+    const respClone: Record<string, unknown> = {
+      ...(result.response as unknown as Record<string, unknown>)
+    };
     const patchAny = patch as Record<string, unknown>;
     for (const key of Object.keys(patch)) {
-      if (!(key in origAny)) origAny[key] = respAny[key];
-      respAny[key] = patchAny[key];
+      if (!(key in origAny)) origAny[key] = respClone[key];
+      respClone[key] = patchAny[key];
     }
+    this._synthResults.set(slot, {
+      ...result,
+      response: respClone as unknown as PcBackstorySynthesisResponse
+    });
     // Any further edit invalidates the prior pronoun-patch hint —
     // the DM has moved on or the prose changed again.
     this._pronounPatchedSlots.delete(slot);
+    // Post-R5 (QA-BUG-4): edit means the DM noticed the failure
+    // banner and chose a different path — clear it.
+    this._resyncFailures.delete(slot);
     this.host.requestUpdate();
     return true;
   }
@@ -523,9 +563,21 @@ export class ChargenController implements ReactiveController {
    * Wave 2 (2026-05-25): full snapshot of all slots' drift state,
    * suitable for passing into the UI as a property.  The UI uses
    * the keys to know which slots have a banner to show.
+   *
+   * Post-R5 fix (QA-BUG-1): returns a shallow clone (Map + per-slot
+   * Partial copies) so the host's property-pass-through doesn't
+   * share identity with the internal cache.  Without this, a Lit
+   * keyed-render that compares Map identity would never see drift
+   * updates; today renders survive only because `requestUpdate()`
+   * fires unconditionally.  Defense-in-depth + makes the API
+   * harder to misuse.
    */
   preAcceptDriftMap(): Map<number, Partial<PcBackstorySynthesisResponse>> {
-    return this._preAcceptOriginals;
+    const out = new Map<number, Partial<PcBackstorySynthesisResponse>>();
+    for (const [slot, drift] of this._preAcceptOriginals) {
+      out.set(slot, { ...drift });
+    }
+    return out;
   }
 
   /**
@@ -545,6 +597,8 @@ export class ChargenController implements ReactiveController {
    */
   patchInPlace(slot: number): boolean {
     if (this._acceptedSlots.has(slot)) return false;
+    // Post-R5 fix (QA-BUG-3): no Patch during re-sync.
+    if (this._resyncInFlight.has(slot)) return false;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return false;
     const drift = this._preAcceptOriginals.get(slot);
@@ -570,7 +624,21 @@ export class ChargenController implements ReactiveController {
     // Apply the patched backstory + dismiss the drift entries that
     // were honored.  The backstory edit itself does NOT add a new
     // drift entry — it's a direct application of existing drift.
-    result.response.backstory = text;
+    //
+    // Post-R5 fix (QA-BUG-2): clone before mutation (same reasoning
+    // as editSynthFieldPreAccept).
+    // Post-R5 fix (QA-BUG-5): stash the original (pre-patch)
+    // backstory so a later Re-sync uses the AI's draft as the
+    // voice anchor, not the deterministically-substituted prose
+    // that may carry "they was" verb-agreement glitches.
+    if (!this._originalBackstoryForResync.has(slot)) {
+      this._originalBackstoryForResync.set(slot, result.response.backstory);
+    }
+    const respClone: PcBackstorySynthesisResponse = {
+      ...result.response,
+      backstory: text
+    };
+    this._synthResults.set(slot, { ...result, response: respClone });
     const pronounWasPatched = patchable.includes('pronouns');
     for (const field of patchable) {
       delete (drift as Record<string, unknown>)[field];
@@ -611,10 +679,12 @@ export class ChargenController implements ReactiveController {
 
   /**
    * Wave 3 polish: full snapshot of slots with a pending pronoun-
-   * patch hint, for the UI property pass.
+   * patch hint, for the UI property pass.  Post-R5 fix (QA-BUG-1):
+   * returns a fresh Set so the host's @property identity check
+   * sees a new value on every accessor call.
    */
   pronounPatchedSlotsSet(): ReadonlySet<number> {
-    return this._pronounPatchedSlots;
+    return new Set(this._pronounPatchedSlots);
   }
 
   /**
@@ -636,6 +706,11 @@ export class ChargenController implements ReactiveController {
 
   acceptSlot(slot: number): void {
     if (this._acceptedSlots.has(slot)) return;
+    // Post-R5 fix (QA-BUG-3): refuse to commit while a re-sync is
+    // in flight — the result is about to be replaced.  Belt-and-
+    // suspenders alongside the UI-level gate so non-UI callers
+    // (tests, hotkeys) can't sneak past.
+    if (this._resyncInFlight.has(slot)) return;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return; // can't accept failures
     const r = result.response;
@@ -750,10 +825,16 @@ export class ChargenController implements ReactiveController {
     pinnedQuestionIds?: readonly string[]
   ): void {
     if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
+    // Post-R5 fix (QA-BUG-3): the re-sync about to land will
+    // produce a new synth-result.  Revise would clear it anyway,
+    // but firing both creates a race — refuse during the window.
+    if (this._resyncInFlight.has(slot)) return;
     this._synthResults.delete(slot);
     this._acceptedSlots.delete(slot);
     this._preAcceptOriginals.delete(slot);
     this._pronounPatchedSlots.delete(slot);
+    this._originalBackstoryForResync.delete(slot);
+    this._resyncFailures.delete(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
       trimmedReason
@@ -1220,6 +1301,9 @@ export class ChargenController implements ReactiveController {
       // the new backstory, so the drift banner should disappear.
       if (options.resync && result.ok) {
         this._preAcceptOriginals.delete(slot);
+        // Post-R5 (QA-BUG-5): re-sync produced fresh prose; any
+        // stashed pre-Patch original is now stale.
+        this._originalBackstoryForResync.delete(slot);
       }
       return result;
     } finally {
@@ -1241,6 +1325,7 @@ export class ChargenController implements ReactiveController {
     slot: number,
     options: { playerDisplayName?: string; dmConstraints?: string } = {}
   ): Promise<SynthesizeBackstoryResult | null> {
+    if (this._resyncInFlight.has(slot)) return null;
     const synth = this._synthResults.get(slot);
     if (!synth || !synth.ok) return null;
     const drift = this._preAcceptOriginals.get(slot);
@@ -1248,11 +1333,16 @@ export class ChargenController implements ReactiveController {
     const editedFields = Object.keys(drift) as Array<
       'name' | 'pronouns' | 'tags' | 'skillMastery' | 'stats'
     >;
-    // The "previous backstory" anchor is the CURRENT cached backstory
-    // (which is still the AI's original text — Patch-in-place edits
-    // would have already mutated it, but re-sync is only offered when
-    // tags/stats/skills drift, so the prose is still the original AI
-    // draft in the canonical Wave 3b flow).
+    // Post-R5 fix (QA-BUG-5): voice-anchor uses the AI's ORIGINAL
+    // backstory (pre-Patch) when one was stashed.  If the DM ran
+    // Patch-in-place first (mutating the cached prose with
+    // deterministic substitutions that may carry "they was"-style
+    // verb-agreement glitches), the AI would otherwise faithfully
+    // preserve those glitches as voice.  Falls back to the current
+    // cached prose when no Patch has run.
+    const previousBackstory =
+      this._originalBackstoryForResync.get(slot) ??
+      synth.response.backstory;
     const resync: ResyncContext = {
       lockedFields: {
         name: synth.response.name,
@@ -1261,10 +1351,69 @@ export class ChargenController implements ReactiveController {
         skillMastery: synth.response.skillMastery,
         stats: synth.response.stats
       },
-      previousBackstory: synth.response.backstory,
+      previousBackstory,
       editedFields
     };
-    return this.synthesizeForSlot(slot, { ...options, resync });
+    this._resyncInFlight.add(slot);
+    // Clear any prior failure banner — we're trying again.
+    this._resyncFailures.delete(slot);
+    this.host.requestUpdate();
+    try {
+      const result = await this.synthesizeForSlot(slot, {
+        ...options,
+        resync
+      });
+      // Post-R5 fix (QA-BUG-4): on failure, stash the code/message
+      // so the UI surfaces a banner.  Drift remains intact (the
+      // success path in synthesizeForSlot is the only one that
+      // clears _preAcceptOriginals when resync was set).
+      if (result && !result.ok) {
+        this._resyncFailures.set(slot, {
+          code: result.code,
+          message: result.message
+        });
+      }
+      return result;
+    } finally {
+      this._resyncInFlight.delete(slot);
+      this.host.requestUpdate();
+    }
+  }
+
+  /**
+   * Post-R5 fix (QA-BUG-4): which slots had their most recent
+   * re-sync attempt fail (and how).  The UI surfaces this as a
+   * banner so the DM doesn't think nothing happened.  Cleared on
+   * any subsequent edit / re-sync / clear / revise.
+   */
+  private readonly _resyncFailures = new Map<
+    number,
+    { code: string; message: string }
+  >();
+
+  resyncFailuresMap(): ReadonlyMap<number, { code: string; message: string }> {
+    return new Map(this._resyncFailures);
+  }
+
+  dismissResyncFailure(slot: number): void {
+    if (this._resyncFailures.has(slot)) {
+      this._resyncFailures.delete(slot);
+      this.host.requestUpdate();
+    }
+  }
+
+  /**
+   * Post-R5 fix (QA-BUG-3): the canonical "is re-sync in flight"
+   * accessor.  UI + acceptSlot + requestReviseSlot + editSynth*
+   * all gate on this.  Returns a Set snapshot so the UI's
+   * @property comparison sees a fresh value (mirrors BUG-1 fix).
+   */
+  resyncInFlightSet(): ReadonlySet<number> {
+    return new Set(this._resyncInFlight);
+  }
+
+  isResyncInFlight(slot: number): boolean {
+    return this._resyncInFlight.has(slot);
   }
 
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */
@@ -1274,6 +1423,8 @@ export class ChargenController implements ReactiveController {
     this._acceptedSlots.delete(slot);
     this._preAcceptOriginals.delete(slot);
     this._pronounPatchedSlots.delete(slot);
+    this._originalBackstoryForResync.delete(slot);
+    this._resyncFailures.delete(slot);
     if (had) this.host.requestUpdate();
   }
 

@@ -503,8 +503,29 @@ export class ChargenDmReview extends LitElement {
    * Wave 3b (2026-05-25): which slots have a re-sync AI call in
    * flight.  Used to disable buttons + show a spinner during the
    * call so the DM doesn't double-fire.
+   *
+   * Post-R5 fix (QA-BUG-3): lifted from @state to @property — the
+   * controller now owns the authoritative set, and the UI just
+   * reads.  Defense against (a) the UI element being re-created
+   * across renders and losing the in-flight slot, and (b) non-UI
+   * callers (tests, future hotkeys) bypassing the gate.
    */
-  @state() private resyncInFlight = new Set<number>();
+  @property({ attribute: false })
+  resyncInFlight: ReadonlySet<number> = new Set();
+
+  /**
+   * Post-R5 fix (QA-BUG-4): per-slot re-sync failure info, surfaced
+   * as a banner so the DM doesn't think nothing happened when the
+   * AI call errors.  Drift remains intact on failure (success
+   * path is the only one that clears drift in resync mode), so
+   * the DM can retry or fall back to Patch / Leave drift.
+   */
+  @property({ attribute: false })
+  resyncFailures: ReadonlyMap<number, { code: string; message: string }> =
+    new Map();
+
+  @property({ attribute: false })
+  onDismissResyncFailure: ((slot: number) => void) | null = null;
 
   /**
    * Wave 3c (2026-05-25): revise-dialog state.  Replaces the legacy
@@ -2060,6 +2081,7 @@ export class ChargenDmReview extends LitElement {
     const patchable = fields.filter((f) => f === 'name' || f === 'pronouns');
     const hasUnpatchable = fields.length > patchable.length;
     const resyncing = this.resyncInFlight.has(slot);
+    const failure = this.resyncFailures.get(slot);
     return html`
       <div class="chargen-dm-review-drift">
         ${this.renderDriftPip(fields.length, patchable.length, hasUnpatchable)}
@@ -2076,6 +2098,27 @@ export class ChargenDmReview extends LitElement {
               Re-syncing backstory… typically 10-20 seconds.  The new
               backstory will replace the current one; other edits on
               this seat are paused.
+            </div>`
+          : nothing}
+        ${failure
+          ? html`<div
+              class="chargen-dm-review-drift-resync-failure"
+              role="alert"
+            >
+              <span>
+                ⚠ Re-sync failed (<code>${failure.code}</code>):
+                ${failure.message}  Drift edits preserved — you can
+                retry, Patch, or Leave drift.
+              </span>
+              <button
+                type="button"
+                class="chargen-dm-review-drift-resync-failure-dismiss"
+                title="Dismiss this banner"
+                aria-label="Dismiss re-sync failure"
+                @click=${() => this.onDismissResyncFailure?.(slot)}
+              >
+                ×
+              </button>
             </div>`
           : nothing}
       </div>
@@ -2175,14 +2218,9 @@ export class ChargenDmReview extends LitElement {
   private async handleResyncBackstory(slot: number): Promise<void> {
     if (!this.onResyncBackstory) return;
     if (this.resyncInFlight.has(slot)) return;
-    this.resyncInFlight = new Set(this.resyncInFlight).add(slot);
-    try {
-      await this.onResyncBackstory(slot);
-    } finally {
-      const next = new Set(this.resyncInFlight);
-      next.delete(slot);
-      this.resyncInFlight = next;
-    }
+    // Controller manages in-flight set + requestUpdate now (post-R5
+    // QA-BUG-3 fix).  This handler is just plumbing.
+    await this.onResyncBackstory(slot);
   }
 
   /**

@@ -679,6 +679,34 @@ export const quireAppStyles = css`
       font-style: italic;
       opacity: 0.85;
     }
+    /* Post-R5 QA-BUG-4: re-sync failure banner */
+    .chargen-dm-review-drift-resync-failure {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      background: light-dark(#fee2e2, #450a0a);
+      border: 1px solid light-dark(#dc2626, #f87171);
+      border-radius: 4px;
+      font-size: 0.88em;
+    }
+    .chargen-dm-review-drift-resync-failure-dismiss {
+      margin-left: auto;
+      padding: 0 0.4rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+      opacity: 0.6;
+      border-radius: 3px;
+    }
+    .chargen-dm-review-drift-resync-failure-dismiss:hover {
+      opacity: 1;
+      border-color: light-dark(#dc2626, #f87171);
+    }
     /* Wave 2: conditional party-stats nudge */
     .chargen-dm-review-party-nudge {
       display: flex;

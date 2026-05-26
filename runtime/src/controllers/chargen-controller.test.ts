@@ -1702,6 +1702,217 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
     expect(ctrl.wasPronounRecentlyPatched(1)).toBe(false);
   });
+
+  it('post-R5 (QA-BUG-1): preAcceptDriftMap returns a fresh clone, not the internal Map', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    const a = ctrl.preAcceptDriftMap();
+    const b = ctrl.preAcceptDriftMap();
+    expect(a).not.toBe(b); // identity differs each call
+    // Mutating the returned Map does NOT touch the controller's internal state.
+    a.delete(1);
+    expect(ctrl.getPreAcceptDrift(1)).toBeDefined();
+  });
+
+  it('post-R5 (QA-BUG-1): pronounPatchedSlotsSet returns a fresh Set', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'She was here.');
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    ctrl.patchInPlace(1);
+    const a = ctrl.pronounPatchedSlotsSet();
+    const b = ctrl.pronounPatchedSlotsSet();
+    expect(a).not.toBe(b);
+  });
+
+  it('post-R5 (QA-BUG-2): editSynthFieldPreAccept clones the synth-result before mutation', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'Mei was here.');
+    const before = (
+      ctrl as unknown as {
+        _synthResults: Map<number, { response: { name: string } }>;
+      }
+    )._synthResults.get(1)!;
+    const beforeName = before.response.name;
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    // Old reference's name is UNCHANGED (the controller swapped in a new
+    // wrapper object); only the controller's own pointer sees the edit.
+    expect(before.response.name).toBe(beforeName);
+    const after = (
+      ctrl as unknown as {
+        _synthResults: Map<number, { response: { name: string } }>;
+      }
+    )._synthResults.get(1)!;
+    expect(after.response.name).toBe('Mai');
+    expect(after).not.toBe(before); // wrapper identity differs
+  });
+
+  it('post-R5 (QA-BUG-3): acceptSlot refuses while a re-sync is in flight', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    seedResultWithBackstory(ctrl, 1, 'X');
+    // Force the in-flight set (simulating an outstanding resync).
+    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
+      1
+    );
+    ctrl.acceptSlot(1);
+    expect(env.pcCreates.length).toBe(0);
+  });
+
+  it('post-R5 (QA-BUG-3): requestReviseSlot refuses while a re-sync is in flight', () => {
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    seedResultWithBackstory(ctrl, 1, 'X');
+    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
+      1
+    );
+    ctrl.requestReviseSlot(1, 'try again');
+    expect(env.scratchNotes.length).toBe(0);
+  });
+
+  it('post-R5 (QA-BUG-3): editSynthFieldPreAccept refuses while a re-sync is in flight', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
+      1
+    );
+    expect(ctrl.editSynthFieldPreAccept(1, { name: 'New' })).toBe(false);
+  });
+
+  it('post-R5 (QA-BUG-3): patchInPlace refuses while a re-sync is in flight', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'Mei was here.');
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
+      1
+    );
+    expect(ctrl.patchInPlace(1)).toBe(false);
+  });
+
+  it('post-R5 (QA-BUG-5): resyncBackstoryForSlot uses the pre-Patch original backstory', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mai',
+          pronouns: 'they/them',
+          tags: ['data analyst', 't2', 't3'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Insight'],
+          backstory: 'Mai grew up in the Mission.',
+          raw: '{}',
+          tokensIn: 100,
+          tokensOut: 250,
+          responseId: 'r-resync'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    // Seed an original "She was a fighter" backstory.
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, {
+      ok: true,
+      response: {
+        name: 'Mei',
+        pronouns: 'she/her',
+        tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory: 'She was a fighter.  She was kind.',
+        raw: '{}',
+        tokensIn: 100,
+        tokensOut: 250,
+        responseId: 'r-original'
+      },
+      warnings: [],
+      retried: false
+    });
+    // DM patches pronouns → cached backstory now has "they was".
+    ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
+    ctrl.patchInPlace(1);
+    // Add a tag drift so resync is eligible.
+    ctrl.editSynthFieldPreAccept(1, {
+      tags: ['data analyst', 't2', 't3']
+    });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(synthSpy).toHaveBeenCalledTimes(1);
+    const callArg = synthSpy.mock.calls[0][1];
+    // Voice anchor should be the ORIGINAL prose, not the patched version.
+    expect(callArg.resync?.previousBackstory).toMatch(/She was/);
+    expect(callArg.resync?.previousBackstory).not.toMatch(/they was/);
+    synthSpy.mockRestore();
+  });
+
+  it('post-R5 (QA-BUG-4): re-sync failure populates resyncFailuresMap', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: false,
+        code: 'provider-error',
+        message: 'rate-limited; try again'
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, {
+      ok: true,
+      response: {
+        name: 'Mei',
+        pronouns: 'she/her',
+        tags: ['a', 'b', 'c'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory: 'X',
+        raw: '{}',
+        tokensIn: 100,
+        tokensOut: 250,
+        responseId: 'r-1'
+      },
+      warnings: [],
+      retried: false
+    });
+    ctrl.editSynthFieldPreAccept(1, { tags: ['new', 'b', 'c'] });
+    await ctrl.resyncBackstoryForSlot(1);
+    const failures = ctrl.resyncFailuresMap();
+    expect(failures.get(1)?.code).toBe('provider-error');
+    expect(failures.get(1)?.message).toMatch(/rate-limited/);
+    // Drift survives on failure so DM can retry / Patch / Leave drift.
+    expect(ctrl.getPreAcceptDrift(1)?.tags).toBeDefined();
+    synthSpy.mockRestore();
+  });
+
+  it('post-R5 (QA-BUG-4): editing a drifted field clears the resync-failure banner', async () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    seedResultWithBackstory(ctrl, 1, 'X');
+    (
+      ctrl as unknown as {
+        _resyncFailures: Map<number, { code: string; message: string }>;
+      }
+    )._resyncFailures.set(1, { code: 'provider-error', message: 'x' });
+    ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
+    expect(ctrl.resyncFailuresMap().get(1)).toBeUndefined();
+  });
 });
 
 describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {

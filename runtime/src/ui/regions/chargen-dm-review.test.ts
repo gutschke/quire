@@ -1421,6 +1421,9 @@ describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
   });
 
   it('Wave 3 polish: Accept + Revise buttons disable during re-sync (UX-R4 fix #2)', async () => {
+    // Post-R5 QA-BUG-3: in-flight set is now controller-owned + flows
+    // through the `resyncInFlight` property.  Tests set it directly
+    // to simulate the in-flight state (bypassing the controller).
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mei')]]);
     el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
@@ -1428,15 +1431,8 @@ describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
     el.onDismissDrift = () => {};
     el.onAccept = () => {};
     el.onRevise = () => {};
-    let resolve!: () => void;
-    el.onResyncBackstory = () =>
-      new Promise<void>((r) => {
-        resolve = r;
-      });
-    await el.updateComplete;
-    el.querySelector<HTMLButtonElement>(
-      '.chargen-dm-review-drift-resync'
-    )!.click();
+    el.onResyncBackstory = async () => {};
+    el.resyncInFlight = new Set([1]);
     await el.updateComplete;
     const accept = el.querySelector<HTMLButtonElement>(
       '.chargen-dm-review-accept'
@@ -1449,40 +1445,54 @@ describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
     expect(
       el.querySelector('.chargen-dm-review-drift-resync-status')
     ).not.toBeNull();
-    resolve();
-    await new Promise((r) => setTimeout(r, 0));
   });
 
   it('shows the in-flight label + disables during the AI call', async () => {
+    // Post-R5: same controller-owned in-flight set — seed the prop.
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult('Mei')]]);
     el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
     el.onEditPreAccept = () => true;
     el.onDismissDrift = () => {};
-    // Keep the promise pending so we can observe in-flight state.
-    let resolve!: () => void;
-    el.onResyncBackstory = () =>
-      new Promise<void>((r) => {
-        resolve = r;
-      });
+    el.onResyncBackstory = async () => {};
+    el.resyncInFlight = new Set([1]);
     await el.updateComplete;
     const btn = el.querySelector<HTMLButtonElement>(
       '.chargen-dm-review-drift-resync'
     )!;
-    btn.click();
-    await el.updateComplete;
     expect(btn.disabled).toBe(true);
     expect(btn.textContent?.trim()).toBe('Re-syncing…');
-    resolve();
-    await new Promise((r) => setTimeout(r, 0));
+    // Simulate the controller clearing the in-flight set on completion.
+    el.resyncInFlight = new Set();
     await el.updateComplete;
-    // Banner may have cleared itself (drift dismissed on success in
-    // real flow); we only assert that the button is re-enabled IF
-    // it's still rendered.
     const after = el.querySelector<HTMLButtonElement>(
       '.chargen-dm-review-drift-resync'
     );
     if (after) expect(after.disabled).toBe(false);
+  });
+
+  it('post-R5 (QA-BUG-4): re-sync failure banner renders + dismiss button fires', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onResyncBackstory = async () => {};
+    el.resyncFailures = new Map([
+      [1, { code: 'provider-error', message: 'rate-limited; try again' }]
+    ]);
+    const dismissed: number[] = [];
+    el.onDismissResyncFailure = (slot) => dismissed.push(slot);
+    await el.updateComplete;
+    const banner = el.querySelector('.chargen-dm-review-drift-resync-failure');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toMatch(/Re-sync failed/);
+    expect(banner!.textContent).toMatch(/provider-error/);
+    expect(banner!.textContent).toMatch(/rate-limited/);
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync-failure-dismiss'
+    )!.click();
+    expect(dismissed).toEqual([1]);
   });
 });
 
