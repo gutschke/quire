@@ -18,6 +18,7 @@ import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
+import './ui/regions/session-wrap-marks';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
 // region module still exists in the repo for git history; future
@@ -1439,6 +1440,7 @@ export class QuireApp extends LitElement {
       }));
     return html`
       ${this.renderDmRosterStrip()}
+      ${this.renderWrapSessionLauncher()}
       <dm-aside
         .campaignSlug=${slug}
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
@@ -1453,6 +1455,106 @@ export class QuireApp extends LitElement {
       ></dm-aside>
       ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
     `;
+  }
+
+  /**
+   * Phase B P5 (2026-05-26): "Wrap session" launcher button in
+   * the DM aside.  Switches appMode to `session-wrap-marks`; the
+   * renderBody dispatch then shows the end-of-session sheet.
+   * Coord-only — non-coord peers don't see this branch at all.
+   */
+  private renderWrapSessionLauncher(): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    if (this.appMode === 'session-wrap-marks') return nothing;
+    return html`<p class="dm-wrap-session-launcher">
+      <button
+        type="button"
+        class="dm-wrap-session-button"
+        title="Step away from play and walk the roster through end-of-session marks"
+        @click=${() => {
+          this.appMode = 'session-wrap-marks';
+        }}
+      >
+        Wrap session…
+      </button>
+    </p>`;
+  }
+
+  /**
+   * Phase B P5 (2026-05-26): render the end-of-session marks sheet.
+   * Pulls every bound-active PC from filteredShared (DM is coord
+   * here; identity fast-path) + the current markBullets from
+   * pcEdits + the record map.
+   */
+  private renderSessionWrapMarks(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) {
+      return html`<section class="card">
+        <h2>Session wrap is DM-only</h2>
+        <p class="muted">
+          Switch to the DM role (or load a session) to see this surface.
+        </p>
+      </section>`;
+    }
+    const pcIds: string[] = [];
+    const recordMap: Record<string, import('./character-loader').CharacterRecord> = {};
+    const bulletsByPcId: Record<
+      string,
+      import('./character-loader').AdvancementMarkBullets
+    > = {};
+    const sortedSlots = Object.keys(v.shared.pcSlots)
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    for (const slot of sortedSlots) {
+      const seat = v.shared.pcSlots[slot];
+      if (seat.state !== 'bound-active') continue;
+      const pcId = seat.pcId;
+      if (!pcId) continue;
+      const record = v.shared.synthesizedPcs[pcId];
+      if (!record) continue;
+      pcIds.push(pcId);
+      recordMap[pcId] = record;
+      // Bullets live on the record + can be overridden by pc-edits.
+      // Build from both.
+      const baseBullets =
+        (record.markBullets as
+          | import('./character-loader').AdvancementMarkBullets
+          | undefined) ?? {};
+      const edits = v.shared.pcEdits[pcId] ?? {};
+      const overlay: import('./character-loader').AdvancementMarkBullets = {
+        ...baseBullets
+      };
+      for (const key of [
+        'hardMoment',
+        'learned',
+        'risk',
+        'against',
+        'complication'
+      ] as const) {
+        const dotted = (edits as Record<string, unknown>)[
+          `markBullets.${key}`
+        ];
+        if (typeof dotted === 'boolean') overlay[key] = dotted;
+      }
+      bulletsByPcId[pcId] = overlay;
+    }
+    const entries = pcIds.map((pcId) => ({
+      pcId,
+      name: recordMap[pcId].name ?? pcId,
+      bullets: bulletsByPcId[pcId]
+    }));
+    return html`<session-wrap-marks
+      .pcs=${entries}
+      .onSetMarkBullet=${(
+        pcId: string,
+        key: keyof import('./character-loader').AdvancementMarkBullets,
+        value: boolean
+      ) => this.submitPcEdit(pcId, `markBullets.${key}`, value)}
+      .onExit=${() => {
+        this.appMode = 'in-session';
+      }}
+    ></session-wrap-marks>`;
   }
 
   /**
@@ -2620,6 +2722,17 @@ export class QuireApp extends LitElement {
   }
 
   private renderBody(): TemplateResult {
+    // Phase B P5 (2026-05-26): when the DM has switched to
+    // session-wrap-marks mode, replace the normal body with the
+    // end-of-session sheet.  Coord-only — the mode toggle button
+    // is in the DM aside, and the materializer-side pc-edit on
+    // markBullets is already gated.  Players who somehow land on
+    // this mode (via URL) see the same sheet read-only; their
+    // pc-edits would no-op via the existing trust gap (tolerable
+    // under the threat model).
+    if (this.appMode === 'session-wrap-marks') {
+      return this.renderSessionWrapMarks();
+    }
     switch (this.appState.kind) {
       case 'idle':
         return this.renderIdle();

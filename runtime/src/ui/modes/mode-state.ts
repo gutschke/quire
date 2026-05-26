@@ -34,6 +34,7 @@ export type AppMode =
   | 'pre-session'
   | 'in-session'
   | 'post-session'
+  | 'session-wrap-marks'
   | 'authoring'
   | 'solo-browse';
 
@@ -41,6 +42,7 @@ export const APP_MODES: ReadonlySet<AppMode> = new Set<AppMode>([
   'pre-session',
   'in-session',
   'post-session',
+  'session-wrap-marks',
   'authoring',
   'solo-browse'
 ]);

@@ -1733,6 +1733,85 @@ export const quireAppStyles = css`
     }
 
     /* ====================================================== */
+    /* Phase B P5 (2026-05-26): session-wrap-marks end-of-session sheet. */
+    .session-wrap-marks-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      margin: 0 0 0.6rem;
+    }
+    .session-wrap-marks-exit {
+      margin-left: auto;
+      padding: 0.3rem 0.8rem;
+      border: 1px solid light-dark(#0369a1, #38bdf8);
+      background: light-dark(#dbeafe, #082f49);
+      color: light-dark(#0369a1, #bae6fd);
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85em;
+    }
+    .session-wrap-marks-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+    }
+    .session-wrap-marks-pc {
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#fafafa, #1d1d1d);
+    }
+    .session-wrap-marks-pc-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      margin-bottom: 0.4rem;
+    }
+    .session-wrap-marks-counter {
+      margin-left: auto;
+      font-size: 0.85em;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .session-wrap-marks-counter-ready {
+      color: light-dark(#15803d, #4ade80);
+      font-weight: 500;
+    }
+    .session-wrap-marks-bullets {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .session-wrap-marks-bullet-label {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+      cursor: pointer;
+    }
+    .session-wrap-marks-bullet-checked {
+      color: light-dark(#15803d, #4ade80);
+    }
+    .dm-wrap-session-launcher {
+      margin: 0.5rem 0;
+    }
+    .dm-wrap-session-button {
+      padding: 0.3rem 0.8rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.9em;
+    }
+
     /* Phase B P1d (2026-05-26): foci-card field-renderer. */
     .foci-card {
       margin-top: 0.6rem;
