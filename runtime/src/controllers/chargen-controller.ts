@@ -64,7 +64,10 @@ import type {
   CreationPath,
   CharCreationAnswers
 } from '../ui/regions/character-creation';
-import type { SynthesizeBackstoryResult } from '../ai/backstory-synthesizer';
+import type {
+  SynthesizeBackstoryResult,
+  ResyncContext
+} from '../ai/backstory-synthesizer';
 import type { PcBackstorySynthesisResponse } from '../ai/schema';
 
 // Provider id matches the AiKeyStore vocabulary.
@@ -1038,6 +1041,13 @@ export class ChargenController implements ReactiveController {
        * persisted answers as before.
        */
       inlineAnswers?: CharCreationAnswers;
+      /**
+       * Wave 3b (2026-05-25): re-sync mode.  When set, the
+       * synthesizer is told to honor the previous backstory's
+       * voice + the locked-in DM-edited field values; output is
+       * a new backstory that uses the edited values verbatim.
+       */
+      resync?: ResyncContext;
     } = {}
   ): Promise<SynthesizeBackstoryResult> {
     const campaign = this.env.getCurrentCampaign();
@@ -1132,7 +1142,8 @@ export class ChargenController implements ReactiveController {
           validatorOptions: {
             playerDisplayName: options.playerDisplayName,
             placeAllowlist
-          }
+          },
+          ...(options.resync ? { resync: options.resync } : {})
         }
       );
       this._synthResults.set(slot, result);
@@ -1140,11 +1151,56 @@ export class ChargenController implements ReactiveController {
       // accepting the OLD result and then re-synthesizing would
       // otherwise leave the accept stale.
       this._acceptedSlots.delete(slot);
+      // Wave 3b: when this was a successful re-sync, clear ALL
+      // drift entries for the slot — the AI has folded them into
+      // the new backstory, so the drift banner should disappear.
+      if (options.resync && result.ok) {
+        this._preAcceptOriginals.delete(slot);
+      }
       return result;
     } finally {
       this._synthInFlight.delete(slot);
       this.host.requestUpdate();
     }
+  }
+
+  /**
+   * Wave 3b (2026-05-25): re-sync the backstory for a slot after
+   * the DM has edited one or more synth-result fields.  Builds the
+   * ResyncContext from the current synth result + drift snapshot
+   * and delegates to synthesizeForSlot in resync mode.
+   *
+   * Returns null when the slot has no synth result OR no drift
+   * to re-sync against — the UI should hide the verb in that case.
+   */
+  async resyncBackstoryForSlot(
+    slot: number,
+    options: { playerDisplayName?: string; dmConstraints?: string } = {}
+  ): Promise<SynthesizeBackstoryResult | null> {
+    const synth = this._synthResults.get(slot);
+    if (!synth || !synth.ok) return null;
+    const drift = this._preAcceptOriginals.get(slot);
+    if (!drift || Object.keys(drift).length === 0) return null;
+    const editedFields = Object.keys(drift) as Array<
+      'name' | 'pronouns' | 'tags' | 'skillMastery' | 'stats'
+    >;
+    // The "previous backstory" anchor is the CURRENT cached backstory
+    // (which is still the AI's original text — Patch-in-place edits
+    // would have already mutated it, but re-sync is only offered when
+    // tags/stats/skills drift, so the prose is still the original AI
+    // draft in the canonical Wave 3b flow).
+    const resync: ResyncContext = {
+      lockedFields: {
+        name: synth.response.name,
+        pronouns: synth.response.pronouns,
+        tags: synth.response.tags,
+        skillMastery: synth.response.skillMastery,
+        stats: synth.response.stats
+      },
+      previousBackstory: synth.response.backstory,
+      editedFields
+    };
+    return this.synthesizeForSlot(slot, { ...options, resync });
   }
 
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */

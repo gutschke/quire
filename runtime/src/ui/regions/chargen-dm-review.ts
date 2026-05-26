@@ -144,6 +144,13 @@ export type DismissDriftCallback = (
  */
 export type PatchInPlaceCallback = (slot: number) => boolean;
 /**
+ * Wave 3b (2026-05-25): DM asks the AI to re-synthesize the
+ * backstory honoring all drift edits.  Async — caller awaits.
+ * Resolves to undefined when no work could be done (e.g., no
+ * drift or no synth result).
+ */
+export type ResyncBackstoryCallback = (slot: number) => Promise<void>;
+/**
  * P-R6 (2026-05-25): DM retires a bound PC.  Host wires to
  * quire-app.appendPcRetire.  Returns true on append.
  */
@@ -337,6 +344,14 @@ export class ChargenDmReview extends LitElement {
   onPatchInPlace: PatchInPlaceCallback | null = null;
 
   /**
+   * Wave 3b (2026-05-25): "Re-sync backstory" — calls the AI to
+   * regenerate the backstory honoring all drift edits.  Hidden
+   * when no callback wired.
+   */
+  @property({ attribute: false })
+  onResyncBackstory: ResyncBackstoryCallback | null = null;
+
+  /**
    * P-R6 (2026-05-25): retire a bound-active PC.  Hidden when no
    * callback wired.
    */
@@ -461,6 +476,13 @@ export class ChargenDmReview extends LitElement {
     | 'departed'
     | 'converted-to-npc'
     | 'other' = 'departed';
+
+  /**
+   * Wave 3b (2026-05-25): which slots have a re-sync AI call in
+   * flight.  Used to disable buttons + show a spinner during the
+   * call so the DM doesn't double-fire.
+   */
+  @state() private resyncInFlight = new Set<number>();
 
   /**
    * Phase 3b polish: per-seat transient UI state for the pack-
@@ -1816,18 +1838,7 @@ export class ChargenDmReview extends LitElement {
         <ul class="chargen-dm-review-drift-list">
           ${fields.map((field) => this.renderDriftRow(slot, field, drift, synth.response))}
         </ul>
-        ${patchable.length > 0 && this.onPatchInPlace
-          ? html`<div class="chargen-dm-review-drift-actions">
-              <button
-                type="button"
-                class="chargen-dm-review-drift-patch"
-                title="Apply name/pronoun substitutions to the backstory text deterministically (no AI call)"
-                @click=${() => this.handlePatchInPlace(slot)}
-              >
-                Patch ${this.summarizePatchable(patchable)} in backstory
-              </button>
-            </div>`
-          : nothing}
+        ${this.renderDriftActions(slot, patchable, hasUnpatchable)}
       </div>
     `;
   }
@@ -1866,6 +1877,61 @@ export class ChargenDmReview extends LitElement {
 
   private handlePatchInPlace(slot: number): void {
     this.onPatchInPlace?.(slot);
+  }
+
+  /**
+   * Wave 3b: render the drift action row.  Combinations:
+   *   - patchable only        → [Patch]
+   *   - patchable + unpatchable → [Patch] + [Re-sync]
+   *   - unpatchable only      → [Re-sync]
+   *   - no callbacks wired    → nothing
+   */
+  private renderDriftActions(
+    slot: number,
+    patchable: Array<keyof PcBackstorySynthesisResponse>,
+    hasUnpatchable: boolean
+  ): TemplateResult | typeof nothing {
+    const patchAvail = patchable.length > 0 && this.onPatchInPlace;
+    const resyncAvail = hasUnpatchable && this.onResyncBackstory;
+    if (!patchAvail && !resyncAvail) return nothing;
+    const inFlight = this.resyncInFlight.has(slot);
+    return html`<div class="chargen-dm-review-drift-actions">
+      ${patchAvail
+        ? html`<button
+            type="button"
+            class="chargen-dm-review-drift-patch"
+            title="Apply name/pronoun substitutions to the backstory text deterministically (no AI call)"
+            ?disabled=${inFlight}
+            @click=${() => this.handlePatchInPlace(slot)}
+          >
+            Patch ${this.summarizePatchable(patchable)} in backstory
+          </button>`
+        : nothing}
+      ${resyncAvail
+        ? html`<button
+            type="button"
+            class="chargen-dm-review-drift-resync"
+            title="Ask the AI to regenerate the backstory honoring the field edits (one AI call)"
+            ?disabled=${inFlight}
+            @click=${() => void this.handleResyncBackstory(slot)}
+          >
+            ${inFlight ? 'Re-syncing…' : 'Re-sync backstory'}
+          </button>`
+        : nothing}
+    </div>`;
+  }
+
+  private async handleResyncBackstory(slot: number): Promise<void> {
+    if (!this.onResyncBackstory) return;
+    if (this.resyncInFlight.has(slot)) return;
+    this.resyncInFlight = new Set(this.resyncInFlight).add(slot);
+    try {
+      await this.onResyncBackstory(slot);
+    } finally {
+      const next = new Set(this.resyncInFlight);
+      next.delete(slot);
+      this.resyncInFlight = next;
+    }
   }
 
   /**

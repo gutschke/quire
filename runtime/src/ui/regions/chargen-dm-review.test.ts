@@ -1304,6 +1304,96 @@ describe('<chargen-dm-review> — Wave 3a Patch-in-place', () => {
   });
 });
 
+describe('<chargen-dm-review> — Wave 3b Re-sync', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders Re-sync button when drift has non-patchable fields + callback wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onResyncBackstory = async () => {};
+    await el.updateComplete;
+    const resync = el.querySelector('.chargen-dm-review-drift-resync');
+    expect(resync).not.toBeNull();
+    expect(resync!.textContent).toMatch(/Re-sync backstory/);
+  });
+
+  it('does NOT render Re-sync when only patchable fields drifted', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mai')]]);
+    el.preAcceptDrift = new Map([[1, { name: 'Mei' }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    el.onResyncBackstory = async () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-drift-resync')).toBeNull();
+  });
+
+  it('does NOT render Re-sync when callback is not wired', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    // onResyncBackstory intentionally null
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-drift-resync')).toBeNull();
+  });
+
+  it('clicking Re-sync invokes onResyncBackstory with the slot', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    const calls: number[] = [];
+    el.onResyncBackstory = async (slot) => {
+      calls.push(slot);
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync'
+    )!.click();
+    expect(calls).toEqual([1]);
+  });
+
+  it('shows the in-flight label + disables during the AI call', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult('Mei')]]);
+    el.preAcceptDrift = new Map([[1, { tags: ['old', 't2', 't3'] }]]);
+    el.onEditPreAccept = () => true;
+    el.onDismissDrift = () => {};
+    // Keep the promise pending so we can observe in-flight state.
+    let resolve!: () => void;
+    el.onResyncBackstory = () =>
+      new Promise<void>((r) => {
+        resolve = r;
+      });
+    await el.updateComplete;
+    const btn = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync'
+    )!;
+    btn.click();
+    await el.updateComplete;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent?.trim()).toBe('Re-syncing…');
+    resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    // Banner may have cleared itself (drift dismissed on success in
+    // real flow); we only assert that the button is re-enabled IF
+    // it's still rendered.
+    const after = el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-drift-resync'
+    );
+    if (after) expect(after.disabled).toBe(false);
+  });
+});
+
 describe('<chargen-dm-review> — P-R6 retire flow', () => {
   beforeEach(() => {
     document.body.innerHTML = '';

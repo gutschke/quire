@@ -294,3 +294,76 @@ describe('buildBackstorySynthesisPrompt', () => {
     expect(r.user).toContain('Hacker');
   });
 });
+
+describe('assembleUserPrompt — Wave 3b re-sync mode', () => {
+  const RESYNC_LOCKED = {
+    name: 'Mai Tanaka',
+    pronouns: 'they/them',
+    tags: ['data analyst', 'reluctant insomniac', 'sister of a pilot'],
+    skillMastery: ['Tech', 'Insight'],
+    stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 }
+  } as const;
+
+  it('omits the re-sync block when input.resync is absent', () => {
+    const r = assembleUserPrompt(BASE);
+    expect(r).not.toContain('Re-sync request');
+    expect(r).not.toContain('Locked-in fields');
+  });
+
+  it('includes the re-sync section + locked-in fields when resync set', () => {
+    const r = assembleUserPrompt({
+      ...BASE,
+      resync: {
+        lockedFields: RESYNC_LOCKED,
+        previousBackstory: 'Mei grew up in the Mission.',
+        editedFields: ['name', 'pronouns', 'tags', 'skillMastery']
+      }
+    });
+    expect(r).toContain('# Re-sync request');
+    expect(r).toContain('Locked-in fields');
+    expect(r).toContain('Mai Tanaka');
+    expect(r).toContain('they/them');
+    expect(r).toContain('data analyst');
+  });
+
+  it('embeds the previous backstory inside the untrusted-content wrapper', () => {
+    const r = assembleUserPrompt({
+      ...BASE,
+      resync: {
+        lockedFields: RESYNC_LOCKED,
+        previousBackstory: 'Mei grew up in the Mission.',
+        editedFields: ['name']
+      }
+    });
+    expect(r).toContain('Mei grew up in the Mission.');
+    // wrapUntrusted uses <untrusted_content> sentinels for player text.
+    expect(r).toMatch(/<untrusted_content[^>]*previous-backstory/);
+  });
+
+  it('mentions the edited fields in the callout so AI knows where to focus', () => {
+    const r = assembleUserPrompt({
+      ...BASE,
+      resync: {
+        lockedFields: RESYNC_LOCKED,
+        previousBackstory: 'X',
+        editedFields: ['tags', 'skillMastery']
+      }
+    });
+    expect(r).toMatch(/DM edited:.*tags.*skillMastery/);
+  });
+
+  it('uses a re-sync-specific task line (different from fresh synth)', () => {
+    const fresh = assembleUserPrompt(BASE);
+    const resync = assembleUserPrompt({
+      ...BASE,
+      resync: {
+        lockedFields: RESYNC_LOCKED,
+        previousBackstory: 'X',
+        editedFields: ['name']
+      }
+    });
+    expect(fresh).toContain('Synthesize a backstory');
+    expect(resync).toContain('Re-synthesize the backstory');
+    expect(resync).toContain('MUST match the locked-in values verbatim');
+  });
+});

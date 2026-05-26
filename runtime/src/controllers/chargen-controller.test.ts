@@ -1663,3 +1663,147 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     expect(ctrl.patchInPlace(1)).toBe(false);
   });
 });
+
+describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
+  function freshSynthResult(): SynthesizeBackstoryResult {
+    return {
+      ok: true,
+      response: {
+        name: 'Mei',
+        pronouns: 'she/her',
+        tags: ['junior engineer', 'reluctant insomniac', 'sister of a pilot'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory: 'Mei grew up in the Mission.',
+        raw: '{}',
+        tokensIn: 100,
+        tokensOut: 250,
+        responseId: 'r-original'
+      },
+      warnings: [],
+      retried: false
+    };
+  }
+
+  function resyncedResult(): SynthesizeBackstoryResult {
+    return {
+      ok: true,
+      response: {
+        name: 'Mai Tanaka',
+        pronouns: 'they/them',
+        tags: ['data analyst', 'reluctant insomniac', 'sister of a pilot'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Insight'],
+        backstory: 'Mai grew up in the Mission, etc.',
+        raw: '{}',
+        tokensIn: 110,
+        tokensOut: 240,
+        responseId: 'r-resync'
+      },
+      warnings: [],
+      retried: false
+    };
+  }
+
+  beforeEach(() => {
+    if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  it('returns null when the slot has no synth result', async () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(await ctrl.resyncBackstoryForSlot(1)).toBeNull();
+  });
+
+  it('returns null when the slot has no drift to re-sync', async () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    expect(await ctrl.resyncBackstoryForSlot(1)).toBeNull();
+  });
+
+  it('builds the resync context from drift + current synth result', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue(resyncedResult());
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    ctrl.editSynthFieldPreAccept(1, {
+      tags: ['data analyst', 't2', 't3'],
+      skillMastery: ['Tech', 'Insight']
+    });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(synthSpy).toHaveBeenCalledTimes(1);
+    const callArg = synthSpy.mock.calls[0][1];
+    expect(callArg.resync).toBeDefined();
+    expect(callArg.resync!.lockedFields.tags).toEqual([
+      'data analyst',
+      't2',
+      't3'
+    ]);
+    expect(callArg.resync!.lockedFields.skillMastery).toEqual([
+      'Tech',
+      'Insight'
+    ]);
+    expect(callArg.resync!.editedFields).toContain('tags');
+    expect(callArg.resync!.editedFields).toContain('skillMastery');
+    expect(callArg.resync!.previousBackstory).toBe(
+      'Mei grew up in the Mission.'
+    );
+    synthSpy.mockRestore();
+  });
+
+  it('clears ALL drift entries on successful re-sync', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue(resyncedResult());
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    ctrl.editSynthFieldPreAccept(1, {
+      tags: ['data analyst', 't2', 't3'],
+      name: 'Mai'
+    });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
+    synthSpy.mockRestore();
+  });
+
+  it('does NOT clear drift on a failed re-sync (so DM can retry)', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: false,
+        code: 'provider-error',
+        message: 'transient'
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, freshSynthResult());
+    ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
+    await ctrl.resyncBackstoryForSlot(1);
+    expect(ctrl.getPreAcceptDrift(1)?.tags).toBeDefined();
+    synthSpy.mockRestore();
+  });
+});

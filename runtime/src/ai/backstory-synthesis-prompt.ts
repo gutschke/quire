@@ -107,6 +107,43 @@ export interface SynthesisPromptInput {
    * `CampaignCharCreationQuestion[]`) is the canonical sequence.
    */
   answers: AnsweredQuestion[];
+  /**
+   * Wave 3b (2026-05-25): optional re-sync context.  When present,
+   * the synthesizer is being asked to regenerate the backstory
+   * after the DM has edited the originally-synthesized PC fields.
+   * The AI must use the locked-in field values verbatim + honor
+   * the previous draft's voice + still respect the player's answers.
+   */
+  resync?: ResyncContext;
+}
+
+/**
+ * Wave 3b (2026-05-25): re-sync request body.  The DM has edited
+ * one or more synth-result fields and wants the AI to regenerate
+ * the backstory consistent with the edits + previous draft.
+ */
+export interface ResyncContext {
+  /** Edited field values — these MUST land in the output verbatim. */
+  lockedFields: {
+    name: string;
+    pronouns: string;
+    tags: readonly string[];
+    skillMastery: readonly string[];
+    stats: {
+      STR: number;
+      DEX: number;
+      CON: number;
+      INT: number;
+      WIS: number;
+      CHA: number;
+    };
+  };
+  /** AI's previous backstory text — voice + structural anchor. */
+  previousBackstory: string;
+  /** Which fields the DM edited (drives prompt callouts so AI knows what to change). */
+  editedFields: ReadonlyArray<
+    'name' | 'pronouns' | 'tags' | 'skillMastery' | 'stats'
+  >;
 }
 
 /**
@@ -150,20 +187,90 @@ export function assembleUserPrompt(input: SynthesisPromptInput): string {
     parts.push(formatAnsweredQuestion(question, answer));
   }
 
+  // 4b. Wave 3b re-sync block.  When the caller is re-syncing the
+  //     backstory after DM edits, the AI gets the previous draft
+  //     as anchor + the locked-in fields it MUST honor verbatim.
+  if (input.resync) {
+    parts.push(formatResyncBlock(input.resync));
+  }
+
   // 5. Task line.  The "honor every answer" instruction is the
   //    backstop for the AI tendency to "reinterpret" inputs into
   //    a "better" story.
   parts.push('# Your task');
-  parts.push(
-    'Synthesize a backstory that honors EVERY player answer above.  ' +
-      "Do not contradict any of them.  Where the player gave free text, " +
-      'treat their exact words as canonical — quote or paraphrase, but ' +
-      'never override.  Where the player gave a multiple-choice answer, ' +
-      'you have latitude to interpret it but not to invert it.\n\n' +
-      'Return the JSON object specified in the system prompt and nothing else.'
-  );
+  if (input.resync) {
+    parts.push(formatResyncTaskLine(input.resync));
+  } else {
+    parts.push(
+      'Synthesize a backstory that honors EVERY player answer above.  ' +
+        "Do not contradict any of them.  Where the player gave free text, " +
+        'treat their exact words as canonical — quote or paraphrase, but ' +
+        'never override.  Where the player gave a multiple-choice answer, ' +
+        'you have latitude to interpret it but not to invert it.\n\n' +
+        'Return the JSON object specified in the system prompt and nothing else.'
+    );
+  }
 
   return parts.join('\n\n');
+}
+
+/**
+ * Wave 3b: render the re-sync block carrying the previous backstory
+ * + locked-in fields.  Sits between the player answers and the
+ * task line so the AI reads in order: who the PC was (answers),
+ * what they ARE now (locked fields), what was already written
+ * (previous draft), then what to do (task line).
+ */
+function formatResyncBlock(ctx: ResyncContext): string {
+  const parts: string[] = [];
+  parts.push('# Re-sync request');
+  parts.push(
+    'The DM has refined the PC since the original synth.  The fields ' +
+      'below are LOCKED — your output MUST use them verbatim.  The ' +
+      'previous backstory below is the voice + structural anchor; ' +
+      'preserve its tone, register, and any factual detail that ' +
+      'remains consistent with the locked-in fields.  Where the ' +
+      'previous draft contradicts a locked-in field, rewrite that ' +
+      'sentence (or paragraph) so it matches the new value.'
+  );
+  parts.push('## Locked-in fields (echo verbatim in JSON)');
+  parts.push(`- **name**: ${ctx.lockedFields.name}`);
+  parts.push(`- **pronouns**: ${ctx.lockedFields.pronouns}`);
+  parts.push(`- **tags**: ${JSON.stringify(ctx.lockedFields.tags)}`);
+  parts.push(`- **skillMastery**: ${JSON.stringify(ctx.lockedFields.skillMastery)}`);
+  parts.push(`- **stats**: ${JSON.stringify(ctx.lockedFields.stats)}`);
+  if (ctx.editedFields.length > 0) {
+    parts.push(
+      '## DM edited:  ' +
+        ctx.editedFields.join(', ') +
+        '.  Pay special attention to making the backstory consistent with these.'
+    );
+  }
+  parts.push('## Previous backstory (voice + anchor — rewrite, do not copy verbatim)');
+  parts.push(wrapUntrusted(ctx.previousBackstory, 'previous-backstory'));
+  return parts.join('\n\n');
+}
+
+/**
+ * Wave 3b: re-sync task line — different emphasis from a fresh
+ * synthesis.  The AI is told it's iterating on existing content,
+ * not generating from scratch.
+ */
+function formatResyncTaskLine(ctx: ResyncContext): string {
+  return (
+    'Re-synthesize the backstory.  Use the locked-in fields above ' +
+    'EXACTLY (no substitutions, no creative renaming).  Honor the ' +
+    'player answers as canonical.  Preserve voice + register from ' +
+    'the previous draft, but rewrite any sentence that contradicts ' +
+    'the locked-in fields' +
+    (ctx.editedFields.length > 0
+      ? ` (especially around the edited ${ctx.editedFields.join(' / ')})`
+      : '') +
+    '.\n\n' +
+    'Return the JSON object specified in the system prompt and ' +
+    'nothing else.  The JSON\'s name/pronouns/tags/skillMastery/stats ' +
+    'fields MUST match the locked-in values verbatim.'
+  );
 }
 
 /**

@@ -30,8 +30,10 @@ import { PC_BACKSTORY_SYNTHESIS_CALL_SCHEMA } from './schema-json';
 import type { ContextFile } from './campaign-context';
 import {
   buildBackstorySynthesisPrompt,
-  type AnsweredQuestion
+  type AnsweredQuestion,
+  type ResyncContext
 } from './backstory-synthesis-prompt';
+export type { ResyncContext } from './backstory-synthesis-prompt';
 import {
   isPcBackstorySynthesisResponse,
   type PcBackstorySynthesisResponse
@@ -72,6 +74,13 @@ export interface SynthesizeBackstoryRequest {
   spoilerTokens?: readonly string[];
   /** Structural-validator options forwarded to `validatePcBackstory`. */
   validatorOptions?: BackstoryValidationOptions;
+  /**
+   * Wave 3b (2026-05-25): when present, the synthesizer runs in
+   * re-sync mode — the prompt anchors on the previous backstory +
+   * locked-in DM-edited fields.  Same pipeline (parse, spoiler-
+   * check, validate, single auto-retry) otherwise.
+   */
+  resync?: ResyncContext;
 }
 
 /**
@@ -144,7 +153,8 @@ export async function synthesizeBackstory(
     campaignContext: req.campaignContext,
     dmConstraints: req.dmConstraints,
     playerDisplayName: req.playerDisplayName,
-    answers: req.answers
+    answers: req.answers,
+    ...(req.resync ? { resync: req.resync } : {})
   });
 
   // ----- First attempt -----

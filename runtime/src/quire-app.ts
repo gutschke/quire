@@ -1325,6 +1325,9 @@ export class QuireApp extends LitElement {
           field: keyof import('./ai/schema').PcBackstorySynthesisResponse
         ) => this.chargen.dismissPreAcceptDrift(slot, field)}
         .onPatchInPlace=${(slot: number) => this.chargen.patchInPlace(slot)}
+        .onResyncBackstory=${async (slot: number) => {
+          await this.chargen.resyncBackstoryForSlot(slot);
+        }}
         .onRetirePc=${(payload: {
           pcId: string;
           inFictionReason: string;
