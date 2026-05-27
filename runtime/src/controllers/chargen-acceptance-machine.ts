@@ -125,7 +125,7 @@ export class ChargenAcceptanceMachine {
   clearRaceMismatch(slot: number): boolean {
     return this.raceMismatch.delete(slot);
   }
-  raceMismatchSnapshot(): Set<number> {
+  raceMismatchSnapshot(): ReadonlySet<number> {
     return new Set(this.raceMismatch);
   }
 
@@ -155,7 +155,7 @@ export class ChargenAcceptanceMachine {
   clearPronounPatched(slot: number): boolean {
     return this.pronounPatched.delete(slot);
   }
-  pronounPatchedSnapshot(): Set<number> {
+  pronounPatchedSnapshot(): ReadonlySet<number> {
     return new Set(this.pronounPatched);
   }
 
@@ -170,7 +170,7 @@ export class ChargenAcceptanceMachine {
   clearResyncInFlight(slot: number): boolean {
     return this.resyncInFlight.delete(slot);
   }
-  resyncInFlightSnapshot(): Set<number> {
+  resyncInFlightSnapshot(): ReadonlySet<number> {
     return new Set(this.resyncInFlight);
   }
 
@@ -188,7 +188,7 @@ export class ChargenAcceptanceMachine {
   clearResyncFailure(slot: number): boolean {
     return this.resyncFailures.delete(slot);
   }
-  resyncFailuresSnapshot(): Map<number, ResyncFailure> {
+  resyncFailuresSnapshot(): ReadonlyMap<number, ResyncFailure> {
     return new Map(this.resyncFailures);
   }
 
@@ -219,7 +219,7 @@ export class ChargenAcceptanceMachine {
   clearJoiningSession(slot: number): boolean {
     return this.joiningSession.delete(slot);
   }
-  joiningSessionSnapshot(): Map<number, number> {
+  joiningSessionSnapshot(): ReadonlyMap<number, number> {
     return new Map(this.joiningSession);
   }
 

@@ -63,7 +63,10 @@ describe('ChargenAcceptanceMachine — raceMismatch', () => {
   it('snapshot returns a shallow clone (mutation-safe)', () => {
     const m = new ChargenAcceptanceMachine();
     m.markRaceMismatch(1);
-    const snap = m.raceMismatchSnapshot();
+    // Cast through unknown: the public type is ReadonlySet (load-
+    // bearing for caller intent), but at runtime we verify the
+    // returned Set is a fresh clone, not the internal reference.
+    const snap = m.raceMismatchSnapshot() as unknown as Set<number>;
     snap.add(99);
     expect(m.hasRaceMismatch(99)).toBe(false);
   });
@@ -112,7 +115,7 @@ describe('ChargenAcceptanceMachine — resyncInFlight', () => {
   it('snapshot mutation-safe', () => {
     const m = new ChargenAcceptanceMachine();
     m.markResyncInFlight(1);
-    const snap = m.resyncInFlightSnapshot();
+    const snap = m.resyncInFlightSnapshot() as unknown as Set<number>;
     snap.add(99);
     expect(m.isResyncInFlight(99)).toBe(false);
   });
@@ -132,7 +135,10 @@ describe('ChargenAcceptanceMachine — resyncFailures', () => {
   it('snapshot mutation-safe', () => {
     const m = new ChargenAcceptanceMachine();
     m.setResyncFailure(1, { code: 'a', message: 'b' });
-    const snap = m.resyncFailuresSnapshot();
+    const snap = m.resyncFailuresSnapshot() as unknown as Map<
+      number,
+      ResyncFailure
+    >;
     snap.delete(1);
     expect(m.hasResyncFailure(1)).toBe(true);
   });
@@ -167,7 +173,7 @@ describe('ChargenAcceptanceMachine — joiningSession', () => {
   it('snapshot is shallow-clone', () => {
     const m = new ChargenAcceptanceMachine();
     m.setJoiningSession(1, 3);
-    const snap = m.joiningSessionSnapshot();
+    const snap = m.joiningSessionSnapshot() as unknown as Map<number, number>;
     snap.set(1, 99);
     expect(m.getJoiningSession(1)).toBe(3);
   });

@@ -220,6 +220,7 @@ import {
   createPeerjsFactoryFromUrl,
   brokerConfigFromUrl
 } from './session-peerjs';
+import { isVitestTeardownError } from './test-env';
 
 const ROLL_HISTORY_MAX = 5;
 
@@ -270,19 +271,11 @@ function ensureWrapModeChunk(): Promise<WrapModeChunk> {
       },
       (err) => {
         // Reset the cache so a subsequent call retries cleanly.
-        // Vitest tears the env down between test files; when a
-        // session-subscriber fires `void ensureWrapModeChunk()`
-        // near the end of a test, the chunk's inner imports can
-        // resolve after teardown, producing an `EnvironmentTeardownError`
-        // that vitest reports as an unhandled rejection — but it
-        // isn't a production failure.  Swallow it; re-throw
-        // anything else so real load failures still surface.
+        // Vitest tears the env down between test files; the chunk's
+        // inner imports can resolve after teardown + reject with
+        // EnvironmentTeardownError.  Real load errors still throw.
         _wrapModeChunkPromise = null;
-        const isTeardown =
-          err &&
-          typeof err === 'object' &&
-          (err as { name?: string }).name === 'EnvironmentTeardownError';
-        if (!isTeardown) throw err;
+        if (!isVitestTeardownError(err)) throw err;
         return null as unknown as WrapModeChunk;
       }
     );

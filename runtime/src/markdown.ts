@@ -28,6 +28,8 @@
  * will not satisfy this type — the compiler enforces the
  * sanitize-before-inject invariant.
  */
+import { isVitestTeardownError } from './test-env';
+
 export type SanitizedHtml = string & { readonly __brand: 'SanitizedHtml' };
 
 export interface MarkdownDocument {
@@ -195,15 +197,10 @@ export function ensureMarkdownPipeline(): Promise<PipelineModule> {
       (err) => {
         // Reset so a subsequent call retries cleanly.  Vitest's
         // env-teardown can race a `void ensureMarkdownPipeline()`
-        // call near a test boundary and surface as an unhandled
-        // rejection; that's not a production failure.  Real
-        // load errors re-throw.
+        // and surface EnvironmentTeardownError as unhandled.
+        // Real load errors re-throw.
         _pipelinePromise = null;
-        const isTeardown =
-          err &&
-          typeof err === 'object' &&
-          (err as { name?: string }).name === 'EnvironmentTeardownError';
-        if (!isTeardown) throw err;
+        if (!isVitestTeardownError(err)) throw err;
         return null as unknown as PipelineModule;
       }
     );
