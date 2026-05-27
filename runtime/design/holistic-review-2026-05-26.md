@@ -425,12 +425,12 @@ discover them post-implementation.
   Input filter REUSES the extracted `isPcEditDmOnly` helper from
   D4-cleanup-3.  MVP scope: NPC memory of player choices only
   (TTRPG-narrowed).
-- [x] **D1-C [H] UI: wrap-mode stepper** ✓ SHIPPED — UX restructure:
+- [x] **D1-C [H] UI: wrap-mode stepper** ✓ SHIPPED `4ed4947` — UX restructure:
   `<wrap-stepper>` orchestrates Marks → Digest → Diff-review →
   Exit panes.  Digest BEFORE diff-review (digest IS input to
   diff-review).  Existing session-wrap-marks + session-digest
   become panes.  Composes for D2 reverse.
-- [x] **D1-D [H] UI: diff-review-stage + wiring** ✓ SHIPPED —
+- [x] **D1-D [H] UI: diff-review-stage + wiring** ✓ SHIPPED `4ed4947` —
   `<diff-review-stage>` 3-pane (Queue | Card | Context with
   source events); j/k/a/r/e hotkeys; edit-in-place;
   `proposal-create/accept/reject` event kinds (DM-private per
