@@ -36,6 +36,10 @@ import type {
 import type { CasterState, ThreadDebtLevel } from '../../core/state';
 import './magic-arc-controls';
 import '../field-renderers/bonds-card';
+import {
+  DM_ASIDE_BOND_NAV_EVENT,
+  type DmAsideBondNavDetail
+} from './dm-aside';
 import type {
   LogAccidentalGrantCallback,
   MarkRealizationCallback,
@@ -234,6 +238,14 @@ export class DmPcDetail extends LitElement {
    */
   @state() private bondRatifyOpenId: string | null = null;
   @state() private bondRatifyDmNotes: string = '';
+  /**
+   * UX-polish (2026-05-27 post-D5 sweep): two-step reject confirm.
+   * Reject was one-click destructive; only recovery was
+   * interpersonal ("hey Bob, propose that again").  Now: first
+   * click stages the rejection; second click commits; Cancel
+   * dismisses.  Per UX-expert scenario S5.
+   */
+  @state() private bondRejectConfirmId: string | null = null;
 
   // (Wave C5: inline-draft state + willUpdate guard moved into the
   // <magic-arc-controls> child component along with the arc-control
@@ -293,6 +305,35 @@ export class DmPcDetail extends LitElement {
   }
 
   /**
+   * UX-polish (2026-05-27 post-D5 sweep): listen for the dm-aside
+   * "Review on PC sheet →" navigation event + scroll the bond-
+   * proposals section into view when the DM lands here from the
+   * queue.  No-op when no matching pcId; tolerant of missing DOM.
+   */
+  private readonly bondNavHandler = (e: Event): void => {
+    const detail = (e as CustomEvent<DmAsideBondNavDetail>).detail;
+    if (!this.view || !detail || detail.pcId !== this.view.pcId) return;
+    // Defer to next frame so the navigation has completed +
+    // dm-pc-detail has had a chance to (re)render.
+    requestAnimationFrame(() => {
+      const target = this.querySelector('.dm-pc-detail-bond-proposals');
+      if (target instanceof HTMLElement) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  };
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener(DM_ASIDE_BOND_NAV_EVENT, this.bondNavHandler);
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener(DM_ASIDE_BOND_NAV_EVENT, this.bondNavHandler);
+    super.disconnectedCallback();
+  }
+
+  /**
    * D5 (2026-05-27): pending bond proposals awaiting DM
    * ratification.  Each row shows the proposed bond text + target
    * + the player who proposed it.  Two flows:
@@ -335,27 +376,60 @@ export class DmPcDetail extends LitElement {
       <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
       ${isOpen
         ? this.renderBondRatifyForm(view.pcId, p.id)
-        : html`<div class="dm-pc-detail-bond-proposal-actions">
-            ${this.onRatifyBond
-              ? html`<button
-                  type="button"
-                  class="dm-pc-detail-bond-ratify"
-                  @click=${() => this.openBondRatifyForm(p.id)}
-                >
-                  Ratify…
-                </button>`
-              : nothing}
-            ${this.onRemoveBond
-              ? html`<button
-                  type="button"
-                  class="dm-pc-detail-bond-reject"
-                  @click=${() => this.onRemoveBond?.(view.pcId, p.id)}
-                >
-                  Reject
-                </button>`
-              : nothing}
-          </div>`}
+        : this.bondRejectConfirmId === p.id
+          ? html`<div class="dm-pc-detail-bond-proposal-actions">
+              <span class="dm-pc-detail-bond-reject-prompt"
+                >Reject this proposal?  No undo.</span
+              >
+              <button
+                type="button"
+                class="dm-pc-detail-bond-reject-confirm"
+                @click=${() => this.confirmBondReject(view.pcId, p.id)}
+              >
+                Confirm reject
+              </button>
+              <button
+                type="button"
+                class="dm-pc-detail-bond-reject-cancel"
+                @click=${() => this.cancelBondReject()}
+              >
+                Cancel
+              </button>
+            </div>`
+          : html`<div class="dm-pc-detail-bond-proposal-actions">
+              ${this.onRatifyBond
+                ? html`<button
+                    type="button"
+                    class="dm-pc-detail-bond-ratify"
+                    @click=${() => this.openBondRatifyForm(p.id)}
+                  >
+                    Ratify…
+                  </button>`
+                : nothing}
+              ${this.onRemoveBond
+                ? html`<button
+                    type="button"
+                    class="dm-pc-detail-bond-reject"
+                    @click=${() => this.stageBondReject(p.id)}
+                  >
+                    Reject
+                  </button>`
+                : nothing}
+            </div>`}
     </li>`;
+  }
+
+  private stageBondReject(id: string): void {
+    this.bondRejectConfirmId = id;
+  }
+
+  private cancelBondReject(): void {
+    this.bondRejectConfirmId = null;
+  }
+
+  private confirmBondReject(pcId: string, id: string): void {
+    if (this.onRemoveBond) this.onRemoveBond(pcId, id);
+    this.bondRejectConfirmId = null;
   }
 
   private renderBondRatifyForm(pcId: string, id: string): TemplateResult {

@@ -147,10 +147,30 @@ export class DmAside extends LitElement {
       <a
         class="dm-aside-bond-queue-link"
         href=${routeToSearch(route)}
-        @click=${(e: Event) => this.onNavigate?.(e, route)}
+        @click=${(e: Event) => this.handleQueueNav(e, route, p.pcId)}
         >Review on ${p.pcLabel}'s sheet →</a
       >
     </li>`;
+  }
+
+  /**
+   * UX-polish (2026-05-27 post-D5 sweep): "Review on Mei's sheet →"
+   * link routed via onNavigate but did NOT scroll the DM to the
+   * pending bonds section once the page landed.  Per UX-expert
+   * scenario E.  Fires a window-level CustomEvent that
+   * `<dm-pc-detail>` listens for + uses to scroll its bond
+   * proposals section into view.  Pure UX hint — no behavior
+   * change if the listener is absent.
+   */
+  private handleQueueNav(
+    e: Event,
+    route: AppRoute,
+    pcId: string
+  ): void {
+    this.onNavigate?.(e, route);
+    window.dispatchEvent(
+      new CustomEvent(DM_ASIDE_BOND_NAV_EVENT, { detail: { pcId } })
+    );
   }
 
   private renderPinned(pinned: string[]): TemplateResult {
@@ -189,6 +209,19 @@ export class DmAside extends LitElement {
       </ul>
     `;
   }
+}
+
+/**
+ * UX-polish (2026-05-27 post-D5 sweep): custom-event name fired
+ * by `<dm-aside>` when the DM clicks "Review on Mei's sheet →" in
+ * the pending-bond queue.  `<dm-pc-detail>` listens + calls
+ * scrollIntoView on its bond-proposals section when the pcId
+ * matches.  Pure UX hint — no behavior change if the listener is
+ * absent.
+ */
+export const DM_ASIDE_BOND_NAV_EVENT = 'dm-aside-bond-nav';
+export interface DmAsideBondNavDetail {
+  pcId: string;
 }
 
 declare global {

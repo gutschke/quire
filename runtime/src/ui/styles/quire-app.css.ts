@@ -3047,11 +3047,23 @@ export const quireAppStyles = css`
     }
     /* D5-cleanup (2026-05-27): inbound bond direction — visually
      * distinct so the player sees "Mei bonded to me" differently
-     * from "I bonded to Iris."  Lighter dashed border to read as
-     * "context about me, not my own action." */
+     * from "I bonded to Iris."  UX-polish (post-D5 sweep) swapped
+     * dashed border → solid + 3px left rail + explicit "Inbound"
+     * pip; dashed read as "draft/incomplete" per scenario-S3. */
     .bonds-card-row-inbound {
-      border-style: dashed;
+      border-left: 3px solid light-dark(#94a3b8, #64748b);
       background: light-dark(#f8fafc, #1e293b);
+    }
+    .bonds-card-inbound-pip {
+      display: inline-block;
+      padding: 0.05rem 0.4rem;
+      margin-right: 0.4rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: light-dark(#475569, #cbd5e1);
+      background: light-dark(#e2e8f0, #334155);
+      border-radius: 3px;
+      vertical-align: middle;
     }
     .bonds-card-target {
       font-size: 0.9rem;
@@ -3223,6 +3235,33 @@ export const quireAppStyles = css`
     .dm-pc-detail-bond-ratify-hint {
       margin: 0;
       font-size: 0.78rem;
+    }
+    /* UX-polish (2026-05-27 post-D5 sweep): two-step reject. */
+    .dm-pc-detail-bond-reject-prompt {
+      font-size: 0.85rem;
+      color: light-dark(#7f1d1d, #fca5a5);
+      margin-right: 0.4rem;
+      align-self: center;
+    }
+    .dm-pc-detail-bond-reject-confirm {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#fca5a5, #991b1b);
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .dm-pc-detail-bond-reject-cancel {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
     }
     /* D5-C-fix #3 (2026-05-27): pending-bond pip for player. */
     .bonds-card-pending-pip {

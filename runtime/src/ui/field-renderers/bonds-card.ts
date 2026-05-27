@@ -128,8 +128,11 @@ export class BondsCard extends LitElement {
     return html`<li class=${rowClasses}>
       <div class="bonds-card-target">
         ${isInbound
-          ? html`<strong>${b.sourceLabel ?? '(unknown)'}</strong>
-              <span class="muted"> → me</span>`
+          ? html`<span class="bonds-card-inbound-pip" aria-label="Inbound bond"
+              >Inbound</span
+            >
+            <strong>${b.sourceLabel ?? '(unknown)'}</strong>
+            <span class="muted"> → me</span>`
           : html`<strong>${b.targetLabel}</strong>`}
       </div>
       <p class="bonds-card-text">${b.text}</p>
