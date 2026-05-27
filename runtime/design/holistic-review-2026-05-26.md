@@ -40,7 +40,7 @@ Unanimous "do first" — XS-S scope, BLOCKER-grade adversarial findings.
 - [x] **A5** — re-order Aside to spec (`dmAside+roster+chat+ai`);
   add `chat>` / `ai (DM)>` input glyph prefixes.
 
-### Wave B — magic-arc DM runtime controls ✓ SHIPPED `<TBD>`
+### Wave B — magic-arc DM runtime controls ✓ SHIPPED `5dbe48e`
 
 TTRPG expert #1 — engine had the data, UI was read-only.  Discovery
 arc is rules.md's act-1-to-act-2 spine.  Engineering also flagged
