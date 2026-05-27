@@ -2321,11 +2321,26 @@ export const quireAppStyles = css`
       margin: 0 0 0.3rem;
     }
     .session-digest-prior-md {
-      white-space: pre-wrap;
-      font-family: inherit;
       font-size: 0.9rem;
-      margin: 0;
       line-height: 1.45;
+    }
+    .session-digest-prior-md p {
+      margin: 0 0 0.6rem;
+    }
+    .session-digest-prior-md p:last-child {
+      margin-bottom: 0;
+    }
+    .session-digest-prior-md h1,
+    .session-digest-prior-md h2,
+    .session-digest-prior-md h3,
+    .session-digest-prior-md h4 {
+      font-size: 1rem;
+      margin: 0.6rem 0 0.3rem;
+    }
+    .session-digest-prior-md ul,
+    .session-digest-prior-md ol {
+      margin: 0 0 0.6rem;
+      padding-left: 1.2rem;
     }
     .session-digest-prior-older {
       margin-top: 0.5rem;

@@ -127,6 +127,57 @@ describe('QuireApp.generateSessionDigest — DM-only field firewall', () => {
     expect(prompt).not.toContain('dmNotes');
   });
 
+  it('strips DM-private `reason` and `scene` from pc-retire/pc-archive payloads', async () => {
+    // D4-cleanup-4 / Adversarial A-1: pc-retire + pc-archive
+    // payloads carry DM-private `reason` enum + optional `scene`.
+    // The session-digest summarizer is narrow today, but the
+    // firewall must be structural — stripped at the bundling
+    // stage — so a future summarizer refactor that JSON-stringifies
+    // the payload can never surface those fields.
+    const app = mountApp();
+    app.startHosting();
+    await flush();
+    app.setAiApiKey('sk-test');
+    const captured: CapturedCall = {};
+    stubClaudeCapturing(app, captured);
+
+    // Drive a pc-retire AND pc-archive directly so the payload
+    // carries `reason` + `scene` end-to-end.  Bypass the host's
+    // helper methods by appending the events to the session log;
+    // we want to assert the digest bundler scrubs them.
+    const session = (app as unknown as { session: { append: (k: string, p: unknown) => void } }).session;
+    expect(session).toBeTruthy();
+    // First create + bind a PC slot so the materializer accepts retire.
+    session.append('seat-add', { v: 1, slot: 1 });
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei Sandwalker',
+      stats: { str: 0, dex: 1, con: 0, int: 0, wis: 1, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    session.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'she walked back into the rain',
+      reason: 'died',
+      scene: 'ep04/scene-07-secret-dm-only-path'
+    });
+    await flush();
+
+    const result = await app.generateSessionDigest();
+    expect(result.ok).toBe(true);
+    const prompt = captured.prompt ?? '';
+    // In-fiction reason must reach the AI (player-visible).
+    expect(prompt).toContain('she walked back into the rain');
+    // DM-private fields must NOT.
+    expect(prompt).not.toContain('ep04/scene-07-secret-dm-only-path');
+    expect(prompt).not.toMatch(/\breason\s*[":=]\s*['"]?died/);
+  });
+
   it('refuses to generate when there are no qualifying events', async () => {
     const app = mountApp();
     app.startHosting();

@@ -18,7 +18,7 @@
 
 import { EventLog, type QuireEvent } from './core/event-log';
 import { KNOWN_EVENT_KINDS } from './core/state';
-import { DM_ONLY_CHARACTER_FIELDS } from './character-loader';
+import { isDmOnlyCharacterFieldPath } from './character-loader';
 
 /**
  * Wave D-prep-2-A (2026-05-26) — field-granularity firewall.
@@ -62,7 +62,6 @@ import { DM_ONLY_CHARACTER_FIELDS } from './character-loader';
  * Returns null when the event should be dropped entirely; returns
  * the (possibly scrubbed) event otherwise.
  */
-const DM_ONLY_FIELDS_SET = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
 /**
  * Wave D-prep-2-A (2026-05-26) cross-expert resolution: adversarial
  * named `condition` as DM-only on `focus-grant`, but TTRPG-expert
@@ -78,11 +77,7 @@ const FOCUS_DM_ONLY_PAYLOAD_FIELDS = ['boundFor', 'notes'] as const;
 function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
   if (event.kind === 'pc-edit') {
     const p = event.payload as { field?: unknown } | null | undefined;
-    const field = typeof p?.field === 'string' ? p.field : '';
-    // Dotted fields (tax.releaseMoment, threadDebt.rung,
-    // alignmentDrift.marks) — match by top-level prefix.
-    const topLevel = field.split('.')[0];
-    if (topLevel.length > 0 && DM_ONLY_FIELDS_SET.has(topLevel)) {
+    if (isDmOnlyCharacterFieldPath(p?.field)) {
       return null;
     }
     return event;

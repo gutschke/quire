@@ -338,6 +338,113 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   can propose `clock-tick` ops.  Covers world-side time pressure
   (the only TTRPG tool the build doesn't already have for "ordinary
   scene → tense scene").
+### Wave D4-cleanup — post-ship 4-expert sanity check findings 🚧 IN PROGRESS
+
+Triggered by the post-D4 4-expert sanity-check round (2026-05-26
+third pass).  Three findings the experts flagged as material (not
+polish), one prereq for D1 architecture, three D1 must-decide-
+before-coding items.
+
+- [ ] **D4-cleanup-1 (UX-material)** — render prior digest as
+  markdown, not `<pre>`.  UX-expert: this is the highest-value
+  player-facing AI artifact; literal `##` and `*` chars in front
+  of players is a broken surface, not polish.  Use existing
+  `src/markdown.ts` renderer.
+- [ ] **D4-cleanup-2 (TTRPG)** — prompt + input-kind tweaks:
+  (a) DROP `seat-memory-edit` from `SESSION_DIGEST_INPUT_KINDS`
+  (DM-intimate, never AI-fed);  (b) magic-discovery constraint:
+  "pre-Realization stays luck — do not pattern-match across
+  events to imply hidden cause";  (c) Quire-register constraint:
+  "contemporary, mundane-surface; friend at a bar, not fantasy
+  prologue";  (d) thread-debt ladder phrasing;  (e) add prior-
+  digest as "previously" anchor.
+- [ ] **D4-cleanup-3 (Engineering — D1 prereq)** — extract shared
+  `isPcEditDmOnly(event)` helper alongside `DM_ONLY_CHARACTER_FIELDS`
+  in `character-loader.ts`.  Currently duplicated between
+  `persistence.ts:scrubEventForPlayer` and
+  `quire-app.ts:generateSessionDigest`.  D1 will need it for the
+  NPC analog — extract NOW so D1 reuses cleanly.
+- [ ] **D4-cleanup-4 (Adversarial A-1)** — pin pc-retire / pc-
+  archive payload scrub with a regression test.  Today the
+  summarizer is narrow so `reason` + `scene` don't leak; the
+  firewall is implicit.  Test fails if a future summarizer
+  change surfaces those fields.
+
+**Deferred to a polish pass (not blockers):** UX Regenerate
+confirm/relabel, unsaved-draft exit guard, Saved toast,
+char-count, Adversarial A-3 hallucination soft-warn (cheap
+post-gen name/foci cross-check), Engineering `_pendingDigest…`
+return-tuple refactor, JSON.stringify truncation in summarizer,
+input-token cap, per-event free-text untrusted-wrap.
+
+### Wave D1 — living-doc diff review (NPC memory MVP) 🆕 PLANNED
+
+TTRPG narrowed MVP to **NPC memory of player choices ONLY** (vs
+the broader "NPC-update category").  Engineering split into 4
+sub-waves shippable as 2 commits.  UX restructure: wrap mode
+becomes a stepper.  Adversarial flagged 5 must-decide-before-
+coding gates — all locked in this plan section so we don't
+discover them post-implementation.
+
+**MUST-DECIDE-BEFORE-CODING (Adversarial B-1 through B-5, all resolved):**
+
+- **B-1 — kind-classification.** Three new event kinds:
+  `proposal-create` + `proposal-reject` go in
+  `PLAYER_SCOPE_STRIP_KINDS` (DM-private); `proposal-accept` is
+  player-visible BUT its broadcast payload must be re-derived
+  from the resolved field-set, NOT echoed from the diff text.
+  Field-coverage CI lint extended to `DM_ONLY_NPC_FIELDS`.
+- **B-2 — AI scope.**  AI sees DM material (must, to propose
+  updates to DM-only fields).  The structural firewall is on the
+  TARGET FIELD-LIST per proposal, not on the prompt
+  `includeDmNotes` flag.  AI returns each proposal tagged with
+  the target jsonPointer; broker validates pointer against the
+  player-visible/DM-only NPC field allowlist.
+- **B-3 — D4 verifier-blocker analog.** The Stage diff UI
+  displays DM-private rationale, but the accept event broadcasts.
+  Regression test FIRST: DM accepts a `dmNotes` diff → non-coord
+  peer sees nothing in their autosave.  Don't echo the diff text
+  to the event; derive from the resolved NPC field value.
+- **B-4 — concurrent co-DM accept.** Accept events carry
+  `proposalId`; materializer deduplicates by id (Set-based).
+  Last-content-wins on the resolved NPC field is acceptable.
+- **B-5 — persistence model.** Proposals live as DM-private
+  event-log entries (`proposal-create` strip-kind), not
+  Stage-local state.  Survives reload, replicates to co-DMs.
+  Trade-off accepted: log bloats; safe per strip-filter.
+
+**Sub-wave plan:**
+
+- [ ] **D1-A [E] engine** — `src/living/diff-format.ts`
+  (DiffProposal interface + Zod-equivalent validator);
+  `src/living/proposals.ts` (`applyProposalsToWorkingCopy`,
+  baseSha staleness rejection); `DM_ONLY_NPC_FIELDS` in
+  `character-loader.ts`; extend `persistence.coverage.test.ts`.
+  Hostile-proposal tests per redesign-plan.md:446.
+- [ ] **D1-B [E+C] AI prompt** — `src/ai/diff-proposal-prompt.ts`.
+  Input filter REUSES the extracted `isPcEditDmOnly` helper from
+  D4-cleanup-3.  MVP scope: NPC memory of player choices only
+  (TTRPG-narrowed).
+- [ ] **D1-C [H] UI: wrap-mode stepper** — UX restructure:
+  `<wrap-stepper>` orchestrates Marks → Digest → Diff-review →
+  Exit panes.  Digest BEFORE diff-review (digest IS input to
+  diff-review).  Existing session-wrap-marks + session-digest
+  become panes.  Composes for D2 reverse.
+- [ ] **D1-D [H] UI: diff-review-stage + wiring** —
+  `<diff-review-stage>` 3-pane (Queue | Card | Context with
+  source events); j/k/a/r/e/Cmd-Enter hotkeys; edit-in-place;
+  `proposal-create/accept/reject` event kinds; appMode
+  transition; `QuireApp.generateLivingDocProposals` +
+  `commitProposals`.
+
+Commit boundaries: D1-A + D1-B → one commit (engine + prompt,
+testable without UI surface); D1-C + D1-D → one commit (UI swap
++ wiring).
+
+---
+
+### Wave D4 — session-digest ✓ SHIPPED `1ded0d1`
+
 - [x] **D4** ✓ SHIPPED `1ded0d1` — session-digest end-of-session campfire
   recap.  New `session-digest` event kind (coord-only, append-only,
   player-visible) + `applySessionDigestEvent` materializer with

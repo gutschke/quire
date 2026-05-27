@@ -24,6 +24,31 @@ describe('<session-digest> (D4)', () => {
     expect(el.querySelector('.session-digest-editor')).toBeNull();
   });
 
+  it('renders prior digest markdown as HTML (not literal `##` / `**`)', async () => {
+    // D4-cleanup-1 (2026-05-26): the prior digest is the highest-
+    // value player-facing AI artifact — players read it at next
+    // session-open.  Was rendered as <pre> showing literal `##`
+    // and `**` characters; now goes through renderMarkdown.
+    const el = mount();
+    el.priorDigests = [
+      {
+        ts: 1,
+        markdown:
+          '## What happened\n\nMei found the **iron keys** in the underleaf.',
+        savedByPeerId: 'HOST'
+      }
+    ];
+    await el.updateComplete;
+    const primary = el.querySelector('.session-digest-prior-md');
+    expect(primary).not.toBeNull();
+    // Heading element rendered.
+    expect(primary?.querySelector('h2')?.textContent).toBe('What happened');
+    // Bold span rendered (no literal asterisks remaining in textContent).
+    expect(primary?.querySelector('strong')?.textContent).toBe('iron keys');
+    expect(primary?.innerHTML ?? '').not.toContain('##');
+    expect(primary?.innerHTML ?? '').not.toContain('**');
+  });
+
   it('renders the latest prior digest first; older ones collapsed', async () => {
     const el = mount();
     el.priorDigests = [
@@ -32,9 +57,12 @@ describe('<session-digest> (D4)', () => {
       { ts: 3, markdown: 'newest recap', savedByPeerId: 'a' }
     ];
     await el.updateComplete;
-    // Latest renders as the primary card.
+    // Latest renders as the primary card.  Markdown-rendered so
+    // we assert by textContent of the parsed body, not the raw
+    // string (parsed `newest recap` paragraph trims to the same
+    // text).
     const primary = el.querySelector('.session-digest-prior-md');
-    expect(primary?.textContent).toBe('newest recap');
+    expect(primary?.textContent?.trim()).toBe('newest recap');
     // Older ones live behind a disclosure.
     const details = el.querySelector('.session-digest-prior-older');
     expect(details).not.toBeNull();
@@ -231,6 +259,6 @@ describe('<session-digest> (D4)', () => {
     expect(el.querySelector('.session-digest-draft')).toBeNull();
     // Prior digest list shows the just-saved entry.
     const primary = el.querySelector('.session-digest-prior-md');
-    expect(primary?.textContent).toBe('first draft');
+    expect(primary?.textContent?.trim()).toBe('first draft');
   });
 });

@@ -56,16 +56,24 @@ export interface SessionDigestPromptInput {
    * typed text reaching a prompt gets wrapped).
    */
   dmGuidance?: string;
+  /**
+   * D4-cleanup-2 (TTRPG-expert): the most-recent prior digest, if
+   * any.  Anchors the new recap as a continuation rather than a
+   * cold restart ("previously, on..." framing).  Same player-
+   * visibility as the new digest will have.
+   */
+  priorDigestMarkdown?: string;
 }
 
 export const SESSION_DIGEST_SYSTEM_PROMPT = `You are a co-DM helping a TTRPG group remember last session by producing a campfire recap.
 
-# Tone
-Write 200-400 words of past-tense prose, in the voice of a thoughtful narrator looking back.  Three to five short paragraphs.  Player-facing — the digest IS what the players read at the start of the next session.
+# Register
+The setting is contemporary, mundane-surface — people have phones and jobs.  The recap should sound like a friend recounting the week over a beer, not a fantasy chronicler.  Prefer concrete specific nouns ("the bus stop", "her sister's kitchen") over evocative ones ("the threshold", "the hearth").  Past tense, three to five short paragraphs, 200-400 words.  Player-facing — this is what the table reads at the start of the next session.
 
 # Inputs
 You will receive:
 - Campaign anchor (name + current episode/scene)
+- (Optional) the most recent prior recap, as a "previously" anchor
 - A timeline of player-visible events: chat lines, dice rolls (with stat + outcome), scene reveals, PC state changes (harm/stress/marks the players know about), focus grants, retirements
 - Optional DM guidance
 
@@ -77,6 +85,16 @@ You will receive:
 - If a focus was granted, describe it as a discovery, not a stat assignment.
 - Do NOT explain mechanics ("they advanced", "they took 2 harm") — translate to fiction ("she came home limping").
 - Do NOT reveal DM-only material (you are not given any; the bundle is pre-filtered).  If your draft contains anything spoiler-shaped, the DM will edit it out before saving.
+
+# Magic-discovery arc (CRITICAL)
+The campaign's magic system has a "discovery" arc: some PCs cast spells but do not yet know magic exists, and their successes resolve in-fiction as luck, coincidence, or good timing.  Until a PC has explicitly "realized" their magic (a one-way gate event you will see as \`pc-mark-realization\`), DO NOT:
+- name the magical pattern across their actions
+- imply a hidden cause when events resolved as luck/coincidence
+- pattern-match across multiple pre-Realization PCs to suggest something supernatural is at work
+Narrate pre-Realization events as the table experienced them: lucky breaks, near misses, strange timing.  After a PC's \`pc-mark-realization\`, you may name their magic plainly when describing their actions.
+
+# Thread-debt
+"Thread-debt" appears as a DM-narrated ladder of escalating cost, not a numbered state.  When the timeline shows thread-debt context, mirror DM phrasing about consequences ("the world's eye drifted toward her", "the room went quiet without anyone noticing why") rather than labels or rung numbers.
 
 # Output format
 Return JSON: { "markdown": "<the recap>" }`;
@@ -130,8 +148,6 @@ function summarizePayload(e: QuireEvent): string {
     }
     case 'pc-mark-realization':
       return `${stringField(p, 'pcId')} realized their magic (one-way gate)`;
-    case 'seat-memory-edit':
-      return `seat ${numField(p, 'slot')} memory: ${truncate(stringField(p, 'text'), 200)}`;
     default:
       return e.kind;
   }
@@ -173,6 +189,12 @@ export function buildSessionDigestPrompt(
   if (cc.currentEpisode) ccLines.push(`- episode: ${cc.currentEpisode}`);
   if (cc.currentScene) ccLines.push(`- scene: ${cc.currentScene}`);
   parts.push(ccLines.length > 0 ? ccLines.join('\n') : '(unknown)');
+  parts.push('');
+  if (input.priorDigestMarkdown && input.priorDigestMarkdown.trim().length > 0) {
+    parts.push('');
+    parts.push('# Previously (most-recent prior recap)');
+    parts.push(input.priorDigestMarkdown.trim());
+  }
   parts.push('');
   parts.push('# Event timeline (player-visible, chronological)');
   parts.push(renderEventTimeline(input.events));
@@ -242,6 +264,11 @@ export const SESSION_DIGEST_INPUT_KINDS: ReadonlySet<string> = new Set([
   'pc-retire',
   'pc-archive',
   'focus-grant',
-  'pc-mark-realization',
-  'seat-memory-edit'
+  'pc-mark-realization'
+  // D4-cleanup-2 (TTRPG): `seat-memory-edit` removed — seat-memory
+  // is the DM's intimate per-seat note layer (silent-player-firewall
+  // domain).  Feeding it into a player-facing recap risks both
+  // spoiler leakage and stepping on DM voice.  Lives in the same
+  // "DM-typed, never AI-fed" cluster as silent-grant / release-
+  // moment text.
 ]);

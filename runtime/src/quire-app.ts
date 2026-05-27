@@ -98,7 +98,7 @@ import {
   loadCharacter,
   stripDmOnlyFromCharacter,
   CharacterLoadError,
-  DM_ONLY_CHARACTER_FIELDS,
+  isDmOnlyCharacterFieldPath,
   type LoadedCharacter,
   type CharacterKind,
   type CharacterRecord
@@ -2203,26 +2203,34 @@ export class QuireApp extends LitElement {
     const allEvents = this.session?.getEvents() ?? [];
     // Sub-field DM-only firewall: pc-edit is allowlisted (player-
     // visible fields like name + harm + stress feed the recap), but
-    // a pc-edit touching a DM-only top-level field (dmNotes,
-    // magicPhase, tax.*, threadDebt.*, accidentalGrants,
-    // alignmentDrift, knowsTheyCanCast) must NOT reach the AI prompt
-    // — the markdown the DM saves becomes a player-visible event,
-    // and even though the DM is the firewall, scaffolding from DM-
-    // only material would routinely surface in the draft.  Mirrors
-    // the field-level scrub used for player autosaves
-    // (scrubEventForPlayer in persistence.ts).
-    const dmOnlyFieldSet = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
-    const bundled = allEvents.filter((e) => {
+    // a pc-edit touching a DM-only top-level field must NOT reach
+    // the AI prompt — the markdown the DM saves becomes a player-
+    // visible event, and DM-only scaffolding would routinely
+    // surface in the draft.  Uses the shared
+    // `isDmOnlyCharacterFieldPath` predicate (same one
+    // `scrubEventForPlayer` in persistence.ts uses for player
+    // autosaves).
+    const bundledRaw = allEvents.filter((e) => {
       if (e.ts <= cutoff) return false;
       if (!SESSION_DIGEST_INPUT_KINDS.has(e.kind)) return false;
       if (e.kind === 'pc-edit') {
         const field = (e.payload as Record<string, unknown> | undefined)?.field;
-        if (typeof field === 'string') {
-          const topLevel = field.split('.', 1)[0];
-          if (topLevel && dmOnlyFieldSet.has(topLevel)) return false;
-        }
+        if (isDmOnlyCharacterFieldPath(field)) return false;
       }
       return true;
+    });
+    // D4-cleanup-4 (Adversarial A-1): pc-retire / pc-archive
+    // payloads carry DM-private `reason` enum + `scene`.  The
+    // summarizer narrows to pcId + inFictionReason today so nothing
+    // leaks in practice, but the firewall would be implicit in the
+    // summarizer's shape — one refactor that JSON-stringifies the
+    // payload and the DM-private fields ride into the prompt.
+    // Strip at the bundling stage so the firewall is structural.
+    const bundled = bundledRaw.map((e) => {
+      if (e.kind !== 'pc-retire' && e.kind !== 'pc-archive') return e;
+      const p = (e.payload ?? {}) as Record<string, unknown>;
+      const { reason: _reason, scene: _scene, ...safe } = p;
+      return { ...e, payload: safe };
     });
     if (bundled.length === 0) {
       return {
@@ -2251,7 +2259,10 @@ export class QuireApp extends LitElement {
     const { system, user } = buildSessionDigestPrompt({
       events: bundled,
       campaignContext,
-      ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {})
+      ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {}),
+      ...(lastDigest?.markdown
+        ? { priorDigestMarkdown: lastDigest.markdown }
+        : {})
     });
     const provider = this.aiProviders[this.aiProvider];
     try {

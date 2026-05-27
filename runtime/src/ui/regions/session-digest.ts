@@ -34,6 +34,8 @@
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
+import { renderMarkdown } from '../../markdown';
 
 /**
  * Host callback: ask for an AI-drafted digest.  Resolves to a
@@ -116,7 +118,9 @@ export class SessionDigest extends LitElement {
         <p class="muted session-digest-prior-ts">
           saved ${new Date(latest.ts).toLocaleDateString()}
         </p>
-        <pre class="session-digest-prior-md">${latest.markdown}</pre>
+        <div class="session-digest-prior-md">
+          ${unsafeHTML(renderMarkdown(latest.markdown))}
+        </div>
       </article>
       ${older.length > 0
         ? html`<details class="session-digest-prior-older">
@@ -130,7 +134,9 @@ export class SessionDigest extends LitElement {
                     <p class="muted">
                       ${new Date(d.ts).toLocaleDateString()}
                     </p>
-                    <pre class="session-digest-prior-md">${d.markdown}</pre>
+                    <div class="session-digest-prior-md">
+                      ${unsafeHTML(renderMarkdown(d.markdown))}
+                    </div>
                   </li>`
                 )}
             </ul>

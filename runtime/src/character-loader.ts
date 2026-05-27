@@ -301,6 +301,35 @@ export const DM_ONLY_CHARACTER_FIELDS = [
 ] as const satisfies ReadonlyArray<keyof CharacterRecord>;
 export type DmOnlyCharacterField = (typeof DM_ONLY_CHARACTER_FIELDS)[number];
 
+const DM_ONLY_CHARACTER_FIELDS_SET = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
+
+/**
+ * Wave D4-cleanup (2026-05-26) — shared "is this dotted field path
+ * targeting a DM-only top-level character field" predicate.
+ *
+ * pc-edit payloads carry a `field` string that may be flat
+ * (`dmNotes`, `harm`) or dotted (`tax.releaseMoment`,
+ * `threadDebt.rung`, `alignmentDrift.marks`).  The DM-only-ness
+ * check matches by TOP-LEVEL prefix only — once the root field is
+ * in DM_ONLY_CHARACTER_FIELDS, any sub-path under it inherits
+ * DM-only status (a tax.releaseMoment write reveals as much as a
+ * full tax payload would).
+ *
+ * Three call sites need this exact logic and used to maintain
+ * three copies; D-prep-2-A introduced the firewall in
+ * `persistence.ts:scrubEventForPlayer`, D4 added a second copy in
+ * `quire-app.ts:generateSessionDigest`, and D1 needs an NPC
+ * analog.  Centralizing here eliminates the drift risk.
+ *
+ * Returns false for empty/non-string input so callers can pipe
+ * arbitrary payload material through without pre-validation.
+ */
+export function isDmOnlyCharacterFieldPath(field: unknown): boolean {
+  if (typeof field !== 'string' || field.length === 0) return false;
+  const topLevel = field.split('.', 1)[0];
+  return topLevel !== undefined && DM_ONLY_CHARACTER_FIELDS_SET.has(topLevel);
+}
+
 /**
  * Phase B P1b: type alias for a character record the local viewer is
  * authorized to render in DM mode (full record, all DM-only fields
