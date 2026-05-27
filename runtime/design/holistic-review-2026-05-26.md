@@ -142,12 +142,19 @@ together; C2 + C4 (larger scope) deferred.
   them is part of why C2 (chargen-out-of-cockpit) hasn't shipped.
   Doing C4 first turns C2 from L → S.
 
-- [ ] **C5 (new)** — extract `<magic-arc-controls>` from
-  `dm-pc-detail.ts:389-571` (Engineering re-prioritization 2026-05-26,
-  S scope).  Wave B added 4 commit handlers + 4 render forms + draft
-  state + re-entry guards in one method group with a clear seam.
-  Extract before crossing 800 LOC; establishes the extraction
-  pattern for D5 (bonds) which will have identical shape.
+- [x] **C5** — extract `<magic-arc-controls>` ✓ SHIPPED `<TBD>`.
+  Engineering re-prioritization 2026-05-26 recommendation.  dm-pc-
+  detail dropped 621 → 383 LOC (38%); new component is 377 LOC
+  (well under the 800-LOC threshold the audit flagged).  willUpdate
+  draft-leak guard moved WITH the drafts per practice memo
+  `feedback_engineering_practices_from_reviews` #2.  Verifier-N3
+  applied: `DmDetailView extends MagicArcControlsView`, so the
+  parent passes its view directly to the child — kills the
+  hand-rolled mapper + makes future field additions
+  compile-checked at the parent boundary.  9 new direct tests + 16
+  existing dm-pc-detail tests (regression net) all green.
+  Verifier-N2 + N6 inline doc nits applied.  Foreshadows D5
+  (bonds) which inherits the extends-pattern for free.
 
 ### Wave D-prep — firewall regression fix + atomicity + UI gates ✓ SHIPPED `d98daf4`
 
