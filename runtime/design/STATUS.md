@@ -1,5 +1,12 @@
 # STATUS
 
+**2026-05-26 update:** Phase B (P1-P5 + #294 seat memory) landed.
+4-expert holistic review ran 2026-05-26; synthesis + Wave A-D plan
+captured in **`design/holistic-review-2026-05-26.md`** — that is the
+current source-of-truth for next-wave priorities + long-tail items.
+Wave A (firewall hardening) shipped `80e2a78`.  Wave B (magic-arc
+DM runtime controls) is in progress.
+
 Current milestone: **M3c closed `ship-with-followups`** — tagged `milestone-M3c` 2026-05-22.  First play-test 2026-05-22 surfaced 7 concerns; design synthesis + 3-lens prioritization in `design/prioritized-backlog.md`.  Phase 0 (foundations) + Phase 1 (P0 items) are now LANDED (each has a first-commit at minimum; some carry follow-ons noted below).  Phase 2 (chargen workflow stack + seat-strip + constraint DSL) is the active scope.
 
 ## M3c acceptance criteria
