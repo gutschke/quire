@@ -1485,6 +1485,23 @@ function isSafeKey(s: unknown): s is string {
   );
 }
 
+/**
+ * N-2 (2026-05-26) defense-in-depth, post-D3 holistic Adversarial
+ * sweep: `isSafeKey` rejects WHOLE-STRING poisonous keys but
+ * permits dotted forms like `'tax.__proto__'` or `'foo.constructor'`.
+ * Today's downstream path is safe (applyCharacterEdits uses a
+ * prefix allowlist), but practice memo 6c says "every layer."
+ * Mirrors `DM_CLOCK_PROTO_SEGMENTS` (D3) + the diff-format proto
+ * check (D1-D).
+ */
+function hasPoisonousDottedSegment(field: unknown): boolean {
+  if (typeof field !== 'string') return false;
+  for (const seg of field.split('.')) {
+    if (POISONOUS_KEYS.has(seg)) return true;
+  }
+  return false;
+}
+
 function isCharacterId(s: unknown): s is string {
   if (!isSafeKey(s)) return false;
   if (s === '.' || s === '..') return false;
@@ -1944,6 +1961,9 @@ function applyPcEditEvent(state: SessionState, event: QuireEvent): void {
   };
   if (!isCharacterId(p.pcId)) return;
   if (!isSafeKey(p.field)) return;
+  // N-2 (2026-05-26): defense-in-depth — reject dotted-field paths
+  // whose segments include POISONOUS_KEYS.  See hasPoisonousDottedSegment.
+  if (hasPoisonousDottedSegment(p.field)) return;
   // M3c.5: hard-gate enforcement for AI-proposed pc-edits.
   // When causedByResponseId is set, the event is the result of
   // the AiWriteController's dispatch path.  Hard-gated

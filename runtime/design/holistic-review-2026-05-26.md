@@ -653,16 +653,113 @@ WebRTC + 25-materializer event-sourced engine).  Bumped cap to
   chargen lazy chunk so the CSS actually leaves main.  Standalone
   extract is DX-only (per-region CSS modules don't shrink the
   concatenated tagged-template string materially).
-- [ ] **E-LARGE-3.5 [defer, ships with E-LARGE-3]** — materializer-
-  kinds registry in `core/state.ts` so adding a kind doesn't
-  touch the central switch; closes the loop
-  `persistence.coverage.test.ts` lint started.
+- [x] **E-LARGE-3.5** ✓ ALREADY SHIPPED retroactively — materializer-
+  kinds registry in `core/state.ts:3658` (`Record<string,
+  EventApplier>`) was already in place before this item was
+  filed.  Post-D3 holistic-review caught the stale entry.
+  `MATERIALIZERS` registry + `persistence.coverage.test.ts` lint
+  together close the "every new kind needs a materializer" loop.
 - [ ] **Bundle-watch [monitor]** — if main exceeds 180 KB gzip
   after WRAP-LAZY, escalate E-LARGE-1 from defer to now (signals
   undisciplined @state growth).
 - [ ] **E-LARGE-1 [defer]** — controller extraction hold per plan
   doc; ship E-PERF-1 + E-PERF-2 first.  Trigger: 180 KB main OR
   3 more @state clusters in QuireApp.
+
+### Holistic-review round 2 — post-D3 (2026-05-26 third pass)
+
+4-expert round (Engineering / TTRPG / UX / Adversarial) ran
+post-D3.  Findings ranked + most ripe items captured below.
+
+**Shipped in the immediate bundle commit:**
+
+- [x] **B-1 BLOCKER (Adversarial)** ✓ FIXED — `pc-retire` +
+  `pc-archive` payloads carry DM-private `reason` enum + `scene`
+  alongside player-safe `inFictionReason` + `seatMemory`.
+  D4-cleanup-4 added the scrub at AI-digest bundling stage but
+  never updated `persistence.ts:scrubEventForPlayer`.  Player
+  autosaves carried raw DM payload pre-fix.  Same class as
+  D-prep-2-A.  Fixed with new arm in `scrubEventForPlayer` +
+  3 regression tests in `persistence.hostile.test.ts`.
+- [x] **N-2 (Adversarial)** ✓ FIXED — pc-edit poison-key
+  defense-in-depth.  `isSafeKey` rejected WHOLE-STRING
+  `__proto__` but permitted dotted forms like `'tax.__proto__'`.
+  Today's downstream path was safe (applyCharacterEdits prefix
+  allowlist) but practice memo 6c says "every layer."  Added
+  `hasPoisonousDottedSegment(field)` helper + denylist call in
+  `applyPcEditEvent` + 4 regression tests.
+
+**Next-ship sequence (post-cleanup batch):**
+
+- [ ] **UX-1 [now]** — extend `SHIPPED_HOTKEYS` with diff-review
+  j/k/a/r/e (5 keys shipped in D1-D, 0 in overlay).  Single-
+  source-of-truth promise in `quire-help-overlay.ts:22-26` is
+  broken; close the regression before the next hotkey lands.
+  Add optional `context` field to `HelpRow` for "Diff-review
+  only" subgroups.  Pair with potential `.`-key tick-last-clock.
+- [ ] **UX-2 [now]** — rename dm-aside `<h2>DM aide</h2>` to
+  "Pinned NPCs".  After C4 stripped thread-debt + caster-state
+  out, dm-aside is just the pinned-NPC card; the parent column
+  ("DM control column") emerged but the header still says aide.
+- [ ] **Q-LT4 [now]** — grep-lint for `v.shared.synthesizedPcs`
+  outside an allowlist of files (covers post-D2 use at
+  quire-app.ts:1708 + future similar leaks).  XS-scope CI lint
+  insurance; closes the loop the firewall-classification CI
+  lint started.
+- [ ] **WRAP-LAZY [now]** — Engineering #1.  Bundle the 5 wrap-
+  direction regions (`session-wrap-marks`, `session-digest`,
+  `wrap-stepper`, `diff-review-stage`, `session-open-stage`)
+  into one lazy chunk gated on
+  `appMode in {session-wrap-marks, session-open}`.  Predicted
+  ~25 KB main shrink; restores bundle headroom before D5 lands
+  more wrap-adjacent surface.
+- [ ] **Field-firewall consolidation [defer until D5]** —
+  collapse 3 parallel constants
+  (`DM_ONLY_CHARACTER_FIELDS`, `DM_ONLY_NPC_FIELDS`,
+  `FOCUS_DM_ONLY_PAYLOAD_FIELDS`) to a single
+  `getDmOnlyFieldsForEvent(kind, payload)` resolver before D5
+  adds a fourth.
+- [ ] **scrubEventForPlayer registry [defer until D5]** —
+  Adversarial flagged that with `pc-retire` joining `pc-edit` +
+  `focus-grant`, the scrub function is becoming a Map of arms.
+  Convert to `Map<kind, scrubFn>` registry parallel to the
+  materializer registry.
+- [ ] **D5 bonds [next major]** — TTRPG #1.  Per-PC bond field;
+  player-authored, DM-ratified.  Per the chargen-authorship
+  division memo: player owns voice, DM owns fit, AI may help
+  phrasing later.  Pre-design 3-expert round next.
+
+**TTRPG re-prioritization (2026-05-26 third pass):**
+
+- D-wave was almost entirely per-table; per-PC relational state
+  is now the biggest engine-vs-table gap.  D5 bonds is THE
+  urgent ship: lands in session 1, feeds everything else
+  (digest, diff-review, scene-open).
+- D3.5 items (shared clocks, AI clock-tick, digest/open
+  auto-surfacing) should WAIT for real playtest signal — three
+  sessions of feedback first.  Ship-against-speculation risk.
+- Faction-tracking DEFER until first table hits Act I
+  (session 6).  Building before play designs against the wrong
+  shape.
+
+**Adversarial three "MUST DECIDE NEXT WAVE":**
+
+1. **scrubEventForPlayer architecture** — Map registry vs
+   ad-hoc `if (kind === ...)` arms.  Decide at D5 entry.
+2. **Hostile-bundle test coverage** — file stuck at pre-Wave-B
+   feature set; D1/D2/D3 hostile inputs not covered.  Either
+   commit to per-wave extension or document as a snapshot.
+3. **WebRTC wire-strip vs save-strip asymmetry** — DM-only
+   events replicate to all peers via broadcast; render is
+   wiped; save is wiped.  If a player dumps localStorage
+   BEFORE autosave fires, DM-only events are exposed.  Civilized-
+   players threat model accepts this; record the decision.
+
+**New emerging bug class (engineering recommends practice memo
+addition):** "draft-leak across data-identity change" has fired
+three times (Wave B S1, C5 willUpdate, D1-D edits-prune).
+Already in practice memo as #2; refresh with a checklist for
+new @state drafts in regions taking parent-keyed properties.
 
 Commit boundaries: D1-A + D1-B → one commit (engine + prompt,
 testable without UI surface); D1-C + D1-D → one commit (UI swap

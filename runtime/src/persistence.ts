@@ -74,6 +74,27 @@ import { isDmOnlyCharacterFieldPath } from './character-loader';
  */
 const FOCUS_DM_ONLY_PAYLOAD_FIELDS = ['boundFor', 'notes'] as const;
 
+/**
+ * Holistic-review BLOCKER B-1 (2026-05-26, post-D3 sweep): pc-retire
+ * / pc-archive payloads carry DM-private `reason` enum + `scene`
+ * (spoiler-shaped path string like `ep04/scene-07-secret-dm-only-path`)
+ * alongside the player-safe `inFictionReason` + `seatMemory`.
+ *
+ * The kind is correctly classified as player-visible (the seat
+ * transition + in-fiction reason + seat memory all surface to the
+ * player), but the raw payload landed verbatim in player autosaves
+ * pre-fix.  Same structural class as D-prep-2-A (kind-level firewall
+ * doesn't catch sub-field DM-only).  D4-cleanup-4 added a scrub at
+ * the AI-digest BUNDLING stage in quire-app.ts:generateSessionDigest,
+ * but never updated the save-stream firewall here — the comment on
+ * that fix even acknowledged the gap.  Closing now.
+ *
+ * Fields stripped: `reason`, `scene`.  Preserves `v`, `pcId`,
+ * `state`, `inFictionReason`, `seatMemory` (all player-safe per
+ * state.ts:applyPcRetireOrArchiveEvent contract).
+ */
+const RETIRE_DM_ONLY_PAYLOAD_FIELDS = ['reason', 'scene'] as const;
+
 function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
   if (event.kind === 'pc-edit') {
     const p = event.payload as { field?: unknown } | null | undefined;
@@ -99,6 +120,24 @@ function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
     }
     if (!touched) return event;
     return { ...event, payload: { ...p, focus: safeFocus } };
+  }
+  if (event.kind === 'pc-retire' || event.kind === 'pc-archive') {
+    const p = event.payload;
+    if (!p || typeof p !== 'object') return event;
+    const obj = p as Record<string, unknown>;
+    let touched = false;
+    const safe: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (
+        (RETIRE_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)
+      ) {
+        touched = true;
+        continue;
+      }
+      safe[k] = v;
+    }
+    if (!touched) return event;
+    return { ...event, payload: safe };
   }
   return event;
 }

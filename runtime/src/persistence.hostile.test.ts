@@ -206,4 +206,121 @@ describe('serializeSessionForViewer — DM-only event stripping', () => {
       expect(parsed.doc.events.length).toBe(doc.events.length);
     }
   });
+
+  // B-1 (2026-05-26 holistic-review Adversarial sweep): pc-retire
+  // and pc-archive payloads carry DM-private `reason` + `scene`
+  // alongside player-safe `inFictionReason` + `seatMemory`.
+  it('non-coord viewer save STRIPS pc-retire reason + scene fields', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'she walked back into the rain',
+      reason: 'died',
+      scene: 'ep04/scene-07-secret-dm-only-path'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const retire = doc.events.find((e) => e.kind === 'pc-retire');
+    expect(retire).toBeDefined();
+    const p = (retire as { payload: Record<string, unknown> }).payload;
+    // Player-safe fields preserved.
+    expect(p.pcId).toBe('mei');
+    expect(p.state).toBe('bound-retired');
+    expect(p.inFictionReason).toBe('she walked back into the rain');
+    // DM-private fields scrubbed.
+    expect(p.reason).toBeUndefined();
+    expect(p.scene).toBeUndefined();
+    // Serialized JSON also clean — direct grep is the leak test.
+    const json = stringifySave(doc);
+    expect(json).not.toContain('ep04/scene-07-secret-dm-only-path');
+  });
+
+  it('non-coord viewer save STRIPS pc-archive reason + scene fields', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'iris',
+      name: 'Iris',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'iris' });
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'iris',
+      state: 'bound-archived',
+      inFictionReason: 'returned to her old life',
+      reason: 'converted-to-npc',
+      scene: 'ep06/private-scene-name'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const archive = doc.events.find((e) => e.kind === 'pc-archive');
+    expect(archive).toBeDefined();
+    const p = (archive as { payload: Record<string, unknown> }).payload;
+    expect(p.inFictionReason).toBe('returned to her old life');
+    expect(p.reason).toBeUndefined();
+    expect(p.scene).toBeUndefined();
+    const json = stringifySave(doc);
+    expect(json).not.toContain('ep06/private-scene-name');
+  });
+
+  it('coord viewer save preserves pc-retire reason + scene (DM authoring own backup)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'she walked back into the rain',
+      reason: 'died',
+      scene: 'ep04/secret'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'alice', // coord viewer
+      'alice'
+    );
+    const retire = doc.events.find((e) => e.kind === 'pc-retire');
+    expect(retire).toBeDefined();
+    const p = (retire as { payload: Record<string, unknown> }).payload;
+    // DM keeps everything — full audit in their own save.
+    expect(p.reason).toBe('died');
+    expect(p.scene).toBe('ep04/secret');
+  });
 });

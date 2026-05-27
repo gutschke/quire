@@ -774,6 +774,66 @@ describe('materialize — pc edits', () => {
   });
 });
 
+describe('materialize — pc-edit poison-key defense (N-2)', () => {
+  // N-2 (2026-05-26 holistic Adversarial sweep): isSafeKey rejects
+  // whole-string poisonous keys but permits dotted segments.
+  // hasPoisonousDottedSegment closes the rule-6c invariant.
+  it('rejects flat __proto__ field', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', { v: 1, pcId: 'pc1', field: '__proto__', value: 'evil' });
+    const state = materialize(log.events());
+    expect(state.pcEdits.pc1).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('rejects dotted __proto__ segment (e.g. tax.__proto__)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'pc1',
+      field: 'tax.__proto__',
+      value: 'evil'
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits.pc1).toBeUndefined();
+  });
+
+  it('rejects dotted constructor segment (e.g. foo.constructor.bar)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'pc1',
+      field: 'foo.constructor.bar',
+      value: 'evil'
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits.pc1).toBeUndefined();
+  });
+
+  it('still accepts safe dotted fields (tax.sessionsRemaining, alignmentDrift.marks)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'pc1',
+      field: 'tax.sessionsRemaining',
+      value: 2
+    });
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'pc1',
+      field: 'alignmentDrift.marks',
+      value: 3
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits.pc1['tax.sessionsRemaining']).toBe(2);
+    expect(state.pcEdits.pc1['alignmentDrift.marks']).toBe(3);
+  });
+});
+
 describe('materialize — notes', () => {
   it('appends notes', () => {
     const log = new EventLog('alice');
