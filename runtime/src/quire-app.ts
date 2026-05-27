@@ -64,27 +64,17 @@ import './ui/components/quire-modal';
 import './ui/components/quire-help-overlay';
 import { HELP_OPEN_EVENT } from './ui/components/quire-help-overlay';
 import {
-  lintChatDraftSync,
-  lintChatDraftAi,
   type ChatLintAiStatus
 } from './ai/chat-spoiler-lint';
-import { aiSemanticSpoilerCheck } from './ai/spoiler-check';
+import {
+  ChatSpoilerLintController,
+  type ChatSpoilerLintUiState
+} from './controllers/chat-spoiler-lint-controller';
 
-/**
- * Task #293: DM-only chat-spoiler-lint UI state.  Created in
- * submitChat when the coordinator's draft trips the substring
- * scanner; consumed by renderChatSpoilerLintModal.  AI status
- * starts at 'unchecked' (no key) or 'checking' (kicked off
- * background semantic pass); the modal updates as the AI
- * resolves.
- */
-interface ChatSpoilerLintUiState {
-  draft: string;
-  substringHits: string[];
-  aiStatus: ChatLintAiStatus;
-  aiLeaks: string[];
-  aiReason: string;
-}
+// chat-spoiler-lint UI state lives in
+// `./controllers/chat-spoiler-lint-controller` (extracted as
+// part of E-LARGE-1 step 1, 2026-05-27).  Imported via the
+// `ChatSpoilerLintUiState` type below.
 import {
   parseMode,
   DEFAULT_APP_MODE,
@@ -677,8 +667,40 @@ export class QuireApp extends LitElement {
    * AI / cancel).  Per [[feedback_silent_player_firewall]] this
    * surface is COORDINATOR-ONLY; players never see anything.
    */
-  @state() chatSpoilerLint: ChatSpoilerLintUiState | null = null;
-  private chatSpoilerLintAbort: AbortController | null = null;
+  /**
+   * E-LARGE-1 step 1 (2026-05-27): chat-spoiler-lint state cluster
+   * extracted to `ChatSpoilerLintController` (a Lit ReactiveController).
+   * The controller owns the modal state + the AbortController for the
+   * in-flight AI semantic check.  The `chatSpoilerLint` getter below
+   * re-exposes the controller's state for the template + tests.
+   */
+  private readonly chatSpoilerLintCtrl = new ChatSpoilerLintController(this, {
+    isCoordinator: () => this.isCoordinator(),
+    hasActiveSession: () =>
+      this.session !== null && this.sessionView?.status === 'active',
+    getAiApiKey: () => this.aiApiKey,
+    getAiProvider: () => this.aiProvider,
+    getAiProviders: () => this.aiProviders,
+    getAiModel: () => this.aiModel,
+    chatMaxLength: () => CHAT_MAX_LENGTH,
+    sendChat: (text) => {
+      this.session?.append('chat', { text });
+    },
+    submitAiPrompt: (text) => {
+      void this.submitAiPrompt(text);
+    },
+    setChatDraft: (draft) => {
+      this.chatDraft = draft;
+    },
+    clearChatError: () => {
+      this.chatError = null;
+    }
+  });
+
+  /** Public getter for template + tests — see chatSpoilerLintCtrl. */
+  get chatSpoilerLint(): ChatSpoilerLintUiState | null {
+    return this.chatSpoilerLintCtrl.state;
+  }
   /**
    * M3a.6 P-M3a-rail-always-on / P-M3a-stat-chips: the local
    * peer's currently-bound PC character record, loaded
@@ -6819,31 +6841,11 @@ export class QuireApp extends LitElement {
       this.chatError = `Message too long (${trimmed.length} characters; max ${CHAT_MAX_LENGTH}).`;
       return false;
     }
-    // Task #293: DM-only chat-spoiler-lint.  When the coordinator's
-    // draft contains substring-flagged tokens (Quiet, magic, fate,
-    // chosen, …), defer the broadcast and open a confirmation modal.
-    // The lint runs only for the coordinator — a player's draft has
-    // nothing DM-private to leak.  Per the silent-player-firewall
-    // rule, no player ever sees a warning here; the modal stays
-    // exclusively on the DM's screen.
-    if (this.isCoordinator()) {
-      const sync = lintChatDraftSync(trimmed);
-      if (sync.flagged) {
-        const hasKey = this.aiApiKey.length > 0;
-        this.chatSpoilerLint = {
-          draft: trimmed,
-          substringHits: sync.substringHits,
-          aiStatus: hasKey ? 'checking' : 'unchecked',
-          // Conservative default until the AI says otherwise: treat
-          // all substring hits as candidate leaks.  When no AI key
-          // is configured this stays — the DM still decides.
-          aiLeaks: sync.substringHits,
-          aiReason: ''
-        };
-        if (hasKey) void this.runChatSpoilerLintAi();
-        return false;
-      }
-    }
+    // Task #293: DM-only chat-spoiler-lint.  See
+    // `ChatSpoilerLintController`: the controller refuses the
+    // broadcast when the coordinator's draft trips the substring
+    // scanner; players still send through normally.
+    if (!this.chatSpoilerLintCtrl.gateDraft(trimmed)) return false;
     this.session.append('chat', { text: trimmed });
     this.chatDraft = '';
     this.chatError = null;
@@ -6851,92 +6853,24 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * Task #293: kick off the AI semantic-check on a held chat draft.
-   * Reuses `aiSemanticSpoilerCheck` (the same function the chargen
-   * post-synthesis check uses) for consistency — same prompt rules,
-   * same false-positive filtering.  Aborts any prior in-flight check
-   * so an over-eager DM hitting Send twice doesn't leave a zombie
-   * promise.
-   */
-  private async runChatSpoilerLintAi(): Promise<void> {
-    const state = this.chatSpoilerLint;
-    if (!state) return;
-    this.chatSpoilerLintAbort?.abort();
-    const ac = new AbortController();
-    this.chatSpoilerLintAbort = ac;
-    const provider = this.aiProviders[this.aiProvider];
-    const apiKey = this.aiApiKey;
-    const model = this.aiModel;
-    const result = await lintChatDraftAi({
-      draft: state.draft,
-      substringHits: state.substringHits,
-      aiCheck: (candidates, text) =>
-        aiSemanticSpoilerCheck(provider, {
-          apiKey,
-          model,
-          backstory: text,
-          candidateWords: candidates,
-          signal: ac.signal
-        })
-    });
-    if (ac.signal.aborted) return;
-    // Confirm the state still matches the draft we evaluated; if the
-    // DM dismissed and started a new draft, drop the stale result.
-    if (this.chatSpoilerLint?.draft !== state.draft) return;
-    this.chatSpoilerLint = {
-      ...this.chatSpoilerLint,
-      aiStatus: result.status,
-      aiLeaks: result.aiLeaks,
-      aiReason: result.reason
-    };
-  }
-
-  /**
-   * Task #293: DM picked "Send to chat anyway" in the lint modal.
-   * Broadcasts the held draft as-is (no marker, no warning to players
-   * — silent firewall) and clears state.
+   * Task #293 chat-spoiler-lint verbs.  Thin delegations to
+   * `ChatSpoilerLintController` (extracted as part of E-LARGE-1
+   * step 1, 2026-05-27).  See that file for the per-method
+   * semantics.
    */
   confirmChatSpoilerLintSend(): boolean {
-    const state = this.chatSpoilerLint;
-    if (!state) return false;
-    this.chatSpoilerLintAbort?.abort();
-    this.chatSpoilerLint = null;
-    if (!this.session || this.sessionView?.status !== 'active') return false;
-    if (state.draft.length > CHAT_MAX_LENGTH) return false;
-    this.session.append('chat', { text: state.draft });
-    this.chatDraft = '';
-    this.chatError = null;
-    return true;
+    return this.chatSpoilerLintCtrl.confirmSend();
   }
 
-  /**
-   * Task #293: DM picked "Route to AI instead" — the canonical
-   * fix for the chat/AI-confusion threat.  Submits the held draft
-   * as an AI prompt and clears the chat input.
-   */
   routeChatSpoilerLintToAi(): boolean {
-    const state = this.chatSpoilerLint;
-    if (!state) return false;
-    this.chatSpoilerLintAbort?.abort();
-    const draft = state.draft;
-    this.chatSpoilerLint = null;
-    this.chatDraft = '';
-    this.chatError = null;
-    void this.submitAiPrompt(draft);
-    return true;
+    return this.chatSpoilerLintCtrl.routeToAi();
   }
 
   /**
-   * Task #293: DM picked "Edit draft" — close the modal and return
-   * to the chat input with the draft preserved.  Cancels any
-   * in-flight AI check.
+   * "Edit draft" — close the modal + restore the draft.
    */
   dismissChatSpoilerLint(): void {
-    this.chatSpoilerLintAbort?.abort();
-    const draft = this.chatSpoilerLint?.draft ?? this.chatDraft;
-    this.chatSpoilerLint = null;
-    // Restore the draft to the input so the DM can edit + re-send.
-    this.chatDraft = draft;
+    this.chatSpoilerLintCtrl.dismiss();
   }
 
   private displayNameFor(peerId: string): string {
