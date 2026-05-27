@@ -876,7 +876,9 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // Wave B (2026-05-26): added accidental-grant-log + focus-grant → 47.
     // Wave D-prep-2 (2026-05-26): added pc-mark-realization → 48.
     // D4 (2026-05-26): added session-digest → 49.
-    expect(KNOWN_EVENT_KINDS.size).toBe(49);
+    // D1-D (2026-05-26): added proposal-create + proposal-accept +
+    // proposal-reject → 52.
+    expect(KNOWN_EVENT_KINDS.size).toBe(52);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -4348,5 +4350,141 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
     const state = materialize(alice.events());
     expect(state.pcRetireRequests).toHaveLength(1);
     expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  // --- D1-D (2026-05-26): living-doc diff-review proposal lifecycle ---
+
+  describe('proposal-create / accept / reject materializers (D1-D)', () => {
+    function setupCoord(): EventLog {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      return log;
+    }
+    function validCreatePayload(over: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        v: 1,
+        id: 'prop-001',
+        kind: 'npc-update',
+        npcId: 'yui-tanaka',
+        path: 'characters/npcs/yui-tanaka.json',
+        field: 'disposition',
+        before: 'friendly-distant',
+        after: 'friendly-warm',
+        rationale: 'PC1 was kind at the SFO gate',
+        baseSha: 'sha-1',
+        ...over
+      };
+    }
+
+    it('coord creates → proposal lands with audit fields', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      const state = materialize(log.events());
+      expect(state.diffProposals).toHaveLength(1);
+      const p = state.diffProposals[0];
+      expect(p.id).toBe('prop-001');
+      expect(p.proposedByPeerId).toBe('alice');
+      expect(p.field).toBe('disposition');
+      expect(p.after).toBe('friendly-warm');
+      expect(p.ts).toBeGreaterThan(0);
+    });
+
+    it('non-coord proposal-create is silently rejected', () => {
+      const alice = setupCoord();
+      const bob = new EventLog('bob');
+      bob.append('proposal-create', validCreatePayload({ id: 'prop-bob' }));
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('id-based replacement: re-create with the same id replaces the prior entry', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload({ after: 'first version' }));
+      log.append('proposal-create', validCreatePayload({ after: 'second version' }));
+      const state = materialize(log.events());
+      expect(state.diffProposals).toHaveLength(1);
+      expect(state.diffProposals[0].after).toBe('second version');
+    });
+
+    it('proposal-accept removes the proposal from the pending queue', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      log.append('proposal-accept', { v: 1, id: 'prop-001' });
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('proposal-accept on unknown id is a no-op', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      log.append('proposal-accept', { v: 1, id: 'prop-DOES-NOT-EXIST' });
+      const state = materialize(log.events());
+      expect(state.diffProposals).toHaveLength(1);
+    });
+
+    it('Adversarial B-4 idempotency: double-accept by two co-DMs is a no-op on the second', () => {
+      const alice = setupCoord();
+      alice.append('proposal-create', validCreatePayload());
+      const bob = new EventLog('bob');
+      bob.append('coordinator-claim', {});
+      // Both coords accept the same proposal id (race).
+      alice.append('proposal-accept', { v: 1, id: 'prop-001' });
+      bob.append('proposal-accept', { v: 1, id: 'prop-001' });
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('proposal-reject removes from queue (same as accept, no file write)', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      log.append('proposal-reject', { v: 1, id: 'prop-001', reason: 'nope' });
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('rejects proposal-create with path-traversal in path', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload({ path: '../../etc/passwd' }));
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('rejects proposal-create with shell-shaped id', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload({ id: 'prop;rm -rf /' }));
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('rejects proposal-create with oversized after payload', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload({ after: 'x'.repeat(20_001) }));
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('rejects unknown kind (forward-compat guard)', () => {
+      const log = setupCoord();
+      log.append(
+        'proposal-create',
+        validCreatePayload({ kind: 'scene-retcon' })
+      );
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('filterForViewer wipes diffProposals for non-coord viewers', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      const state = materialize(log.events());
+      // Non-coord viewer.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.diffProposals).toEqual([]);
+      // Coord identity fast-path preserves.
+      const dmView = filterForViewer(state, 'alice');
+      expect(dmView.diffProposals).toHaveLength(1);
+    });
   });
 });

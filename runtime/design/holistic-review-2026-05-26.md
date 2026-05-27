@@ -425,17 +425,58 @@ discover them post-implementation.
   Input filter REUSES the extracted `isPcEditDmOnly` helper from
   D4-cleanup-3.  MVP scope: NPC memory of player choices only
   (TTRPG-narrowed).
-- [ ] **D1-C [H] UI: wrap-mode stepper** — UX restructure:
+- [x] **D1-C [H] UI: wrap-mode stepper** ✓ SHIPPED — UX restructure:
   `<wrap-stepper>` orchestrates Marks → Digest → Diff-review →
   Exit panes.  Digest BEFORE diff-review (digest IS input to
   diff-review).  Existing session-wrap-marks + session-digest
   become panes.  Composes for D2 reverse.
-- [ ] **D1-D [H] UI: diff-review-stage + wiring** —
+- [x] **D1-D [H] UI: diff-review-stage + wiring** ✓ SHIPPED —
   `<diff-review-stage>` 3-pane (Queue | Card | Context with
-  source events); j/k/a/r/e/Cmd-Enter hotkeys; edit-in-place;
-  `proposal-create/accept/reject` event kinds; appMode
-  transition; `QuireApp.generateLivingDocProposals` +
-  `commitProposals`.
+  source events); j/k/a/r/e hotkeys; edit-in-place;
+  `proposal-create/accept/reject` event kinds (DM-private per
+  Adversarial B-5 simplified MVP); host methods
+  `generateDiffProposals` + `acceptDiffProposal` +
+  `rejectDiffProposal`; WorkingCopy lazy-init (IDB-backed in
+  prod, injectable for tests via `workingCopyStoreFactory`);
+  per-pointer cards w/ DM-only warm-amber rail; filterForViewer
+  wipes `state.diffProposals` for non-coord viewers.  Bumped
+  MAIN_CHUNK_CAP_BYTES 150→175 KB; bundle currently 159 KB.
+  +52 tests across engine (12), AI prompt (14), UI (24), host
+  regression carryover.
+
+### Architecture review findings (2026-05-26) — captured from spawned agent
+
+Bundle gate hit 151 KB during D1-D build.  Spawned senior eng
+architecture-review agent.  Verdict: 151 KB is **normal-to-good**
+for the feature surface (markdown + DOMPurify + js-yaml + Lit +
+WebRTC + 25-materializer event-sourced engine).  Bumped cap to
+175 KB; the recommended path forward is below.
+
+- [ ] **E-LH6 [now]** — lazy-load markdown.ts (marked + DOMPurify
+  + js-yaml).  ~30 KB gzip main shrink; resets bundle gate to
+  green with comfortable headroom.  Touch every unsafeHTML
+  caller in `quire-app.ts`, `scene-stage.ts`, `session-digest.ts`;
+  wrap renderMarkdown in dynamic import.  Single highest-leverage
+  bundle win.
+- [ ] **WRAP-LAZY [defer, post-D2]** — bundle `<session-wrap-marks>`,
+  `<session-digest>`, `<wrap-stepper>`, `<diff-review-stage>` into
+  one lazy chunk loaded only when DM enters wrap mode.  Static
+  imports at `quire-app.ts:21-26` today.  Pair with D2 (session-
+  open ritual) so both wrap-direction surfaces share one chunk.
+- [ ] **E-LH3 [REVISED]** — pair chargen.css.ts extract with
+  chargen lazy chunk so the CSS actually leaves main.  Standalone
+  extract is DX-only (per-region CSS modules don't shrink the
+  concatenated tagged-template string materially).
+- [ ] **E-LARGE-3.5 [defer, ships with E-LARGE-3]** — materializer-
+  kinds registry in `core/state.ts` so adding a kind doesn't
+  touch the central switch; closes the loop
+  `persistence.coverage.test.ts` lint started.
+- [ ] **Bundle-watch [monitor]** — if main exceeds 180 KB gzip
+  after WRAP-LAZY, escalate E-LARGE-1 from defer to now (signals
+  undisciplined @state growth).
+- [ ] **E-LARGE-1 [defer]** — controller extraction hold per plan
+  doc; ship E-PERF-1 + E-PERF-2 first.  Trigger: 180 KB main OR
+  3 more @state clusters in QuireApp.
 
 Commit boundaries: D1-A + D1-B → one commit (engine + prompt,
 testable without UI surface); D1-C + D1-D → one commit (UI swap

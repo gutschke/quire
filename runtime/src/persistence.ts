@@ -197,7 +197,17 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   // player learns at the table, not from their save file.  Same
   // rationale as ai-prompt/ai-response (no spoiler text, but the
   // existence of the event is DM-internal).
-  'pc-mark-realization'
+  'pc-mark-realization',
+  // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
+  // All three are DM-private — proposals carry AI-prose (rationale,
+  // proposed `after` values including dmNotes prose); accept events
+  // carry the snapshot of the resolved `after`; reject events carry
+  // optional DM-typed reasons.  Players see updated NPC files only
+  // after the DM commits the WorkingCopy back to git (out-of-band
+  // from the session event log per Adversarial B-5 simplified MVP).
+  'proposal-create',
+  'proposal-accept',
+  'proposal-reject'
 ]);
 
 /**

@@ -632,6 +632,27 @@ export interface SessionState {
    * land them in order.
    */
   sessionDigests: SessionDigest[];
+  /**
+   * D1-D (2026-05-26): pending NPC living-doc proposals awaiting
+   * DM ratification.  DM-only state — never shipped to player
+   * peers (`filterForViewer` wipes for non-coord).  Materialized
+   * from the proposal-create / proposal-accept / proposal-reject
+   * event triplet (all coord-only, all in PLAYER_SCOPE_STRIP_KINDS).
+   *
+   * Lifecycle: create appends (dedup by id); accept removes (the
+   * resolved value is applied to the WorkingCopy by the host, NOT
+   * by the materializer — keeps the materializer pure); reject
+   * removes.  Empty by default; populated when DM calls
+   * `generateDiffProposals` in the wrap-stepper diff-review pane.
+   *
+   * Why DM-only-state (not coord-replicated state):
+   *   - Players never see proposals (no leak surface for AI prose)
+   *   - Co-DMs see proposals via the event log (PLAYER_SCOPE_STRIP_KINDS
+   *     keeps players blind; event log itself replicates among coords)
+   *   - The git commit of the WorkingCopy is the player-visible
+   *     broadcast channel — out-of-band from the session event log
+   */
+  diffProposals: PendingDiffProposal[];
 }
 
 /**
@@ -681,7 +702,8 @@ export function emptyState(): SessionState {
     pendingChargenPacks: [],
     pcAccidentalGrants: {},
     pcFoci: {},
-    sessionDigests: []
+    sessionDigests: [],
+    diffProposals: []
   };
 }
 
@@ -896,6 +918,10 @@ export function filterForViewer(
     // post-Realization the DM can choose to narrate callbacks but
     // the grant log itself stays DM-only.
     pcAccidentalGrants: {},
+    // D1-D (2026-05-26): pending living-doc diff proposals are
+    // DM-only.  Players see updated NPCs only after the DM commits
+    // the WorkingCopy back to git (out-of-band channel).
+    diffProposals: [],
     // pcFoci passes through unchanged — foci are player-visible by
     // design at Realization onward.  The UI gate (Grant focus only
     // when magicPhase >= 'realization') is the firewall.
@@ -1532,7 +1558,19 @@ export const KNOWN_EVENT_KINDS = new Set([
   // session recap (AI-drafted, DM-edited).  Player-visible — the
   // recap IS what players read at the start of the next session.
   // Append-only; each save lands as a fresh entry.
-  'session-digest'
+  'session-digest',
+  // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
+  // All three are coord-only AND DM-private (PLAYER_SCOPE_STRIP_KINDS)
+  // — the diff-review is the DM's pre-publication review.  Players
+  // see updated NPCs only after the DM commits the WorkingCopy
+  // back to the campaign repo (out-of-band — git push).
+  // Per Adversarial B-5 simplified MVP: keep proposals entirely
+  // DM-private in the event log; the git commit IS the broadcast
+  // channel to players, not the event log.
+  // Materializer maintains `state.diffProposals` (DM-only state).
+  'proposal-create',
+  'proposal-accept',
+  'proposal-reject'
 ]);
 
 /**
@@ -3049,6 +3087,180 @@ function applySessionDigestEvent(
   state.sessionDigests = [...state.sessionDigests, digest];
 }
 
+// -----------------------------------------------------------------
+// D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
+// All three events are coord-only AND DM-private; the materializer
+// is the SOLE source-of-truth for `state.diffProposals`.
+//
+// Per-event responsibilities:
+//   - proposal-create: validate + append (id-based dedup; second
+//     create with the same id replaces — supports AI regenerate
+//     before any accept)
+//   - proposal-accept: remove by id (the actual file write happens
+//     in the HOST via applyProposalToWorkingCopy; the materializer
+//     only manages the pending-queue state)
+//   - proposal-reject: remove by id
+//
+// Engineering choice: keep the materializer pure (no IO, no WC).
+// The host owns the wc.write side-effect on accept; if the host
+// fails to apply, the proposal still leaves the pending queue
+// (per Adversarial B-4 idempotency — both accept events on the
+// same id are equivalent no-ops).
+// -----------------------------------------------------------------
+
+const PROPOSAL_ID_MAX = 200;
+const PROPOSAL_FIELD_MAX = 200;
+const PROPOSAL_NPCID_MAX = 200;
+const PROPOSAL_RATIONALE_MAX = 2000;
+const PROPOSAL_AFTER_JSON_MAX = 20_000;
+const PROPOSAL_PATH_MAX = 4096;
+const PROPOSAL_SOURCE_EVENT_IDS_MAX = 32;
+const PROPOSAL_ID_RE = /^[A-Za-z0-9._\-:]+$/;
+const PROPOSAL_FIELD_RE = /^[A-Za-z0-9._\-]+$/;
+const PROPOSAL_NPCID_RE = /^[A-Za-z0-9._\-]+$/;
+
+/**
+ * Materialized view of a DiffProposal in shared state.  Subset of
+ * the `DiffProposal` shape from `src/living/diff-format.ts` —
+ * imports avoided to keep `core/state.ts` engine-pure.  The fields
+ * are intentionally the same NAMES so the host can spread between
+ * the two without re-mapping.
+ */
+export interface PendingDiffProposal {
+  id: string;
+  kind: 'npc-update';
+  npcId: string;
+  path: string;
+  field: string;
+  before: unknown;
+  after: unknown;
+  rationale: string;
+  sourceEventIds?: string[];
+  baseSha?: string;
+  /** Coord that emitted the proposal-create event (audit trail). */
+  proposedByPeerId: PeerId;
+  /** Epoch-ms the proposal landed. */
+  ts: number;
+}
+
+interface ProposalCreatePayload {
+  v: 1;
+  id: string;
+  kind: 'npc-update';
+  npcId: string;
+  path: string;
+  field: string;
+  before: unknown;
+  after: unknown;
+  rationale: string;
+  sourceEventIds?: string[];
+  baseSha?: string;
+}
+
+function applyProposalCreateEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<ProposalCreatePayload>;
+  if (typeof p.id !== 'string' || !PROPOSAL_ID_RE.test(p.id)) return;
+  if (p.id.length > PROPOSAL_ID_MAX) return;
+  if (p.kind !== 'npc-update') return;
+  if (typeof p.npcId !== 'string' || !PROPOSAL_NPCID_RE.test(p.npcId)) return;
+  if (p.npcId.length > PROPOSAL_NPCID_MAX) return;
+  if (typeof p.path !== 'string' || p.path.length === 0) return;
+  if (p.path.length > PROPOSAL_PATH_MAX) return;
+  if (p.path.startsWith('/') || p.path.includes('..')) return;
+  if (typeof p.field !== 'string' || !PROPOSAL_FIELD_RE.test(p.field)) return;
+  if (p.field.length > PROPOSAL_FIELD_MAX) return;
+  if (typeof p.rationale !== 'string') return;
+  if (p.rationale.length > PROPOSAL_RATIONALE_MAX) return;
+  let afterJson: string;
+  try {
+    afterJson = JSON.stringify(p.after) ?? '';
+  } catch {
+    return;
+  }
+  if (afterJson.length > PROPOSAL_AFTER_JSON_MAX) return;
+  if (p.sourceEventIds !== undefined) {
+    if (!Array.isArray(p.sourceEventIds)) return;
+    if (p.sourceEventIds.length > PROPOSAL_SOURCE_EVENT_IDS_MAX) return;
+    for (const id of p.sourceEventIds) {
+      if (typeof id !== 'string' || id.length > PROPOSAL_ID_MAX) return;
+    }
+  }
+  if (p.baseSha !== undefined) {
+    if (typeof p.baseSha !== 'string' || p.baseSha.length > 200) return;
+  }
+  const proposal: PendingDiffProposal = {
+    id: p.id,
+    kind: 'npc-update',
+    npcId: p.npcId,
+    path: p.path,
+    field: p.field,
+    before: p.before,
+    after: p.after,
+    rationale: p.rationale,
+    proposedByPeerId: event.peerId,
+    ts: event.ts
+  };
+  if (p.sourceEventIds !== undefined) proposal.sourceEventIds = [...p.sourceEventIds];
+  if (p.baseSha !== undefined) proposal.baseSha = p.baseSha;
+  // Id-based replacement: a re-create with the same id REPLACES
+  // the prior entry.  Supports the AI-regenerate-before-accept
+  // flow without leaving duplicate proposals in the queue.
+  state.diffProposals = [
+    ...state.diffProposals.filter((q) => q.id !== p.id),
+    proposal
+  ];
+}
+
+interface ProposalAcceptPayload {
+  v: 1;
+  id: string;
+  /**
+   * Snapshot of the resolved `after` at accept-time, in case the
+   * DM edited the proposal before clicking Accept.  Stored in the
+   * audit trail (event log) but NOT re-applied by the materializer
+   * — the host already wrote it to the WorkingCopy.
+   */
+  resolvedAfter?: unknown;
+}
+
+function applyProposalAcceptEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<ProposalAcceptPayload>;
+  if (typeof p.id !== 'string' || p.id.length === 0) return;
+  // Idempotent: removing an already-removed id is a no-op (Adversarial B-4).
+  state.diffProposals = state.diffProposals.filter((q) => q.id !== p.id);
+}
+
+interface ProposalRejectPayload {
+  v: 1;
+  id: string;
+  /** Optional DM-typed reason — audit only.  Not surfaced anywhere
+   *  for MVP; reserved for future "rejection patterns" telemetry. */
+  reason?: string;
+}
+
+function applyProposalRejectEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<ProposalRejectPayload>;
+  if (typeof p.id !== 'string' || p.id.length === 0) return;
+  if (p.reason !== undefined && typeof p.reason !== 'string') return;
+  if (p.reason !== undefined && p.reason.length > 1000) return;
+  state.diffProposals = state.diffProposals.filter((q) => q.id !== p.id);
+}
+
 /**
  * P-R11 (2026-05-25): record a player's request to retire their own
  * PC.  Player-authored — the event.peerId IS the requesting peer.
@@ -3245,7 +3457,13 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   // Wave D-prep-2 (2026-05-26): atomic Realization-beat event.
   'pc-mark-realization': applyPcMarkRealizationEvent,
   // D4 (2026-05-26): DM-saved session-digest recap.
-  'session-digest': applySessionDigestEvent
+  'session-digest': applySessionDigestEvent,
+  // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
+  // All three coord-only AND DM-private; see PendingDiffProposal
+  // doc-comment for the lifecycle contract.
+  'proposal-create': applyProposalCreateEvent,
+  'proposal-accept': applyProposalAcceptEvent,
+  'proposal-reject': applyProposalRejectEvent
 };
 
 /**

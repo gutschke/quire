@@ -20,6 +20,10 @@ import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
 import './ui/regions/session-wrap-marks';
 import { buildWrapMarksEntries } from './ui/regions/session-wrap-marks';
+import './ui/regions/wrap-stepper';
+import type { WrapStep } from './ui/regions/wrap-stepper';
+import './ui/regions/diff-review-stage';
+import type { DiffProposalView } from './ui/regions/diff-review-stage';
 import './ui/regions/session-digest';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
@@ -127,6 +131,22 @@ import {
   SESSION_DIGEST_CALL_SCHEMA,
   SESSION_DIGEST_INPUT_KINDS
 } from './ai/session-digest-prompt';
+import {
+  buildDiffProposalPrompt,
+  DIFF_PROPOSAL_CALL_SCHEMA,
+  filterEventsForDiffProposal,
+  type NpcContext
+} from './ai/diff-proposal-prompt';
+import {
+  applyProposalToWorkingCopy,
+  validateProposal as validateDiffProposalShape,
+  type DiffProposal
+} from './living/diff-format';
+import {
+  WorkingCopy,
+  IndexedDbWorkingCopyStore,
+  type WorkingCopyStore
+} from './sync/working-copy';
 import {
   promptHashFor,
   responseHashFor,
@@ -557,6 +577,14 @@ export class QuireApp extends LitElement {
    * (no live session) — see ui.md's "AppMode persistence" section.
    */
   @state() appMode: AppMode = DEFAULT_APP_MODE;
+  /**
+   * D1-C (2026-05-26): which sub-step of the wrap workflow is
+   * showing.  Local to QuireApp; not URL-persisted (the destination
+   * is the saved digest + ratified proposals — the path through is
+   * ephemeral; reload during wrap returns to marks).  Reset to
+   * 'marks' whenever the launcher enters wrap mode.
+   */
+  @state() wrapStep: WrapStep = 'marks';
   @state() rolls: DiceRoll[] = [];
   @state() rollDraft: string = '';
   @state() rollError: string | null = null;
@@ -1566,6 +1594,7 @@ export class QuireApp extends LitElement {
         class="dm-wrap-session-button"
         title="Step away from play and walk the roster through end-of-session marks"
         @click=${() => {
+          this.wrapStep = 'marks';
           this.appMode = 'session-wrap-marks';
         }}
       >
@@ -1645,44 +1674,102 @@ export class QuireApp extends LitElement {
       bulletsByPcId,
       pcIds
     );
-    // D4 (2026-05-26): session-digest panel mounts below the marks
-    // list.  Only the coord sees the editor + Generate/Save
-    // controls; non-coord viewers see prior digests (read-only) so
-    // a player who's pulled up wrap-marks can re-read past recaps.
+    // D1-C (2026-05-26): wrap is now a STEPPER not a single scroll.
+    // The marks pane is step 1; digest is step 2; diff-review is
+    // step 3.  Each pane renders independently within the stepper
+    // shell.  See WrapStepper for the UX rationale.
     const isCoord = this.isCoordinator();
     const priorDigests = v.filteredShared.sessionDigests.map((d) => ({
       ts: d.ts,
       markdown: d.markdown,
       savedByPeerId: d.savedByPeerId
     }));
-    return html`<session-wrap-marks
-        .pcs=${entries}
-        .onSetMarkBullet=${(
-          pcId: string,
-          key: keyof import('./character-loader').AdvancementMarkBullets,
-          value: boolean
-        ) => this.submitPcEdit(pcId, `markBullets.${key}`, value)}
-        .onExit=${() => {
-          this.appMode = 'in-session';
-        }}
-      ></session-wrap-marks>
-      <session-digest
-        .priorDigests=${priorDigests}
-        .onGenerate=${
-          isCoord
-            ? async () => this.generateSessionDigest()
-            : null
-        }
-        .onSave=${
-          isCoord
-            ? (md: string, rid?: string) =>
-                this.appendSessionDigest(
-                  md,
-                  rid ? { generatedByResponseId: rid } : undefined
-                )
-            : null
-        }
-      ></session-digest>`;
+    const finishWrap = (): void => {
+      this.appMode = 'in-session';
+    };
+    return html`<wrap-stepper
+      .step=${this.wrapStep}
+      .onStepChange=${(next: WrapStep) => {
+        this.wrapStep = next;
+      }}
+      .onFinish=${finishWrap}
+    >
+      ${this.wrapStep === 'marks'
+        ? html`<session-wrap-marks
+            .pcs=${entries}
+            .onSetMarkBullet=${(
+              pcId: string,
+              key: keyof import('./character-loader').AdvancementMarkBullets,
+              value: boolean
+            ) => this.submitPcEdit(pcId, `markBullets.${key}`, value)}
+          ></session-wrap-marks>`
+        : nothing}
+      ${this.wrapStep === 'digest'
+        ? html`<session-digest
+            .priorDigests=${priorDigests}
+            .onGenerate=${
+              isCoord
+                ? async () => this.generateSessionDigest()
+                : null
+            }
+            .onSave=${
+              isCoord
+                ? (md: string, rid?: string) =>
+                    this.appendSessionDigest(
+                      md,
+                      rid ? { generatedByResponseId: rid } : undefined
+                    )
+                : null
+            }
+          ></session-digest>`
+        : nothing}
+      ${this.wrapStep === 'diff-review' ? this.renderDiffReviewPane() : nothing}
+    </wrap-stepper>`;
+  }
+
+  /**
+   * D1-D (2026-05-26): diff-review pane — mounts
+   * <diff-review-stage> with the pending DiffProposals from
+   * filtered shared state.  Coord-only callbacks are wired
+   * conditionally so non-coord viewers see read-only.
+   */
+  private renderDiffReviewPane(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return html`<section class="card">
+        <p class="muted">No active session.</p>
+      </section>`;
+    }
+    const isCoord = this.isCoordinator();
+    const proposals: DiffProposalView[] = v.filteredShared.diffProposals.map(
+      (p) => {
+        const view: DiffProposalView = {
+          id: p.id,
+          npcId: p.npcId,
+          path: p.path,
+          field: p.field,
+          before: p.before,
+          after: p.after,
+          rationale: p.rationale
+        };
+        if (p.sourceEventIds) view.sourceEventIds = [...p.sourceEventIds];
+        return view;
+      }
+    );
+    return html`<diff-review-stage
+      .proposals=${proposals}
+      .onGenerate=${isCoord
+        ? async () => this.generateDiffProposals()
+        : null}
+      .onAccept=${isCoord
+        ? async (id: string, edited?: unknown) =>
+            this.acceptDiffProposal(id, edited)
+        : null}
+      .onReject=${isCoord
+        ? (id: string, opts?: { reason?: string }) =>
+            this.rejectDiffProposal(id, opts)
+        : null}
+    ></diff-review-stage>`;
   }
 
   /**
@@ -2349,6 +2436,328 @@ export class QuireApp extends LitElement {
    *  call — used when the DM hits Save to record the start
    *  boundary of the recap window.  Cleared on save. */
   private _pendingDigestSessionStartTs: number | undefined = undefined;
+
+  /**
+   * D1-D (2026-05-26): per-app WorkingCopy for living-doc edits.
+   * Lazy-init to keep the constructor light; the IDB connection
+   * opens on first use (first proposal-accept).  Test injection:
+   * pass via the static factory below (kept as a field, not a
+   * constructor arg, so QuireApp stays a zero-arg LitElement).
+   */
+  private _workingCopy: WorkingCopy | null = null;
+  /** Test seam — assign to override the default IDB-backed store. */
+  workingCopyStoreFactory: (() => WorkingCopyStore) | null = null;
+  private getWorkingCopy(): WorkingCopy {
+    if (!this._workingCopy) {
+      const store = this.workingCopyStoreFactory
+        ? this.workingCopyStoreFactory()
+        : new IndexedDbWorkingCopyStore();
+      this._workingCopy = new WorkingCopy(store);
+    }
+    return this._workingCopy;
+  }
+
+  /**
+   * D1-D (2026-05-26): ask the AI broker to propose NPC living-doc
+   * updates based on the current session.  Coord-only.  The host
+   * gathers the player-visible event bundle (same filter as
+   * session-digest), the loaded NPC files (full content including
+   * dmNotes per Adversarial B-2 — broadcast firewall happens at
+   * accept time), and the most-recent session-digest (D4) as
+   * framing context.  Proposals returned by the AI are validated
+   * + appended via `proposal-create` events (DM-private; co-DM
+   * replication via the event log).
+   *
+   * Returns: typed result with the count of validated proposals
+   * appended, or a failure code the UI surfaces.  Does NOT write
+   * anything to the WorkingCopy — that happens on accept.
+   */
+  async generateDiffProposals(opts?: {
+    dmGuidance?: string;
+    signal?: AbortSignal;
+  }): Promise<
+    | { ok: true; created: number; responseId: string }
+    | {
+        ok: false;
+        code:
+          | 'no-session'
+          | 'no-coord'
+          | 'no-key'
+          | 'no-events'
+          | 'no-npcs'
+          | 'provider-error'
+          | 'provider-refused'
+          | 'aborted';
+        message: string;
+      }
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return { ok: false, code: 'no-session', message: 'No active session.' };
+    }
+    if (!this.isCoordinator()) {
+      return {
+        ok: false,
+        code: 'no-coord',
+        message: 'Only the coord (DM) can generate proposals.'
+      };
+    }
+    if (!this.aiApiKey || this.aiApiKey.length === 0) {
+      return { ok: false, code: 'no-key', message: 'Set your AI API key first.' };
+    }
+    // Bundle player-visible events since the most-recent digest (or
+    // session start) — same window as the digest itself.  D-prep-2-A
+    // / D4-cleanup-3 firewall via filterEventsForDiffProposal.
+    const lastDigest =
+      v.filteredShared.sessionDigests[
+        v.filteredShared.sessionDigests.length - 1
+      ];
+    const cutoff = lastDigest?.ts ?? 0;
+    const allEvents = this.session?.getEvents() ?? [];
+    const bundled = filterEventsForDiffProposal(
+      allEvents.filter((e) => e.ts > cutoff)
+    );
+    if (bundled.length === 0) {
+      return {
+        ok: false,
+        code: 'no-events',
+        message: 'No qualifying events since the last digest.'
+      };
+    }
+    // Collect NPC files: fetch every NPC listed in the campaign
+    // manifest.  No cache — runs once per Generate click; the
+    // latency cost is one-shot and the DM is gated on AI output
+    // anyway.  Fetch failures are silently skipped (a malformed
+    // NPC file shouldn't block the whole diff-review).
+    const campaign = this.getCurrentCampaign();
+    const npcIds = campaign?.base.manifest.characters?.npcs ?? [];
+    const npcs: NpcContext[] = [];
+    if (campaign) {
+      for (const npcId of npcIds) {
+        try {
+          const loaded = await loadCharacter(
+            campaign.base.source,
+            'npc',
+            npcId
+          );
+          npcs.push({
+            npcId,
+            path: `characters/npcs/${npcId}.json`,
+            record: loaded.record as unknown as Record<string, unknown>
+          });
+        } catch {
+          // Silently skip — one bad NPC file shouldn't block the diff.
+        }
+      }
+    }
+    if (npcs.length === 0) {
+      return {
+        ok: false,
+        code: 'no-npcs',
+        message: 'Campaign has no NPCs to propose updates against.'
+      };
+    }
+    const campaignContext: {
+      name?: string;
+      currentEpisode?: string;
+      currentScene?: string;
+    } = {};
+    if (campaign?.base.manifest.name) {
+      campaignContext.name = campaign.base.manifest.name;
+    }
+    if (this.appState.kind === 'episode' || this.appState.kind === 'scene') {
+      campaignContext.currentEpisode = this.appState.episode.slug;
+    }
+    if (this.appState.kind === 'scene') {
+      campaignContext.currentScene = this.appState.scene.path;
+    }
+    const { system, user } = buildDiffProposalPrompt({
+      events: bundled,
+      npcs,
+      campaignContext,
+      ...(lastDigest?.markdown
+        ? { sessionDigestMarkdown: lastDigest.markdown }
+        : {}),
+      ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {})
+    });
+    const provider = this.aiProviders[this.aiProvider];
+    try {
+      const result = await provider.callStructured<{ proposals: unknown[] }>(
+        {
+          apiKey: this.aiApiKey,
+          model: this.aiModel,
+          systemPrompt: system,
+          prompt: user,
+          ...(opts?.signal ? { signal: opts.signal } : {})
+        },
+        DIFF_PROPOSAL_CALL_SCHEMA
+      );
+      if (!result.ok) {
+        return {
+          ok: false,
+          code:
+            result.refusal.kind === 'provider-error'
+              ? 'provider-error'
+              : 'provider-refused',
+          message: result.refusal.message
+        };
+      }
+      const raw = Array.isArray(result.value?.proposals)
+        ? result.value!.proposals
+        : [];
+      let created = 0;
+      for (const item of raw) {
+        const obj = item as Partial<DiffProposal> & Record<string, unknown>;
+        const proposal: DiffProposal = {
+          id: typeof obj.id === 'string' ? obj.id : '',
+          kind: 'npc-update',
+          npcId: typeof obj.npcId === 'string' ? obj.npcId : '',
+          path: `characters/npcs/${typeof obj.npcId === 'string' ? obj.npcId : ''}.json`,
+          field: typeof obj.field === 'string' ? obj.field : '',
+          before: obj.before,
+          after: obj.after,
+          rationale: typeof obj.rationale === 'string' ? obj.rationale : '',
+          ...(Array.isArray(obj.sourceEventIds)
+            ? { sourceEventIds: obj.sourceEventIds.filter((s): s is string => typeof s === 'string') }
+            : {})
+        };
+        // Attach the baseSha from the NPC we proposed against, when
+        // available — lets the apply step do staleness detection.
+        // (NpcContext.baseSha is optional today; D5/M5 will wire git
+        // SHAs through the loader.)
+        const npcCtx = npcs.find((n) => n.npcId === proposal.npcId);
+        if (npcCtx?.baseSha) proposal.baseSha = npcCtx.baseSha;
+        const v2 = validateDiffProposalShape(proposal);
+        if (!v2.ok) continue; // Drop malformed AI output silently.
+        this.session?.append('proposal-create', {
+          v: 1,
+          id: proposal.id,
+          kind: proposal.kind,
+          npcId: proposal.npcId,
+          path: proposal.path,
+          field: proposal.field,
+          before: proposal.before,
+          after: proposal.after,
+          rationale: proposal.rationale,
+          ...(proposal.sourceEventIds
+            ? { sourceEventIds: proposal.sourceEventIds }
+            : {}),
+          ...(proposal.baseSha ? { baseSha: proposal.baseSha } : {})
+        });
+        created++;
+      }
+      return { ok: true, created, responseId: result.responseId };
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        return { ok: false, code: 'aborted', message: 'Generation cancelled.' };
+      }
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: (e as Error).message
+      };
+    }
+  }
+
+  /**
+   * D1-D (2026-05-26): accept a pending proposal.  Writes the
+   * resolved `after` value to the WorkingCopy + emits
+   * `proposal-accept` (which removes it from the pending queue
+   * via the materializer).  Returns a typed result so the UI can
+   * surface stale-base-sha vs other failures.
+   *
+   * `editedAfter` is the DM's possibly-modified version of the
+   * AI's proposed `after` — if undefined, the original is used.
+   */
+  async acceptDiffProposal(
+    id: string,
+    editedAfter?: unknown
+  ): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        code: 'no-session' | 'no-coord' | 'not-found' | 'apply-failed';
+        message: string;
+      }
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return { ok: false, code: 'no-session', message: 'No active session.' };
+    }
+    if (!this.isCoordinator()) {
+      return { ok: false, code: 'no-coord', message: 'DM-only.' };
+    }
+    const pending = v.shared.diffProposals.find((p) => p.id === id);
+    if (!pending) {
+      return { ok: false, code: 'not-found', message: `proposal ${id} is not pending` };
+    }
+    const proposal: DiffProposal = {
+      id: pending.id,
+      kind: pending.kind,
+      npcId: pending.npcId,
+      path: pending.path,
+      field: pending.field,
+      before: pending.before,
+      after: editedAfter !== undefined ? editedAfter : pending.after,
+      rationale: pending.rationale,
+      ...(pending.sourceEventIds ? { sourceEventIds: pending.sourceEventIds } : {}),
+      ...(pending.baseSha ? { baseSha: pending.baseSha } : {})
+    };
+    // Seed fallbackJson from the loaded NPC file so the WC apply
+    // works even on a fresh WC entry (the loader is the source of
+    // truth pre-edit; the WC is the staging area post-edit).
+    const campaign = this.getCurrentCampaign();
+    let fallbackJson: string | undefined;
+    if (campaign) {
+      try {
+        const loaded = await loadCharacter(
+          campaign.base.source,
+          'npc',
+          pending.npcId
+        );
+        fallbackJson = JSON.stringify(loaded.record, null, 2) + '\n';
+      } catch {
+        // Will fall through to the WC's existing entry if any.
+      }
+    }
+    const wc = this.getWorkingCopy();
+    const applyResult = await applyProposalToWorkingCopy(
+      proposal,
+      wc,
+      fallbackJson ? { fallbackJson } : undefined
+    );
+    if (!applyResult.ok) {
+      return {
+        ok: false,
+        code: 'apply-failed',
+        message: `${applyResult.code}: ${applyResult.message}`
+      };
+    }
+    this.session?.append('proposal-accept', {
+      v: 1,
+      id: pending.id,
+      resolvedAfter: proposal.after
+    });
+    return { ok: true };
+  }
+
+  /**
+   * D1-D (2026-05-26): reject a pending proposal.  Emits
+   * `proposal-reject` (materializer removes from queue).  No WC
+   * side-effect.
+   */
+  rejectDiffProposal(id: string, opts?: { reason?: string }): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    if (!this.isCoordinator()) return false;
+    if (!v.shared.diffProposals.some((p) => p.id === id)) return false;
+    this.session?.append('proposal-reject', {
+      v: 1,
+      id,
+      ...(opts?.reason ? { reason: opts.reason } : {})
+    });
+    return true;
+  }
 
   /**
    * P-R6 (2026-05-25): emit a `pc-archive` event flipping a seat
