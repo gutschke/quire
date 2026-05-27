@@ -142,7 +142,7 @@ together; C2 + C4 (larger scope) deferred.
   them is part of why C2 (chargen-out-of-cockpit) hasn't shipped.
   Doing C4 first turns C2 from L → S.
 
-- [x] **C5** — extract `<magic-arc-controls>` ✓ SHIPPED `<TBD>`.
+- [x] **C5** — extract `<magic-arc-controls>` ✓ SHIPPED `86cd29d`.
   Engineering re-prioritization 2026-05-26 recommendation.  dm-pc-
   detail dropped 621 → 383 LOC (38%); new component is 377 LOC
   (well under the 800-LOC threshold the audit flagged).  willUpdate
