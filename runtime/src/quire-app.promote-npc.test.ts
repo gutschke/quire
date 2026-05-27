@@ -207,7 +207,7 @@ describe('QuireApp P-R10 — promoteNpcToPc integration', () => {
     expect(await app.promoteNpcToPc('yui')).toBeNull();
   });
 
-  it('handles NPC load failure (returns null + sets aiError)', async () => {
+  it('handles NPC load failure (returns null + sets transientError)', async () => {
     const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
     app.startHosting();
     await flush();
@@ -217,7 +217,7 @@ describe('QuireApp P-R10 — promoteNpcToPc integration', () => {
       .mockRejectedValue(new Error('404'));
     const slot = await app.promoteNpcToPc('missing');
     expect(slot).toBeNull();
-    expect((app as unknown as { aiError: string }).aiError).toMatch(/404/);
+    expect((app as unknown as { transientError: string }).transientError).toMatch(/404/);
     loadSpy.mockRestore();
   });
 

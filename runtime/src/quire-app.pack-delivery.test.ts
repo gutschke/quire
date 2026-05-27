@@ -350,7 +350,7 @@ describe('#253 adversarial — hostile peers', () => {
 });
 
 describe('#253 acceptChargenPack failure recovery', () => {
-  it('campaign-mismatch keeps the pack pending + sets aiError', async () => {
+  it('campaign-mismatch keeps the pack pending + sets transientError', async () => {
     const network = new InMemoryNetwork();
     const host = mountApp(inMemoryFactory(network, 'HOST'));
     host.startHosting();
@@ -370,7 +370,7 @@ describe('#253 acceptChargenPack failure recovery', () => {
     await flush();
     expect(host.sessionView!.shared.pendingChargenPacks).toHaveLength(1);
     expect(
-      (host as unknown as { aiError: string }).aiError ?? ''
+      (host as unknown as { transientError: string }).transientError ?? ''
     ).toMatch(/Import failed/);
   });
 

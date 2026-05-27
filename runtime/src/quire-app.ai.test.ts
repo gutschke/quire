@@ -109,7 +109,7 @@ describe('QuireApp AI panel — submit flow', () => {
     const app = mountApp();
     const result = await app.submitAiPrompt('hello');
     expect(result).toBeNull();
-    expect(app.aiError).toMatch(/api key/i);
+    expect(app.transientError).toMatch(/api key/i);
   });
 
   it('rejects empty prompts even with a key', async () => {
@@ -117,7 +117,7 @@ describe('QuireApp AI panel — submit flow', () => {
     app.setAiApiKey('sk-test');
     const result = await app.submitAiPrompt('   ');
     expect(result).toBeNull();
-    expect(app.aiError).toMatch(/empty/i);
+    expect(app.transientError).toMatch(/empty/i);
   });
 
   // M3b.5: AI submit now goes through AiBroker → aiProviders.
@@ -159,7 +159,7 @@ describe('QuireApp AI panel — submit flow', () => {
     expect(app.aiResponse).toBe('a quiet description.');
     expect(app.aiResponseStructured?.safe).toBe('a quiet description.');
     expect(app.aiLoading).toBe(false);
-    expect(app.aiError).toBeNull();
+    expect(app.transientError).toBeNull();
     expect(app.aiPromptDraft).toBe('');
   });
 
@@ -170,7 +170,7 @@ describe('QuireApp AI panel — submit flow', () => {
     const result = await app.submitAiPrompt('hi');
     expect(result).toBeNull();
     expect(app.aiResponse).toBeNull();
-    expect(app.aiError).toMatch(/boom/);
+    expect(app.transientError).toMatch(/boom/);
     expect(app.aiLoading).toBe(false);
   });
 

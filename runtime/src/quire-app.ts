@@ -774,12 +774,13 @@ export class QuireApp extends LitElement {
     yieldCoordinator: () => {
       this.session?.append('coordinator-yield', {});
     },
-    // TODO(engineError): `aiError` is the current bail-error
-    // channel but the name lies — this isn't an AI error.
-    // Rename to engineError or transientError when the E-LARGE-1
-    // sweep wraps + we know all the call sites.
+    // `transientError` is the shared ephemeral-error slot —
+    // AI failures + engine bails + import / NPC-load errors
+    // all flow through this single channel, rendered by the
+    // AI panel's error band.  Future polish: per-domain
+    // render slots (a status bar for engine errors, etc.).
     setBailError: (msg) => {
-      this.aiError = msg;
+      this.transientError = msg;
     }
   });
 
@@ -860,7 +861,7 @@ export class QuireApp extends LitElement {
   @state() aiVerdictResponseId: string = '';
   @state() aiVerdictKind: '' | 'accept' | 'reject' = '';
   @state() aiLoading: boolean = false;
-  @state() aiError: string | null = null;
+  @state() transientError: string | null = null;
   @state() aiShowSettings: boolean = false;
 
   /**
@@ -3690,7 +3691,7 @@ export class QuireApp extends LitElement {
     if (!entry) return false;
     const result = this.chargen.importPack(entry.pack, slot);
     if (!result.ok) {
-      this.aiError = `Import failed: ${result.message}`;
+      this.transientError = `Import failed: ${result.message}`;
       return false;
     }
     return this.appendChargenPackClear(senderPeerId, slot);
@@ -3754,7 +3755,7 @@ export class QuireApp extends LitElement {
    * removes the NPC from the manifest via M4 living-doc.
    *
    * Returns the allocated slot integer on success, null otherwise.
-   * Surfaces failures via `aiError` (the closest existing toast
+   * Surfaces failures via `transientError` (the closest existing toast
    * surface for ad-hoc DM-side errors).
    */
   async promoteNpcToPc(npcId: string): Promise<number | null> {
@@ -3773,7 +3774,7 @@ export class QuireApp extends LitElement {
         npcId
       );
     } catch (e) {
-      this.aiError = `Could not load NPC "${npcId}": ${(e as Error).message}`;
+      this.transientError = `Could not load NPC "${npcId}": ${(e as Error).message}`;
       return null;
     }
     // Compute the lowest unused slot integer (ignores
@@ -4301,7 +4302,7 @@ export class QuireApp extends LitElement {
         .showSettings=${this.aiShowSettings}
         .promptDraft=${this.aiPromptDraft}
         .loading=${this.aiLoading}
-        .error=${this.aiError}
+        .error=${this.transientError}
         .response=${dualResponse}
         .scope=${this.aiScope}
         .inSession=${this.sessionView?.status === 'active'}
@@ -6129,12 +6130,12 @@ export class QuireApp extends LitElement {
   async submitAiPrompt(prompt: string): Promise<string | null> {
     if (!this.showAiPanel()) return null;
     if (!this.aiApiKey) {
-      this.aiError = 'Set an API key first.';
+      this.transientError = 'Set an API key first.';
       return null;
     }
     const user = prompt.trim();
     if (!user) {
-      this.aiError = 'Empty prompt.';
+      this.transientError = 'Empty prompt.';
       return null;
     }
     const session = this.session;
@@ -6143,14 +6144,14 @@ export class QuireApp extends LitElement {
     // coordinator is set.  In-session requires active + coord-self.
     const inSession = this.sessionView?.status === 'active';
     if (!session) {
-      this.aiError = 'AI panel not ready.';
+      this.transientError = 'AI panel not ready.';
       return null;
     }
     this.aiAbort?.abort();
     const ac = new AbortController();
     this.aiAbort = ac;
     this.aiLoading = true;
-    this.aiError = null;
+    this.transientError = null;
     this.aiResponse = null;
     this.aiResponseStructured = null;
     const scope = this.aiScope;
@@ -6255,9 +6256,9 @@ export class QuireApp extends LitElement {
       // GeminiProviderError) were retired alongside the legacy
       // call()/parse() pair in step 9.
       if (e instanceof AiBrokerError) {
-        this.aiError = e.message;
+        this.transientError = e.message;
       } else {
-        this.aiError = (e as Error).message ?? 'AI request failed.';
+        this.transientError = (e as Error).message ?? 'AI request failed.';
       }
       return null;
     } finally {

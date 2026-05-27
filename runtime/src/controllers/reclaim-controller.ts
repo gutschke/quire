@@ -88,9 +88,10 @@ export interface ReclaimEnv {
   yieldCoordinator(): void;
   /**
    * Set a user-visible error string for the failed-retire bail
-   * path.  Reuses QuireApp's `aiError` slot for now — see
-   * TODO(engineError) in the failing-retire branch below; the
-   * misnaming is documented + tracked.
+   * path.  Wired to QuireApp's `transientError` slot — the
+   * shared ephemeral-error channel rendered by the AI panel's
+   * error band.  Future polish: dedicated per-domain render
+   * slot for engine errors.
    */
   setBailError(message: string): void;
 }
@@ -264,10 +265,6 @@ export class ReclaimController implements ReactiveController {
           inFictionReason: reason
         });
         if (!accepted) {
-          // TODO(engineError): `aiError` is the current bail
-          // channel but the name lies — this isn't an AI error.
-          // Rename to engineError or transientError when the
-          // E-LARGE-1 sweep wraps + we know all the call sites.
           this.env.setBailError(
             `Retire of ${p.pcName} was not accepted by the engine — yield aborted.  ` +
               `Try again or pick a different PC fate.`
