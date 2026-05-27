@@ -45,6 +45,7 @@ import {
 import { routeToSearch } from '../routing';
 import { loadChargenState, saveChargenState } from '../chargen-persistence';
 import { ChargenPersistenceQueue } from './chargen-persistence-queue';
+import { ChargenAcceptanceMachine } from './chargen-acceptance-machine';
 import {
   packChargen,
   parseChargenPack,
@@ -272,75 +273,17 @@ export class ChargenController implements ReactiveController {
   /** Slots whose synthesis is currently in-flight (for UI dim/spinner). */
   private readonly _synthInFlight = new Set<number>();
 
-  /** Slots the DM has accepted (CC-24).  Used by the region for the accept-gate dim. */
-  private readonly _acceptedSlots = new Set<number>();
-
   /**
-   * Wave 2 (2026-05-25): per-slot snapshot of the original AI-
-   * synthesized values for any field the DM has edited before
-   * accept.  Each entry records the field's value at the moment of
-   * the first edit, so the drift banner can render a "before → now"
-   * comparison.  Cleared on dismissPreAcceptDrift / clearSynth /
-   * revise.  Pre-acceptance edits are DM-local (the synth result
-   * has not been broadcast yet); post-acceptance edits will go
-   * through pc-edit in Wave 3 with a separate visibility model.
+   * D5.5-A step 2 (2026-05-27 E-LARGE-2): accept / pre-accept /
+   * re-sync slot lifecycle state, bundled into a single owner.
+   * Pre-extraction this was 8 separate fields scattered across
+   * ~70 lines + 3 nearly-identical inline reset blocks.  See
+   * `ChargenAcceptanceMachine` for the per-slot semantics.
+   *
+   * Synth-result state (`_synthResults` + `_synthInFlight`) stays
+   * separate above — different lifecycle, different clear events.
    */
-  private readonly _preAcceptOriginals = new Map<
-    number,
-    Partial<PcBackstorySynthesisResponse>
-  >();
-
-  /**
-   * Wave 3 polish (2026-05-25, TTRPG-R4 fix #5): track slots where
-   * the last patchInPlace touched pronouns.  The deterministic
-   * substitution leaves verb agreement intact ("she was" stays
-   * "they was") — surface a non-blocking hint so the DM knows to
-   * Re-sync if they care about clean prose.  Cleared on the next
-   * edit/dismiss/accept for the slot.
-   */
-  private readonly _pronounPatchedSlots = new Set<number>();
-
-  /**
-   * Post-R5 fix (QA-BUG-5): when Patch-in-place runs and mutates
-   * the cached backstory, stash the AI's ORIGINAL prose so a
-   * later Re-sync uses it as the voice-anchor (instead of the
-   * deterministically-substituted version that may carry verb-
-   * agreement glitches the AI would faithfully preserve).
-   * Cleared on revise/clearSynth/resync-success (the resync
-   * itself produces a fresh original).
-   */
-  private readonly _originalBackstoryForResync = new Map<number, string>();
-
-  /**
-   * Post-R5 fix (QA-BUG-3): re-sync is async (10-30s).  While it's
-   * in flight, accept / revise / edit calls must be gated so a
-   * stale-pre-resync commit doesn't race the new AI output.
-   * Previously this lived ONLY on the UI element (lost across
-   * re-creation, bypassable by non-UI callers).  Lifted to the
-   * controller as the single source of truth.
-   */
-  private readonly _resyncInFlight = new Set<number>();
-
-  /**
-   * Phase B P2 verification fix (S2): race-mismatch flag.  Set
-   * when `acceptSlot` was called with an `expectedResponseId` that
-   * doesn't match the current synth result (a re-sync landed
-   * between modal-open and click).  The UI consults
-   * `hasAcceptRaceMismatch(slot)` to surface a "synth landed mid-
-   * review — please re-review" banner.  Cleared on a successful
-   * accept, on `clearSynth`, and on a fresh synth via
-   * `synthesizeForSlot`.
-   */
-  private readonly _acceptRaceMismatch = new Set<number>();
-
-  /**
-   * P-R12 (2026-05-25): "joining at session N" picker per-slot.
-   * Default 1 (no catch-up).  When N > 1, acceptSlot seeds the
-   * pc-create payload's startingMarks (N - 1) + advancement bump
-   * so the late-joining PC isn't mechanically behind the party.
-   * Cleared on accept / clearSynth / revise.
-   */
-  private readonly _joiningSession = new Map<number, number>();
+  private readonly acceptance = new ChargenAcceptanceMachine();
 
   /**
    * Code-split: cached dynamic-imports for the chargen surfaces.
@@ -449,14 +392,14 @@ export class ChargenController implements ReactiveController {
   hasPendingSynth(): boolean {
     if (this._synthInFlight.size > 0) return true;
     for (const slot of this._synthResults.keys()) {
-      if (!this._acceptedSlots.has(slot)) return true;
+      if (!this.acceptance.isAccepted(slot)) return true;
     }
     return false;
   }
 
   /** True when the DM has accepted the slot's current synth result. */
   isAccepted(slot: number): boolean {
-    return this._acceptedSlots.has(slot);
+    return this.acceptance.isAccepted(slot);
   }
 
   /**
@@ -467,10 +410,10 @@ export class ChargenController implements ReactiveController {
    * or fresh synth.
    */
   hasAcceptRaceMismatch(slot: number): boolean {
-    return this._acceptRaceMismatch.has(slot);
+    return this.acceptance.hasRaceMismatch(slot);
   }
   clearAcceptRaceMismatch(slot: number): void {
-    if (this._acceptRaceMismatch.delete(slot)) this.host.requestUpdate();
+    if (this.acceptance.clearRaceMismatch(slot)) this.host.requestUpdate();
   }
 
   /**
@@ -480,7 +423,7 @@ export class ChargenController implements ReactiveController {
   slotsWithSynthState(): number[] {
     const slots = new Set<number>();
     for (const s of this._synthResults.keys()) slots.add(s);
-    for (const s of this._acceptedSlots) slots.add(s);
+    for (const s of this.acceptance.acceptedIterator()) slots.add(s);
     return [...slots].sort((a, b) => a - b);
   }
 
@@ -565,7 +508,7 @@ export class ChargenController implements ReactiveController {
     if (!seat || seat.state !== 'unbound') return false;
     if (this._synthResults.has(slot)) return false;
     if (this._synthInFlight.has(slot)) return false;
-    if (this._acceptedSlots.has(slot)) return false;
+    if (this.acceptance.isAccepted(slot)) return false;
     if (!this.env.appendSeatRemove(slot)) return false;
     return true;
   }
@@ -604,16 +547,16 @@ export class ChargenController implements ReactiveController {
     slot: number,
     patch: Partial<PcBackstorySynthesisResponse>
   ): boolean {
-    if (this._acceptedSlots.has(slot)) return false;
+    if (this.acceptance.isAccepted(slot)) return false;
     // Post-R5 fix (QA-BUG-3): no edits during re-sync — the AI is
     // about to overwrite the response anyway.
-    if (this._resyncInFlight.has(slot)) return false;
+    if (this.acceptance.isResyncInFlight(slot)) return false;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return false;
-    let original = this._preAcceptOriginals.get(slot);
+    let original = this.acceptance.getPreAcceptOriginal(slot);
     if (!original) {
       original = {};
-      this._preAcceptOriginals.set(slot, original);
+      this.acceptance.setPreAcceptOriginal(slot, original);
     }
     const origAny = original as Record<string, unknown>;
     // Post-R5 fix (QA-BUG-2): clone the synth-result before
@@ -637,10 +580,10 @@ export class ChargenController implements ReactiveController {
     });
     // Any further edit invalidates the prior pronoun-patch hint —
     // the DM has moved on or the prose changed again.
-    this._pronounPatchedSlots.delete(slot);
+    this.acceptance.clearPronounPatched(slot);
     // Post-R5 (QA-BUG-4): edit means the DM noticed the failure
     // banner and chose a different path — clear it.
-    this._resyncFailures.delete(slot);
+    this.acceptance.clearResyncFailure(slot);
     this.host.requestUpdate();
     return true;
   }
@@ -655,7 +598,7 @@ export class ChargenController implements ReactiveController {
   getPreAcceptDrift(
     slot: number
   ): Partial<PcBackstorySynthesisResponse> | undefined {
-    return this._preAcceptOriginals.get(slot);
+    return this.acceptance.getPreAcceptOriginal(slot);
   }
 
   /**
@@ -670,15 +613,15 @@ export class ChargenController implements ReactiveController {
     slot: number,
     field?: keyof PcBackstorySynthesisResponse
   ): void {
-    const original = this._preAcceptOriginals.get(slot);
+    const original = this.acceptance.getPreAcceptOriginal(slot);
     if (!original) return;
     if (field !== undefined) {
       delete (original as Record<string, unknown>)[field];
       if (Object.keys(original).length === 0) {
-        this._preAcceptOriginals.delete(slot);
+        this.acceptance.deletePreAcceptOriginal(slot);
       }
     } else {
-      this._preAcceptOriginals.delete(slot);
+      this.acceptance.deletePreAcceptOriginal(slot);
     }
     this.host.requestUpdate();
   }
@@ -698,7 +641,7 @@ export class ChargenController implements ReactiveController {
    */
   preAcceptDriftMap(): Map<number, Partial<PcBackstorySynthesisResponse>> {
     const out = new Map<number, Partial<PcBackstorySynthesisResponse>>();
-    for (const [slot, drift] of this._preAcceptOriginals) {
+    for (const [slot, drift] of this.acceptance.preAcceptOriginalEntries()) {
       out.set(slot, { ...drift });
     }
     return out;
@@ -720,12 +663,12 @@ export class ChargenController implements ReactiveController {
    * that were applied so the banner reflects the new state.
    */
   patchInPlace(slot: number): boolean {
-    if (this._acceptedSlots.has(slot)) return false;
+    if (this.acceptance.isAccepted(slot)) return false;
     // Post-R5 fix (QA-BUG-3): no Patch during re-sync.
-    if (this._resyncInFlight.has(slot)) return false;
+    if (this.acceptance.isResyncInFlight(slot)) return false;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return false;
-    const drift = this._preAcceptOriginals.get(slot);
+    const drift = this.acceptance.getPreAcceptOriginal(slot);
     if (!drift) return false;
     const patchable = this.patchableDriftFields(slot);
     if (patchable.length === 0) return false;
@@ -755,8 +698,8 @@ export class ChargenController implements ReactiveController {
     // backstory so a later Re-sync uses the AI's draft as the
     // voice anchor, not the deterministically-substituted prose
     // that may carry "they was" verb-agreement glitches.
-    if (!this._originalBackstoryForResync.has(slot)) {
-      this._originalBackstoryForResync.set(slot, result.response.backstory);
+    if (!this.acceptance.hasOriginalBackstoryForResync(slot)) {
+      this.acceptance.setOriginalBackstoryForResync(slot, result.response.backstory);
     }
     // R6 QA-F1 fix: same deep-clone discipline as
     // editSynthFieldPreAccept so external refs to nested
@@ -771,13 +714,13 @@ export class ChargenController implements ReactiveController {
       delete (drift as Record<string, unknown>)[field];
     }
     if (Object.keys(drift).length === 0) {
-      this._preAcceptOriginals.delete(slot);
+      this.acceptance.deletePreAcceptOriginal(slot);
     }
     // Wave 3 polish: mark the slot so the UI can hint about
     // potential verb-agreement glitches the substitution doesn't
     // catch.  Cleared on next edit/dismiss/accept/clear.
     if (pronounWasPatched) {
-      this._pronounPatchedSlots.add(slot);
+      this.acceptance.markPronounPatched(slot);
     }
     this.host.requestUpdate();
     return true;
@@ -789,7 +732,7 @@ export class ChargenController implements ReactiveController {
    * agreement" hint.
    */
   wasPronounRecentlyPatched(slot: number): boolean {
-    return this._pronounPatchedSlots.has(slot);
+    return this.acceptance.hasPronounPatch(slot);
   }
 
   /**
@@ -798,8 +741,7 @@ export class ChargenController implements ReactiveController {
    * accept/clear for the slot.
    */
   dismissPronounPatchHint(slot: number): void {
-    if (this._pronounPatchedSlots.has(slot)) {
-      this._pronounPatchedSlots.delete(slot);
+    if (this.acceptance.clearPronounPatched(slot)) {
       this.host.requestUpdate();
     }
   }
@@ -811,7 +753,7 @@ export class ChargenController implements ReactiveController {
    * sees a new value on every accessor call.
    */
   pronounPatchedSlotsSet(): ReadonlySet<number> {
-    return new Set(this._pronounPatchedSlots);
+    return this.acceptance.pronounPatchedSnapshot();
   }
 
   /**
@@ -823,7 +765,7 @@ export class ChargenController implements ReactiveController {
   patchableDriftFields(
     slot: number
   ): Array<'name' | 'pronouns'> {
-    const drift = this._preAcceptOriginals.get(slot);
+    const drift = this.acceptance.getPreAcceptOriginal(slot);
     if (!drift) return [];
     const out: Array<'name' | 'pronouns'> = [];
     if ('name' in drift) out.push('name');
@@ -832,12 +774,12 @@ export class ChargenController implements ReactiveController {
   }
 
   acceptSlot(slot: number, expectedResponseId?: string): void {
-    if (this._acceptedSlots.has(slot)) return;
+    if (this.acceptance.isAccepted(slot)) return;
     // Post-R5 fix (QA-BUG-3): refuse to commit while a re-sync is
     // in flight — the result is about to be replaced.  Belt-and-
     // suspenders alongside the UI-level gate so non-UI callers
     // (tests, hotkeys) can't sneak past.
-    if (this._resyncInFlight.has(slot)) return;
+    if (this.acceptance.isResyncInFlight(slot)) return;
     const result = this._synthResults.get(slot);
     if (!result || !result.ok) return; // can't accept failures
     const r = result.response;
@@ -853,12 +795,12 @@ export class ChargenController implements ReactiveController {
       expectedResponseId !== undefined &&
       r.responseId !== expectedResponseId
     ) {
-      this._acceptRaceMismatch.add(slot);
+      this.acceptance.markRaceMismatch(slot);
       this.host.requestUpdate();
       return;
     }
     // Clear any prior race-mismatch flag for this slot.
-    this._acceptRaceMismatch.delete(slot);
+    this.acceptance.clearRaceMismatch(slot);
 
     // Derive the pcId from slot + a short hash of responseId.
     const pcId = derivePcId(slot, r.responseId);
@@ -894,7 +836,7 @@ export class ChargenController implements ReactiveController {
     // PC convert them to advancements at end-of-session like
     // everyone else.  The DM can pc-edit to override if a
     // particular campaign uses a different cadence.
-    const joiningSession = this._joiningSession.get(slot) ?? 1;
+    const joiningSession = this.acceptance.getJoiningSession(slot);
     const catchUp =
       joiningSession > 1
         ? { startingMarks: Math.max(0, joiningSession - 1) }
@@ -931,7 +873,7 @@ export class ChargenController implements ReactiveController {
     // future audit tool can parse "DM accepted synthesized PC for
     // slot N: name=X, responseId=Y" without needing to know about
     // the pc-create event kind.
-    this._acceptedSlots.add(slot);
+    this.acceptance.markAccepted(slot);
     this.env.appendScratchNote(
       `DM accepted synthesized PC for slot ${slot}: name="${r.name}", responseId=${r.responseId}.`
     );
@@ -1022,18 +964,13 @@ export class ChargenController implements ReactiveController {
     reason?: string,
     pinnedQuestionIds?: readonly string[]
   ): void {
-    if (!this._synthResults.has(slot) && !this._acceptedSlots.has(slot)) return;
+    if (!this._synthResults.has(slot) && !this.acceptance.isAccepted(slot)) return;
     // Post-R5 fix (QA-BUG-3): the re-sync about to land will
     // produce a new synth-result.  Revise would clear it anyway,
     // but firing both creates a race — refuse during the window.
-    if (this._resyncInFlight.has(slot)) return;
+    if (this.acceptance.isResyncInFlight(slot)) return;
     this._synthResults.delete(slot);
-    this._acceptedSlots.delete(slot);
-    this._preAcceptOriginals.delete(slot);
-    this._pronounPatchedSlots.delete(slot);
-    this._originalBackstoryForResync.delete(slot);
-    this._resyncFailures.delete(slot);
-    this._joiningSession.delete(slot);
+    this.acceptance.resetForRevise(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
       trimmedReason
@@ -1589,21 +1526,12 @@ export class ChargenController implements ReactiveController {
       this._synthResults.set(slot, result);
       // Re-synthesizing clears any prior accept for the same slot —
       // accepting the OLD result and then re-synthesizing would
-      // otherwise leave the accept stale.
-      this._acceptedSlots.delete(slot);
-      // Phase B P2 verification fix (S2): a fresh synth supersedes
-      // any prior accept-race banner — the DM will see the new
-      // result and either accept or re-review.
-      this._acceptRaceMismatch.delete(slot);
-      // Wave 3b: when this was a successful re-sync, clear ALL
-      // drift entries for the slot — the AI has folded them into
-      // the new backstory, so the drift banner should disappear.
-      if (options.resync && result.ok) {
-        this._preAcceptOriginals.delete(slot);
-        // Post-R5 (QA-BUG-5): re-sync produced fresh prose; any
-        // stashed pre-Patch original is now stale.
-        this._originalBackstoryForResync.delete(slot);
-      }
+      // otherwise leave the accept stale.  When this was a
+      // successful re-sync, also clear drift Maps (AI folded them
+      // into the new prose).
+      this.acceptance.resetAfterFreshSynth(slot, {
+        resyncSucceeded: !!options.resync && result.ok
+      });
       return result;
     } finally {
       this._synthInFlight.delete(slot);
@@ -1624,10 +1552,10 @@ export class ChargenController implements ReactiveController {
     slot: number,
     options: { playerDisplayName?: string; dmConstraints?: string } = {}
   ): Promise<SynthesizeBackstoryResult | null> {
-    if (this._resyncInFlight.has(slot)) return null;
+    if (this.acceptance.isResyncInFlight(slot)) return null;
     const synth = this._synthResults.get(slot);
     if (!synth || !synth.ok) return null;
-    const drift = this._preAcceptOriginals.get(slot);
+    const drift = this.acceptance.getPreAcceptOriginal(slot);
     if (!drift || Object.keys(drift).length === 0) return null;
     const editedFields = Object.keys(drift) as Array<
       | 'name'
@@ -1647,7 +1575,7 @@ export class ChargenController implements ReactiveController {
     // preserve those glitches as voice.  Falls back to the current
     // cached prose when no Patch has run.
     const previousBackstory =
-      this._originalBackstoryForResync.get(slot) ??
+      this.acceptance.getOriginalBackstoryForResync(slot) ??
       synth.response.backstory;
     // Phase B P2 (2026-05-26) verification fix (B1): include
     // languages + moneyBand in lockedFields so DM edits to either
@@ -1675,9 +1603,9 @@ export class ChargenController implements ReactiveController {
       previousBackstory,
       editedFields: editedForPrompt
     };
-    this._resyncInFlight.add(slot);
+    this.acceptance.markResyncInFlight(slot);
     // Clear any prior failure banner — we're trying again.
-    this._resyncFailures.delete(slot);
+    this.acceptance.clearResyncFailure(slot);
     this.host.requestUpdate();
     try {
       const result = await this.synthesizeForSlot(slot, {
@@ -1687,38 +1615,26 @@ export class ChargenController implements ReactiveController {
       // Post-R5 fix (QA-BUG-4): on failure, stash the code/message
       // so the UI surfaces a banner.  Drift remains intact (the
       // success path in synthesizeForSlot is the only one that
-      // clears _preAcceptOriginals when resync was set).
+      // clears preAcceptOriginals when resync was set).
       if (result && !result.ok) {
-        this._resyncFailures.set(slot, {
+        this.acceptance.setResyncFailure(slot, {
           code: result.code,
           message: result.message
         });
       }
       return result;
     } finally {
-      this._resyncInFlight.delete(slot);
+      this.acceptance.clearResyncInFlight(slot);
       this.host.requestUpdate();
     }
   }
 
-  /**
-   * Post-R5 fix (QA-BUG-4): which slots had their most recent
-   * re-sync attempt fail (and how).  The UI surfaces this as a
-   * banner so the DM doesn't think nothing happened.  Cleared on
-   * any subsequent edit / re-sync / clear / revise.
-   */
-  private readonly _resyncFailures = new Map<
-    number,
-    { code: string; message: string }
-  >();
-
   resyncFailuresMap(): ReadonlyMap<number, { code: string; message: string }> {
-    return new Map(this._resyncFailures);
+    return this.acceptance.resyncFailuresSnapshot();
   }
 
   dismissResyncFailure(slot: number): void {
-    if (this._resyncFailures.has(slot)) {
-      this._resyncFailures.delete(slot);
+    if (this.acceptance.clearResyncFailure(slot)) {
       this.host.requestUpdate();
     }
   }
@@ -1730,11 +1646,11 @@ export class ChargenController implements ReactiveController {
    * @property comparison sees a fresh value (mirrors BUG-1 fix).
    */
   resyncInFlightSet(): ReadonlySet<number> {
-    return new Set(this._resyncInFlight);
+    return this.acceptance.resyncInFlightSnapshot();
   }
 
   isResyncInFlight(slot: number): boolean {
-    return this._resyncInFlight.has(slot);
+    return this.acceptance.isResyncInFlight(slot);
   }
 
   /**
@@ -1744,7 +1660,7 @@ export class ChargenController implements ReactiveController {
    * detects the change.
    */
   acceptRaceMismatchSet(): ReadonlySet<number> {
-    return new Set(this._acceptRaceMismatch);
+    return this.acceptance.raceMismatchSnapshot();
   }
 
   /**
@@ -1755,32 +1671,26 @@ export class ChargenController implements ReactiveController {
   setJoiningSessionForSlot(slot: number, n: number): void {
     if (!Number.isInteger(n) || n < 1 || n > 20) return;
     if (n === 1) {
-      this._joiningSession.delete(slot);
+      this.acceptance.clearJoiningSession(slot);
     } else {
-      this._joiningSession.set(slot, n);
+      this.acceptance.setJoiningSession(slot, n);
     }
     this.host.requestUpdate();
   }
 
   joiningSessionForSlot(slot: number): number {
-    return this._joiningSession.get(slot) ?? 1;
+    return this.acceptance.getJoiningSession(slot);
   }
 
   joiningSessionMap(): ReadonlyMap<number, number> {
-    return new Map(this._joiningSession);
+    return this.acceptance.joiningSessionSnapshot();
   }
 
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */
   clearSynth(slot: number): void {
-    const had = this._synthResults.has(slot) || this._acceptedSlots.has(slot);
+    const had = this._synthResults.has(slot) || this.acceptance.isAccepted(slot);
     this._synthResults.delete(slot);
-    this._acceptedSlots.delete(slot);
-    this._preAcceptOriginals.delete(slot);
-    this._pronounPatchedSlots.delete(slot);
-    this._originalBackstoryForResync.delete(slot);
-    this._resyncFailures.delete(slot);
-    this._acceptRaceMismatch.delete(slot);
-    this._joiningSession.delete(slot);
+    this.acceptance.resetForDelete(slot);
     if (had) this.host.requestUpdate();
   }
 

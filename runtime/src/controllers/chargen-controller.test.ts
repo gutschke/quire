@@ -1359,7 +1359,7 @@ describe('ChargenController — addSeat / removeSeat (Wave 1)', () => {
     const ctrl = new ChargenController(host, env);
     // Drive ctrl into accepted state for slot 3 via the public
     // surface so the bookkeeping flag matches reality.
-    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(3);
+    (ctrl as unknown as { acceptance: { markAccepted(s: number): void } }).acceptance.markAccepted(3);
     expect(ctrl.removeSeat(3)).toBe(false);
     expect(env.seatRemoves).toEqual([]);
   });
@@ -1447,7 +1447,7 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResult(ctrl, 1);
-    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(1);
+    (ctrl as unknown as { acceptance: { markAccepted(s: number): void } }).acceptance.markAccepted(1);
     expect(ctrl.editSynthFieldPreAccept(1, { name: 'Mai' })).toBe(false);
     expect(ctrl.getPreAcceptDrift(1)).toBeUndefined();
   });
@@ -1720,7 +1720,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'X');
     ctrl.editSynthFieldPreAccept(1, { name: 'New' });
-    (ctrl as unknown as { _acceptedSlots: Set<number> })._acceptedSlots.add(1);
+    (ctrl as unknown as { acceptance: { markAccepted(s: number): void } }).acceptance.markAccepted(1);
     expect(ctrl.patchInPlace(1)).toBe(false);
   });
 
@@ -1848,9 +1848,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const ctrl = new ChargenController(host, env);
     seedResultWithBackstory(ctrl, 1, 'X');
     // Force the in-flight set (simulating an outstanding resync).
-    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
-      1
-    );
+    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
     ctrl.acceptSlot(1);
     expect(env.pcCreates.length).toBe(0);
   });
@@ -1860,9 +1858,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const env = makeEnv(makeCampaign());
     const ctrl = new ChargenController(host, env);
     seedResultWithBackstory(ctrl, 1, 'X');
-    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
-      1
-    );
+    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
     ctrl.requestReviseSlot(1, 'try again');
     expect(env.scratchNotes.length).toBe(0);
   });
@@ -1871,9 +1867,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'X');
-    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
-      1
-    );
+    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
     expect(ctrl.editSynthFieldPreAccept(1, { name: 'New' })).toBe(false);
   });
 
@@ -1882,9 +1876,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'Mei was here.');
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
-    (ctrl as unknown as { _resyncInFlight: Set<number> })._resyncInFlight.add(
-      1
-    );
+    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
     expect(ctrl.patchInPlace(1)).toBe(false);
   });
 
@@ -1999,9 +1991,14 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     seedResultWithBackstory(ctrl, 1, 'X');
     (
       ctrl as unknown as {
-        _resyncFailures: Map<number, { code: string; message: string }>;
+        acceptance: {
+          setResyncFailure(
+            s: number,
+            f: { code: string; message: string }
+          ): void;
+        };
       }
-    )._resyncFailures.set(1, { code: 'provider-error', message: 'x' });
+    ).acceptance.setResyncFailure(1, { code: 'provider-error', message: 'x' });
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
     expect(ctrl.resyncFailuresMap().get(1)).toBeUndefined();
   });
@@ -2468,8 +2465,8 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
       ctrl as unknown as { _synthResults: Map<number, unknown> }
     )._synthResults.set(1, { ok: true } as unknown);
     (
-      ctrl as unknown as { _acceptedSlots: Set<number> }
-    )._acceptedSlots.add(1);
+      ctrl as unknown as { acceptance: { markAccepted(s: number): void } }
+    ).acceptance.markAccepted(1);
     expect(ctrl.hasPendingSynth()).toBe(false);
   });
 
@@ -2483,8 +2480,8 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
       ctrl as unknown as { _synthResults: Map<number, unknown> }
     )._synthResults.set(2, { ok: true } as unknown);
     (
-      ctrl as unknown as { _acceptedSlots: Set<number> }
-    )._acceptedSlots.add(1);
+      ctrl as unknown as { acceptance: { markAccepted(s: number): void } }
+    ).acceptance.markAccepted(1);
     // Slot 2 still pending → gate stays open.
     expect(ctrl.hasPendingSynth()).toBe(true);
   });
