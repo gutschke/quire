@@ -4767,6 +4767,39 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
       expect(playerView.pcBonds.mei ?? []).toHaveLength(0);
     });
 
+    it('SEC-2 (post-D5 sweep): filterForViewer strips pcFoci entries for hidden-seat PCs', () => {
+      // Adversarial: a hidden-seat PC's pcFoci[hiddenPcId] entry
+      // was leaking through the player projection — same class
+      // as the bond hidden-seat leak fixed in D5-cleanup-2.
+      const alice = new EventLog('alice');
+      alice.append('coordinator-claim', {});
+      // Hidden seat with PC.
+      alice.append('seat-add', { v: 1, slot: 9, revealed: false });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mystery',
+        name: 'Mystery',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 9, pcId: 'mystery' });
+      // Mark realization to enable focus-grant.
+      alice.append('pc-mark-realization', { v: 1, pcId: 'mystery' });
+      alice.append('focus-grant', {
+        v: 1,
+        pcId: 'mystery',
+        focus: { name: 'the-pattern' }
+      });
+      const state = materialize(alice.events());
+      // Coord sees the foci.
+      const coordView = filterForViewer(state, 'alice');
+      expect(coordView.pcFoci.mystery).toBeDefined();
+      // Non-coord viewer: hidden-seat pcFoci wiped entirely.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcFoci.mystery).toBeUndefined();
+    });
+
     it('filterForViewer strips per-entry dmNotes for non-coord viewers', () => {
       const [alice, bob] = setupSessionWithBob();
       const ev = bob.append('bond-propose', {

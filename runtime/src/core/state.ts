@@ -1055,9 +1055,15 @@ export function filterForViewer(
     // sub-field is stripped per-entry (per D5-8; mirrors the
     // D-prep-2-A per-entry strip pattern).
     pcBonds: stripBondDmNotesPerEntry(state.pcBonds, hiddenSeatPcIds),
-    // pcFoci passes through unchanged — foci are player-visible by
-    // design at Realization onward.  The UI gate (Grant focus only
-    // when magicPhase >= 'realization') is the firewall.
+    // SEC-2 (2026-05-27 post-D5 holistic Adversarial sweep): pcFoci
+    // for HIDDEN-seat PCs leaks the hidden seat's existence (the
+    // pcId key exists in the projection's pcFoci even though
+    // synthesizedPcs is wiped for the same key).  Same shape as
+    // the D5-cleanup-2 bond hidden-seat fix.  Foci entries
+    // themselves are player-visible by design at Realization
+    // onward, but a foci array keyed by a pcId whose seat is
+    // hidden is a structural firewall hole.
+    pcFoci: stripHiddenSeatKeys(state.pcFoci, hiddenSeatPcIds),
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -3499,6 +3505,28 @@ function isBondAuthorAllowed(
  * Mirrors the focus-grant payload-field strip pattern but at the
  * record-level (an array of bond entries).
  */
+/**
+ * SEC-2 helper: strip entries whose key is a hidden-seat pcId
+ * from a `Record<pcId, T>`-shaped projection.  Same shape as the
+ * pc-by-pcId firewall pattern in filterForViewer (e.g.
+ * synthesizedPcs map gets entries deleted for hidden-seat pcIds).
+ *
+ * Generic so callers can use it for pcFoci, future per-pc maps,
+ * etc.  Empty-set passthrough is identity (cheap).
+ */
+function stripHiddenSeatKeys<T>(
+  byPcId: Record<string, T>,
+  hiddenSeatPcIds: ReadonlySet<string>
+): Record<string, T> {
+  if (hiddenSeatPcIds.size === 0) return byPcId;
+  const out: Record<string, T> = {};
+  for (const [pcId, value] of Object.entries(byPcId)) {
+    if (hiddenSeatPcIds.has(pcId)) continue;
+    out[pcId] = value;
+  }
+  return out;
+}
+
 function stripBondDmNotesPerEntry(
   pcBonds: Record<string, BondEntry[]>,
   hiddenSeatPcIds: ReadonlySet<string> = new Set()

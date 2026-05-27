@@ -289,6 +289,83 @@ describe('serializeSessionForViewer — DM-only event stripping', () => {
     expect(json).not.toContain('ep06/private-scene-name');
   });
 
+  it('SEC-1 (post-D5 sweep): non-coord viewer save STRIPS DM-only fields from pc-create payload', () => {
+    // pc-create is player-visible (the synthesized PC IS the
+    // player's character) but the payload carries the full
+    // CharacterRecord shape — including optional DM-only fields
+    // a DM may have edited at chargen review (dmNotes,
+    // magicPhase, etc.).  Pre-fix those landed in player saves.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0,
+      // DM ratified the synth with a spoiler-anchor dmNotes:
+      dmNotes: 'Mei is the first accidental caster the Quiet noticed.',
+      magicPhase: 'accidental',
+      knowsTheyCanCast: false,
+      tax: { active: false },
+      threadDebt: { rung: 'quiet' },
+      accidentalGrants: [{ ts: 1, note: 'a luck moment' }],
+      alignmentDrift: { marks: 0 }
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const create = doc.events.find((e) => e.kind === 'pc-create');
+    expect(create).toBeDefined();
+    const p = (create as { payload: Record<string, unknown> }).payload;
+    // Player-safe fields preserved.
+    expect(p.pcId).toBe('mei');
+    expect(p.name).toBe('Mei');
+    expect(p.stats).toBeDefined();
+    expect(p.harm).toBe(0);
+    expect(p.stress).toBe(0);
+    // DM-only fields scrubbed.
+    expect(p.dmNotes).toBeUndefined();
+    expect(p.magicPhase).toBeUndefined();
+    expect(p.knowsTheyCanCast).toBeUndefined();
+    expect(p.tax).toBeUndefined();
+    expect(p.threadDebt).toBeUndefined();
+    expect(p.accidentalGrants).toBeUndefined();
+    expect(p.alignmentDrift).toBeUndefined();
+    // Direct-grep leak test for the dmNotes spoiler text.
+    const json = stringifySave(doc);
+    expect(json).not.toContain('first accidental caster the Quiet noticed');
+  });
+
+  it('SEC-1: coord viewer save preserves pc-create DM-only fields (DM authoring own backup)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0,
+      dmNotes: 'spoiler anchor'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'alice', // coord viewer
+      'alice'
+    );
+    const create = doc.events.find((e) => e.kind === 'pc-create');
+    const p = (create as { payload: Record<string, unknown> }).payload;
+    expect(p.dmNotes).toBe('spoiler anchor');
+  });
+
   it('coord viewer save preserves pc-retire reason + scene (DM authoring own backup)', () => {
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});

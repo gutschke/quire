@@ -18,7 +18,10 @@
 
 import { EventLog, type QuireEvent } from './core/event-log';
 import { KNOWN_EVENT_KINDS } from './core/state';
-import { isDmOnlyCharacterFieldPath } from './character-loader';
+import {
+  isDmOnlyCharacterFieldPath,
+  DM_ONLY_CHARACTER_FIELDS
+} from './character-loader';
 
 /**
  * Wave D-prep-2-A (2026-05-26) — field-granularity firewall.
@@ -152,6 +155,32 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
     if (!('dmNotes' in obj)) return event;
     const { dmNotes: _omit, ...safe } = obj;
     void _omit;
+    return { ...event, payload: safe };
+  },
+  // SEC-1 (2026-05-27 post-D5 holistic Adversarial sweep): pc-create
+  // is correctly classified player-visible (the synthesized PC is
+  // the player's own character), but the payload carries the full
+  // CharacterRecord shape including OPTIONAL DM-only fields.  Pre-
+  // fix: a DM ratifying chargen with `dmNotes` set would land that
+  // dmNotes verbatim in EVERY player's autosave.  Same D-prep-2-A
+  // bug class as pc-edit + focus-grant + pc-retire — the scrubber
+  // family started on edits and missed creates.  Strip every
+  // top-level DM-only character field by name (reuse the SSOT
+  // constant from character-loader so the lint stays load-bearing).
+  'pc-create': (event) => {
+    const p = event.payload;
+    if (!p || typeof p !== 'object') return event;
+    const obj = p as Record<string, unknown>;
+    let touched = false;
+    const safe: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if ((DM_ONLY_CHARACTER_FIELDS as readonly string[]).includes(k)) {
+        touched = true;
+        continue;
+      }
+      safe[k] = v;
+    }
+    if (!touched) return event;
     return { ...event, payload: safe };
   }
 };

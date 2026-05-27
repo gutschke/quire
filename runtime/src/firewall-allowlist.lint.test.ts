@@ -65,7 +65,27 @@ const FIREWALL_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   // D5 (2026-05-27): bond proposals are DM-private state.
   // filterForViewer wipes them for non-coord.  Direct reads must
   // be coord-gated upstream.
-  { name: 'v.shared.pcBondProposals', re: /v\.shared\.pcBondProposals\b/g }
+  { name: 'v.shared.pcBondProposals', re: /v\.shared\.pcBondProposals\b/g },
+  // SEC-3 (2026-05-27 post-D5 holistic Adversarial sweep): cover
+  // the remaining DM-only shared-state objects.  Each is wiped
+  // (or per-entry stripped) by filterForViewer; direct
+  // `v.shared.*` reads must therefore be coord-gated or read the
+  // count-only.
+  // pcAccidentalGrants: append-only DM-typed silent-grant log
+  // (Wave B); wiped wholesale for non-coord.
+  {
+    name: 'v.shared.pcAccidentalGrants',
+    re: /v\.shared\.pcAccidentalGrants\b/g
+  },
+  // dmClocks: DM-only progress trackers (D3); wiped wholesale.
+  { name: 'v.shared.dmClocks', re: /v\.shared\.dmClocks\b/g },
+  // pcBonds: ratified bonds; player-visible at the array level
+  // BUT per-entry dmNotes + hidden-seat-source/target stripped.
+  // Direct reads from `v.shared` (not filteredShared) skip both
+  // strips.
+  { name: 'v.shared.pcBonds', re: /v\.shared\.pcBonds\b/g },
+  // diffProposals: D1-D living-doc proposals; wiped wholesale.
+  { name: 'v.shared.diffProposals', re: /v\.shared\.diffProposals\b/g }
 ];
 
 // Back-compat: the original PATTERN_SYNTHESIZED_PCS export name
