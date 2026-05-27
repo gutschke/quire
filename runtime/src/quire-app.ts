@@ -74,6 +74,7 @@ import {
   ReclaimController,
   type YieldPcFatePrompt
 } from './controllers/reclaim-controller';
+import { BroadcastFollowingController } from './controllers/broadcast-following-controller';
 
 // chat-spoiler-lint UI state lives in
 // `./controllers/chat-spoiler-lint-controller` (extracted as
@@ -1194,12 +1195,12 @@ export class QuireApp extends LitElement {
       // a campaign is loaded, lazy-fetch the PC character so the
       // Rail / Dice / Aside renderers have the data.
       this.refreshBoundCharacter();
-      // M3a.8 P2-11: follow DM broadcasts.  Non-coord viewer
-      // navigates to the broadcast target when its ts advances
-      // past what we've already followed.  Skips the DM (no
-      // self-bounce) and the initial subscribe (lastFollowed
-      // starts at 0; a real broadcast carries a positive ts).
-      this.followBroadcast();
+      // M3a.8 P2-11 broadcast-follow runs via
+      // `BroadcastFollowingController.hostUpdated` (extracted
+      // 2026-05-27, E-LARGE-1 step 3) — no explicit dispatch
+      // needed here.  The @state update from setting
+      // `this.sessionView` above triggers the Lit reactive
+      // cycle which fires hostUpdated.
       // Live-bounce a non-coordinator player if they're currently
       // viewing a scene the DM has just un-revealed.  Without this,
       // they'd see the now-private content until they navigate away.
@@ -5613,14 +5614,34 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * M3a.8 P2-11: track the most recent broadcast we've already
-   * followed.  Initialized to 0 so the first real broadcast
-   * (positive ts) is always honored; subsequent broadcasts only
-   * trigger navigation when strictly newer.  Per-instance state
-   * (not persisted) — a reload resets it so an old broadcast
-   * doesn't ambush the player on rejoin.
+   * E-LARGE-1 step 3 (2026-05-27): broadcast-follow cursor +
+   * navigate-on-newer-ts logic extracted to
+   * `BroadcastFollowingController`.  Runs via hostUpdated each
+   * Lit cycle — no QuireApp dispatch needed.  See controller
+   * for the inFlight concurrency guard (extraction-time fix).
    */
-  private lastFollowedBroadcastTs: number = 0;
+  private readonly broadcastFollowingCtrl = new BroadcastFollowingController(
+    this,
+    {
+      getSessionView: () => this.sessionView,
+      isCoordinator: () => this.isCoordinator(),
+      parseStagePath: (path) => parseRoute(path),
+      navigateToRoute: (route) => this.navigateToRoute(route)
+    }
+  );
+
+  /**
+   * @internal Test-only escape hatch: read the broadcast-follow
+   * cursor for assertions.  Also satisfies the noUnusedLocals
+   * check on the controller field above — the controller
+   * registers itself via host.addController, but TypeScript
+   * can't see that side effect.  First `_*ForTest` precedent on
+   * QuireApp; future test seams should follow this @internal-
+   * JSDoc convention rather than proliferating naming variants.
+   */
+  get _broadcastFollowCursorForTest(): number {
+    return this.broadcastFollowingCtrl._cursorForTest();
+  }
 
   /**
    * M3a.8 P2-11: emit a broadcast-view event for the local DM's
@@ -5641,46 +5662,9 @@ export class QuireApp extends LitElement {
     return true;
   }
 
-  /**
-   * Subscribe-side: navigate to the DM's broadcast target when a
-   * newer broadcast arrives.  Skipped for the DM (who is the
-   * author).  Pure handler — caller-paced via session subscribe.
-   */
-  private followBroadcast(): void {
-    const v = this.sessionView;
-    if (!v || v.status !== 'active') return;
-    const bv = v.filteredShared.broadcastView;
-    if (!bv) return;
-    if (bv.ts <= this.lastFollowedBroadcastTs) return;
-    if (this.isCoordinator()) {
-      // DM is the broadcast author — no self-bounce.  Still
-      // advance the cursor so future broadcasts dispatch
-      // correctly when the DM changes coord state.
-      this.lastFollowedBroadcastTs = bv.ts;
-      return;
-    }
-    const route = parseRoute(bv.stagePath);
-    if (route.kind === 'home') {
-      // Malformed stagePath — treat as followed so retry isn't
-      // wedged on the same poisoned event.
-      this.lastFollowedBroadcastTs = bv.ts;
-      return;
-    }
-    // Advance the cursor AFTER navigation resolves so a DM retry
-    // of the SAME ts still re-fires when the previous navigation
-    // failed (the player lands on the error screen and the DM can
-    // re-broadcast without bumping ts).
-    void this.navigateToRoute(route).then(
-      () => {
-        this.lastFollowedBroadcastTs = bv.ts;
-      },
-      () => {
-        // Don't advance on rejection — re-broadcast of the same
-        // ts will retry.  navigateToRoute already handles its own
-        // error display via _appState; no further surface needed.
-      }
-    );
-  }
+  // followBroadcast lives in
+  // `./controllers/broadcast-following-controller` (extracted
+  // 2026-05-27, E-LARGE-1 step 3).
 
   /**
    * M3a.8 P2-11: derive the AppRoute that corresponds to the
