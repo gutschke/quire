@@ -724,7 +724,7 @@ post-D3.  Findings ranked + most ripe items captured below.
   `focus-grant`, the scrub function is becoming a Map of arms.
   Convert to `Map<kind, scrubFn>` registry parallel to the
   materializer registry.
-### Wave D5 — per-PC bonds 🚧 IN PROGRESS
+### Wave D5 — per-PC bonds ✓ SHIPPED (multi-commit; see sub-waves)
 
 3-expert pre-design round (TTRPG / UX / Adversarial) locked the
 MVP scope below.  Per the chargen-authorship division: player
@@ -837,19 +837,51 @@ ratification gate).  AI is OUT OF MVP.
 **Sub-wave plan:**
 
 - [ ] **D5-A** — locked scope above (DONE in this commit).
-- [ ] **D5-B [engine]** — `Bond` interface + `bonds?: Bond[]`
-  on CharacterRecord; 3 new event kinds + materializers;
-  seat-binding authoring gate; `filterForViewer` per-entry strip;
-  `scrubEventForPlayer` registry conversion + arm; persistence
-  classification; engine tests.
-- [ ] **D5-C [UI]** — chargen integration (post-backstory bond
-  authoring); `<bonds-card>` field-renderer mirroring
-  `<foci-card>`; chargen-dm-review ratification arm;
-  read-only mirror on dm-pc-detail.
-- [ ] **D5-D [composability + verifier]** — `bond-ratify` joins
-  `SESSION_DIGEST_INPUT_KINDS` + digest prompt update;
-  player-rail bond chip + edit affordance; end-of-wave
-  verifier; commit/push.
+- [x] **D5-B [engine]** ✓ SHIPPED `0160a26` — `Bond` interface +
+  `bonds?: Bond[]` on CharacterRecord; 3 new event kinds +
+  materializers; seat-binding authoring gate;
+  `filterForViewer` per-entry strip; `scrubEventForPlayer`
+  registry conversion + arm; persistence classification; engine
+  tests.
+- [x] **D5-C [UI]** ✓ SHIPPED `1a940cf` — `<bonds-card>` field-
+  renderer mirroring `<foci-card>`; player-rail post-chargen
+  authoring with inline compose form; dm-pc-detail
+  ratification + pending-proposals surface.
+- [x] **D5-C-fix [scenario blockers]** ✓ SHIPPED `4532a30` — 9
+  must-fix items from first-round scenario expert playthrough.
+  Includes dmNotes-on-ratify inline form (the locked
+  "DM owns fit" half was silently non-functional in D5-C),
+  willUpdate draft-leak guard (3rd memo-#2 strike), pending-
+  pip player feedback, bond-ratify into digest input,
+  (retired PC) target fallback, defense-in-depth proto-pollution
+  guard on pcId + targetPcId, dup-id pre-check with entropy
+  bump, broadcast-warning copy.
+- [x] **D5-cleanup [cross-side + DM queue]** ✓ SHIPPED `43679a4`
+  — inbound bond rendering (Iris sees "Mei → me" on her sheet);
+  campaign-level pending-bond queue in dm-aside (DM doesn't
+  navigate to each PC to discover work).
+- [x] **D5-cleanup-2 [second-round blockers]** ✓ SHIPPED `a069540`
+  — 5 must-fix from second-round scenario sweep including
+  hidden-seat bond LEAK (security-class — DM-authored bonds
+  from hidden-seat source PCs were leaking via cross-side
+  inbound rendering); FIFO sort fix (comment vs code); Q-LT4
+  lint extended to pcBondProposals; DM-vs-player parity
+  (DM saw fewer bonds than players); duplicate-target filter.
+  Quick wins folded: bond-remove → digest input; materializer
+  dup-id widening.
+- [x] **D5-D [composability + chargen + verifier]** ✓ SHIPPED —
+  bond-count discoverability pip on chargen-dm-review accepted
+  slot cards.  DM sees "N pending bonds" alongside backstory
+  review without leaving the chargen surface; navigation to
+  the full Ratify form is via the existing dm-aside queue +
+  dm-pc-detail.  bond-ratify + bond-remove both in
+  SESSION_DIGEST_INPUT_KINDS.  End-to-end propose → ratify →
+  display loop works via the post-chargen player-rail path.
+  Full PLAYER-side chargen-Q&A bond authoring (TTRPG-expert's
+  full D5-12 vision: bonds typed during chargen Q&A, captured
+  in the chargen payload, fired as bond-propose after
+  pc-create) deferred to D5.5 — requires character-creation
+  + chargen-controller refactoring beyond a single-commit pass.
 
 **TTRPG re-prioritization (2026-05-26 third pass):**
 

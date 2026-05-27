@@ -227,6 +227,17 @@ export class ChargenDmReview extends LitElement {
    * Slots whose synth is in-flight (dim spinner state).
    */
   @property({ attribute: false }) synthInFlight: Set<number> = new Set();
+  /**
+   * D5-D (2026-05-27): per-PC pending bond count.  Host populates
+   * from `state.pcBondProposals[pcId].length` for each accepted
+   * slot's bound pcId.  When > 0, the slot card surfaces "N
+   * pending bonds → Review on PC sheet" so the DM sees the work
+   * waiting alongside the backstory review.  The full Ratify UI
+   * lives on `<dm-pc-detail>` + dm-aside; this is a discoverability
+   * pip, not a duplicate surface.
+   */
+  @property({ attribute: false }) pendingBondCounts: Record<string, number> =
+    {};
 
   /**
    * Slots the DM has accepted (CC-24 — wired in step 4; step 2
@@ -2087,6 +2098,7 @@ export class ChargenDmReview extends LitElement {
               ${accepted ? 'Accepted' : 'Accept this PC'}
             </button>`
           : nothing}
+        ${this.renderBondCountPip(slot)}
         ${synth
           ? html`<button
               type="button"
@@ -2102,6 +2114,35 @@ export class ChargenDmReview extends LitElement {
           : nothing}
       </div>
     `;
+  }
+
+  /**
+   * D5-D (2026-05-27): bond-count discoverability pip on each
+   * chargen-dm-review slot card.  Shows "N pending bonds →
+   * Review on PC sheet" when the bound PC has un-ratified bond
+   * proposals.  Discoverability only — the full Ratify-with-
+   * dmNotes form lives on `<dm-pc-detail>`.  Per TTRPG D5-12 lock:
+   * "DM ratifies fit during the existing review pass" — this is
+   * the breadcrumb that surfaces the work.
+   *
+   * Player-side chargen-Q&A bond authoring (the full D5-12
+   * vision) deferred to D5.5 — it needs character-creation
+   * surface + chargen-controller refactoring.  The current
+   * post-chargen path on player-rail + dm-aside queue covers the
+   * end-to-end loop without that refactor.
+   */
+  private renderBondCountPip(slot: number): TemplateResult | typeof nothing {
+    const seat = this.pcSlots?.[slot];
+    const pcId = seat?.pcId;
+    if (typeof pcId !== 'string' || pcId.length === 0) return nothing;
+    const count = this.pendingBondCounts?.[pcId] ?? 0;
+    if (count === 0) return nothing;
+    return html`<span
+      class="chargen-dm-review-bond-pip"
+      title="This PC has bond proposals awaiting DM ratification.  Open their character page to review."
+    >
+      ${count} pending bond${count === 1 ? '' : 's'}
+    </span>`;
   }
 
   private openReviewModal(slot: number): void {

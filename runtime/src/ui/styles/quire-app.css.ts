@@ -1445,6 +1445,18 @@ export const quireAppStyles = css`
       gap: 0.4rem;
       margin-top: 0.5rem;
     }
+    /* D5-D (2026-05-27): bond-count discoverability pip on
+     * accepted chargen-dm-review slot cards. */
+    .chargen-dm-review-bond-pip {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.78rem;
+      color: light-dark(#1d4ed8, #93c5fd);
+      background: light-dark(#dbeafe, #1e3a8a);
+      border: 1px solid light-dark(#60a5fa, #3b82f6);
+      border-radius: 3px;
+      align-self: center;
+    }
     .chargen-dm-review-accept {
       padding: 0.35rem 0.85rem;
       border: 1px solid light-dark(#16a34a, #4ade80);

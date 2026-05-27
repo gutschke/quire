@@ -355,6 +355,37 @@ describe('<chargen-dm-review> — accept + revise (CC-24 + P3T-19)', () => {
     expect(calls).toEqual([4]);
   });
 
+  it('D5-D: renders pending-bond pip on accepted slot card when count > 0', async () => {
+    const el = mountWith9Seats();
+    // Bind slot 3 to a pcId so the pip can resolve.
+    const slots = nineUnbound();
+    slots[3] = bound('mei');
+    el.pcSlots = slots;
+    el.synthResults = new Map([[3, okResult()]]);
+    el.acceptedSlots = new Set([3]);
+    el.pendingBondCounts = { mei: 2 };
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    const seat3 = el.querySelector('[data-slot="3"]');
+    const pip = seat3?.querySelector('.chargen-dm-review-bond-pip');
+    expect(pip).not.toBeNull();
+    expect(pip?.textContent?.trim()).toMatch(/2 pending bonds/);
+  });
+
+  it('D5-D: no pip rendered when pendingBondCounts has no entry for the pc', async () => {
+    const el = mountWith9Seats();
+    const slots = nineUnbound();
+    slots[3] = bound('mei');
+    el.pcSlots = slots;
+    el.synthResults = new Map([[3, okResult()]]);
+    el.pendingBondCounts = {};
+    el.onAccept = () => {};
+    el.onRevise = () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.chargen-dm-review-bond-pip')).toBeNull();
+  });
+
   it('Accept button is disabled (and labeled "Accepted") when slot is in acceptedSlots', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[5, okResult()]]);

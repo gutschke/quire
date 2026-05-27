@@ -2441,6 +2441,26 @@ export class QuireApp extends LitElement {
     return v.shared.pcBondProposals?.[pcId]?.length ?? 0;
   }
 
+  /**
+   * D5-D (2026-05-27): pending-bond counts keyed by pcId.  Used by
+   * `<chargen-dm-review>` to surface a "N pending bonds" pip on
+   * each accepted slot card so the DM sees the work waiting
+   * alongside backstory review.  Coord-only by design (the
+   * chargen-dm-review surface is coord-mounted upstream).
+   */
+  private pendingBondCountsByPcId(): Record<string, number> {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return {};
+    if (!this.isCoordinator()) return {};
+    const out: Record<string, number> = {};
+    for (const [pcId, proposals] of Object.entries(
+      v.shared.pcBondProposals ?? {}
+    )) {
+      if (proposals.length > 0) out[pcId] = proposals.length;
+    }
+    return out;
+  }
+
   private bondTargetCandidates(
     selfPcId: string
   ): Array<{ pcId: string; name: string }> {
@@ -2519,6 +2539,7 @@ export class QuireApp extends LitElement {
         .synthResults=${this.chargenSynthResultsView()}
         .synthInFlight=${this.chargenSynthInFlightView()}
         .acceptedSlots=${this.chargenAcceptedSlotsView()}
+        .pendingBondCounts=${this.pendingBondCountsByPcId()}
         .displayNameLookup=${(pcId: string) =>
           this.chargen.displayNameForBound(pcId)}
         .answersLookup=${(slot: number) =>
