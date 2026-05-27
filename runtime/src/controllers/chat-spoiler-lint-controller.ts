@@ -99,6 +99,29 @@ export class ChatSpoilerLintController implements ReactiveController {
   }
 
   /**
+   * Reactive coord-loss auto-dismiss (post-session-simulation fix,
+   * 2026-05-27).  Pre-fix, a co-DM reclaim left the prior DM's
+   * lint modal open with a working "Send to chat anyway" — the
+   * confirmSend gate only checked hasActiveSession + length, not
+   * coord status, so a non-coord peer could append chat that
+   * bypassed the silent-firewall gate.  This hook fires on every
+   * host update; auto-dismisses when isCoordinator() flips false.
+   * Defense-in-depth: confirmSend also re-checks coord status.
+   *
+   * Lit's hostUpdated() takes no args — we read env every tick
+   * rather than diffing.  Cheap enough; isCoordinator is a getter.
+   */
+  hostUpdated(): void {
+    if (this.state === null) return;
+    if (this.env.isCoordinator()) return;
+    // Local peer lost coord while modal was open — drop it.
+    this.abort?.abort();
+    this.abort = null;
+    this.state = null;
+    this.host.requestUpdate();
+  }
+
+  /**
    * Gate a chat draft against the spoiler lint.  Returns true when
    * the draft can proceed to broadcast immediately (not coord, or
    * no substring hits).  Returns false when the lint fired + the
@@ -141,6 +164,16 @@ export class ChatSpoilerLintController implements ReactiveController {
     if (!state) return false;
     this.abort?.abort();
     this.state = null;
+    // Belt-and-suspenders coord-recheck (post-session-simulation
+    // fix).  The hostUpdated hook above is the primary defense
+    // (auto-dismisses on coord-loss), but if the click and the
+    // coord-loss race the same tick, the gate here closes the
+    // last gap.  Silent-firewall posture: refuse without
+    // broadcasting.
+    if (!this.env.isCoordinator()) {
+      this.host.requestUpdate();
+      return false;
+    }
     if (!this.env.hasActiveSession()) {
       this.host.requestUpdate();
       return false;
