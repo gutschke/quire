@@ -338,19 +338,19 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   can propose `clock-tick` ops.  Covers world-side time pressure
   (the only TTRPG tool the build doesn't already have for "ordinary
   scene → tense scene").
-### Wave D4-cleanup — post-ship 4-expert sanity check findings 🚧 IN PROGRESS
+### Wave D4-cleanup — post-ship 4-expert sanity check findings ✓ SHIPPED `d6eb8e5`
 
 Triggered by the post-D4 4-expert sanity-check round (2026-05-26
 third pass).  Three findings the experts flagged as material (not
 polish), one prereq for D1 architecture, three D1 must-decide-
 before-coding items.
 
-- [ ] **D4-cleanup-1 (UX-material)** — render prior digest as
+- [x] **D4-cleanup-1 (UX-material)** — render prior digest as
   markdown, not `<pre>`.  UX-expert: this is the highest-value
   player-facing AI artifact; literal `##` and `*` chars in front
   of players is a broken surface, not polish.  Use existing
   `src/markdown.ts` renderer.
-- [ ] **D4-cleanup-2 (TTRPG)** — prompt + input-kind tweaks:
+- [x] **D4-cleanup-2 (TTRPG)** — prompt + input-kind tweaks:
   (a) DROP `seat-memory-edit` from `SESSION_DIGEST_INPUT_KINDS`
   (DM-intimate, never AI-fed);  (b) magic-discovery constraint:
   "pre-Realization stays luck — do not pattern-match across
@@ -358,13 +358,13 @@ before-coding items.
   "contemporary, mundane-surface; friend at a bar, not fantasy
   prologue";  (d) thread-debt ladder phrasing;  (e) add prior-
   digest as "previously" anchor.
-- [ ] **D4-cleanup-3 (Engineering — D1 prereq)** — extract shared
+- [x] **D4-cleanup-3 (Engineering — D1 prereq)** — extract shared
   `isPcEditDmOnly(event)` helper alongside `DM_ONLY_CHARACTER_FIELDS`
   in `character-loader.ts`.  Currently duplicated between
   `persistence.ts:scrubEventForPlayer` and
   `quire-app.ts:generateSessionDigest`.  D1 will need it for the
   NPC analog — extract NOW so D1 reuses cleanly.
-- [ ] **D4-cleanup-4 (Adversarial A-1)** — pin pc-retire / pc-
+- [x] **D4-cleanup-4 (Adversarial A-1)** — pin pc-retire / pc-
   archive payload scrub with a regression test.  Today the
   summarizer is narrow so `reason` + `scene` don't leak; the
   firewall is implicit.  Test fails if a future summarizer
