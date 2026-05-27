@@ -54,7 +54,7 @@ export class DmAside extends LitElement {
     if (pinned.length === 0) {
       return html`
         <section class="card dm-aside-empty">
-          <h2>DM aide</h2>
+          <h2>Pinned NPCs</h2>
           <p class="muted">
             Pin NPCs from any NPC page to surface them here.
           </p>
@@ -63,7 +63,7 @@ export class DmAside extends LitElement {
     }
     return html`
       <section class="card dm-aside-card">
-        <h2>DM aide</h2>
+        <h2>Pinned NPCs <span class="muted">(${pinned.length})</span></h2>
         ${this.renderPinned(pinned)}
       </section>
     `;
@@ -71,7 +71,6 @@ export class DmAside extends LitElement {
 
   private renderPinned(pinned: string[]): TemplateResult {
     return html`
-      <h3 class="dm-aside-subhead">Pinned NPCs (${pinned.length})</h3>
       <ul class="dm-aside-pinned">
         ${pinned.map(
           (npcId) => html`

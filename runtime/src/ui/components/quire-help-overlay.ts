@@ -51,6 +51,14 @@ interface HelpRow {
   keys: string;
   action: string;
   scope: 'dm' | 'player' | 'shared';
+  /**
+   * UX-1 (2026-05-26 holistic-review): optional contextual subgroup
+   * label.  Some DM hotkeys only fire in specific app modes (e.g.
+   * j/k/a/r/e in the diff-review pane during wrap mode).  Omit for
+   * always-on hotkeys; supply a short subgroup name for contextual
+   * ones.
+   */
+  context?: string;
 }
 
 const SHIPPED_HOTKEYS: ReadonlyArray<HelpRow> = [
@@ -82,6 +90,35 @@ const SHIPPED_HOTKEYS: ReadonlyArray<HelpRow> = [
     keys: 'F1',
     action: 'Add a new player seat (allocates the next slot)',
     scope: 'dm'
+  },
+  // UX-1 (2026-05-26 holistic-review): D1-D shipped 5 keys in the
+  // diff-review pane that never made it into this overlay.  Closing
+  // that single-source-of-truth regression.  Listed with the
+  // 'Diff-review' subgroup so the DM sees they only fire in that
+  // wrap-mode pane.
+  {
+    keys: 'J / K',
+    action: 'Walk to previous / next proposal',
+    scope: 'dm',
+    context: 'Diff-review pane'
+  },
+  {
+    keys: 'A',
+    action: 'Accept the selected proposal (writes to WorkingCopy)',
+    scope: 'dm',
+    context: 'Diff-review pane'
+  },
+  {
+    keys: 'R',
+    action: 'Reject the selected proposal',
+    scope: 'dm',
+    context: 'Diff-review pane'
+  },
+  {
+    keys: 'E',
+    action: 'Focus the after-text editor (edit before accept)',
+    scope: 'dm',
+    context: 'Diff-review pane'
   }
 ];
 
@@ -136,7 +173,16 @@ export class QuireHelpOverlay extends LitElement {
   }
 
   override render(): TemplateResult {
-    const dmRows = SHIPPED_HOTKEYS.filter((r) => r.scope === 'dm');
+    const dmAlways = SHIPPED_HOTKEYS.filter(
+      (r) => r.scope === 'dm' && !r.context
+    );
+    const dmContexts = new Map<string, HelpRow[]>();
+    for (const row of SHIPPED_HOTKEYS) {
+      if (row.scope !== 'dm' || !row.context) continue;
+      const arr = dmContexts.get(row.context);
+      if (arr) arr.push(row);
+      else dmContexts.set(row.context, [row]);
+    }
     const sharedRows = SHIPPED_HOTKEYS.filter((r) => r.scope === 'shared');
     return html`<quire-modal
       class="quire-help-overlay"
@@ -156,7 +202,10 @@ export class QuireHelpOverlay extends LitElement {
       </header>
       <div class="quire-help-overlay-body">
         ${renderGroup('Shared', sharedRows)}
-        ${renderGroup('DM hotkeys', dmRows)}
+        ${renderGroup('DM hotkeys', dmAlways)}
+        ${Array.from(dmContexts.entries()).map(([ctx, rows]) =>
+          renderGroup(`DM hotkeys — ${ctx}`, rows)
+        )}
         <p class="quire-help-overlay-foot muted">
           DM hotkeys only fire when you're the coordinator + your
           focus isn't in a text field.  Player hotkeys land in a

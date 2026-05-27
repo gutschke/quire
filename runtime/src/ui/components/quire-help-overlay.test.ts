@@ -93,6 +93,23 @@ describe('<quire-help-overlay> (Wave C1)', () => {
     expect(headings).toContain('DM hotkeys');
   });
 
+  it('UX-1 (2026-05-26 holistic-review): renders Diff-review pane subgroup', async () => {
+    const el = mount();
+    window.dispatchEvent(new CustomEvent(HELP_OPEN_EVENT));
+    await el.updateComplete;
+    const headings = Array.from(
+      el.querySelectorAll('.quire-help-overlay-group h4')
+    ).map((h) => h.textContent?.trim());
+    expect(headings).toContain('DM hotkeys — Diff-review pane');
+    // All 4 D1-D hotkeys (j/k accept on subgroup; a, r, e) should
+    // appear inside the body somewhere.
+    const text = el.textContent ?? '';
+    expect(text).toMatch(/Walk to previous \/ next proposal/);
+    expect(text).toMatch(/Accept the selected proposal/);
+    expect(text).toMatch(/Reject the selected proposal/);
+    expect(text).toMatch(/Focus the after-text editor/);
+  });
+
   it('close button dismisses the overlay', async () => {
     const el = mount();
     window.dispatchEvent(new CustomEvent(HELP_OPEN_EVENT));
