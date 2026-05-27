@@ -177,20 +177,36 @@ const _onReadyCallbacks: Array<() => void> = [];
 export function ensureMarkdownPipeline(): Promise<PipelineModule> {
   if (_pipeline) return Promise.resolve(_pipeline);
   if (!_pipelinePromise) {
-    _pipelinePromise = import('./markdown-pipeline').then((mod) => {
-      _pipeline = mod;
-      // Fire registered onReady callbacks; lets Lit components
-      // request a re-render once the pipeline is available.
-      for (const cb of _onReadyCallbacks) {
-        try {
-          cb();
-        } catch {
-          // Don't let one bad listener block others.
+    _pipelinePromise = import('./markdown-pipeline').then(
+      (mod) => {
+        _pipeline = mod;
+        // Fire registered onReady callbacks; lets Lit components
+        // request a re-render once the pipeline is available.
+        for (const cb of _onReadyCallbacks) {
+          try {
+            cb();
+          } catch {
+            // Don't let one bad listener block others.
+          }
         }
+        _onReadyCallbacks.length = 0;
+        return mod;
+      },
+      (err) => {
+        // Reset so a subsequent call retries cleanly.  Vitest's
+        // env-teardown can race a `void ensureMarkdownPipeline()`
+        // call near a test boundary and surface as an unhandled
+        // rejection; that's not a production failure.  Real
+        // load errors re-throw.
+        _pipelinePromise = null;
+        const isTeardown =
+          err &&
+          typeof err === 'object' &&
+          (err as { name?: string }).name === 'EnvironmentTeardownError';
+        if (!isTeardown) throw err;
+        return null as unknown as PipelineModule;
       }
-      _onReadyCallbacks.length = 0;
-      return mod;
-    });
+    );
   }
   return _pipelinePromise;
 }

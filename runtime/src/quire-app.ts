@@ -267,6 +267,23 @@ function ensureWrapModeChunk(): Promise<WrapModeChunk> {
         }
         _wrapModeReadyCallbacks.length = 0;
         return mod;
+      },
+      (err) => {
+        // Reset the cache so a subsequent call retries cleanly.
+        // Vitest tears the env down between test files; when a
+        // session-subscriber fires `void ensureWrapModeChunk()`
+        // near the end of a test, the chunk's inner imports can
+        // resolve after teardown, producing an `EnvironmentTeardownError`
+        // that vitest reports as an unhandled rejection — but it
+        // isn't a production failure.  Swallow it; re-throw
+        // anything else so real load failures still surface.
+        _wrapModeChunkPromise = null;
+        const isTeardown =
+          err &&
+          typeof err === 'object' &&
+          (err as { name?: string }).name === 'EnvironmentTeardownError';
+        if (!isTeardown) throw err;
+        return null as unknown as WrapModeChunk;
       }
     );
   }
