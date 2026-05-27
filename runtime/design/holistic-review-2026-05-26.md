@@ -107,7 +107,7 @@ to release-moment text.
 UX expert flagged these as next after firewall.  C1 + C3 shipped
 together; C2 + C4 (larger scope) deferred.
 
-- [x] **C1** — hotkey `?` overlay ✓ SHIPPED `<TBD>`.  New
+- [x] **C1** — hotkey `?` overlay ✓ SHIPPED `50d303d`.  New
   `<quire-help-overlay>` self-contained component owns global `?`
   keydown + custom-event open; topbar `?` chip is the click
   affordance.  Lists 8 shipped hotkeys (single source of truth in
@@ -120,7 +120,7 @@ together; C2 + C4 (larger scope) deferred.
   per `ui.md` L100); after chargen, unmount entirely.  Composes with
   the engineering recommendation to extract the modal forms as
   child components.
-- [x] **C3** — callback-type consolidation ✓ SHIPPED `<TBD>`.
+- [x] **C3** — callback-type consolidation ✓ SHIPPED `50d303d`.
   New `src/ui/callback-types.ts` is the single source of truth for
   `NavigateCallback` (was duplicated in 4 files),
   `DisplayNameLookup` (was 3), `AddSeatCallback` + `BumpStatCallback`
