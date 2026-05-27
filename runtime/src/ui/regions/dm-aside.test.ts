@@ -62,7 +62,8 @@ describe('<dm-aside>', () => {
         pcLabel: 'Mei',
         targetLabel: 'Iris',
         text: 'classmates at Berkeley',
-        proposedByPeerId: 'bob'
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
       },
       {
         id: 'b2',
@@ -70,7 +71,8 @@ describe('<dm-aside>', () => {
         pcLabel: 'Hadrian',
         targetLabel: 'Reggie',
         text: 'co-workers at the gate',
-        proposedByPeerId: 'dave'
+        proposedByPeerId: 'dave',
+        ts: 1700000010000
       }
     ];
     await el.updateComplete;
@@ -105,7 +107,8 @@ describe('<dm-aside>', () => {
         pcLabel: 'Mei',
         targetLabel: 'Iris',
         text: 't',
-        proposedByPeerId: 'bob'
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
       }
     ];
     await el.updateComplete;
@@ -123,7 +126,8 @@ describe('<dm-aside>', () => {
         pcLabel: 'Mei',
         targetLabel: 'Iris',
         text: 't',
-        proposedByPeerId: 'bob'
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
       }
     ];
     let routed: unknown = null;

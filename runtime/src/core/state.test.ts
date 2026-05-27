@@ -4666,6 +4666,107 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
       expect(state.pcBondProposals.mei.length).toBe(8);
     });
 
+    it('D5-cleanup-2 BLOCKER: filterForViewer strips bonds from hidden-seat source for non-coord', () => {
+      // Adv-B (scenario-sweep): DM authors a bond from a hidden-seat
+      // PC `mystery` targeting `iris`.  Pre-fix, iris's player saw
+      // "(unknown PC) → me · <bond text>" leaking the hidden PC's
+      // existence + the bond text.  Now filtered.
+      const alice = new EventLog('alice');
+      alice.append('coordinator-claim', {});
+      // Add an UNREVEALED seat for the hidden PC.
+      alice.append('seat-add', {
+        v: 1,
+        slot: 9,
+        revealed: false
+      });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mystery',
+        name: 'Mystery PC',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 9, pcId: 'mystery' });
+      // Now add a visible target PC.
+      alice.append('seat-add', { v: 1, slot: 1 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'iris',
+        name: 'Iris',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'iris' });
+      // Coord-authored bond from hidden PC mystery → visible Iris.
+      alice.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mystery',
+        targetPcId: 'iris',
+        text: 'they witnessed something together'
+      });
+      alice.append('bond-ratify', { v: 1, id: 'b1', pcId: 'mystery' });
+      const state = materialize(alice.events());
+      // Coord view: full visibility.
+      const coordView = filterForViewer(state, 'alice');
+      expect(coordView.pcBonds.mystery).toHaveLength(1);
+      // Non-coord (bob, a player) view: hidden-seat source bonds
+      // are wiped entirely.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcBonds.mystery).toBeUndefined();
+    });
+
+    it('D5-cleanup-2 BLOCKER: filterForViewer strips bonds targeting hidden-seat for non-coord', () => {
+      // Mirror case: bond's SOURCE is visible, TARGET is hidden.
+      const alice = new EventLog('alice');
+      alice.append('coordinator-claim', {});
+      // Hidden target.
+      alice.append('seat-add', { v: 1, slot: 9, revealed: false });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mystery',
+        name: 'Mystery',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 9, pcId: 'mystery' });
+      // Visible source.
+      alice.append('seat-add', { v: 1, slot: 1 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mei',
+        name: 'Mei',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', {
+        v: 1,
+        slot: 1,
+        pcId: 'mei',
+        controllerPeerId: 'bob'
+      });
+      // Coord-authored bond Mei → mystery.
+      alice.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'mystery',
+        text: 'mysterious connection'
+      });
+      alice.append('bond-ratify', { v: 1, id: 'b1', pcId: 'mei' });
+      const state = materialize(alice.events());
+      const coordView = filterForViewer(state, 'alice');
+      expect(coordView.pcBonds.mei).toHaveLength(1);
+      // Non-coord view: mei's bond array exists but excludes the
+      // bond targeting the hidden PC.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcBonds.mei ?? []).toHaveLength(0);
+    });
+
     it('filterForViewer strips per-entry dmNotes for non-coord viewers', () => {
       const [alice, bob] = setupSessionWithBob();
       const ev = bob.append('bond-propose', {

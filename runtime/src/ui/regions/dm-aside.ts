@@ -58,6 +58,15 @@ export interface DmAsideBondProposal {
   text: string;
   /** Player peer who proposed it. */
   proposedByPeerId: string;
+  /**
+   * D5-cleanup-2 (2026-05-27 scenario UX-6 + Adv-E): epoch-ms
+   * timestamp when the proposal landed.  Host populates from
+   * `BondProposal.ts`; renderer uses it for FIFO sort (oldest
+   * pending first).  Pre-fix the queue sorted by random id,
+   * giving DMs pseudo-random triage order despite a
+   * locked-FIFO design intent.
+   */
+  ts: number;
 }
 
 @customElement('dm-aside')

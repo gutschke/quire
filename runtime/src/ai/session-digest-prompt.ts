@@ -156,6 +156,8 @@ function summarizePayload(e: QuireEvent): string {
       // only), summarize only the player-facing fields.
       return `bond ratified for ${stringField(p, 'pcId')} → "${truncate(stringField(p, 'text'), 200)}"`;
     }
+    case 'bond-remove':
+      return `bond removed for ${stringField(p, 'pcId')} (id ${stringField(p, 'id')})`;
     case 'pc-mark-realization':
       return `${stringField(p, 'pcId')} realized their magic (one-way gate)`;
     default:
@@ -282,7 +284,13 @@ export const SESSION_DIGEST_INPUT_KINDS: ReadonlySet<string> = new Set([
   // already stripped by PER_KIND_SCRUBBERS in persistence.ts +
   // by filterForViewer's per-entry strip — the digest input is
   // doubly-safe.
-  'bond-ratify'
+  'bond-ratify',
+  // D5-cleanup-2 (2026-05-27 scenario TTRPG-D.4): dissolution is
+  // also table-canon.  The recap should narrate when a bond was
+  // ended, not just when it formed.  bond-remove payload is
+  // `{v, id, pcId}` — no DM-only sub-fields — so feeding it is
+  // safe by construction.
+  'bond-remove'
   // D4-cleanup-2 (TTRPG): `seat-memory-edit` removed — seat-memory
   // is the DM's intimate per-seat note layer (silent-player-firewall
   // domain).  Feeding it into a player-facing recap risks both

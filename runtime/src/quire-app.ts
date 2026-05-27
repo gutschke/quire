@@ -2399,12 +2399,15 @@ export class QuireApp extends LitElement {
           pcLabel,
           targetLabel: this.resolvePcDisplayLabel(p.targetPcId),
           text: p.text,
-          proposedByPeerId: p.proposedByPeerId
+          proposedByPeerId: p.proposedByPeerId,
+          ts: p.ts
         });
       }
     }
     // Sort by ts ascending — oldest pending first (FIFO queue).
-    out.sort((a, b) => a.id.localeCompare(b.id));
+    // D5-cleanup-2 fix: was `a.id.localeCompare(b.id)` which
+    // gave random order since bond ids are random hex.
+    out.sort((a, b) => a.ts - b.ts);
     return out;
   }
 
@@ -2443,11 +2446,38 @@ export class QuireApp extends LitElement {
   ): Array<{ pcId: string; name: string }> {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return [];
+    // D5-cleanup-2 (2026-05-27 scenario UX-5): exclude PCs the
+    // viewer's PC has ALREADY bonded to (outbound, ratified or
+    // pending).  Pre-fix the player could submit "Iris → Hadrian"
+    // twice with different text and the engine accepted both
+    // rows — reads as sloppy/buggy.  Filter by existing target
+    // ids; the player can still remove + re-add to change a bond.
+    const existingTargets = new Set<string>();
+    const outboundRatified = v.filteredShared.pcBonds?.[selfPcId] ?? [];
+    for (const b of outboundRatified) existingTargets.add(b.targetPcId);
+    // Pending proposals only visible to coord viewers (D5-3) or
+    // the controlling player.  Read from shared state when
+    // appropriate; the union is the source-of-truth for the
+    // "already used" set.
+    const proposals = v.shared.pcBondProposals?.[selfPcId] ?? [];
+    let canSeeOwnProposals = this.isCoordinator();
+    if (!canSeeOwnProposals) {
+      for (const seat of Object.values(v.shared.pcSlots)) {
+        if (seat.pcId === selfPcId && seat.controllerPeerId === v.peerId) {
+          canSeeOwnProposals = true;
+          break;
+        }
+      }
+    }
+    if (canSeeOwnProposals) {
+      for (const p of proposals) existingTargets.add(p.targetPcId);
+    }
     const out: Array<{ pcId: string; name: string }> = [];
     for (const seat of Object.values(v.filteredShared.pcSlots)) {
       if (seat.state !== 'bound-active') continue;
       const pcId = seat.pcId;
       if (!pcId || pcId === selfPcId) continue;
+      if (existingTargets.has(pcId)) continue;
       const record = v.filteredShared.synthesizedPcs?.[pcId];
       const name = (record?.name as string | undefined) ?? pcId;
       out.push({ pcId, name });
@@ -7080,22 +7110,55 @@ export class QuireApp extends LitElement {
     // dm-pc-detail.  Pull from v.shared (DM read path) since
     // dm-pc-detail is coord-gated upstream by the parent render
     // method that branches on isCoordinator().
-    const ratifiedBonds = v.shared.pcBonds?.[character.id] ?? [];
-    if (ratifiedBonds.length > 0) {
-      view.bonds = ratifiedBonds.map((b) => {
-        const target = v.shared.synthesizedPcs?.[b.targetPcId];
-        const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
-          id: b.id,
-          targetPcId: b.targetPcId,
-          text: b.text,
-          targetLabel:
-            (target?.name as string | undefined) ??
-            `(unknown: ${b.targetPcId})`
-        };
-        if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
-        return entry;
-      });
+    //
+    // D5-cleanup-2 (2026-05-27 scenario TTRPG-C parity bug):
+    // DM-side view was previously OUTBOUND-only.  Player rail
+    // includes inbound via `buildBondsCardEntries`; the DM view
+    // needs the same so the DM sees the same bond set the
+    // players do.  Pre-fix the DM saw fewer bonds than the
+    // players on the same PC's sheet.
+    const bondEntries: import('./ui/field-renderers/bonds-card').BondsCardEntry[] =
+      [];
+    const outboundBonds = v.shared.pcBonds?.[character.id] ?? [];
+    for (const b of outboundBonds) {
+      const target = v.shared.synthesizedPcs?.[b.targetPcId];
+      const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
+        id: b.id,
+        targetPcId: b.targetPcId,
+        text: b.text,
+        targetLabel:
+          (target?.name as string | undefined) ??
+          `(unknown: ${b.targetPcId})`,
+        direction: 'out'
+      };
+      if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
+      bondEntries.push(entry);
     }
+    // Inbound: scan every OTHER PC's bonds for targetPcId === character.id.
+    for (const [sourcePcId, sourceBonds] of Object.entries(
+      v.shared.pcBonds ?? {}
+    )) {
+      if (sourcePcId === character.id) continue;
+      for (const b of sourceBonds) {
+        if (b.targetPcId !== character.id) continue;
+        const source = v.shared.synthesizedPcs?.[sourcePcId];
+        const sourceLabel =
+          (source?.name as string | undefined) ?? `(unknown: ${sourcePcId})`;
+        const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry =
+          {
+            id: b.id,
+            targetPcId: character.id,
+            text: b.text,
+            targetLabel:
+              (record.name as string | undefined) ?? character.id,
+            direction: 'in',
+            sourceLabel
+          };
+        if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
+        bondEntries.push(entry);
+      }
+    }
+    if (bondEntries.length > 0) view.bonds = bondEntries;
     const pendingBonds = v.shared.pcBondProposals?.[character.id] ?? [];
     if (pendingBonds.length > 0) {
       view.bondProposals = pendingBonds.map((p) => {

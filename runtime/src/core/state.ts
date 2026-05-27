@@ -1054,7 +1054,7 @@ export function filterForViewer(
     // players AT THE ARRAY LEVEL, but each entry's `dmNotes`
     // sub-field is stripped per-entry (per D5-8; mirrors the
     // D-prep-2-A per-entry strip pattern).
-    pcBonds: stripBondDmNotesPerEntry(state.pcBonds),
+    pcBonds: stripBondDmNotesPerEntry(state.pcBonds, hiddenSeatPcIds),
     // pcFoci passes through unchanged — foci are player-visible by
     // design at Realization onward.  The UI gate (Grant focus only
     // when magicPhase >= 'realization') is the firewall.
@@ -3500,16 +3500,33 @@ function isBondAuthorAllowed(
  * record-level (an array of bond entries).
  */
 function stripBondDmNotesPerEntry(
-  pcBonds: Record<string, BondEntry[]>
+  pcBonds: Record<string, BondEntry[]>,
+  hiddenSeatPcIds: ReadonlySet<string> = new Set()
 ): Record<string, BondEntry[]> {
   const out: Record<string, BondEntry[]> = {};
   for (const [pcId, bonds] of Object.entries(pcBonds)) {
-    out[pcId] = bonds.map((b) => {
-      if (b.dmNotes === undefined) return b;
-      const { dmNotes: _omit, ...safe } = b;
-      void _omit;
-      return safe as BondEntry;
-    });
+    // D5-cleanup-2 BLOCKER (2026-05-27 scenario-sweep Adv-B):
+    // hidden-seat source bonds must not pass through to non-coord
+    // viewers.  Pre-fix, a DM-authored bond from hidden-seat PC
+    // `mystery` targeting `iris` leaked "(unknown PC) → me · <text>"
+    // to iris's player via cross-side inbound rendering — both the
+    // existence of the hidden PC AND the bond text.
+    if (hiddenSeatPcIds.has(pcId)) continue;
+    const safeBonds: BondEntry[] = [];
+    for (const b of bonds) {
+      // Also filter inbound bonds whose TARGET is a hidden PC:
+      // even if source is visible, leaking "<source> → <hidden>"
+      // is a spoiler about the hidden PC.
+      if (hiddenSeatPcIds.has(b.targetPcId)) continue;
+      if (b.dmNotes === undefined) {
+        safeBonds.push(b);
+      } else {
+        const { dmNotes: _omit, ...rest } = b;
+        void _omit;
+        safeBonds.push(rest as BondEntry);
+      }
+    }
+    out[pcId] = safeBonds;
   }
   return out;
 }
@@ -3540,11 +3557,18 @@ function applyBondProposeEvent(
   if (!isBondAuthorAllowed(state, event, p.pcId)) return;
   // DoS guard + duplicate-create no-op.
   const proposals = state.pcBondProposals[p.pcId] ?? [];
+  const ratified = state.pcBonds[p.pcId] ?? [];
+  // D5-cleanup-2 (2026-05-27 scenario Adv-C harden): dup-id check
+  // now covers BOTH pcBondProposals AND pcBonds — a re-emitted
+  // proposal whose id collides with an already-ratified bond is
+  // silently rejected (was previously only checked against
+  // proposals).  40-bit entropy makes collision non-exploitable
+  // in practice; this closes the loop for defense-in-depth.
   if (proposals.some((q) => q.id === p.id)) return;
+  if (ratified.some((q) => q.id === p.id)) return;
   // Cap counts proposals + ratified together; the proposal-then-
   // ratify path is the same logical entry.
-  const ratifiedCount = (state.pcBonds[p.pcId] ?? []).length;
-  if (proposals.length + ratifiedCount >= BOND_MAX_PER_PC) return;
+  if (proposals.length + ratified.length >= BOND_MAX_PER_PC) return;
   // D5-C-fix #7 (2026-05-27 scenario Adv-MFN-2): replace the
   // dead whole-string POISONOUS_KEYS check (already caught by
   // `isCharacterId` above) with a defense-in-depth dotted-
