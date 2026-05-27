@@ -1648,6 +1648,7 @@ export class QuireApp extends LitElement {
       <dm-aside
         .campaignSlug=${slug}
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
+        .pendingBondProposals=${this.buildPendingBondProposalsForDmAside()}
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
@@ -2296,40 +2297,70 @@ export class QuireApp extends LitElement {
   ): import('./ui/field-renderers/bonds-card').BondsCardEntry[] {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return [];
-    const bonds = v.filteredShared.pcBonds?.[pcId] ?? [];
-    return bonds.map((b) => {
-      const target = v.filteredShared.synthesizedPcs?.[b.targetPcId];
-      const targetName = target?.name as string | undefined;
-      // D5-C-fix #6 (2026-05-27 scenario-playthrough TTRPG-D /
-      // UX-6): D5-7 lock promised "(retired PC)" fallback when
-      // the target seat has retired.  Check pcSlots for terminal
-      // states; the seat carries the PC after retire (sticky-N)
-      // so we can surface the retired status without losing the
-      // name.
-      let targetLabel: string;
-      if (targetName) {
-        const targetSeat = Object.values(v.filteredShared.pcSlots).find(
-          (s) => s.pcId === b.targetPcId
-        );
-        const retired =
-          targetSeat?.state === 'bound-retired' ||
-          targetSeat?.state === 'bound-archived';
-        targetLabel = retired ? `${targetName} (retired)` : targetName;
-      } else {
-        // Spoiler-firewalled-out or unknown.  Show a placeholder
-        // that doesn't leak the raw pcId (which could itself be
-        // spoiler-shaped).
-        targetLabel = '(unknown PC)';
-      }
+    const out: import('./ui/field-renderers/bonds-card').BondsCardEntry[] = [];
+    // Outbound bonds (this PC bonded to someone else).
+    const outbound = v.filteredShared.pcBonds?.[pcId] ?? [];
+    for (const b of outbound) {
+      const targetLabel = this.resolvePcDisplayLabel(b.targetPcId);
       const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
         id: b.id,
         targetPcId: b.targetPcId,
         text: b.text,
-        targetLabel
+        targetLabel,
+        direction: 'out'
       };
       if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
-      return entry;
-    });
+      out.push(entry);
+    }
+    // D5-cleanup (2026-05-27 TTRPG-A.5): inbound bonds (someone
+    // else bonded TO this PC).  Engine keeps pcBonds keyed by
+    // SOURCE PC; the renderer composes the inbound side at
+    // display time.  Both player + DM views see inbound on the
+    // target's character sheet — that's the "shared anchor"
+    // semantic the design intends.
+    for (const [sourcePcId, sourceBonds] of Object.entries(
+      v.filteredShared.pcBonds ?? {}
+    )) {
+      if (sourcePcId === pcId) continue;
+      for (const b of sourceBonds) {
+        if (b.targetPcId !== pcId) continue;
+        const sourceLabel = this.resolvePcDisplayLabel(sourcePcId);
+        const targetLabel = this.resolvePcDisplayLabel(pcId);
+        const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
+          id: b.id,
+          targetPcId: pcId,
+          text: b.text,
+          targetLabel,
+          direction: 'in',
+          sourceLabel
+        };
+        if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
+        out.push(entry);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * D5-cleanup (2026-05-27): shared display-label resolver.  Reads
+   * `filteredShared.synthesizedPcs[pcId].name` with fallback to
+   * "(retired)" suffix when the seat is in a terminal state, or
+   * "(unknown PC)" placeholder when the target is firewalled-out.
+   * Used by both outbound + inbound bond rendering.
+   */
+  private resolvePcDisplayLabel(pcId: string): string {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return '(unknown PC)';
+    const target = v.filteredShared.synthesizedPcs?.[pcId];
+    const targetName = target?.name as string | undefined;
+    if (!targetName) return '(unknown PC)';
+    const targetSeat = Object.values(v.filteredShared.pcSlots).find(
+      (s) => s.pcId === pcId
+    );
+    const retired =
+      targetSeat?.state === 'bound-retired' ||
+      targetSeat?.state === 'bound-archived';
+    return retired ? `${targetName} (retired)` : targetName;
   }
 
   /**
@@ -2339,6 +2370,44 @@ export class QuireApp extends LitElement {
    * spoiler-firewall (UX-expert pre-design lock: targets must be
    * a PC the table has met).
    */
+  /**
+   * D5-cleanup (2026-05-27 TTRPG-A.4 / UX-2): build the
+   * campaign-level pending bond proposal queue for dm-aside.
+   * Reads from `v.shared.pcBondProposals` (DM-only state; this
+   * method is coord-gated by the dm-aside render context).
+   * Returns empty for non-coord viewers — dm-aside mount itself
+   * is also coord-gated upstream.  Flattens all per-PC proposals
+   * into a single list with label resolutions.
+   */
+  private buildPendingBondProposalsForDmAside(): Array<
+    import('./ui/regions/dm-aside').DmAsideBondProposal
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return [];
+    if (!this.isCoordinator()) return [];
+    const out: Array<
+      import('./ui/regions/dm-aside').DmAsideBondProposal
+    > = [];
+    for (const [pcId, proposals] of Object.entries(
+      v.shared.pcBondProposals ?? {}
+    )) {
+      const pcLabel = this.resolvePcDisplayLabel(pcId);
+      for (const p of proposals) {
+        out.push({
+          id: p.id,
+          pcId,
+          pcLabel,
+          targetLabel: this.resolvePcDisplayLabel(p.targetPcId),
+          text: p.text,
+          proposedByPeerId: p.proposedByPeerId
+        });
+      }
+    }
+    // Sort by ts ascending — oldest pending first (FIFO queue).
+    out.sort((a, b) => a.id.localeCompare(b.id));
+    return out;
+  }
+
   /**
    * D5-C-fix (2026-05-27): pending bond proposal count for a PC.
    * Reads from `v.shared.pcBondProposals` (NOT filteredShared —

@@ -41,6 +41,25 @@ export interface BondsCardEntry extends Bond {
    *  `synthesizedPcs[targetPcId].name` or `seatMemory` fallback
    *  for retired PCs). */
   targetLabel: string;
+  /**
+   * D5-cleanup (2026-05-27): direction of the bond relative to
+   * the PC being viewed.
+   *   - 'out': this PC bonded to someone else (the source PC)
+   *   - 'in': someone else bonded to this PC (cross-side render)
+   * Default 'out' for backwards compatibility.  Scenario TTRPG-A.5
+   * found that without inbound rendering, Iris doesn't see Mei's
+   * bond pointing at her — the whole "shared anchor" semantic
+   * breaks.  Engine isn't changing; state.pcBonds is still keyed
+   * by source PC.  Host collects inbound from other PCs' bond
+   * arrays where targetPcId === viewing pcId.
+   */
+  direction?: 'out' | 'in';
+  /**
+   * When direction === 'in', this is the PC who authored the
+   * bond pointing at the viewer.  Used for the "Mei → me" label
+   * in the bonds-card display.
+   */
+  sourceLabel?: string;
 }
 
 export type RemoveBondCallback = (pcId: string, bondId: string) => void;
@@ -99,9 +118,19 @@ export class BondsCard extends LitElement {
   }
 
   private renderBond(b: BondsCardEntry, isCoord: boolean): TemplateResult {
-    return html`<li class="bonds-card-row">
+    const isInbound = b.direction === 'in';
+    const rowClasses = [
+      'bonds-card-row',
+      isInbound ? 'bonds-card-row-inbound' : ''
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return html`<li class=${rowClasses}>
       <div class="bonds-card-target">
-        <strong>${b.targetLabel}</strong>
+        ${isInbound
+          ? html`<strong>${b.sourceLabel ?? '(unknown)'}</strong>
+              <span class="muted"> → me</span>`
+          : html`<strong>${b.targetLabel}</strong>`}
       </div>
       <p class="bonds-card-text">${b.text}</p>
       ${isCoord && b.dmNotes
@@ -109,7 +138,7 @@ export class BondsCard extends LitElement {
             <strong>DM:</strong> ${b.dmNotes}
           </aside>`
         : nothing}
-      ${isCoord && this.onRemove !== null
+      ${isCoord && this.onRemove !== null && !isInbound
         ? html`<button
             type="button"
             class="bonds-card-remove"

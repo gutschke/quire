@@ -3033,6 +3033,14 @@ export const quireAppStyles = css`
       padding: 0.4rem 0.6rem;
       position: relative;
     }
+    /* D5-cleanup (2026-05-27): inbound bond direction — visually
+     * distinct so the player sees "Mei bonded to me" differently
+     * from "I bonded to Iris."  Lighter dashed border to read as
+     * "context about me, not my own action." */
+    .bonds-card-row-inbound {
+      border-style: dashed;
+      background: light-dark(#f8fafc, #1e293b);
+    }
     .bonds-card-target {
       font-size: 0.9rem;
     }
@@ -5518,6 +5526,36 @@ export const quireAppStyles = css`
       margin: 0.6rem 0 0.3rem;
       font-size: 0.95em;
     }
+    /* D5-cleanup (2026-05-27): dm-aside pending bond queue. */
+    .dm-aside-bond-queue {
+      border-left: 3px solid light-dark(#60a5fa, #3b82f6);
+    }
+    .dm-aside-bond-queue-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .dm-aside-bond-queue-row {
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 4px;
+      padding: 0.4rem 0.5rem;
+      font-size: 0.85rem;
+    }
+    .dm-aside-bond-queue-summary,
+    .dm-aside-bond-queue-text {
+      margin: 0 0 0.2rem;
+    }
+    .dm-aside-bond-queue-text {
+      font-style: italic;
+    }
+    .dm-aside-bond-queue-link {
+      font-size: 0.82rem;
+      color: light-dark(#1d4ed8, #93c5fd);
+    }
+
     .dm-aside-pinned {
       list-style: none;
       padding: 0;

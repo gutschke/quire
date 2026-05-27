@@ -51,4 +51,94 @@ describe('<dm-aside>', () => {
     el.querySelector<HTMLButtonElement>('.dm-aside-unpin')!.click();
     expect(received).toBe('alice');
   });
+
+  it('D5-cleanup: renders pending bond queue when proposals present', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 'classmates at Berkeley',
+        proposedByPeerId: 'bob'
+      },
+      {
+        id: 'b2',
+        pcId: 'hadrian',
+        pcLabel: 'Hadrian',
+        targetLabel: 'Reggie',
+        text: 'co-workers at the gate',
+        proposedByPeerId: 'dave'
+      }
+    ];
+    await el.updateComplete;
+    expect(el.querySelector('.dm-aside-bond-queue')).not.toBeNull();
+    expect(el.innerHTML).toMatch(/Pending bond proposals/);
+    expect(el.innerHTML).toMatch(/2/); // count
+    expect(el.querySelectorAll('.dm-aside-bond-queue-row').length).toBe(2);
+    expect(el.innerHTML).toContain('Mei');
+    expect(el.innerHTML).toContain('Iris');
+    expect(el.innerHTML).toContain('classmates at Berkeley');
+    expect(el.innerHTML).toContain('Hadrian');
+    expect(el.innerHTML).toContain('Reggie');
+  });
+
+  it('D5-cleanup: hides bond queue section when proposals empty', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pinnedNpcs = ['alice'];
+    el.pendingBondProposals = [];
+    await el.updateComplete;
+    expect(el.querySelector('.dm-aside-bond-queue')).toBeNull();
+  });
+
+  it('D5-cleanup: bond queue + no pins still renders the queue card (empty-state guard)', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pinnedNpcs = [];
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 't',
+        proposedByPeerId: 'bob'
+      }
+    ];
+    await el.updateComplete;
+    expect(el.querySelector('.dm-aside-empty')).toBeNull();
+    expect(el.querySelector('.dm-aside-bond-queue')).not.toBeNull();
+  });
+
+  it('D5-cleanup: bond queue row navigation link fires onNavigate', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 't',
+        proposedByPeerId: 'bob'
+      }
+    ];
+    let routed: unknown = null;
+    el.onNavigate = (_e, route) => {
+      routed = route;
+    };
+    await el.updateComplete;
+    const link = el.querySelector<HTMLAnchorElement>(
+      '.dm-aside-bond-queue-link'
+    );
+    link!.click();
+    expect(routed).toMatchObject({
+      kind: 'character',
+      characterKind: 'pc',
+      characterId: 'mei'
+    });
+  });
 });

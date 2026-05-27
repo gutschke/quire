@@ -112,6 +112,50 @@ describe('<bonds-card>', () => {
     expect(el.querySelector('.bonds-card-pending-pip')).toBeNull();
   });
 
+  it('D5-cleanup: inbound bonds render with "→ me" + sourceLabel', async () => {
+    const el = mount();
+    el.bonds = [
+      bond({
+        id: 'b-in',
+        direction: 'in',
+        sourceLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 'we were classmates'
+      })
+    ];
+    await el.updateComplete;
+    const row = el.querySelector('.bonds-card-row');
+    expect(row?.classList.contains('bonds-card-row-inbound')).toBe(true);
+    const target = row?.querySelector('.bonds-card-target')?.textContent ?? '';
+    expect(target).toMatch(/Mei/);
+    expect(target).toMatch(/→ me/);
+  });
+
+  it('D5-cleanup: inbound bond hides remove button (owned by source PC)', async () => {
+    const el = mount();
+    el.bonds = [
+      bond({
+        id: 'b-in',
+        direction: 'in',
+        sourceLabel: 'Mei',
+        text: 'we were classmates'
+      })
+    ];
+    el.editablePcId = 'iris'; // viewer is iris, bond owned by mei
+    el.onRemove = () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-remove')).toBeNull();
+  });
+
+  it('D5-cleanup: outbound bond (direction: out or default) shows remove button when coord', async () => {
+    const el = mount();
+    el.bonds = [bond({ id: 'b-out', direction: 'out' })];
+    el.editablePcId = 'mei';
+    el.onRemove = () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-remove')).not.toBeNull();
+  });
+
   it('D5-C-fix #5: empty-state copy no longer claims chargen-only', async () => {
     const el = mount();
     el.editablePcId = 'mei';
