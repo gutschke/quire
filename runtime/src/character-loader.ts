@@ -331,6 +331,38 @@ export function isDmOnlyCharacterFieldPath(field: unknown): boolean {
 }
 
 /**
+ * D1-A (2026-05-26) — NPC analog to DM_ONLY_CHARACTER_FIELDS.
+ *
+ * The pc-side magic-arc fields (magicPhase, tax, threadDebt,
+ * accidentalGrants, alignmentDrift, knowsTheyCanCast) are PC-only
+ * concerns and don't apply to NPCs.  What's DM-only on an NPC is
+ * narrower: `dmNotes` (the DM's private narrative anchor — see
+ * yui-tanaka.json for the canonical example) and `knownTo` (which
+ * PCs have met this NPC; players don't know which other PCs have
+ * met whom).
+ *
+ * Used by:
+ *   - D1 living-doc diff-review to classify proposal visibility
+ *     (per-pointer DM-only / player-eligible)
+ *   - the D1 broadcast-payload firewall on `proposal-accept` events
+ *
+ * This list MUST stay narrow.  Widening over-strips and breaks
+ * the "AI proposes NPC memory updates that DM ratifies" loop —
+ * if too many fields are DM-only, the AI can't see enough to
+ * propose useful relationship/memory updates.
+ */
+export const DM_ONLY_NPC_FIELDS = ['dmNotes', 'knownTo'] as const;
+export type DmOnlyNpcField = (typeof DM_ONLY_NPC_FIELDS)[number];
+
+const DM_ONLY_NPC_FIELDS_SET = new Set<string>(DM_ONLY_NPC_FIELDS);
+
+export function isDmOnlyNpcFieldPath(field: unknown): boolean {
+  if (typeof field !== 'string' || field.length === 0) return false;
+  const topLevel = field.split('.', 1)[0];
+  return topLevel !== undefined && DM_ONLY_NPC_FIELDS_SET.has(topLevel);
+}
+
+/**
  * Phase B P1b: type alias for a character record the local viewer is
  * authorized to render in DM mode (full record, all DM-only fields
  * visible).  Same shape as CharacterRecord — the alias is a
