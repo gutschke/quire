@@ -44,6 +44,7 @@ import {
 } from '../invite-token';
 import { routeToSearch } from '../routing';
 import { loadChargenState, saveChargenState } from '../chargen-persistence';
+import { ChargenPersistenceQueue } from './chargen-persistence-queue';
 import {
   packChargen,
   parseChargenPack,
@@ -351,8 +352,28 @@ export class ChargenController implements ReactiveController {
     typeof import('../ai/backstory-synthesizer')
   > | null = null;
 
-  /** Per-slot debounced persist timers; one per (slug, slot) pair. */
-  private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * D5.5-A (2026-05-27 E-LARGE-2 step 1): debounced-persist queue
+   * extracted into `ChargenPersistenceQueue`.  Pre-extraction this
+   * lived as `persistTimers` + `persistPendingValues` + 2 methods
+   * inline.  No behavior change; the queue calls
+   * `saveChargenState(slug, slot, ...)` via the writer closure
+   * passed in the constructor.
+   */
+  private readonly persistQueue = new ChargenPersistenceQueue<{
+    slug: string;
+    slot: number;
+    chosenPath: CreationPath | '';
+    answers: CharCreationAnswers;
+  }>(
+    (_key, value) => {
+      saveChargenState(value.slug, value.slot, {
+        chosenPath: value.chosenPath,
+        answers: value.answers
+      });
+    },
+    CHARGEN_PERSIST_DEBOUNCE_MS
+  );
   private packFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -1053,59 +1074,18 @@ export class ChargenController implements ReactiveController {
   }
 
   /**
-   * Per-slot pending values awaiting their debounce flush.  Kept
-   * separately from the timer map so `flushPending` can write them
-   * synchronously without re-reading mutable `this.chosenPath` /
-   * `this.answers` (avoids a race when multiple slots are in
-   * flight).
-   */
-  private persistPendingValues = new Map<
-    string,
-    {
-      slug: string;
-      slot: number;
-      chosenPath: CreationPath | '';
-      answers: CharCreationAnswers;
-    }
-  >();
-
-  /**
-   * Debounced persist of the current chargen state.  Per-slot
-   * (slug+slot) timer so concurrent edits to different slots don't
-   * stomp each other.
+   * D5.5-A: debounced persist of the current chargen state via
+   * the extracted ChargenPersistenceQueue.  Per-slot (slug+slot)
+   * key so concurrent edits to different slots don't stomp.
    */
   persistDebounced(campaign: ChargenCampaign, slot: number): void {
     const slug = this.env.getCampaignSlug(campaign);
     const key = `${slug}:${slot}`;
-    const existing = this.persistTimers.get(key);
-    if (existing) clearTimeout(existing);
-    // Snapshot the current state into pending; flush will write it.
-    this.persistPendingValues.set(key, {
+    this.persistQueue.schedule(key, {
       slug,
       slot,
       chosenPath: this.chosenPath,
       answers: { ...this.answers }
-    });
-    this.persistTimers.set(
-      key,
-      setTimeout(() => {
-        this.flushPendingPersistForKey(key);
-      }, CHARGEN_PERSIST_DEBOUNCE_MS)
-    );
-  }
-
-  private flushPendingPersistForKey(key: string): void {
-    const pending = this.persistPendingValues.get(key);
-    const timer = this.persistTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      this.persistTimers.delete(key);
-    }
-    if (!pending) return;
-    this.persistPendingValues.delete(key);
-    saveChargenState(pending.slug, pending.slot, {
-      chosenPath: pending.chosenPath,
-      answers: pending.answers
     });
   }
 
@@ -1116,9 +1096,7 @@ export class ChargenController implements ReactiveController {
    * timers.
    */
   flushPending(): void {
-    for (const key of [...this.persistPendingValues.keys()]) {
-      this.flushPendingPersistForKey(key);
-    }
+    this.persistQueue.flushAll();
   }
 
   // ---- pack + download (CC-10) ----
