@@ -1109,9 +1109,19 @@ export class QuireApp extends LitElement {
       // transition leaves unstripped DM-only fields visible to a
       // now-player viewer.  Clear in BOTH directions — a player→
       // coord transition wants the unstripped record too.
+      //
+      // ALSO invalidate `boundCharacterFor` (the cache-mirror
+      // short-circuit key).  refreshBoundCharacter returns early
+      // when the key is unchanged across renders, so without
+      // resetting it here the @state `boundCharacter` mirror
+      // keeps the OLD strip decision even after the cache clears.
+      // Post-extraction sim (2026-05-27 Session A) caught this as
+      // the third firewall gap in the same coord-flip class as
+      // chat-spoiler-lint + pcCharacterCache.
       if (wasLocalCoord !== nowLocalCoord) {
         this.pcCharacterCache.clear();
         this.pcCharacterInFlight.clear();
+        this.boundCharacterFor = '';
       }
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.

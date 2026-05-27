@@ -301,6 +301,63 @@ describe('QuireApp Phase 3b-1 — synthesized PC end-to-end', () => {
     expect(appLoader.pcCharacterCache.size).toBe(0);
   });
 
+  /**
+   * Firewall regression #3 (2026-05-27): post-pcCharacterCache fix,
+   * the sim found a SECOND mirror of the same data: `boundCharacter`
+   * @state, populated via `refreshBoundCharacter`.  That method
+   * short-circuits when `key === boundCharacterFor` (slug|pcId
+   * unchanged across coord-flip).  So even after the cache clears,
+   * the @state mirror keeps the old strip decision — coord→player
+   * flip leaves unstripped DM-only fields visible to the now-player
+   * viewer via Rail / Dice / Aside / sheet surfaces.  Fix: reset
+   * `boundCharacterFor` alongside the cache clear so the next
+   * `refreshBoundCharacter` re-resolves with the current decision.
+   */
+  it('boundCharacter clears on coord-loss + re-resolves stripped', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    injectCampaign(app);
+    const session = (app as unknown as {
+      session: { append: Function; rename: Function };
+    }).session;
+    // Seed: pc-create + bind so refreshBoundCharacter has something
+    // to resolve.  Also bind the local peer to that PC via
+    // peer-rename so `filteredShared.peers[me].pcId` resolves.
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'pc-dm',
+      name: 'Maria',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech'],
+      backstory: 'x',
+      causedByResponseId: 'syn-r1'
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'pc-dm' });
+    session.rename({ pcId: 'pc-dm' });
+    await flush();
+    const appAny = app as unknown as {
+      boundCharacterFor: string;
+      boundCharacter: { record: { name?: string } } | null;
+    };
+    // After init, boundCharacterFor should be the slug|pcId key
+    // because the local peer is bound to pc-dm.
+    expect(appAny.boundCharacterFor).not.toBe('');
+    const boundBefore = appAny.boundCharacter;
+    expect(boundBefore).not.toBeNull();
+    // Force coord-loss: append coordinator-yield.
+    session.append('coordinator-yield', {});
+    await flush();
+    // The fix must re-resolve boundCharacter through the strip-
+    // decision path.  Identity comparison: pre-fix, the
+    // boundCharacterFor short-circuit kept the SAME object;
+    // post-fix, the subscriber resets boundCharacterFor and
+    // refreshBoundCharacter creates a new wrapper.
+    expect(appAny.boundCharacter).not.toBe(boundBefore);
+  });
+
   it('overlay miss falls through to the GitHub fetch path (regression)', async () => {
     // A pcId NOT in synthesizedPcs should NOT short-circuit; the
     // existing async fetch path takes over.  Since the fetch will
