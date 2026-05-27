@@ -4599,14 +4599,12 @@ export const quireAppStyles = css`
       margin: 0.6rem 0 0.3rem;
       font-size: 0.95em;
     }
-    .dm-aside-pinned,
-    .dm-aside-debts {
+    .dm-aside-pinned {
       list-style: none;
       padding: 0;
       margin: 0;
     }
-    .dm-aside-pinned-row,
-    .dm-aside-debt-row {
+    .dm-aside-pinned-row {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
@@ -4626,47 +4624,27 @@ export const quireAppStyles = css`
     .dm-aside-unpin:hover {
       color: light-dark(#cc1010, #ffa0a0);
     }
-    .dm-aside-debt-level {
-      font-variant: small-caps;
-      letter-spacing: 0.04em;
-      font-size: 0.85em;
-      padding: 0.05rem 0.4rem;
-      border-radius: 2px;
-      background: light-dark(#eee, #2a2a2a);
-    }
-    .dm-aside-debt-noticed {
-      background: light-dark(#fff5d0, #3a3318);
-    }
-    .dm-aside-debt-watched {
-      background: light-dark(#fde0b3, #4a3618);
-    }
-    .dm-aside-debt-pushing-back {
-      background: light-dark(#fdc0a0, #5a2e10);
-    }
-    .dm-aside-debt-hunted {
-      background: light-dark(#fa9080, #6a1818);
-      color: light-dark(#000, #fff);
-    }
-    .dm-aside-debt-select {
-      font-size: 0.85em;
+    /* Wave C4 (2026-05-26): thread-debt selector + reset-spam chip
+       ported from the dm-aside debt + spam-reset rules when the
+       surfaces consolidated into dm-pc-detail.  Verifier caught
+       the unported-styles regression — chip is amber so it reads
+       as the "scene-boundary cue" the DM resets at scene breaks;
+       selector tracks the surrounding dm-pc-detail-row typography. */
+    .dm-pc-detail-thread-debt-select {
+      font-size: 0.9em;
       padding: 0.1rem 0.3rem;
-      max-width: 11ch;
+      max-width: 14ch;
     }
-    .dm-aside-debt-orphan {
-      opacity: 0.7;
-      font-style: italic;
-    }
-    .dm-aside-spam-reset {
-      font-size: 0.75em;
+    .dm-pc-detail-spam-reset {
+      font-size: 0.78em;
       padding: 0.1rem 0.5rem;
       background: light-dark(#fff7e0, #2a2618);
       border: 1px solid light-dark(#b8841a, #856010);
       color: light-dark(#5a4310, #ffd479);
       border-radius: 3px;
       cursor: pointer;
-      margin-left: 0.4em;
     }
-    .dm-aside-spam-reset:hover {
+    .dm-pc-detail-spam-reset:hover {
       background: light-dark(#fff2cf, #3a2f20);
     }
     .dm-rail-episodes {

@@ -130,17 +130,31 @@ together; C2 + C4 (larger scope) deferred.
   Region files now use `import + re-export` pattern so existing
   local consumers stay green AND any future cross-file import
   resolves to the same source.
-- [ ] **C4** — single active-PC focus card in Rail (UX-5, S/M
-  scope).  Today thread-debt + caster-state live in both
-  `dm-aside.ts:239` AND should live in the Rail's active-PC card.
-  Consolidate to one home; gut the duplicate.
+- [x] **C4** — single active-PC focus card in Rail ✓ SHIPPED `<TBD>`.
+  Thread-debt selector + reset-spam chip + casterState data prop
+  added to `<dm-pc-detail>`; `<dm-aside>` stripped down to pinned-
+  NPC management only (259 → 113 LOC).  dm-pc-detail at 496 LOC,
+  well under the 800 threshold.  6 new C4 tests on dm-pc-detail;
+  4 dropped from dm-aside; 2105 total (+2 net).  Verifier caught
+  CSS class-rename regression (chip + selector were unstyled
+  because the .dm-aside-debt-* rules didn't port with the class
+  names) — fixed in same commit + captured as practice memo item
+  #6 to catch the class next time.  Also caught backtick-in-css-
+  comment parse bug that bit Wave C1 too — captured as memo #6a.
+  Verifier inline-doc nits N1 (import order) + N2 (casterState
+  null asymmetry) applied.
 
-  **UX re-prioritization (2026-05-26):** C4 should land BEFORE C2.
-  Rail wins as the canonical home; dm-aside sheds thread-debt +
-  caster-state entirely.  Rationale: chargen-dm-review currently
-  shares the Aside with thread-debt/caster widgets, and untangling
-  them is part of why C2 (chargen-out-of-cockpit) hasn't shipped.
-  Doing C4 first turns C2 from L → S.
+  **Deferred surface gap (orphan rungs):** previously dm-aside
+  listed orphan thread-debt entries (PCs no peer has bound but
+  who carry non-zero debt).  No surface for this in C4 v1; the
+  DM navigates to the PC's character page directly.  Watch-item:
+  if DMs report losing track, promote the readout into the Stage
+  roster's Retired/Archived tabs instead of restoring it in
+  dm-aside (preserves the one-canonical-home invariant).
+
+  **C2 unblocked:** with thread-debt/caster widgets out of
+  dm-aside, the remaining chargen-dm-review extraction is now an
+  S-scope job per UX expert's "C4 first turns C2 from L → S."
 
 - [x] **C5** — extract `<magic-arc-controls>` ✓ SHIPPED `86cd29d`.
   Engineering re-prioritization 2026-05-26 recommendation.  dm-pc-

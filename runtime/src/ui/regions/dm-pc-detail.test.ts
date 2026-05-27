@@ -52,15 +52,20 @@ describe('<dm-pc-detail>', () => {
     expect(el.textContent).toMatch(/face Yui/);
   });
 
-  it('renders thread-debt section', async () => {
+  it('renders thread-debt section (read-only, Wave C4 split persistent vs live spam)', async () => {
     const el = mount({
-      pcId: 'mei', pcName: 'Mei',
+      pcId: 'mei',
+      pcName: 'Mei',
       threadDebt: { rung: 'watched', spamCount: 2 }
     });
     await el.updateComplete;
     expect(el.textContent).toMatch(/Antagonist attention/);
     expect(el.textContent).toMatch(/Watched/);
-    expect(el.textContent).toMatch(/Spam count/);
+    // Wave C4: label is now "Persistent spam count" — the
+    // character-record field is the cross-scene counter, distinct
+    // from the live shared-state caster-state spam chip that the
+    // DM resets at scene boundaries.
+    expect(el.textContent).toMatch(/Persistent spam count/);
   });
 
   it('renders alignment-drift section with 5 pips', async () => {
@@ -128,6 +133,117 @@ describe('<dm-pc-detail>', () => {
     const sections = el.querySelectorAll('.dm-pc-detail-section');
     // magic-arc, tax, thread-debt, alignment-drift, accidental-grants, dm-notes
     expect(sections.length).toBe(6);
+  });
+
+  // ---- Wave C4 (2026-05-26) thread-debt + reset-spam (consolidated from dm-aside) ----
+
+  it('Wave C4: thread-debt section gains an inline selector when onSetThreadDebt is wired', async () => {
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      threadDebt: { rung: 'watched' }
+    });
+    el.onSetThreadDebt = () => {};
+    await el.updateComplete;
+    const sel = el.querySelector(
+      '.dm-pc-detail-thread-debt-select'
+    ) as HTMLSelectElement;
+    expect(sel).not.toBeNull();
+    // Current rung 'watched' is selected.
+    const watched = sel.querySelector<HTMLOptionElement>(
+      'option[value="watched"]'
+    );
+    expect(watched?.hasAttribute('selected')).toBe(true);
+  });
+
+  it('Wave C4: selector change invokes onSetThreadDebt with pcId + level', async () => {
+    let received: { pcId: string; level: string } | null = null;
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      threadDebt: { rung: 'quiet' }
+    });
+    el.onSetThreadDebt = (pcId, level) => {
+      received = { pcId, level };
+    };
+    await el.updateComplete;
+    const sel = el.querySelector(
+      '.dm-pc-detail-thread-debt-select'
+    ) as HTMLSelectElement;
+    sel.value = 'hunted';
+    sel.dispatchEvent(new Event('change'));
+    expect(received).toEqual({ pcId: 'mei', level: 'hunted' });
+  });
+
+  it('Wave C4: selector empty-string clears the rung', async () => {
+    let received: { pcId: string; level: string } | null = null;
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      threadDebt: { rung: 'noticed' }
+    });
+    el.onSetThreadDebt = (pcId, level) => {
+      received = { pcId, level };
+    };
+    await el.updateComplete;
+    const sel = el.querySelector(
+      '.dm-pc-detail-thread-debt-select'
+    ) as HTMLSelectElement;
+    sel.value = '';
+    sel.dispatchEvent(new Event('change'));
+    expect(received).toEqual({ pcId: 'mei', level: '' });
+  });
+
+  it('Wave C4: reset-spam chip renders when casterState.spamCount > 0 + callback wired', async () => {
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      threadDebt: { rung: 'noticed' }
+    });
+    el.casterState = {
+      ladder: 'noticed',
+      spamCount: 3
+    } as unknown as import('../../core/state').CasterState;
+    el.onResetSpamCounter = () => {};
+    await el.updateComplete;
+    const btn = el.querySelector('.dm-pc-detail-spam-reset') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toMatch(/3 casts this scene/);
+  });
+
+  it('Wave C4: reset-spam chip click invokes onResetSpamCounter with pcId', async () => {
+    let received: string | null = null;
+    const el = mount({ pcId: 'mei', pcName: 'Mei' });
+    el.casterState = {
+      ladder: 'quiet',
+      spamCount: 1
+    } as unknown as import('../../core/state').CasterState;
+    el.onResetSpamCounter = (pcId) => {
+      received = pcId;
+    };
+    await el.updateComplete;
+    const btn = el.querySelector('.dm-pc-detail-spam-reset') as HTMLButtonElement;
+    btn.click();
+    expect(received).toBe('mei');
+  });
+
+  it('Wave C4: thread-debt section renders even on a PC with no prior debt — DM can set initial rung', async () => {
+    // The consolidation: the only place the DM sets thread-debt is
+    // now dm-pc-detail.  If the section only rendered when
+    // threadDebt was already set, the DM could never bootstrap a
+    // PC into a non-quiet state from this surface.  Guard ensures
+    // the section appears for any coord viewer.
+    const el = mount({ pcId: 'mei', pcName: 'Mei' });
+    el.onSetThreadDebt = () => {};
+    await el.updateComplete;
+    expect(el.textContent).toMatch(/Antagonist attention/);
+    const sel = el.querySelector(
+      '.dm-pc-detail-thread-debt-select'
+    ) as HTMLSelectElement;
+    expect(sel).not.toBeNull();
+    // Default 'none' option is selected.
+    const none = sel.querySelector<HTMLOptionElement>('option[value=""]');
+    expect(none?.hasAttribute('selected')).toBe(true);
   });
 
   // ---- Wave B (2026-05-26) magic-arc DM runtime controls ----

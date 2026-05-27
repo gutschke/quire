@@ -1491,29 +1491,18 @@ export class QuireApp extends LitElement {
     if (!v || v.status !== 'active') return nothing;
     const campaign = this.getCurrentCampaign();
     const slug = campaign ? this.slugFor(campaign) : '';
-    // FU-3: surface bound-PC peers so the DM can adjust thread-
-    // debt inline from the cockpit.  Pulled from filteredShared
-    // (no DM-only data needed; pcId binding is player-visible).
-    const boundPcs = Object.values(v.filteredShared.peers)
-      .filter((p) => p.leftAt === undefined && typeof p.pcId === 'string')
-      .map((p) => ({
-        pcId: p.pcId as string,
-        name: p.name ?? (p.pcId as string),
-        peerId: p.peerId
-      }));
+    // Wave C4 (2026-05-26): thread-debt + caster-state + reset-spam
+    // wiring removed from <dm-aside> and consolidated on
+    // <dm-pc-detail>.  Per UX expert: "Rail wins as the canonical
+    // home; dm-aside sheds thread-debt + caster-state entirely."
+    // dm-aside is now strictly the pinned-NPC aide.
     return html`
       ${this.renderDmRosterStrip()}
       ${this.renderWrapSessionLauncher()}
       <dm-aside
         .campaignSlug=${slug}
         .pinnedNpcs=${v.filteredShared.pinnedNpcs}
-        .threadDebt=${v.filteredShared.threadDebt}
-        .boundPcs=${boundPcs}
-        .casterState=${v.filteredShared.casterState}
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
-        .onSetThreadDebt=${(pcId: string, level: ThreadDebtLevel | '') =>
-          this.setThreadDebt(pcId, level)}
-        .onResetSpamCounter=${(pcId: string) => this.resetSpamCounter(pcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
       ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
@@ -5719,9 +5708,15 @@ export class QuireApp extends LitElement {
     // Wave B (2026-05-26): wire the 4 magic-arc runtime control
     // callbacks ONLY when the local viewer is the coord.  Non-coord
     // viewers see the read-only card without arc controls.
+    // Wave C4 (2026-05-26): added thread-debt + reset-spam wiring
+    // (moved here from <dm-aside> per UX expert's canonical-home
+    // rule).  Same coord gate.
     const isCoord = this.isCoordinator();
+    const liveCasterState =
+      v.filteredShared.casterState?.[character.id] ?? null;
     return html`<dm-pc-detail
       .view=${view}
+      .casterState=${liveCasterState}
       .onLogAccidentalGrant=${
         isCoord
           ? (pcId: string, note: string) =>
@@ -5743,6 +5738,17 @@ export class QuireApp extends LitElement {
         isCoord
           ? (pcId: string, moment: string) =>
               this.appendReleaseTax(pcId, moment)
+          : null
+      }
+      .onSetThreadDebt=${
+        isCoord
+          ? (pcId: string, level: ThreadDebtLevel | '') =>
+              this.setThreadDebt(pcId, level)
+          : null
+      }
+      .onResetSpamCounter=${
+        isCoord
+          ? (pcId: string) => this.resetSpamCounter(pcId)
           : null
       }
     ></dm-pc-detail>`;

@@ -33,6 +33,7 @@ import type {
   TaxState,
   ThreadDebt
 } from '../../character-loader';
+import type { CasterState, ThreadDebtLevel } from '../../core/state';
 import './magic-arc-controls';
 import type {
   LogAccidentalGrantCallback,
@@ -51,6 +52,36 @@ export type {
   GrantFocusCallback,
   ReleaseTaxCallback
 } from './magic-arc-controls';
+
+/**
+ * Wave C4 (2026-05-26): thread-debt edit + spam-reset callbacks
+ * moved here from `<dm-aside>` so the DM has ONE canonical home
+ * for per-PC arc state (ui.md L170: "Thread-debt ladder lives
+ * inside the Rail's active-PC card, not above Stage prose").
+ * dm-aside is now PINNED-NPCS ONLY.
+ *
+ * Empty string in SetThreadDebtCallback clears the rung (no
+ * antagonist attention).  Coord-only by enforcement at the host
+ * layer; the component hides the affordances when the callback
+ * is null (non-coord viewer).
+ */
+export type SetThreadDebtCallback = (
+  pcId: string,
+  level: ThreadDebtLevel | ''
+) => void;
+export type ResetSpamCounterCallback = (pcId: string) => void;
+
+const THREAD_DEBT_OPTIONS: ReadonlyArray<{
+  key: '' | ThreadDebtLevel;
+  label: string;
+}> = [
+  { key: '', label: '— none —' },
+  { key: 'quiet', label: 'quiet' },
+  { key: 'noticed', label: 'noticed' },
+  { key: 'watched', label: 'watched' },
+  { key: 'pushing-back', label: 'pushing back' },
+  { key: 'hunted', label: 'hunted' }
+];
 
 /**
  * Wave C5 verifier-N3 (2026-05-26): structurally extends
@@ -132,6 +163,33 @@ export class DmPcDetail extends LitElement {
   @property({ attribute: false })
   onReleaseTax: ReleaseTaxCallback | null = null;
 
+  /**
+   * Wave C4 (2026-05-26): thread-debt edit + spam-reset
+   * affordances consolidated here from dm-aside (UX expert: "Rail
+   * wins as the canonical home; dm-aside sheds thread-debt +
+   * caster-state entirely").  When the callback is null, the
+   * surface remains read-only — same gate the inline arc-controls
+   * pattern uses.
+   *
+   * `casterState[pcId]` carries the live in-session spamCount the
+   * `caster-state-set` event tracks (separate from the
+   * `threadDebt.spamCount` field on the character record — the
+   * shared-state caster is the scene-boundary counter).
+   */
+  @property({ attribute: false })
+  onSetThreadDebt: SetThreadDebtCallback | null = null;
+  @property({ attribute: false })
+  onResetSpamCounter: ResetSpamCounterCallback | null = null;
+  /** Verifier N2 (2026-05-26): asymmetry vs. the `DmDetailView`
+   *  arc-state fields (which use `undefined`) is intentional.
+   *  `null` here means "host explicitly said no caster-state for
+   *  this PC right now"; `undefined` would mean "host hasn't told
+   *  me yet."  The host at quire-app.ts coalesces `?? null` to
+   *  make the distinction explicit.  Do NOT normalize to
+   *  `undefined`. */
+  @property({ attribute: false })
+  casterState: CasterState | null = null;
+
   // (Wave C5: inline-draft state + willUpdate guard moved into the
   // <magic-arc-controls> child component along with the arc-control
   // render methods.  This file stays a read-only renderer; arc
@@ -168,13 +226,18 @@ export class DmPcDetail extends LitElement {
     </section>`;
   }
 
-  /** True when ANY write callback is wired (host is coord). */
+  /** True when ANY write callback is wired (host is coord).
+   *  Used by the empty-state guard at the top of render() so the
+   *  card stays visible for a coord even when there's nothing yet
+   *  to display — the DM needs to see the surface exists. */
   private canEdit(): boolean {
     return (
       this.onLogAccidentalGrant !== null ||
       this.onMarkRealization !== null ||
       this.onGrantFocus !== null ||
-      this.onReleaseTax !== null
+      this.onReleaseTax !== null ||
+      this.onSetThreadDebt !== null ||
+      this.onResetSpamCounter !== null
     );
   }
 
@@ -230,21 +293,79 @@ export class DmPcDetail extends LitElement {
     </div>`;
   }
 
+  /**
+   * Wave C4 (2026-05-26): thread-debt + spam-reset surface
+   * consolidated from dm-aside.  Renders:
+   *   - Rung readout / inline selector (selector when
+   *     `onSetThreadDebt` is wired)
+   *   - Reset-spam chip when shared-state casterState.spamCount > 0
+   *     AND `onResetSpamCounter` is wired
+   *
+   * Section appears when EITHER the disk-loaded debt is present
+   * OR the host wired the edit callback (so the DM can SET an
+   * initial rung from this surface even on a PC with no prior
+   * thread-debt).  Read-only `debt.spamCount` (the character-
+   * record field) still displays in addition to the live
+   * casterState chip — they're separate concepts the rules track
+   * differently and the DM may want to see both.
+   */
   private renderThreadDebt(
     debt: ThreadDebt | undefined
   ): TemplateResult | typeof nothing {
-    if (!debt) return nothing;
+    const view = this.view;
+    if (!view) return nothing;
+    const liveSpam = this.casterState?.spamCount ?? 0;
+    const editable = this.onSetThreadDebt !== null;
+    const canResetSpam = liveSpam > 0 && this.onResetSpamCounter !== null;
+    // If nothing to show AND nothing the DM can do here, skip.
+    if (!debt && !editable && !canResetSpam) return nothing;
+    const currentRung = debt?.rung ?? '';
     return html`<div class="dm-pc-detail-section">
       <h3>Antagonist attention</h3>
       <p class="dm-pc-detail-row">
         <span class="dm-pc-detail-label">Rung:</span>
-        <span class="dm-pc-detail-value"
-          >${THREAD_DEBT_LABEL[debt.rung] ?? debt.rung}</span
-        >
+        ${editable
+          ? html`<select
+              class="dm-pc-detail-thread-debt-select"
+              aria-label="Thread debt rung for ${view.pcName}"
+              @change=${(e: Event) =>
+                this.onSetThreadDebt?.(
+                  view.pcId,
+                  (e.target as HTMLSelectElement).value as
+                    | ThreadDebtLevel
+                    | ''
+                )}
+            >
+              ${THREAD_DEBT_OPTIONS.map(
+                (o) => html`<option
+                  value=${o.key}
+                  ?selected=${o.key === currentRung}
+                >
+                  ${o.label}
+                </option>`
+              )}
+            </select>`
+          : html`<span class="dm-pc-detail-value"
+              >${debt
+                ? THREAD_DEBT_LABEL[debt.rung] ?? debt.rung
+                : '—'}</span
+            >`}
       </p>
-      ${typeof debt.spamCount === 'number' && debt.spamCount > 0
+      ${canResetSpam
         ? html`<p class="dm-pc-detail-row">
-            <span class="dm-pc-detail-label">Spam count this scene:</span>
+            <button
+              type="button"
+              class="dm-pc-detail-spam-reset"
+              title="${view.pcName} has ${liveSpam} Free/Cheap casts this scene — reset on scene boundary"
+              @click=${() => this.onResetSpamCounter?.(view.pcId)}
+            >
+              ${liveSpam} casts this scene · reset
+            </button>
+          </p>`
+        : nothing}
+      ${debt && typeof debt.spamCount === 'number' && debt.spamCount > 0
+        ? html`<p class="dm-pc-detail-row">
+            <span class="dm-pc-detail-label">Persistent spam count:</span>
             <span class="dm-pc-detail-value">${debt.spamCount}</span>
           </p>`
         : nothing}
