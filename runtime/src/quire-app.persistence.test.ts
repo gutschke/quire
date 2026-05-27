@@ -439,6 +439,50 @@ describe('QuireApp persistence — localStorage autosave', () => {
     expect(kinds.has('scratch-note')).toBe(true);
   });
 
+  it('Wave D-prep-1 firewall: player autosave STRIPS accidental-grant-log (Wave B regression fix)', async () => {
+    // Adversarial expert caught this 30 minutes after Wave B
+    // shipped: accidental-grant-log was a coord-only event
+    // carrying DM-typed silent-grant prose, but was missing from
+    // PLAYER_SCOPE_STRIP_KINDS in persistence.ts.  Same class as
+    // the Wave A scratch-note leak.  This test pins the fix.
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    injectCampaign(host);
+    await host.startHosting();
+    await flush();
+    const player = mountApp(inMemoryFactory(network, 'PLAYER'));
+    injectCampaign(player);
+    (player as unknown as { sessionFactory: TransportFactory }).sessionFactory = {
+      createHost: async () => ({
+        transport: new InMemoryTransport('PLAYER', network),
+        pairingCode: 'PLAYER'
+      }),
+      createGuest: async () => ({
+        transport: new InMemoryTransport('PLAYER', network)
+      })
+    };
+    player.joinCodeDraft = 'HOST';
+    player.joinSession();
+    await flush();
+    // HOST emits a silent-grant note (Wave B coord-only event).
+    expect(
+      host.appendAccidentalGrantLog(
+        'mei',
+        'DM secret: the keys came to her hand a moment too easily'
+      )
+    ).toBe(true);
+    await flush();
+    expect(player.sessionView?.status).toBe('active');
+    const doc = player.buildShareableSaveDocument();
+    expect(doc).not.toBeNull();
+    const kinds = new Set(doc!.events.map((e) => e.kind));
+    expect(kinds.has('accidental-grant-log')).toBe(false);
+    // Belt-and-suspenders: scan all event payloads for the secret
+    // text.  If this matches, the strip skipped the event entirely.
+    const allTexts = doc!.events.map((e) => JSON.stringify(e)).join(' ');
+    expect(allTexts).not.toContain('the keys came to her hand');
+  });
+
   it('Wave A1 firewall: non-coord (player) autosave doc STRIPS DM-only events', async () => {
     // Two-peer session: HOST (coord) and PLAYER (joined via join
     // code).  HOST appends a scratch-note (DM-only event kind).

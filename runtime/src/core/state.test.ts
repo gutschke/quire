@@ -874,7 +874,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // #253 (2026-05-26): added chargen-pack-deliver + chargen-pack-clear → 44.
     // #294 (2026-05-26): added seat-memory-edit → 45.
     // Wave B (2026-05-26): added accidental-grant-log + focus-grant → 47.
-    expect(KNOWN_EVENT_KINDS.size).toBe(47);
+    // Wave D-prep-2 (2026-05-26): added pc-mark-realization → 48.
+    expect(KNOWN_EVENT_KINDS.size).toBe(48);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -3506,6 +3507,113 @@ describe('materialize — accidental-grant-log + focus-grant (Wave B magic-arc)'
     expect(state.pcAccidentalGrants).toEqual({});
     expect(state.pcFoci).toEqual({});
   });
+
+  // --- Wave D-prep-2 (2026-05-26): atomic pc-mark-realization ---
+
+  it('pc-mark-realization: applies all 4 fields atomically to pcEdits[pcId]', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei' });
+    const state = materialize(log.events());
+    const edits = state.pcEdits.mei;
+    expect(edits.magicPhase).toBe('realization');
+    expect(edits.knowsTheyCanCast).toBe(true);
+    expect(edits['tax.active']).toBe(true);
+    expect(edits['tax.sessionsRemaining']).toBe(3);
+  });
+
+  it('pc-mark-realization: honors a caller-supplied taxSessions value', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei', taxSessions: 2 });
+    const state = materialize(log.events());
+    expect(state.pcEdits.mei['tax.sessionsRemaining']).toBe(2);
+  });
+
+  it('pc-mark-realization: non-coord is silently dropped', () => {
+    const alice = new EventLog('alice');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Bob' });
+    alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const bob = new EventLog('bob');
+    bob.append('pc-mark-realization', { v: 1, pcId: 'mei' });
+    const merged = [...alice.events(), ...bob.events()];
+    const state = materialize(merged);
+    expect(state.pcEdits.mei).toBeUndefined();
+  });
+
+  it('pc-mark-realization: rejects invalid pcId / out-of-range taxSessions', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-mark-realization', { v: 1, pcId: '../escape' });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei', taxSessions: 0 });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei', taxSessions: 21 });
+    log.append('pc-mark-realization', {
+      v: 1,
+      pcId: 'mei',
+      taxSessions: 'three' as unknown as number
+    });
+    const state = materialize(log.events());
+    expect(state.pcEdits.mei).toBeUndefined();
+    expect(state.pcEdits['../escape']).toBeUndefined();
+  });
+
+  it('pc-mark-realization: preserves prior pcEdits (overlay merge, not clobber)', () => {
+    // The atomic write merges its 4 fields onto whatever pcEdits
+    // entry already exists.  Other prior edits (harm, stress,
+    // tags, etc.) MUST survive the realization commit.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-edit', { v: 1, pcId: 'mei', field: 'harm', value: 2 });
+    log.append('pc-edit', { v: 1, pcId: 'mei', field: 'stress', value: 1 });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei' });
+    const state = materialize(log.events());
+    const edits = state.pcEdits.mei;
+    // Prior edits survive.
+    expect(edits.harm).toBe(2);
+    expect(edits.stress).toBe(1);
+    // Realization fields applied.
+    expect(edits.magicPhase).toBe('realization');
+    expect(edits.knowsTheyCanCast).toBe(true);
+    expect(edits['tax.active']).toBe(true);
+    expect(edits['tax.sessionsRemaining']).toBe(3);
+  });
+
+  it('pc-mark-realization: atomicity guarantee — half-applied state is impossible', () => {
+    // The TTRPG-expert "real risk, low frequency, high
+    // embarrassment" case.  Pre-fix, a network drop between event
+    // 2 and 3 of the 4-pc-edit batch left "player told they can
+    // cast but tax not active" — destroyed table trust on the
+    // one-way gate.  Post-fix, materialize is all-or-nothing
+    // because a single materializer call writes all 4 fields.
+    // Test: materialize the log AT TWO DIFFERENT EVENT-COUNT
+    // CUT POINTS — neither point can yield a half-applied state.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei' });
+    const events = log.events();
+    // Cut BEFORE the realization event: no realization fields.
+    const before = materialize(events.slice(0, -1));
+    expect(before.pcEdits.mei).toBeUndefined();
+    // Cut AT the realization event: ALL fields land together.
+    const after = materialize(events);
+    expect(after.pcEdits.mei.magicPhase).toBe('realization');
+    expect(after.pcEdits.mei.knowsTheyCanCast).toBe(true);
+    expect(after.pcEdits.mei['tax.active']).toBe(true);
+    expect(after.pcEdits.mei['tax.sessionsRemaining']).toBe(3);
+  });
+
+  // ---
 
   it('verifier-S5: concurrent grants from two coordHolders both land (append-only, no LWW collision)', () => {
     // Co-DM scenario: alice yields to bob; both are in

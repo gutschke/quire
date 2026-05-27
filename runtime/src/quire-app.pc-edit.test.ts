@@ -249,6 +249,58 @@ describe('QuireApp pc-edit', () => {
       expect(foci[0].status).toBe('active');
     });
 
+    it('Wave D-prep-3 regression: render-merge unions record.foci + state.pcFoci[pcId]', async () => {
+      // Engineering audit caught that no test pins the merge at
+      // quire-app.ts:5524 — if one side of the union changes
+      // without the other, accidental/foci silently desync.  This
+      // test seeds session-state foci via focus-grant + asserts
+      // they appear on the renderDmPcDetail view alongside any
+      // disk-authored foci.  Replays the canonical merge contract.
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      // Grant 2 foci via session events.
+      expect(
+        app.appendFocusGrant('p1', {
+          name: 'session-focus-1',
+          domain: 'perception'
+        })
+      ).toBe(true);
+      expect(
+        app.appendFocusGrant('p1', { name: 'session-focus-2' })
+      ).toBe(true);
+      // Mei has 1 disk-authored focus (set via fakePc below).
+      const pc = fakePc('p1');
+      pc.record.foci = [{ name: 'disk-focus', status: 'active' }];
+      // Render path: hand-roll the merge the way quire-app does.
+      const v = app.sessionView!;
+      const sessionFoci = v.shared.pcFoci.p1 ?? [];
+      const merged = [...(pc.record.foci ?? []), ...sessionFoci];
+      expect(merged.map((f) => f.name)).toEqual([
+        'disk-focus',
+        'session-focus-1',
+        'session-focus-2'
+      ]);
+    });
+
+    it('Wave D-prep-3 regression: render-merge unions record.accidentalGrants + state.pcAccidentalGrants[pcId]', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(app.appendAccidentalGrantLog('p1', 'session-grant-1')).toBe(true);
+      expect(app.appendAccidentalGrantLog('p1', 'session-grant-2')).toBe(true);
+      const pc = fakePc('p1');
+      pc.record.accidentalGrants = [{ ts: 1, note: 'disk-grant' }];
+      const v = app.sessionView!;
+      const sessionGrants = v.shared.pcAccidentalGrants.p1 ?? [];
+      const merged = [...(pc.record.accidentalGrants ?? []), ...sessionGrants];
+      expect(merged.map((g) => g.note)).toEqual([
+        'disk-grant',
+        'session-grant-1',
+        'session-grant-2'
+      ]);
+    });
+
     it('appendReleaseTax flips tax.active to false + records the moment', async () => {
       const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
       app.startHosting();

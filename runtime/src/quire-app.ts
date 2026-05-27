@@ -1972,29 +1972,16 @@ export class QuireApp extends LitElement {
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
     if (!pcId || pcId.length === 0) return false;
-    this.session.append('pc-edit', {
+    // Wave D-prep-2 (2026-05-26): atomic single-event emit.
+    // Pre-fix this method fired 4 sequential pc-edit events; a
+    // network drop mid-batch left half-applied state (player told
+    // they can cast but tax not active, or vice versa) on the
+    // one-way Realization gate.  Single materializer call now
+    // guarantees all-or-nothing.  Default taxSessions=3 per
+    // rules.md:180-184.
+    this.session.append('pc-mark-realization', {
       v: 1,
-      pcId,
-      field: 'magicPhase',
-      value: 'realization'
-    });
-    this.session.append('pc-edit', {
-      v: 1,
-      pcId,
-      field: 'knowsTheyCanCast',
-      value: true
-    });
-    this.session.append('pc-edit', {
-      v: 1,
-      pcId,
-      field: 'tax.active',
-      value: true
-    });
-    this.session.append('pc-edit', {
-      v: 1,
-      pcId,
-      field: 'tax.sessionsRemaining',
-      value: 3
+      pcId
     });
     return true;
   }

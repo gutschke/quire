@@ -1478,7 +1478,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // appends to a PC's foci list at Realization onward (one-way
   // append; rules.md:139).  Both coord-only.
   'accidental-grant-log',
-  'focus-grant'
+  'focus-grant',
+  // Wave D-prep-2 (2026-05-26): atomic one-way Realization-beat
+  // event.  Replaces the Wave B 4-pc-edit batch (TTRPG-expert
+  // verifier S2: half-applied state on the one-way gate destroys
+  // DM trust on the most-narratively-loaded moment in the
+  // campaign).  Applies magicPhase + knowsTheyCanCast + tax in
+  // ONE materializer call.  Coord-only.
+  'pc-mark-realization'
 ]);
 
 /**
@@ -2881,6 +2888,66 @@ function applyFocusGrantEvent(
 }
 
 /**
+ * Wave D-prep-2 (2026-05-26): atomic Realization-beat event.
+ *
+ * Replaces the Wave B 4-pc-edit batch (TTRPG expert verifier S2:
+ * "real risk, low frequency, high embarrassment when it hits" —
+ * half-applied state on the one-way Realization gate destroys DM
+ * trust on the most-narratively-loaded moment in the campaign).
+ * The 4 field changes (magicPhase → 'realization', knowsTheyCanCast
+ * → true, tax.active → true, tax.sessionsRemaining → taxSessions
+ * with default 3) apply ATOMICALLY in one materializer call —
+ * either all four flip or none does, even if the event log is
+ * partially synced.
+ *
+ * Coord-only.  Idempotent: re-applying on an already-realized PC
+ * resets tax.sessionsRemaining to the supplied value (intentional;
+ * lets the DM extend the tax via a fresh emit when the campaign
+ * calls for it).
+ *
+ * Payload is DM-only (the event itself reveals the arc-state
+ * transition).  Stripped from player autosaves via
+ * PLAYER_SCOPE_STRIP_KINDS in `persistence.ts`.
+ */
+interface PcMarkRealizationPayload {
+  v: 1;
+  pcId: string;
+  /**
+   * Default 3 per rules.md:180-184 ("the tax lasts 2-3 sessions").
+   * Bounded [1, 20] defensively.
+   */
+  taxSessions?: number;
+}
+function applyPcMarkRealizationEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcMarkRealizationPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  let taxSessions = 3;
+  if (p.taxSessions !== undefined) {
+    if (typeof p.taxSessions !== 'number') return;
+    if (!Number.isFinite(p.taxSessions) || !Number.isInteger(p.taxSessions)) {
+      return;
+    }
+    if (p.taxSessions < 1 || p.taxSessions > 20) return;
+    taxSessions = p.taxSessions;
+  }
+  // Atomic 4-field write to state.pcEdits[pcId].  Single materializer
+  // call — replay-safe and partial-sync-safe.
+  const prior = state.pcEdits[p.pcId] ?? {};
+  state.pcEdits[p.pcId] = {
+    ...prior,
+    magicPhase: 'realization',
+    knowsTheyCanCast: true,
+    'tax.active': true,
+    'tax.sessionsRemaining': taxSessions
+  };
+}
+
+/**
  * P-R11 (2026-05-25): record a player's request to retire their own
  * PC.  Player-authored — the event.peerId IS the requesting peer.
  * Validates the seat is bound-active and that the peer actually
@@ -3072,7 +3139,9 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'seat-memory-edit': applySeatMemoryEditEvent,
   // Wave B (2026-05-26): magic-arc DM runtime controls.
   'accidental-grant-log': applyAccidentalGrantLogEvent,
-  'focus-grant': applyFocusGrantEvent
+  'focus-grant': applyFocusGrantEvent,
+  // Wave D-prep-2 (2026-05-26): atomic Realization-beat event.
+  'pc-mark-realization': applyPcMarkRealizationEvent
 };
 
 /**

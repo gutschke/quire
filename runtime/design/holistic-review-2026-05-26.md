@@ -135,10 +135,76 @@ together; C2 + C4 (larger scope) deferred.
   `dm-aside.ts:239` AND should live in the Rail's active-PC card.
   Consolidate to one home; gut the duplicate.
 
+  **UX re-prioritization (2026-05-26):** C4 should land BEFORE C2.
+  Rail wins as the canonical home; dm-aside sheds thread-debt +
+  caster-state entirely.  Rationale: chargen-dm-review currently
+  shares the Aside with thread-debt/caster widgets, and untangling
+  them is part of why C2 (chargen-out-of-cockpit) hasn't shipped.
+  Doing C4 first turns C2 from L → S.
+
+- [ ] **C5 (new)** — extract `<magic-arc-controls>` from
+  `dm-pc-detail.ts:389-571` (Engineering re-prioritization 2026-05-26,
+  S scope).  Wave B added 4 commit handlers + 4 render forms + draft
+  state + re-entry guards in one method group with a clear seam.
+  Extract before crossing 800 LOC; establishes the extraction
+  pattern for D5 (bonds) which will have identical shape.
+
+### Wave D-prep — firewall regression fix + atomicity + UI gates ✓ SHIPPED `<TBD>`
+
+Triggered by the 2026-05-26 re-prioritization round: adversarial
+expert caught a Wave B firewall regression (same class Wave A
+closed); TTRPG expert + engineering both pushed atomic mark-
+realization to the front; engineering flagged missing render-merge
+regression test.  Bundle landed as one commit to close the loop
+before the bigger Wave-D items begin.
+
+- [x] **D-prep-1 (BLOCKER)** — `accidental-grant-log` added to
+  `PLAYER_SCOPE_STRIP_KINDS` (was missed in Wave B; player
+  autosaves were leaking DM-typed silent-grant notes verbatim).
+  Plus new `EVENT_KINDS_PLAYER_VISIBLE` set + CI lint test
+  (`persistence.coverage.test.ts`) that fails when ANY new event
+  kind lacks a visibility classification.  Forces the engineer
+  who adds the next event kind to make the firewall-classification
+  decision explicitly.  Two-peer autosave-strip regression test
+  pins the fix.
+- [x] **D-prep-2** — atomic `pc-mark-realization` event replaces
+  the Wave B 4-pc-edit batch.  TTRPG-expert deferred-S2 from Wave
+  B: "real risk, low frequency, high embarrassment when it hits"
+  — half-applied state on the one-way Realization gate destroyed
+  DM trust on the most-narratively-loaded moment in the campaign.
+  Single materializer call writes magicPhase + knowsTheyCanCast
+  + tax.active + tax.sessionsRemaining atomically.  Cut-point
+  test pins the all-or-nothing invariant.  `appendMarkRealization`
+  swapped to fire the new event; preserves prior pcEdits via
+  overlay merge.
+- [x] **D-prep-3** — render-merge regression tests for
+  `effective foci = record.foci ∪ state.pcFoci[pcId]` and the
+  same for `pcAccidentalGrants`.  Pre-fix, silent desync if one
+  side changed without the other.  Plus `boundFor` hidden from
+  player-rail's foci-card via new `hideBoundFor` prop (adversarial
+  audit: DM-typed narrative anchor could carry spoiler text like
+  "bind-on-mother-reveal-ep4" through to player view).  DM
+  surfaces keep the field; player rail strips it.  Engine policy
+  unchanged — UI gate per engine-vs-campaign-policy boundary.
+
+**Stale entries cleaned from this doc:**
+- Original E-PERF-1 ("SessionController.notify recomputes view per
+  listener") was already fixed at `session-controller.ts:466` —
+  removed from long-tail.  Real concern is E-PERF-2 (no
+  requestUpdate debounce, 21 notify call sites).
+- Engineering audit said `chargen-controller` had "101 host.*
+  taps" — current count is 36.  Original was inflated.
+
 ### Wave D — between-sessions ritual + clocks (longer-term)
 
-Genuine unique-feature payload but L scope.  Don't start until
-Wave B + C settle.
+Genuine unique-feature payload but L scope.
+
+**TTRPG re-prioritization (2026-05-26):** D1 is now THE biggest
+remaining engine-vs-table gap.  Wave B added typed events
+(accidental-grant-log, focus-grant, mark-realization) that give
+D4 (session-digest) structured raw material it didn't have 30
+minutes ago — D1 + D4 compose strongly.  Recommended order:
+D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
 
 - [ ] **D1** — living-doc diff review post-session (UX-4 + TTRPG-5,
   L scope).  After `session-wrap-marks`, transition Stage to the
@@ -267,6 +333,15 @@ make the Wave A-D ranking.  Captured so they don't rot.
   'realization' | 'tax' | 'free'`; some memory notes and prose
   said "aware / realized" — code is source of truth.  Tracker for
   future memory hygiene.
+- [ ] **T-LT4 (new 2026-05-26)** — focus form on `dm-pc-detail`
+  captures `name + domain` only.  TTRPG-expert re-review flagged
+  this as a **semantic hole, not polish**: rules.md says foci
+  "have a domain... and only apply within it" — `condition` IS
+  the in-fiction trigger that lets AI reason about WHEN the focus
+  applies.  Without it, the AI write API can't compose with
+  focus-grant cleanly.  Expose `condition` (and optionally
+  `notes` + `boundFor`) in the chargen-Realization-beat form OR
+  add a follow-up focus-edit affordance.  S scope.
 
 ### UX (long-tail)
 

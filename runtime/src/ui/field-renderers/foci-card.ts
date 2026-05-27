@@ -83,6 +83,22 @@ export class FociCard extends LitElement {
     | SetFocusStatusCallback
     | null = null;
 
+  /**
+   * Wave D-prep-3 (2026-05-26): hide the `boundFor` row.  Set on
+   * player-rail usage to avoid leaking DM-typed narrative anchors
+   * the DM may have written as spoiler-shaped text (adversarial
+   * audit: "boundFor: bind-on-mother-reveal-ep4" would surface to
+   * the player otherwise).  DM-side usage (`<dm-pc-detail>` →
+   * future foci-card mount) keeps the default `false` to see the
+   * intent text on the DM's own surface.
+   *
+   * Engine doesn't enforce this — campaigns may legitimately want
+   * `boundFor` player-visible if they treat it as the player's
+   * declared intent rather than the DM's narrative anchor.  UI
+   * gate per surface, per the engine-vs-campaign-policy boundary.
+   */
+  @property({ type: Boolean }) hideBoundFor = false;
+
   override render(): TemplateResult {
     if (this.foci.length === 0) {
       return html`<section class="foci-card foci-card-empty">
@@ -130,7 +146,7 @@ export class FociCard extends LitElement {
             <span class="foci-card-field-label">domain:</span> ${focus.domain}
           </p>`
         : nothing}
-      ${focus.boundFor
+      ${focus.boundFor && !this.hideBoundFor
         ? html`<p class="foci-card-boundfor">
             <span class="foci-card-field-label">intent:</span>
             ${focus.boundFor}

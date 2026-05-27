@@ -377,6 +377,7 @@ export class PlayerRail extends LitElement {
               .foci=${r.foci}
               .editablePcId=${editable ? character.id : null}
               .onSetFocusStatus=${this.onSetFocusStatus}
+              ?hideBoundFor=${true}
             ></foci-card>`
           : nothing}
         ${r.conditions?.length

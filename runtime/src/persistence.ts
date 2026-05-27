@@ -93,7 +93,122 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   'ai-response',
   'ai-accept',
   'ai-reject',
-  'caster-state-set'
+  'caster-state-set',
+  // Wave D-prep-1 (2026-05-26) firewall regression fix: Wave B
+  // added `accidental-grant-log` as a coord-only event carrying
+  // DM-typed silent-grant text (pre-Realization aid the player
+  // doesn't know about).  Adversarial audit caught that the
+  // event-log strip list was NOT updated alongside the state-view
+  // strip in filterForViewer — same Wave A class regression that
+  // shipped autosaves with raw scratch-notes.  Added here so a
+  // non-coord peer's autosave / saved file never carries the
+  // silent-grant prose.  The CI lint at
+  // `coordOnlyEventKinds.test.ts` enforces this list stays in
+  // sync with the coord-gated materializers in state.ts.
+  'accidental-grant-log',
+  // Wave D-prep-2 (2026-05-26): atomic Realization-beat event.
+  // The payload itself reveals the DM-private arc-state transition
+  // — even though it carries no narrative text, the FACT that
+  // realization happened to PC X is DM-private bookkeeping the
+  // player learns at the table, not from their save file.  Same
+  // rationale as ai-prompt/ai-response (no spoiler text, but the
+  // existence of the event is DM-internal).
+  'pc-mark-realization'
+]);
+
+/**
+ * Test-only export of `PLAYER_SCOPE_STRIP_KINDS`.  The set is
+ * module-local to prevent accidental import from production code
+ * (callers should use `serializeSessionForViewer` rather than
+ * inspecting the set directly); the test file needs read access
+ * to verify the firewall classification invariants.
+ */
+export const PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS = PLAYER_SCOPE_STRIP_KINDS;
+
+/**
+ * Wave D-prep-1 (2026-05-26) — CI lint floor: every event kind in
+ * KNOWN_EVENT_KINDS MUST appear in either PLAYER_SCOPE_STRIP_KINDS
+ * (DM-only payload) OR this set (player-visible payload).  The
+ * test `persistence.coverage.test.ts` enumerates KNOWN_EVENT_KINDS
+ * and fails when a kind is in NEITHER set, forcing the engineer
+ * adding a new event kind to make the visibility-classification
+ * decision EXPLICITLY rather than defaulting one way silently.
+ *
+ * Why a curated allowlist instead of "infer from materializer":
+ * coord-authored (`coordHolders.has(event.peerId)`) does NOT imply
+ * DM-only payload.  `scene-reveal` is coord-authored but the
+ * REVEAL ITSELF is what players see; `seat-memory-edit` is coord-
+ * authored but its text is "shown to all players including any
+ * future occupant of seat N"; `focus-grant` is coord-authored but
+ * the granted focus is the Realization-beat payoff the player
+ * sees on their rail.  No automatic inference; classify per kind.
+ *
+ * Add new kinds in the same commit that adds the event to
+ * KNOWN_EVENT_KINDS.  When in doubt, ASK: "if a non-coord peer
+ * downloads their save file and opens it in a text editor, is the
+ * content the DM intended them to see, or DM-private bookkeeping
+ * the spoiler-firewall protects?"  DM-private → strip.  Player-
+ * visible → here.
+ */
+export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
+  // Foundational session events (presence, coord transitions).
+  'peer-join',
+  'peer-leave',
+  'peer-disconnect',
+  'peer-rename',
+  'coordinator-claim',
+  'coordinator-yield',
+  'coordinator-reclaim',
+  // Stage / scene events — the REVEAL ITSELF is the player-visible
+  // payload.  See doc comment above.
+  'scene-reveal',
+  'scene-unreveal',
+  'scene-reveal-paragraph',
+  'scene-unreveal-paragraph',
+  'broadcast-view',
+  // Chat (visible to all players by definition) + dice (rolls are
+  // visible too — the result is the play-audible payload).  `note`
+  // is the per-player notes channel (NOT scratch-note which is
+  // DM-private — different kind, easy to confuse).
+  'chat',
+  'dice-roll',
+  'note',
+  // Player-rail-visible cosmetic / structural state.
+  'raise-hand',
+  'lower-hand',
+  // Map blobs are coord-authored content the players see when
+  // revealed.  The unreveal/move/remove counterparts are also
+  // player-visible (the map UI must reflect them).
+  'map-blob-add',
+  'map-blob-move',
+  'map-blob-remove',
+  'map-blob-reveal',
+  'map-blob-unreveal',
+  // Per-PC edits + lifecycle — payloads are PC-state changes the
+  // bound player sees on their own sheet.
+  'pc-edit',
+  'pc-create',
+  'pc-slot-bind',
+  'seat-add',
+  'seat-remove',
+  'seat-reveal',
+  'pc-retire',
+  'pc-archive',
+  'pc-switch',
+  // P-R11 retire-request flow: player-initiated request + DM
+  // accept/reject.  Both carry player-visible text.
+  'pc-retire-request',
+  'pc-retire-reject',
+  // Chargen pack delivery — player-authored content + DM-side
+  // clear is just bookkeeping the player sees on their own UI.
+  'chargen-pack-deliver',
+  'chargen-pack-clear',
+  // #294: seat memory — player-safe by construction ("shown to
+  // all players including any future occupant of seat N").
+  'seat-memory-edit',
+  // Wave B: foci are player-visible at Realization; the focus-
+  // grant event IS the moment the player sees it.
+  'focus-grant'
 ]);
 
 /**
