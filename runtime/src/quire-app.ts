@@ -18,17 +18,15 @@ import './ui/regions/player-aside';
 import './ui/regions/dm-scratch';
 import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
-import './ui/regions/session-wrap-marks';
-import { buildWrapMarksEntries } from './ui/regions/session-wrap-marks';
-import './ui/regions/wrap-stepper';
+// WRAP-LAZY (2026-05-27 holistic-review): the 5 wrap-direction
+// regions live in a separate chunk loaded only when the DM enters
+// wrap or open mode.  See `./ui/regions/wrap-mode-chunk.ts` for
+// the barrel.  Type-only imports stay static (zero runtime cost).
 import type { WrapStep } from './ui/regions/wrap-stepper';
-import './ui/regions/diff-review-stage';
 import type { DiffProposalView } from './ui/regions/diff-review-stage';
-import './ui/regions/session-open-stage';
 import type { CarryoverPcCard } from './ui/regions/session-open-stage';
 import './ui/regions/clock-strip';
 import type { DmClockView } from './ui/regions/clock-strip';
-import './ui/regions/session-digest';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
@@ -239,6 +237,60 @@ const ROLL_HISTORY_MAX = 5;
  * why.
  */
 const CHAT_MAX_LENGTH = 500;
+
+// -----------------------------------------------------------------
+// WRAP-LAZY (2026-05-27 holistic-review): lazy-load the wrap-mode
+// chunk on first transition into 'session-wrap-marks' or
+// 'session-open'.  Until loaded, the host renders a placeholder.
+// Module-level pattern (not a class field) so re-mounts of
+// QuireApp during tests don't accidentally re-trigger the import.
+// Mirrors the markdown-pipeline lazy-load (E-LH6).
+// -----------------------------------------------------------------
+
+type WrapModeChunk = typeof import('./ui/regions/wrap-mode-chunk');
+let _wrapModeChunk: WrapModeChunk | null = null;
+let _wrapModeChunkPromise: Promise<WrapModeChunk> | null = null;
+const _wrapModeReadyCallbacks: Array<() => void> = [];
+
+function ensureWrapModeChunk(): Promise<WrapModeChunk> {
+  if (_wrapModeChunk) return Promise.resolve(_wrapModeChunk);
+  if (!_wrapModeChunkPromise) {
+    _wrapModeChunkPromise = import('./ui/regions/wrap-mode-chunk').then(
+      (mod) => {
+        _wrapModeChunk = mod;
+        for (const cb of _wrapModeReadyCallbacks) {
+          try {
+            cb();
+          } catch {
+            // Don't let one listener block others.
+          }
+        }
+        _wrapModeReadyCallbacks.length = 0;
+        return mod;
+      }
+    );
+  }
+  return _wrapModeChunkPromise;
+}
+
+function onWrapModeChunkReady(cb: () => void): void {
+  if (_wrapModeChunk) {
+    cb();
+    return;
+  }
+  _wrapModeReadyCallbacks.push(cb);
+}
+
+function isWrapModeChunkLoaded(): boolean {
+  return _wrapModeChunk !== null;
+}
+
+/** Test-only reset for the wrap-mode chunk cache. */
+export function resetWrapModeChunkForTests(): void {
+  _wrapModeChunk = null;
+  _wrapModeChunkPromise = null;
+  _wrapModeReadyCallbacks.length = 0;
+}
 
 interface LoadedCampaign {
   base: LoadedCampaignBase;
@@ -965,6 +1017,10 @@ export class QuireApp extends LitElement {
     // render can re-render with real content.
     onMarkdownPipelineReady(() => this.requestUpdate());
     void ensureMarkdownPipeline();
+    // WRAP-LAZY (2026-05-27): re-render once the wrap-mode chunk
+    // resolves so any pending wrap/open render swaps from
+    // placeholder to real region content.
+    onWrapModeChunkReady(() => this.requestUpdate());
     // Seed appMode from URL on first mount; popstate keeps it in sync
     // thereafter.  M1 — observed but not yet acted upon.
     this.appMode = parseMode(window.location.search);
@@ -1011,6 +1067,18 @@ export class QuireApp extends LitElement {
           (v.shared.sessionOpens?.length ?? 0)
       ) {
         this.appMode = 'session-open';
+      }
+      // WRAP-LAZY: pre-fetch the wrap-mode chunk as soon as we
+      // know the DM has prior digests + this is a coord viewer.
+      // Even if they don't auto-open right now (e.g. session 1
+      // never has digests), the moment they click "Wrap session…"
+      // the chunk is already loaded.  Idempotent.
+      if (
+        v.status === 'active' &&
+        v.peerId !== null &&
+        v.shared.coordHolders.has(v.peerId)
+      ) {
+        void ensureWrapModeChunk();
       }
       if (
         !wasActive &&
@@ -1691,6 +1759,13 @@ export class QuireApp extends LitElement {
         </p>
       </section>`;
     }
+    // WRAP-LAZY: same loader gate as renderSessionWrapMarks.
+    if (!isWrapModeChunkLoaded()) {
+      void ensureWrapModeChunk();
+      return html`<section class="card">
+        <p class="muted">Loading session-open surface…</p>
+      </section>`;
+    }
     const lastDigest =
       v.filteredShared.sessionDigests[
         v.filteredShared.sessionDigests.length - 1
@@ -1836,6 +1911,15 @@ export class QuireApp extends LitElement {
         </p>
       </section>`;
     }
+    // WRAP-LAZY: render placeholder while the wrap-mode chunk
+    // loads.  The session subscriber already kicked off the
+    // import; this just covers the few-frames gap.
+    if (!isWrapModeChunkLoaded()) {
+      void ensureWrapModeChunk();
+      return html`<section class="card">
+        <p class="muted">Loading wrap surface…</p>
+      </section>`;
+    }
     const pcIds: string[] = [];
     const recordMap: Record<string, import('./character-loader').CharacterRecord> = {};
     const bulletsByPcId: Record<
@@ -1886,7 +1970,15 @@ export class QuireApp extends LitElement {
     // Use the exported helper so it stays load-bearing (verification
     // ac7a1cdcc81285f0c flagged the prior inline build as dead-code
     // adjacent to a tested export).
-    const entries = buildWrapMarksEntries(
+    // WRAP-LAZY: helper now lives in the lazy chunk; assert loaded.
+    if (!_wrapModeChunk) {
+      // Should be unreachable — the early-return above covers
+      // not-loaded.  Defensive return.
+      return html`<section class="card">
+        <p class="muted">Loading…</p>
+      </section>`;
+    }
+    const entries = _wrapModeChunk.buildWrapMarksEntries(
       recordMap,
       bulletsByPcId,
       pcIds
