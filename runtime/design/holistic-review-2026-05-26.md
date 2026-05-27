@@ -234,7 +234,7 @@ before the bigger Wave-D items begin.
 - Engineering audit said `chargen-controller` had "101 host.*
   taps" — current count is 36.  Original was inflated.
 
-### Wave D-prep-2 — field-granularity firewall + T-LT4 + alignmentDrift cleanup ✓ SHIPPED `<TBD>`
+### Wave D-prep-2 — field-granularity firewall + T-LT4 + alignmentDrift cleanup ✓ SHIPPED `5d6a73c`
 
 Triggered by the post-C2 4-expert round (2026-05-26 second pass).
 Adversarial sweep found 2 NEW pre-existing field-granularity
