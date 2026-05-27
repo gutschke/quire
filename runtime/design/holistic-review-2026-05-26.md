@@ -115,7 +115,7 @@ together; C2 + C4 (larger scope) deferred.
   Shared / DM.  Editable-target gate respects text inputs.  8
   tests pin the contract (mount, key open, event open, input
   gate, content, sections, close button, listener cleanup).
-- [x] **C2** — chargen-dm-review unmount-when-complete ✓ SHIPPED `<TBD>`.
+- [x] **C2** — chargen-dm-review unmount-when-complete ✓ SHIPPED `5194e5c`.
   Simpler than the original "move to Stage" framing — just gate
   the mount on `isChargenActive` (any unbound seat OR pending
   synth via new `ChargenController.hasPendingSynth`).  Re-entry
