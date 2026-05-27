@@ -207,7 +207,16 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   // from the session event log per Adversarial B-5 simplified MVP).
   'proposal-create',
   'proposal-accept',
-  'proposal-reject'
+  'proposal-reject',
+  // D3 (2026-05-26): DM-only progress clocks.  Hidden threat /
+  // pacing trackers; clock NAMES can carry magic-arc spoilers
+  // ("the Quiet is closing in") so the entire family stays
+  // DM-private.  Shared (player-visible) clocks deferred to D3.5
+  // under a separate `clock-*` family with appropriate name-
+  // confirm + AI hard-gate.
+  'dm-clock-create',
+  'dm-clock-tick',
+  'dm-clock-delete'
 ]);
 
 /**

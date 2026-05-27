@@ -416,13 +416,107 @@ No player-side welcome-back surface (defer to D2.5 / U-LT2).
 Realignment-acknowledge receipt is local @state only (re-fires
 on reload of the same session-open; acceptable since reload
 mid-open is rare).
-- [ ] **D3** — progress clocks as first-class primitive (TTRPG-2, M
-  scope).  ~300 LOC: new `clock` event kind +
-  `clocks: Record<id, ClockState>` shared state + `<clock-strip>`
-  component in `dm-aside`.  Extends `StateUpdate` variants so AI
-  can propose `clock-tick` ops.  Covers world-side time pressure
-  (the only TTRPG tool the build doesn't already have for "ordinary
-  scene → tense scene").
+### Wave D3 — progress clocks (DM-only MVP) 🚧 IN PROGRESS
+
+3-expert pre-design round (TTRPG / UX / Adversarial) locked the
+MVP scope.  **TTRPG-expert reframed**: clocks aren't for "scene
+tension" (already covered by threadDebt + harm/stress); they're
+for **"between-scene + between-session pressure that survives
+the digest."**  Concretely from `underleaf/design/DM-ONLY/`:
+the Engineer's ship-deadline, the Companion's tightening, Mira's
+network noticing clustering, faction-project advances.
+
+**Strong scope narrowing**: MVP ships DM-only clocks ONLY (no
+shared / player-visible clocks).  Sizes 4 and 6 ONLY (drop 8).
+No AI write surface in MVP (clocks encode DM pacing intent;
+AI-tick would reframe DM job into AI-triage).  No composability
+with D4 digest / D2 open carryover in MVP (defer to D3.5 once
+the primitive proves out).
+
+**MUST-DECIDE-BEFORE-CODING (locked):**
+
+- **D3-1 (TTRPG + Adversarial agree)** — DM-only clocks ONLY.
+  Event kinds prefixed `dm-clock-create`, `dm-clock-tick`,
+  `dm-clock-delete`.  State: `state.dmClocks: Record<id, DmClock>`.
+  Shared `clock-*` family RESERVED for D3.5 (same architecture
+  but separate state object + separate kinds — Adversarial
+  warned against the unified `{dmOnly: boolean}` flag which is
+  the D-prep-2-A bug class).
+- **D3-2 (Adversarial)** — No migration path MVP scope (no
+  shared family yet to migrate to).
+- **D3-3 (Adversarial)** — Delta-tick event shape:
+  `dm-clock-tick { v: 1, id, by: N }` (NOT absolute-set).
+  Replay-deterministic because clamp `[0, size]` applied at
+  EACH event's materialization (not lazy at read).  Idempotency
+  on duplicate delivery handled by EventLog's existing id-dedup.
+- **D3-4 (Adversarial)** — Materializer validation:
+  - id regex `/^[A-Za-z0-9._-]{1,64}$/`
+  - reject `__proto__` / `constructor` / `prototype` segments
+    (reuse `PROTOTYPE_POLLUTION_SEGMENTS` from D1-D)
+  - name 1-200 chars, trim, non-empty
+  - size in `{4, 6}` (TTRPG narrowed from FitD canon
+    `{4, 6, 8}`)
+  - `by` integer in `[-size, +size]`
+  - max 64 clocks per campaign (DoS guard)
+  - reject ticks for non-existent ids (no auto-create)
+- **D3-5, D3-6, D3-8** — moot in MVP (no AI surface, no shared
+  clocks, no DM-confirm dialogs needed).  Captured for D3.5.
+- **D3-7 (TTRPG rules.md verification)** — D3 is ADDITIVE; do
+  NOT unify with existing alignmentDrift (per-PC 0-5 mark
+  counter, rules.md:172) or threadDebt (5-rung ladder, named,
+  rules.md:125-134) or tax.sessionsRemaining (D2-4 reversed
+  this to NOT be a counter per rules.md:184).  Clocks are for
+  campaign-level pressure that doesn't fit those locked
+  mechanics.
+- **D3-9 (Persistence)** — All 3 `dm-clock-*` kinds in
+  `PLAYER_SCOPE_STRIP_KINDS`.  CI coverage lint auto-picks up.
+  `filterForViewer` wipes `state.dmClocks = {}` for non-coord.
+
+**UX picks (locked):**
+
+- SVG pie glyph, 16px for size-4, 18px for size-6.  Filled
+  wedges; title-attr for screen-reader precision.
+- Mount below roster-strip in dm-aside; soft cap ~5 visible
+  with `overflow-y: auto`.
+- Left-click pie = +1 segment.  Shift-click = -1 (mistake
+  recovery; discoverable via title-attr).
+- ⊕ in Clocks header opens inline create row (NOT modal —
+  modal breaks scene flow).  Inputs: name + size [4|6].
+- Click-clock-name to inline-rename (consistent with foci-card
+  status-chip cycle pattern).
+- 4px left rail amber (Stage DM-only convention from ui.md:182).
+- Full clock = warm-red wedges + slow pulse until DM clicks
+  → marks acknowledged → 60% opacity (no auto-archive; many
+  filled clocks is itself a story signal).
+- No reorder / no drag-sort — insertion-order only (conscious
+  MVP debt; revisit if DMs ask after 3+ sessions of real play).
+
+**Conscious MVP debt** (deferred to D3.5):
+
+- Shared / player-visible clocks (with `dmNote` field-firewall,
+  spoiler-name DM-confirm, AI write hard-gate analog).
+- AI `dm-clock-tick` proposal flow (clocks encode DM pacing
+  intent; ceding to AI inverts prime directive — ship after the
+  DM rhythm is set).
+- Auto-surface ticked clocks in session-digest (D4) Pressure card.
+- Auto-surface unacknowledged-full clocks in session-open (D2)
+  carryover.
+- Reorder / drag-sort.
+- Hotkey `.` for tick-last-modified-clock (would compose with
+  the deferred hotkey-discoverability work).
+- Size 8 (and beyond).
+- Campaign-config clock TEMPLATES (`[C]` layer) — DM types names
+  manually in MVP.
+
+**Sub-wave plan:**
+
+- [ ] **D3-A** — locked scope (DONE in this commit).
+- [ ] **D3-B [engine]** — 3 new event kinds + DmClock interface
+  + materializers + persistence classification + filterForViewer
+  wipe + engine tests.
+- [ ] **D3-C [UI]** — `<clock-strip>` region + host methods +
+  dm-aside mount + CSS + component tests.
+- [ ] **D3-D** — verifier + commit + push.
 ### Wave D4-cleanup — post-ship 4-expert sanity check findings ✓ SHIPPED `d6eb8e5`
 
 Triggered by the post-D4 4-expert sanity-check round (2026-05-26

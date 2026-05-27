@@ -26,6 +26,8 @@ import './ui/regions/diff-review-stage';
 import type { DiffProposalView } from './ui/regions/diff-review-stage';
 import './ui/regions/session-open-stage';
 import type { CarryoverPcCard } from './ui/regions/session-open-stage';
+import './ui/regions/clock-strip';
+import type { DmClockView } from './ui/regions/clock-strip';
 import './ui/regions/session-digest';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
@@ -1573,6 +1575,7 @@ export class QuireApp extends LitElement {
     const chargenActive = this.isChargenActive(v.filteredShared.pcSlots);
     return html`
       ${this.renderDmRosterStrip()}
+      ${this.renderClockStrip()}
       ${this.renderWrapSessionLauncher()}
       <dm-aside
         .campaignSlug=${slug}
@@ -2001,6 +2004,101 @@ export class QuireApp extends LitElement {
         this.chargen.displayNameForBound(pcId)}
       .onAddSeat=${() => this.chargen.addSeat()}
     ></dm-roster-strip>`;
+  }
+
+  /**
+   * D3 (2026-05-26): DM-only progress-clock strip.  Coord-only —
+   * the host already gates the whole dm-aside surface on
+   * isCoordinator() via renderBody dispatch, but the early-return
+   * here is defense-in-depth in case dm-aside ever mounts in a
+   * different path.
+   */
+  private renderClockStrip(): TemplateResult | typeof nothing {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    if (!this.isCoordinator()) return nothing;
+    // dmClocks is wiped from filteredShared for non-coord by
+    // filterForViewer, so a coord viewer sees the full map and a
+    // non-coord wouldn't have reached here anyway.
+    const clocks: DmClockView[] = Object.values(v.shared.dmClocks ?? {})
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((c) => ({ id: c.id, name: c.name, size: c.size, filled: c.filled }));
+    return html`<clock-strip
+      .clocks=${clocks}
+      .onCreate=${(name: string, size: 4 | 6) =>
+        this.createDmClock(name, size)}
+      .onTick=${(id: string, by: number) => this.tickDmClock(id, by)}
+      .onDelete=${(id: string) => this.deleteDmClock(id)}
+    ></clock-strip>`;
+  }
+
+  /**
+   * D3 (2026-05-26): create a DM-only progress clock.  Coord-only.
+   * Returns true on success.  The clock id is derived from the
+   * name (lowercased, non-alphanumeric → dashes) + a short random
+   * suffix to dedup similarly-named clocks.
+   */
+  createDmClock(name: string, size: 4 | 6): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const trimmed = name.trim();
+    if (trimmed.length === 0 || trimmed.length > 200) return false;
+    if (size !== 4 && size !== 6) return false;
+    // Slug + 6 hex chars; total ≤ 64 chars to satisfy materializer
+    // validation.  Slugify by lowercasing + replacing non-allowed
+    // chars with `-`, then collapsing runs + trimming.  D3-verifier
+    // NIT: drop `.` from allowed chars so the host can never
+    // produce a dotted id whose segments might match the proto-
+    // pollution denylist (e.g. user types "foo.__proto__.bar").
+    // The materializer rejects either way, but the host pre-clean
+    // avoids the silent-no-emit UX bug.
+    const slugRaw = trimmed
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[-_]+|[-_]+$/g, '');
+    const slug = slugRaw.length > 0 ? slugRaw.slice(0, 50) : 'clock';
+    const rand = Math.floor(Math.random() * 0xffffff)
+      .toString(16)
+      .padStart(6, '0');
+    const id = `${slug}-${rand}`;
+    this.session.append('dm-clock-create', {
+      v: 1,
+      id,
+      name: trimmed,
+      size
+    });
+    return true;
+  }
+
+  /**
+   * D3 (2026-05-26): tick a clock by N (default +1).  Coord-only.
+   * Delta semantics — materializer clamps `[0, size]`.  Returns
+   * true on emit; false if validation prevents emit.
+   */
+  tickDmClock(id: string, by: number = 1): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isFinite(by) || !Number.isInteger(by)) return false;
+    const clock = v.shared.dmClocks?.[id];
+    if (!clock) return false;
+    if (Math.abs(by) > clock.size) return false;
+    this.session.append('dm-clock-tick', { v: 1, id, by });
+    return true;
+  }
+
+  /**
+   * D3 (2026-05-26): delete a clock entirely.  Coord-only.
+   */
+  deleteDmClock(id: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!v.shared.dmClocks?.[id]) return false;
+    this.session.append('dm-clock-delete', { v: 1, id });
+    return true;
   }
 
   /**

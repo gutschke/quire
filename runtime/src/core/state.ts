@@ -662,6 +662,41 @@ export interface SessionState {
    *     broadcast channel — out-of-band from the session event log
    */
   diffProposals: PendingDiffProposal[];
+  /**
+   * D3 (2026-05-26): DM-only progress clocks.  Keyed by clock id
+   * (DM-typed slug-shaped string).  Wiped by `filterForViewer`
+   * for non-coord viewers.  Event kinds: `dm-clock-create` /
+   * `dm-clock-tick` / `dm-clock-delete`, all coord-only and all
+   * in PLAYER_SCOPE_STRIP_KINDS.
+   *
+   * Shared (player-visible) clocks deferred to D3.5; that family
+   * will live in a SEPARATE `state.clocks` object with its own
+   * `clock-*` event kinds (Adversarial D3-1: avoid the unified
+   * `dmOnly: boolean` flag — that's the D-prep-2-A bug class).
+   */
+  dmClocks: Record<string, DmClock>;
+}
+
+/**
+ * D3 (2026-05-26): one DM-only progress clock.  Filled count is
+ * the sum of `dm-clock-tick.by` deltas, clamped to `[0, size]`
+ * at each materialization step for replay determinism.
+ */
+export interface DmClock {
+  id: string;
+  name: string;
+  /** Total segments (FitD canon, narrowed to {4, 6} for MVP). */
+  size: 4 | 6;
+  /** Filled segments, in [0, size].  Sum of ticks, clamped on
+   *  each event apply. */
+  filled: number;
+  /** Coord peer that created the clock (audit). */
+  createdByPeerId: PeerId;
+  /** Epoch-ms creation timestamp. */
+  createdAt: number;
+  /** Epoch-ms of the most-recent tick (used for "tick last-
+   *  modified" UX hooks; falls back to createdAt). */
+  lastTickedAt: number;
 }
 
 /**
@@ -725,7 +760,8 @@ export function emptyState(): SessionState {
     pcFoci: {},
     sessionDigests: [],
     sessionOpens: [],
-    diffProposals: []
+    diffProposals: [],
+    dmClocks: {}
   };
 }
 
@@ -944,6 +980,10 @@ export function filterForViewer(
     // DM-only.  Players see updated NPCs only after the DM commits
     // the WorkingCopy back to git (out-of-band channel).
     diffProposals: [],
+    // D3 (2026-05-26): DM-only progress clocks.  Hidden threat
+    // trackers; players see nothing until D3.5 ships the shared
+    // family.
+    dmClocks: {},
     // pcFoci passes through unchanged — foci are player-visible by
     // design at Realization onward.  The UI gate (Grant focus only
     // when magicPhase >= 'realization') is the firewall.
@@ -1587,6 +1627,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // started" is fine for players to see; the audit trail captures
   // WHICH coord opened the session).
   'session-open',
+  // D3 (2026-05-26): DM-only progress clocks.  All three coord-
+  // only AND DM-private (PLAYER_SCOPE_STRIP_KINDS).  Sizes
+  // restricted to {4, 6}.  Delta-tick semantics — clamp on each
+  // event apply for replay determinism.  Shared (player-visible)
+  // clocks deferred to D3.5 (separate `clock-*` family).
+  'dm-clock-create',
+  'dm-clock-tick',
+  'dm-clock-delete',
   // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
   // All three are coord-only AND DM-private (PLAYER_SCOPE_STRIP_KINDS)
   // — the diff-review is the DM's pre-publication review.  Players
@@ -3131,6 +3179,142 @@ function applySessionDigestEvent(
  * the second is a no-op for the trigger but stays in the log for
  * "co-DM also opened" history.
  */
+// -----------------------------------------------------------------
+// D3 (2026-05-26): DM-only progress clocks.  See `DmClock`
+// interface for shape.  All three kinds are coord-only AND in
+// PLAYER_SCOPE_STRIP_KINDS — players see nothing.  Shared
+// (player-visible) clocks are reserved for D3.5 under a separate
+// state object + separate event-kind family.
+//
+// Event shapes (all v: 1):
+//   - dm-clock-create { id, name, size }
+//   - dm-clock-tick   { id, by }       — delta, clamped [0, size]
+//   - dm-clock-delete { id }
+//
+// Validation (Adversarial D3-4):
+//   - id matches DM_CLOCK_ID_RE; ≤ 64 chars
+//   - id segments don't include __proto__ / constructor / prototype
+//   - name 1-200 chars after trim
+//   - size in {4, 6}
+//   - by integer in [-size, +size]
+//   - max DM_CLOCK_MAX_PER_CAMPAIGN clocks per campaign
+//   - tick refuses unknown ids (no auto-create per Adversarial D3-4)
+// -----------------------------------------------------------------
+
+const DM_CLOCK_ID_RE = /^[A-Za-z0-9._-]+$/;
+const DM_CLOCK_ID_MAX = 64;
+const DM_CLOCK_NAME_MAX = 200;
+const DM_CLOCK_MAX_PER_CAMPAIGN = 64;
+const DM_CLOCK_PROTO_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
+function isValidDmClockId(id: unknown): id is string {
+  if (typeof id !== 'string') return false;
+  if (id.length === 0 || id.length > DM_CLOCK_ID_MAX) return false;
+  if (!DM_CLOCK_ID_RE.test(id)) return false;
+  // Defense-in-depth against prototype-pollution (practice memo 6c).
+  for (const seg of id.split('.')) {
+    if (DM_CLOCK_PROTO_SEGMENTS.has(seg)) return false;
+  }
+  return true;
+}
+
+interface DmClockCreatePayload {
+  v: 1;
+  id: string;
+  name: string;
+  size: number;
+}
+
+function applyDmClockCreateEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<DmClockCreatePayload>;
+  if (!isValidDmClockId(p.id)) return;
+  if (typeof p.name !== 'string') return;
+  const trimmedName = p.name.trim();
+  if (trimmedName.length === 0 || trimmedName.length > DM_CLOCK_NAME_MAX) {
+    return;
+  }
+  if (p.size !== 4 && p.size !== 6) return;
+  // DoS guard + duplicate-create no-op.
+  if (state.dmClocks[p.id] !== undefined) return;
+  if (Object.keys(state.dmClocks).length >= DM_CLOCK_MAX_PER_CAMPAIGN) {
+    return;
+  }
+  state.dmClocks = {
+    ...state.dmClocks,
+    [p.id]: {
+      id: p.id,
+      name: trimmedName,
+      size: p.size,
+      filled: 0,
+      createdByPeerId: event.peerId,
+      createdAt: event.ts,
+      lastTickedAt: event.ts
+    }
+  };
+}
+
+interface DmClockTickPayload {
+  v: 1;
+  id: string;
+  by: number;
+}
+
+function applyDmClockTickEvent(state: SessionState, event: QuireEvent): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<DmClockTickPayload>;
+  if (!isValidDmClockId(p.id)) return;
+  if (typeof p.by !== 'number') return;
+  if (!Number.isFinite(p.by) || !Number.isInteger(p.by)) return;
+  const clock = state.dmClocks[p.id];
+  if (clock === undefined) return; // No auto-create.
+  // |by| ≤ size: rejects 1e308, MAX_SAFE_INTEGER, etc.
+  if (Math.abs(p.by) > clock.size) return;
+  const next = Math.max(0, Math.min(clock.size, clock.filled + p.by));
+  if (next === clock.filled) {
+    // Still update lastTickedAt — the DM clicked + the audit
+    // entry exists, even if clamping makes the value-change a
+    // no-op.  Helps "tick last-modified" UX hooks stay sensible.
+    state.dmClocks = {
+      ...state.dmClocks,
+      [p.id]: { ...clock, lastTickedAt: event.ts }
+    };
+    return;
+  }
+  state.dmClocks = {
+    ...state.dmClocks,
+    [p.id]: { ...clock, filled: next, lastTickedAt: event.ts }
+  };
+}
+
+interface DmClockDeletePayload {
+  v: 1;
+  id: string;
+}
+
+function applyDmClockDeleteEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<DmClockDeletePayload>;
+  if (!isValidDmClockId(p.id)) return;
+  if (state.dmClocks[p.id] === undefined) return;
+  const next = { ...state.dmClocks };
+  delete next[p.id];
+  state.dmClocks = next;
+}
+
 function applySessionOpenEvent(
   state: SessionState,
   event: QuireEvent
@@ -3536,6 +3720,11 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'session-digest': applySessionDigestEvent,
   // D2 (2026-05-26): session-open ritual marker.
   'session-open': applySessionOpenEvent,
+  // D3 (2026-05-26): DM-only progress clocks.  Coord-only,
+  // DM-private — see PendingDmClock interface for shape contract.
+  'dm-clock-create': applyDmClockCreateEvent,
+  'dm-clock-tick': applyDmClockTickEvent,
+  'dm-clock-delete': applyDmClockDeleteEvent,
   // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
   // All three coord-only AND DM-private; see PendingDiffProposal
   // doc-comment for the lifecycle contract.

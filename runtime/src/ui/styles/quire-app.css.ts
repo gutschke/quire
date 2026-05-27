@@ -2834,6 +2834,164 @@ export const quireAppStyles = css`
       font-size: 0.85rem;
     }
 
+    /* D3 (2026-05-26): DM-only clock-strip. */
+    .clock-strip {
+      margin: 0.5rem 0;
+      padding: 0.5rem 0.7rem;
+      border-left: 4px solid light-dark(#f59e0b, #d97706);
+    }
+    .clock-strip-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin: 0 0 0.4rem;
+    }
+    .clock-strip-head h3 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+    .clock-strip-add {
+      padding: 0.1rem 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.95rem;
+    }
+    .clock-strip-empty {
+      margin: 0;
+      font-size: 0.85rem;
+    }
+    .clock-strip-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 8rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .clock-strip-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.88rem;
+    }
+    .clock-strip-pie {
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+    .clock-strip-pie:disabled {
+      cursor: default;
+      opacity: 0.5;
+    }
+    .clock-strip-svg .clock-strip-wedge-filled {
+      fill: light-dark(#475569, #94a3b8);
+      stroke: light-dark(#1e293b, #cbd5e1);
+      stroke-width: 0.5;
+    }
+    .clock-strip-svg .clock-strip-wedge-empty {
+      fill: light-dark(#f1f5f9, #1e293b);
+      stroke: light-dark(#94a3b8, #475569);
+      stroke-width: 0.5;
+    }
+    .clock-strip-row-full .clock-strip-wedge-filled {
+      fill: light-dark(#dc2626, #ef4444);
+      stroke: light-dark(#7f1d1d, #fca5a5);
+      animation: clock-strip-pulse 2s ease-in-out infinite;
+    }
+    @keyframes clock-strip-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .clock-strip-row-acked {
+      opacity: 0.6;
+    }
+    .clock-strip-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .clock-strip-counter {
+      font-family: ui-monospace, monospace;
+      font-size: 0.82rem;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .clock-strip-delete {
+      padding: 0.1rem 0.35rem;
+      border: 1px solid transparent;
+      background: transparent;
+      color: light-dark(#94a3b8, #64748b);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .clock-strip-delete:hover {
+      color: light-dark(#dc2626, #ef4444);
+      border-color: light-dark(#fca5a5, #991b1b);
+      border-radius: 3px;
+    }
+    .clock-strip-create {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin-bottom: 0.4rem;
+      padding: 0.3rem;
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      border-radius: 3px;
+      font-size: 0.85rem;
+    }
+    .clock-strip-create-name {
+      flex: 1;
+      padding: 0.2rem 0.4rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 3px;
+      font: inherit;
+      font-size: 0.85rem;
+      min-width: 0;
+    }
+    .clock-strip-create-sizes {
+      display: flex;
+      gap: 0.2rem;
+    }
+    .clock-strip-create-size {
+      padding: 0.15rem 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .clock-strip-create-size-selected {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#60a5fa, #3b82f6);
+    }
+    .clock-strip-create-submit,
+    .clock-strip-create-cancel {
+      padding: 0.15rem 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .clock-strip-create-submit {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#60a5fa, #3b82f6);
+    }
+
     .dm-wrap-session-launcher {
       margin: 0.5rem 0;
     }

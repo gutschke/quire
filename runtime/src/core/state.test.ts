@@ -879,7 +879,9 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // D1-D (2026-05-26): added proposal-create + proposal-accept +
     // proposal-reject → 52.
     // D2 (2026-05-26): added session-open → 53.
-    expect(KNOWN_EVENT_KINDS.size).toBe(53);
+    // D3 (2026-05-26): added dm-clock-create + dm-clock-tick +
+    // dm-clock-delete → 56.
+    expect(KNOWN_EVENT_KINDS.size).toBe(56);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -4351,6 +4353,262 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
     const state = materialize(alice.events());
     expect(state.pcRetireRequests).toHaveLength(1);
     expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  // --- D3 (2026-05-26): DM-only progress clocks ---
+
+  describe('dm-clock materializers (D3)', () => {
+    function setupCoord(): EventLog {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      return log;
+    }
+
+    it('coord can create a clock; entry lands with creator + ts', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'engineer-ships',
+        name: 'Engineer ships the bad thing',
+        size: 4
+      });
+      const state = materialize(log.events());
+      const c = state.dmClocks['engineer-ships'];
+      expect(c).toBeDefined();
+      expect(c.name).toBe('Engineer ships the bad thing');
+      expect(c.size).toBe(4);
+      expect(c.filled).toBe(0);
+      expect(c.createdByPeerId).toBe('alice');
+      expect(c.createdAt).toBeGreaterThan(0);
+    });
+
+    it('non-coord cannot create a clock', () => {
+      const alice = setupCoord();
+      const bob = new EventLog('bob');
+      bob.append('dm-clock-create', {
+        v: 1,
+        id: 'rogue',
+        name: 'rogue clock',
+        size: 4
+      });
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('rejects id with __proto__ segment (prototype-pollution defense)', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: '__proto__',
+        name: 'evil',
+        size: 4
+      });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it('rejects id with constructor.prototype chain', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'constructor.prototype',
+        name: 'evil',
+        size: 4
+      });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('rejects size outside {4, 6}', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'too-big',
+        name: 'x',
+        size: 8
+      });
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'too-small',
+        name: 'x',
+        size: 3
+      });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('rejects empty name and oversized name', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'empty',
+        name: '   ',
+        size: 4
+      });
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'huge',
+        name: 'x'.repeat(201),
+        size: 4
+      });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('duplicate create is a no-op (id collision)', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'dup',
+        name: 'first',
+        size: 4
+      });
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'dup',
+        name: 'second',
+        size: 6
+      });
+      const state = materialize(log.events());
+      expect(state.dmClocks.dup.name).toBe('first');
+      expect(state.dmClocks.dup.size).toBe(4);
+    });
+
+    it('tick advances filled and clamps to size on each step', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 4
+      });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: 2 });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: 3 }); // clamps to 4
+      const state = materialize(log.events());
+      expect(state.dmClocks.a.filled).toBe(4);
+    });
+
+    it('negative tick rewinds, clamps to 0', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 6
+      });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: 3 });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: -5 });
+      const state = materialize(log.events());
+      expect(state.dmClocks.a.filled).toBe(0);
+    });
+
+    it('tick refuses unknown id (no auto-create)', () => {
+      const log = setupCoord();
+      log.append('dm-clock-tick', { v: 1, id: 'ghost', by: 1 });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('tick rejects |by| > size (hostile numeric input guard)', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 4
+      });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: 99 });
+      log.append('dm-clock-tick', {
+        v: 1,
+        id: 'a',
+        by: Number.MAX_SAFE_INTEGER
+      });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: Infinity });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: NaN });
+      log.append('dm-clock-tick', { v: 1, id: 'a', by: 2.5 });
+      const state = materialize(log.events());
+      expect(state.dmClocks.a.filled).toBe(0);
+    });
+
+    it('delete removes from state', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 4
+      });
+      log.append('dm-clock-delete', { v: 1, id: 'a' });
+      const state = materialize(log.events());
+      expect(state.dmClocks).toEqual({});
+    });
+
+    it('delete on unknown id is a no-op', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 4
+      });
+      log.append('dm-clock-delete', { v: 1, id: 'ghost' });
+      const state = materialize(log.events());
+      expect(state.dmClocks.a).toBeDefined();
+    });
+
+    it('co-DM concurrent ticks add deltas (delta-tick semantics)', () => {
+      const alice = setupCoord();
+      alice.append('dm-clock-create', {
+        v: 1,
+        id: 'a',
+        name: 'A',
+        size: 6
+      });
+      const bob = new EventLog('bob');
+      bob.append('coordinator-claim', {});
+      // Both DMs tick the same clock simultaneously.
+      alice.append('dm-clock-tick', { v: 1, id: 'a', by: 2 });
+      bob.append('dm-clock-tick', { v: 1, id: 'a', by: 1 });
+      // Both events land; deltas sum (delta-tick converges).
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.dmClocks.a.filled).toBe(3);
+    });
+
+    it('rejects creation past max-clocks cap (DoS guard)', () => {
+      const log = setupCoord();
+      // Spam 65 create attempts; the materializer caps at 64.
+      for (let i = 0; i < 65; i++) {
+        log.append('dm-clock-create', {
+          v: 1,
+          id: `c${i}`,
+          name: `c${i}`,
+          size: 4
+        });
+      }
+      const state = materialize(log.events());
+      expect(Object.keys(state.dmClocks).length).toBe(64);
+    });
+
+    it('filterForViewer wipes dmClocks for non-coord viewers', () => {
+      const log = setupCoord();
+      log.append('dm-clock-create', {
+        v: 1,
+        id: 'secret',
+        name: 'the Quiet closes in',
+        size: 6
+      });
+      log.append('dm-clock-tick', { v: 1, id: 'secret', by: 3 });
+      const state = materialize(log.events());
+      // Non-coord viewer sees no clocks.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.dmClocks).toEqual({});
+      // Coord identity fast-path preserves.
+      const dmView = filterForViewer(state, 'alice');
+      expect(dmView.dmClocks.secret.filled).toBe(3);
+    });
   });
 
   // --- D2 (2026-05-26): session-open ritual ---
