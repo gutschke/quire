@@ -130,7 +130,7 @@ together; C2 + C4 (larger scope) deferred.
   Region files now use `import + re-export` pattern so existing
   local consumers stay green AND any future cross-file import
   resolves to the same source.
-- [x] **C4** — single active-PC focus card in Rail ✓ SHIPPED `<TBD>`.
+- [x] **C4** — single active-PC focus card in Rail ✓ SHIPPED `242f497`.
   Thread-debt selector + reset-spam chip + casterState data prop
   added to `<dm-pc-detail>`; `<dm-aside>` stripped down to pinned-
   NPC management only (259 → 113 LOC).  dm-pc-detail at 496 LOC,
