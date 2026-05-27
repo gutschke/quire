@@ -146,6 +146,16 @@ function summarizePayload(e: QuireEvent): string {
       const domain = stringField(focus, 'domain');
       return `${stringField(p, 'pcId')} gained focus "${name}"${domain ? ` (domain: ${domain})` : ''}`;
     }
+    case 'bond-ratify': {
+      // D5-C-fix #4: text is the player-visible bond text.  The
+      // `dmNotes` sub-field is already stripped from this event
+      // payload by `scrubEventForPlayer` before it reaches a
+      // player save, but this code path reads the LOCAL log
+      // which carries the full payload for the coord.  Per the
+      // SESSION_DIGEST input contract (player-visible content
+      // only), summarize only the player-facing fields.
+      return `bond ratified for ${stringField(p, 'pcId')} → "${truncate(stringField(p, 'text'), 200)}"`;
+    }
     case 'pc-mark-realization':
       return `${stringField(p, 'pcId')} realized their magic (one-way gate)`;
     default:
@@ -264,7 +274,15 @@ export const SESSION_DIGEST_INPUT_KINDS: ReadonlySet<string> = new Set([
   'pc-retire',
   'pc-archive',
   'focus-grant',
-  'pc-mark-realization'
+  'pc-mark-realization',
+  // D5-C-fix #4 (2026-05-27 D5-13 lock-fulfillment): bond-ratify
+  // is the moment a relationship becomes table-canon.  Feeding
+  // it to the digest lets the recap narrate ("Mei and Iris,
+  // classmates, fell out over X this session").  dmNotes is
+  // already stripped by PER_KIND_SCRUBBERS in persistence.ts +
+  // by filterForViewer's per-entry strip — the digest input is
+  // doubly-safe.
+  'bond-ratify'
   // D4-cleanup-2 (TTRPG): `seat-memory-edit` removed — seat-memory
   // is the DM's intimate per-seat note layer (silent-player-firewall
   // domain).  Feeding it into a player-facing recap risks both

@@ -4540,6 +4540,37 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
       expect(state.pcBondProposals.mei).toBeUndefined();
     });
 
+    it('D5-C-fix #7: rejects __proto__ in dotted targetPcId (defense-in-depth)', () => {
+      const log = setupSession();
+      log.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'foo.__proto__.bar',
+        text: 'evil'
+      });
+      const state = materialize(log.events());
+      expect(state.pcBondProposals.mei).toBeUndefined();
+      // Cross-check: Object.prototype unpolluted.
+      expect(({} as Record<string, unknown>).bar).toBeUndefined();
+    });
+
+    it('D5-C-fix #7: rejects __proto__ in dotted pcId', () => {
+      const log = setupSession();
+      log.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei.__proto__',
+        targetPcId: 'iris',
+        text: 'evil'
+      });
+      const state = materialize(log.events());
+      // Either rejected by isCharacterId (regex) or by the
+      // hasPoisonousDottedSegment check; verify no pcBondProposals
+      // entry exists with the bad key.
+      expect(Object.keys(state.pcBondProposals)).not.toContain('mei.__proto__');
+    });
+
     it('coord ratify moves proposal → pcBonds; optionally adds dmNotes', () => {
       const [alice, bob] = setupSessionWithBob();
       const bobEvent = bob.append('bond-propose', {

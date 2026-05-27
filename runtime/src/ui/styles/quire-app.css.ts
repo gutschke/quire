@@ -3177,6 +3177,39 @@ export const quireAppStyles = css`
       background: light-dark(#dbeafe, #1e3a8a);
       border-color: light-dark(#60a5fa, #3b82f6);
     }
+    /* D5-C-fix #1 (2026-05-27): inline dmNotes form on Ratify. */
+    .dm-pc-detail-bond-ratify-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-top: 0.4rem;
+      padding: 0.4rem;
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      border-radius: 3px;
+    }
+    .dm-pc-detail-bond-ratify-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.85rem;
+    }
+    .dm-pc-detail-bond-ratify-notes {
+      padding: 0.3rem 0.4rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 3px;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .dm-pc-detail-bond-ratify-hint {
+      margin: 0;
+      font-size: 0.78rem;
+    }
+    /* D5-C-fix #3 (2026-05-27): pending-bond pip for player. */
+    .bonds-card-pending-pip {
+      margin-left: 0.4rem;
+      font-size: 0.78rem;
+      color: light-dark(#64748b, #94a3b8);
+    }
 
     .foci-card {
       margin-top: 0.6rem;

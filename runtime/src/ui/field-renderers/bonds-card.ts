@@ -57,6 +57,17 @@ export class BondsCard extends LitElement {
   @property({ attribute: false }) bonds: BondsCardEntry[] = [];
 
   /**
+   * D5-C-fix (2026-05-27 scenario-playthrough UX-1): pending bond
+   * proposal count surfaced to the LOCAL player so they have
+   * after-state feedback when they propose a bond.  Pre-fix the
+   * compose form closed silently and the player saw zero
+   * indication their proposal landed (pcBondProposals is wiped
+   * for non-coord by filterForViewer per design D5-3).  Surfaces
+   * as a muted pip "1 awaiting DM review" when > 0.
+   */
+  @property({ attribute: false }) pendingProposalCount: number = 0;
+
+  /**
    * When non-null, the card renders in coord/DM mode: dmNotes
    * lines are visible (already stripped for non-coord by
    * filterForViewer), per-bond delete affordance appears, and the
@@ -73,11 +84,14 @@ export class BondsCard extends LitElement {
     return html`<section class="bonds-card">
       <header class="bonds-card-head">
         <h4>Bonds${this.bonds.length > 0 ? ` (${this.bonds.length})` : ''}</h4>
+        ${this.pendingProposalCount > 0
+          ? html`<span class="muted bonds-card-pending-pip"
+              >${this.pendingProposalCount} awaiting DM review</span
+            >`
+          : nothing}
       </header>
       ${this.bonds.length === 0
-        ? html`<p class="muted bonds-card-empty">
-            No bonds yet.${isCoord ? ' Bonds are authored at chargen.' : ''}
-          </p>`
+        ? html`<p class="muted bonds-card-empty">No bonds yet.</p>`
         : html`<ul class="bonds-card-list">
             ${this.bonds.map((b) => this.renderBond(b, isCoord))}
           </ul>`}

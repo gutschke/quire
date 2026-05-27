@@ -250,6 +250,16 @@ export class PlayerRail extends LitElement {
    */
   @property({ attribute: false }) bonds: BondsCardEntry[] = [];
   /**
+   * D5-C-fix (2026-05-27 scenario-playthrough UX-1): pending bond
+   * proposal count for THIS PC.  Surfaces "N awaiting DM review"
+   * to the local player so a freshly-submitted proposal isn't a
+   * silent void.  Host counts via `pcBondProposals[pcId].length`
+   * — though filterForViewer wipes that map for non-coord, the
+   * host can read it from `v.shared` when the local peer
+   * controls the seat (player sees their own pending count).
+   */
+  @property({ attribute: false }) pendingBondProposalCount: number = 0;
+  /**
    * D5 (2026-05-27): inline-add affordance.  When set, the bonds
    * card shows a "Propose bond" form.  Host wires to
    * `QuireApp.proposeBond`.
@@ -290,6 +300,31 @@ export class PlayerRail extends LitElement {
    * a click outside the confirming entry.
    */
   @state() private takeOverConfirmPcId: string | null = null;
+
+  /**
+   * D5-C-fix (2026-05-27 scenario-playthrough UX-7): draft-leak
+   * guard for the bond compose form @state when the rendered
+   * `character` prop changes (PC switch via name-row switcher).
+   * Without this, Bob typing on Mei → opens switcher → picks
+   * Iris would land Iris's bonds-card with Mei-context draft text
+   * pre-loaded + a `bondFormTarget` pcId that may not be in
+   * Iris's candidate list.  Third strike of practice-memo rule
+   * #2 (draft-leak across data-identity changes); mirrors the
+   * Wave C5 magic-arc-controls willUpdate hook.
+   */
+  override willUpdate(changed: Map<string, unknown>): void {
+    if (changed.has('character')) {
+      const prior = changed.get('character') as LoadedCharacter | null;
+      const next = this.character;
+      const priorId = prior?.id;
+      const nextId = next?.id;
+      if (priorId !== undefined && nextId !== undefined && priorId !== nextId) {
+        this.bondFormOpen = false;
+        this.bondFormTarget = '';
+        this.bondFormText = '';
+      }
+    }
+  }
 
   override render(): TemplateResult {
     const character = this.character;
@@ -414,6 +449,7 @@ export class PlayerRail extends LitElement {
           ? html`<bonds-card
               .bonds=${this.bonds}
               .editablePcId=${null}
+              .pendingProposalCount=${this.pendingBondProposalCount}
             ></bonds-card>
             ${editable && this.onProposeBond !== null
               ? this.renderProposeBondForm(character.id)

@@ -24,7 +24,7 @@
  */
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import type {
   AccidentalGrant,
   AlignmentDrift,
@@ -224,6 +224,17 @@ export class DmPcDetail extends LitElement {
   @property({ attribute: false })
   onRemoveBond: ((pcId: string, id: string) => void) | null = null;
 
+  /**
+   * D5-C-fix (2026-05-27 scenario-playthrough TTRPG-B / UX-3):
+   * which proposal id (if any) has its dmNotes-inline-form open.
+   * Local-only @state; cleared on ratify / cancel.  Allows the
+   * DM to add a spoiler-anchor dmNotes string before clicking
+   * the final "Ratify" — the engine already accepted dmNotes;
+   * D5-C shipped without exposing it.
+   */
+  @state() private bondRatifyOpenId: string | null = null;
+  @state() private bondRatifyDmNotes: string = '';
+
   // (Wave C5: inline-draft state + willUpdate guard moved into the
   // <magic-arc-controls> child component along with the arc-control
   // render methods.  This file stays a read-only renderer; arc
@@ -284,9 +295,19 @@ export class DmPcDetail extends LitElement {
   /**
    * D5 (2026-05-27): pending bond proposals awaiting DM
    * ratification.  Each row shows the proposed bond text + target
-   * + the player who proposed it.  Ratify (coord-only) accepts
-   * the proposal as-is (DM can optionally add dmNotes via the
-   * inline form); Remove rejects the proposal.
+   * + the player who proposed it.  Two flows:
+   *
+   *   1. "Ratify…" expands an inline form with an optional
+   *      `dmNotes` textarea (D5-C-fix #1, per scenario-playthrough
+   *      TTRPG-B + UX-3): the engine has always accepted dmNotes;
+   *      D5-C shipped without exposing the input, silently
+   *      breaking the "DM owns fit" half of the locked design.
+   *      Final "Ratify" button inside the form commits with the
+   *      optional dmNotes payload + a "broadcasts to all players"
+   *      hint.
+   *   2. "Reject" removes the proposal silently (no warning;
+   *      player doesn't see proposals so they can't be confused
+   *      by silent removal — see Adv-Scenario-3).
    */
   private renderBondProposals(
     view: DmDetailView
@@ -296,37 +317,103 @@ export class DmPcDetail extends LitElement {
     return html`<div class="dm-pc-detail-section dm-pc-detail-bond-proposals">
       <h3>Pending bond proposals (${proposals.length})</h3>
       <ul class="dm-pc-detail-bond-proposal-list">
-        ${proposals.map(
-          (p) => html`<li class="dm-pc-detail-bond-proposal">
-            <p>
-              <strong>${p.targetLabel}</strong>
-              <span class="muted"> · ${p.proposedByPeerId}</span>
-            </p>
-            <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
-            <div class="dm-pc-detail-bond-proposal-actions">
-              ${this.onRatifyBond
-                ? html`<button
-                    type="button"
-                    class="dm-pc-detail-bond-ratify"
-                    @click=${() => this.onRatifyBond?.(view.pcId, p.id)}
-                  >
-                    Ratify
-                  </button>`
-                : nothing}
-              ${this.onRemoveBond
-                ? html`<button
-                    type="button"
-                    class="dm-pc-detail-bond-reject"
-                    @click=${() => this.onRemoveBond?.(view.pcId, p.id)}
-                  >
-                    Reject
-                  </button>`
-                : nothing}
-            </div>
-          </li>`
-        )}
+        ${proposals.map((p) => this.renderBondProposalRow(view, p))}
       </ul>
     </div>`;
+  }
+
+  private renderBondProposalRow(
+    view: DmDetailView,
+    p: NonNullable<DmDetailView['bondProposals']>[number]
+  ): TemplateResult {
+    const isOpen = this.bondRatifyOpenId === p.id;
+    return html`<li class="dm-pc-detail-bond-proposal">
+      <p>
+        <strong>${p.targetLabel}</strong>
+        <span class="muted"> · ${p.proposedByPeerId}</span>
+      </p>
+      <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
+      ${isOpen
+        ? this.renderBondRatifyForm(view.pcId, p.id)
+        : html`<div class="dm-pc-detail-bond-proposal-actions">
+            ${this.onRatifyBond
+              ? html`<button
+                  type="button"
+                  class="dm-pc-detail-bond-ratify"
+                  @click=${() => this.openBondRatifyForm(p.id)}
+                >
+                  Ratify…
+                </button>`
+              : nothing}
+            ${this.onRemoveBond
+              ? html`<button
+                  type="button"
+                  class="dm-pc-detail-bond-reject"
+                  @click=${() => this.onRemoveBond?.(view.pcId, p.id)}
+                >
+                  Reject
+                </button>`
+              : nothing}
+          </div>`}
+    </li>`;
+  }
+
+  private renderBondRatifyForm(pcId: string, id: string): TemplateResult {
+    return html`<div class="dm-pc-detail-bond-ratify-form">
+      <label class="dm-pc-detail-bond-ratify-label">
+        DM-only spoiler anchor (optional)
+        <textarea
+          class="dm-pc-detail-bond-ratify-notes"
+          rows="3"
+          maxlength="2000"
+          placeholder="e.g., Iris saw Mei cast accidentally in their first year."
+          .value=${this.bondRatifyDmNotes}
+          @input=${(e: Event) => {
+            this.bondRatifyDmNotes = (
+              e.target as HTMLTextAreaElement
+            ).value;
+          }}
+        ></textarea>
+      </label>
+      <p class="muted dm-pc-detail-bond-ratify-hint">
+        Ratifying broadcasts the bond text to all players.  Spoiler
+        anchor stays DM-only.
+      </p>
+      <div class="dm-pc-detail-bond-proposal-actions">
+        <button
+          type="button"
+          class="dm-pc-detail-bond-ratify"
+          @click=${() => this.submitBondRatify(pcId, id)}
+        >
+          Ratify bond
+        </button>
+        <button
+          type="button"
+          class="dm-pc-detail-bond-reject"
+          @click=${() => this.cancelBondRatifyForm()}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>`;
+  }
+
+  private openBondRatifyForm(id: string): void {
+    this.bondRatifyOpenId = id;
+    this.bondRatifyDmNotes = '';
+  }
+
+  private cancelBondRatifyForm(): void {
+    this.bondRatifyOpenId = null;
+    this.bondRatifyDmNotes = '';
+  }
+
+  private submitBondRatify(pcId: string, id: string): void {
+    if (!this.onRatifyBond) return;
+    const notes = this.bondRatifyDmNotes.trim();
+    const opts = notes.length > 0 ? { dmNotes: notes } : undefined;
+    this.onRatifyBond(pcId, id, opts);
+    this.cancelBondRatifyForm();
   }
 
   /** True when ANY write callback is wired (host is coord).

@@ -2226,11 +2226,20 @@ export class QuireApp extends LitElement {
       }
     }
     if (!isCoord && !isController) return false;
-    // Slug + random suffix; ≤ 64 chars (matches materializer regex).
-    const rand = Math.floor(Math.random() * 0xffffff)
-      .toString(16)
-      .padStart(6, '0');
+    // D5-C-fix #8 (2026-05-27 scenario Adv-MFN-3 +
+    // Adv-watch-item-3): bump id entropy from 6 → 10 hex chars
+    // (24 → 40 bits) so the materializer's dup-id silent-drop is
+    // statistically irrelevant across a multi-session campaign
+    // lifetime.  Cheap; total id length stays well under the
+    // 64-char cap.  Pre-check against current proposals is also
+    // cheap; if a dup somehow occurs (replay, time-of-check race),
+    // the materializer still rejects safely.
+    const r1 = Math.floor(Math.random() * 0xffffff).toString(16);
+    const r2 = Math.floor(Math.random() * 0xffff).toString(16);
+    const rand = (r1 + r2).padStart(10, '0');
     const id = `bond-${rand}`;
+    const existingProposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
+    if (existingProposals.some((q) => q.id === id)) return false;
     this.session.append('bond-propose', {
       v: 1,
       id,
@@ -2290,8 +2299,28 @@ export class QuireApp extends LitElement {
     const bonds = v.filteredShared.pcBonds?.[pcId] ?? [];
     return bonds.map((b) => {
       const target = v.filteredShared.synthesizedPcs?.[b.targetPcId];
-      const targetLabel =
-        (target?.name as string | undefined) ?? `(unknown: ${b.targetPcId})`;
+      const targetName = target?.name as string | undefined;
+      // D5-C-fix #6 (2026-05-27 scenario-playthrough TTRPG-D /
+      // UX-6): D5-7 lock promised "(retired PC)" fallback when
+      // the target seat has retired.  Check pcSlots for terminal
+      // states; the seat carries the PC after retire (sticky-N)
+      // so we can surface the retired status without losing the
+      // name.
+      let targetLabel: string;
+      if (targetName) {
+        const targetSeat = Object.values(v.filteredShared.pcSlots).find(
+          (s) => s.pcId === b.targetPcId
+        );
+        const retired =
+          targetSeat?.state === 'bound-retired' ||
+          targetSeat?.state === 'bound-archived';
+        targetLabel = retired ? `${targetName} (retired)` : targetName;
+      } else {
+        // Spoiler-firewalled-out or unknown.  Show a placeholder
+        // that doesn't leak the raw pcId (which could itself be
+        // spoiler-shaped).
+        targetLabel = '(unknown PC)';
+      }
       const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
         id: b.id,
         targetPcId: b.targetPcId,
@@ -2310,6 +2339,36 @@ export class QuireApp extends LitElement {
    * spoiler-firewall (UX-expert pre-design lock: targets must be
    * a PC the table has met).
    */
+  /**
+   * D5-C-fix (2026-05-27): pending bond proposal count for a PC.
+   * Reads from `v.shared.pcBondProposals` (NOT filteredShared —
+   * the player needs to see THEIR OWN pending count even though
+   * filterForViewer wipes the map for non-coord shared
+   * projection).  Acceptable per Q-LT4: this read is gated by
+   * the controllerPeerId check at the next layer; only the
+   * local player's own pending count flows through.
+   *
+   * Coord viewers see the full count for any PC.  Non-coord
+   * viewers only see the count when the local peer controls the
+   * seat.
+   */
+  private pendingBondProposalCount(pcId: string): number {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return 0;
+    if (!this.isCoordinator()) {
+      // Player branch: only show count for their own PC.
+      let controlsSeat = false;
+      for (const seat of Object.values(v.shared.pcSlots)) {
+        if (seat.pcId === pcId && seat.controllerPeerId === v.peerId) {
+          controlsSeat = true;
+          break;
+        }
+      }
+      if (!controlsSeat) return 0;
+    }
+    return v.shared.pcBondProposals?.[pcId]?.length ?? 0;
+  }
+
   private bondTargetCandidates(
     selfPcId: string
   ): Array<{ pcId: string; name: string }> {
@@ -3845,6 +3904,7 @@ export class QuireApp extends LitElement {
         .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
         .bonds=${this.buildBondsCardEntries(bound.id)}
         .bondTargetCandidates=${this.bondTargetCandidates(bound.id)}
+        .pendingBondProposalCount=${this.pendingBondProposalCount(bound.id)}
         .onProposeBond=${editable
           ? (targetPcId: string, text: string) =>
               void this.proposeBond({ pcId: bound.id, targetPcId, text })

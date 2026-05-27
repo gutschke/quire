@@ -3458,19 +3458,17 @@ const BOND_TEXT_MAX = 500;
 const BOND_DM_NOTES_MAX = 2000;
 const BOND_MAX_PER_PC = 8;
 const BOND_ID_RE = /^[A-Za-z0-9._-]+$/;
-const BOND_POISONOUS_SEGMENTS: ReadonlySet<string> = new Set([
-  '__proto__',
-  'constructor',
-  'prototype'
-]);
 
 function isValidBondId(id: unknown): id is string {
   if (typeof id !== 'string') return false;
   if (id.length === 0 || id.length > BOND_ID_MAX) return false;
   if (!BOND_ID_RE.test(id)) return false;
-  for (const seg of id.split('.')) {
-    if (BOND_POISONOUS_SEGMENTS.has(seg)) return false;
-  }
+  // D5-C-fix #7 (2026-05-27): reuse the canonical
+  // `hasPoisonousDottedSegment` helper (covers __proto__ +
+  // constructor + prototype + toString + hasOwnProperty + …) per
+  // practice memo 6c "every layer."  Previously this used a
+  // narrow 3-key set; the canonical set is broader.
+  if (hasPoisonousDottedSegment(id)) return false;
   return true;
 }
 
@@ -3547,9 +3545,14 @@ function applyBondProposeEvent(
   // ratify path is the same logical entry.
   const ratifiedCount = (state.pcBonds[p.pcId] ?? []).length;
   if (proposals.length + ratifiedCount >= BOND_MAX_PER_PC) return;
-  if (typeof p.pcId !== 'string' || BOND_POISONOUS_SEGMENTS.has(p.pcId)) {
-    return;
-  }
+  // D5-C-fix #7 (2026-05-27 scenario Adv-MFN-2): replace the
+  // dead whole-string POISONOUS_KEYS check (already caught by
+  // `isCharacterId` above) with a defense-in-depth dotted-
+  // segment check on both pcId AND targetPcId.  PC_ID_RE accepts
+  // dots; while neither is used as an object key TODAY, practice
+  // memo 6c says "every layer."
+  if (hasPoisonousDottedSegment(p.pcId)) return;
+  if (hasPoisonousDottedSegment(p.targetPcId)) return;
   state.pcBondProposals = {
     ...state.pcBondProposals,
     [p.pcId]: [

@@ -95,4 +95,29 @@ describe('<bonds-card>', () => {
       /Bonds \(3\)/
     );
   });
+
+  it('D5-C-fix #3: renders pending-pip when pendingProposalCount > 0', async () => {
+    const el = mount();
+    el.pendingProposalCount = 2;
+    await el.updateComplete;
+    expect(
+      el.querySelector('.bonds-card-pending-pip')?.textContent
+    ).toMatch(/2 awaiting DM review/);
+  });
+
+  it('D5-C-fix #3: no pending-pip when count is zero', async () => {
+    const el = mount();
+    el.pendingProposalCount = 0;
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-pending-pip')).toBeNull();
+  });
+
+  it('D5-C-fix #5: empty-state copy no longer claims chargen-only', async () => {
+    const el = mount();
+    el.editablePcId = 'mei';
+    await el.updateComplete;
+    const empty = el.querySelector('.bonds-card-empty')?.textContent ?? '';
+    expect(empty).not.toMatch(/chargen/i);
+    expect(empty).toMatch(/No bonds yet/);
+  });
 });
