@@ -338,7 +338,7 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   can propose `clock-tick` ops.  Covers world-side time pressure
   (the only TTRPG tool the build doesn't already have for "ordinary
   scene → tense scene").
-- [x] **D4** ✓ SHIPPED — session-digest end-of-session campfire
+- [x] **D4** ✓ SHIPPED `1ded0d1` — session-digest end-of-session campfire
   recap.  New `session-digest` event kind (coord-only, append-only,
   player-visible) + `applySessionDigestEvent` materializer with
   bounds validation + `state.sessionDigests` array.  AI-side:
