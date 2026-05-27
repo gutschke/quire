@@ -612,6 +612,47 @@ export interface SessionState {
    * accidents can't sneak a focus onto a player's sheet.
    */
   pcFoci: Record<string /*pcId*/, Focus[]>;
+
+  /**
+   * D4 (2026-05-26): append-only log of session-digest entries.
+   * Each entry is the DM-saved end-of-session recap (AI-drafted,
+   * DM-edited).  Player-visible: the recap IS what players read
+   * at the start of the next session ("the campfire recap" per
+   * TTRPG-expert framing).  Coord-only authorship; the materializer
+   * gates on coordHolders.
+   *
+   * One entry per session-wrap commit.  Ordered chronologically
+   * (append-only, no LWW collisions); future "edit prior digest"
+   * surface would re-emit a fresh entry rather than mutate the
+   * old one (audit trail preserved).
+   *
+   * Stored as an Array (not keyed by sessionStartTs) because
+   * session boundaries are themselves narrative — a campaign that
+   * splits a single play-session into multiple digests should
+   * land them in order.
+   */
+  sessionDigests: SessionDigest[];
+}
+
+/**
+ * D4 (2026-05-26): one session-recap entry.  AI-drafted, DM-
+ * edited, DM-saved.  See `applySessionDigestEvent` materializer.
+ */
+export interface SessionDigest {
+  /** Coord peer that saved the digest. */
+  savedByPeerId: PeerId;
+  /** Epoch-ms when the digest was saved. */
+  ts: number;
+  /** Epoch-ms of the session-start the digest covers (input boundary). */
+  sessionStartTs: number;
+  /** DM-saved markdown body. */
+  markdown: string;
+  /**
+   * AI responseId that drafted the markdown.  Optional — the DM
+   * can also hand-write a digest from scratch without invoking
+   * the AI broker.
+   */
+  generatedByResponseId?: string;
 }
 
 export function emptyState(): SessionState {
@@ -639,7 +680,8 @@ export function emptyState(): SessionState {
     pcRetireRejections: [],
     pendingChargenPacks: [],
     pcAccidentalGrants: {},
-    pcFoci: {}
+    pcFoci: {},
+    sessionDigests: []
   };
 }
 
@@ -1485,7 +1527,12 @@ export const KNOWN_EVENT_KINDS = new Set([
   // DM trust on the most-narratively-loaded moment in the
   // campaign).  Applies magicPhase + knowsTheyCanCast + tax in
   // ONE materializer call.  Coord-only.
-  'pc-mark-realization'
+  'pc-mark-realization',
+  // D4 (2026-05-26): session-digest event.  Coord-saves an end-of-
+  // session recap (AI-drafted, DM-edited).  Player-visible — the
+  // recap IS what players read at the start of the next session.
+  // Append-only; each save lands as a fresh entry.
+  'session-digest'
 ]);
 
 /**
@@ -2948,6 +2995,61 @@ function applyPcMarkRealizationEvent(
 }
 
 /**
+ * D4 (2026-05-26): record a DM-saved session digest.  Coord-only.
+ * Player-visible payload — the digest IS the campfire recap the
+ * players read at session-open next time.
+ *
+ * Validation bounds:
+ *   - `markdown`: ≤ SESSION_DIGEST_MAX_MARKDOWN chars (generous
+ *     enough for a multi-paragraph recap, bounded so a runaway
+ *     AI response can't balloon state).
+ *   - `sessionStartTs`: non-negative epoch-ms.
+ *   - `generatedByResponseId`: optional; ≤ 200 chars.
+ *
+ * Append-only: each save lands as a fresh entry, ordered by
+ * event.ts.  Replays are deterministic.  Two coords saving
+ * concurrently → both digests land (audit trail preserved); the
+ * UI surfaces the latest at the top of the list.
+ */
+const SESSION_DIGEST_MAX_MARKDOWN = 20_000;
+const SESSION_DIGEST_RESPONSE_ID_MAX = 200;
+interface SessionDigestPayload {
+  v: 1;
+  sessionStartTs: number;
+  markdown: string;
+  generatedByResponseId?: string;
+}
+function applySessionDigestEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<SessionDigestPayload>;
+  if (typeof p.sessionStartTs !== 'number') return;
+  if (!Number.isFinite(p.sessionStartTs) || p.sessionStartTs < 0) return;
+  if (typeof p.markdown !== 'string') return;
+  if (p.markdown.length === 0) return;
+  if (p.markdown.length > SESSION_DIGEST_MAX_MARKDOWN) return;
+  if (p.generatedByResponseId !== undefined) {
+    if (typeof p.generatedByResponseId !== 'string') return;
+    if (p.generatedByResponseId.length > SESSION_DIGEST_RESPONSE_ID_MAX) {
+      return;
+    }
+  }
+  const digest: SessionDigest = {
+    savedByPeerId: event.peerId,
+    ts: event.ts,
+    sessionStartTs: p.sessionStartTs,
+    markdown: p.markdown
+  };
+  if (p.generatedByResponseId !== undefined) {
+    digest.generatedByResponseId = p.generatedByResponseId;
+  }
+  state.sessionDigests = [...state.sessionDigests, digest];
+}
+
+/**
  * P-R11 (2026-05-25): record a player's request to retire their own
  * PC.  Player-authored — the event.peerId IS the requesting peer.
  * Validates the seat is bound-active and that the peer actually
@@ -3141,7 +3243,9 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'accidental-grant-log': applyAccidentalGrantLogEvent,
   'focus-grant': applyFocusGrantEvent,
   // Wave D-prep-2 (2026-05-26): atomic Realization-beat event.
-  'pc-mark-realization': applyPcMarkRealizationEvent
+  'pc-mark-realization': applyPcMarkRealizationEvent,
+  // D4 (2026-05-26): DM-saved session-digest recap.
+  'session-digest': applySessionDigestEvent
 };
 
 /**

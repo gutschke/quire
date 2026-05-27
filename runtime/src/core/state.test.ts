@@ -875,7 +875,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // #294 (2026-05-26): added seat-memory-edit → 45.
     // Wave B (2026-05-26): added accidental-grant-log + focus-grant → 47.
     // Wave D-prep-2 (2026-05-26): added pc-mark-realization → 48.
-    expect(KNOWN_EVENT_KINDS.size).toBe(48);
+    // D4 (2026-05-26): added session-digest → 49.
+    expect(KNOWN_EVENT_KINDS.size).toBe(49);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -3614,6 +3615,136 @@ describe('materialize — accidental-grant-log + focus-grant (Wave B magic-arc)'
   });
 
   // ---
+
+  // --- D4 (2026-05-26): session-digest event ---
+
+  describe('session-digest materializer (D4)', () => {
+    function setupCoord(): EventLog {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      return log;
+    }
+
+    it('coord can save a digest; entry lands with ts + savedByPeerId + markdown', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1_000,
+        markdown: '# Session 1\n\nMei found the keys.'
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests).toHaveLength(1);
+      const d = state.sessionDigests[0];
+      expect(d.savedByPeerId).toBe('alice');
+      expect(d.sessionStartTs).toBe(1_000);
+      expect(d.markdown).toBe('# Session 1\n\nMei found the keys.');
+      expect(d.ts).toBeGreaterThan(0);
+    });
+
+    it('append-only — multiple digests land in chronological order', () => {
+      const log = setupCoord();
+      log.append('session-digest', { v: 1, sessionStartTs: 1, markdown: 'first' });
+      log.append('session-digest', { v: 1, sessionStartTs: 2, markdown: 'second' });
+      log.append('session-digest', { v: 1, sessionStartTs: 3, markdown: 'third' });
+      const state = materialize(log.events());
+      expect(state.sessionDigests.map((d) => d.markdown)).toEqual([
+        'first',
+        'second',
+        'third'
+      ]);
+    });
+
+    it('non-coord cannot save a digest', () => {
+      const alice = setupCoord();
+      const bob = new EventLog('bob');
+      bob.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: 'bob-attempt'
+      });
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.sessionDigests).toEqual([]);
+    });
+
+    it('rejects empty markdown', () => {
+      const log = setupCoord();
+      log.append('session-digest', { v: 1, sessionStartTs: 1, markdown: '' });
+      const state = materialize(log.events());
+      expect(state.sessionDigests).toEqual([]);
+    });
+
+    it('rejects oversized markdown (>20000 chars)', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: 'x'.repeat(20_001)
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests).toEqual([]);
+    });
+
+    it('rejects negative sessionStartTs', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: -1,
+        markdown: 'x'
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests).toEqual([]);
+    });
+
+    it('preserves optional generatedByResponseId when present', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: 'x',
+        generatedByResponseId: 'mock-r-123'
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests[0].generatedByResponseId).toBe('mock-r-123');
+    });
+
+    it('omits generatedByResponseId from stored entry when not supplied', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: 'hand-written'
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests[0].generatedByResponseId).toBeUndefined();
+    });
+
+    it('rejects oversized generatedByResponseId (>200 chars)', () => {
+      const log = setupCoord();
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: 'x',
+        generatedByResponseId: 'x'.repeat(201)
+      });
+      const state = materialize(log.events());
+      expect(state.sessionDigests).toEqual([]);
+    });
+
+    it('filterForViewer passes sessionDigests through to non-coord (player-visible)', () => {
+      const log = setupCoord();
+      log.append('peer-join', { name: 'bob' });
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 1,
+        markdown: '# Recap\n\nThe campfire memory.'
+      });
+      const state = materialize(log.events());
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.sessionDigests).toHaveLength(1);
+      expect(playerView.sessionDigests[0].markdown).toContain('campfire');
+    });
+  });
 
   it('verifier-S5: concurrent grants from two coordHolders both land (append-only, no LWW collision)', () => {
     // Co-DM scenario: alice yields to bob; both are in

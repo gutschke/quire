@@ -20,6 +20,7 @@ import './ui/regions/dm-aside';
 import './ui/regions/dm-roster-strip';
 import './ui/regions/session-wrap-marks';
 import { buildWrapMarksEntries } from './ui/regions/session-wrap-marks';
+import './ui/regions/session-digest';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
 // per-seat row rendering is now inside <chargen-dm-review>.  The
@@ -97,6 +98,7 @@ import {
   loadCharacter,
   stripDmOnlyFromCharacter,
   CharacterLoadError,
+  DM_ONLY_CHARACTER_FIELDS,
   type LoadedCharacter,
   type CharacterKind,
   type CharacterRecord
@@ -120,6 +122,11 @@ import { geminiProvider } from './ai/providers/gemini';
 import type { AiResponse } from './ai/schema';
 import type { ContextScope } from './ai/context';
 import { wrapUntrusted } from './ai/context';
+import {
+  buildSessionDigestPrompt,
+  SESSION_DIGEST_CALL_SCHEMA,
+  SESSION_DIGEST_INPUT_KINDS
+} from './ai/session-digest-prompt';
 import {
   promptHashFor,
   responseHashFor,
@@ -1638,17 +1645,44 @@ export class QuireApp extends LitElement {
       bulletsByPcId,
       pcIds
     );
+    // D4 (2026-05-26): session-digest panel mounts below the marks
+    // list.  Only the coord sees the editor + Generate/Save
+    // controls; non-coord viewers see prior digests (read-only) so
+    // a player who's pulled up wrap-marks can re-read past recaps.
+    const isCoord = this.isCoordinator();
+    const priorDigests = v.filteredShared.sessionDigests.map((d) => ({
+      ts: d.ts,
+      markdown: d.markdown,
+      savedByPeerId: d.savedByPeerId
+    }));
     return html`<session-wrap-marks
-      .pcs=${entries}
-      .onSetMarkBullet=${(
-        pcId: string,
-        key: keyof import('./character-loader').AdvancementMarkBullets,
-        value: boolean
-      ) => this.submitPcEdit(pcId, `markBullets.${key}`, value)}
-      .onExit=${() => {
-        this.appMode = 'in-session';
-      }}
-    ></session-wrap-marks>`;
+        .pcs=${entries}
+        .onSetMarkBullet=${(
+          pcId: string,
+          key: keyof import('./character-loader').AdvancementMarkBullets,
+          value: boolean
+        ) => this.submitPcEdit(pcId, `markBullets.${key}`, value)}
+        .onExit=${() => {
+          this.appMode = 'in-session';
+        }}
+      ></session-wrap-marks>
+      <session-digest
+        .priorDigests=${priorDigests}
+        .onGenerate=${
+          isCoord
+            ? async () => this.generateSessionDigest()
+            : null
+        }
+        .onSave=${
+          isCoord
+            ? (md: string, rid?: string) =>
+                this.appendSessionDigest(
+                  md,
+                  rid ? { generatedByResponseId: rid } : undefined
+                )
+            : null
+        }
+      ></session-digest>`;
   }
 
   /**
@@ -2116,6 +2150,194 @@ export class QuireApp extends LitElement {
     this.session.append('seat-memory-edit', { v: 1, slot, text });
     return true;
   }
+
+  /**
+   * D4 (2026-05-26): generate an AI-drafted session-recap.  Pure
+   * read on the local event log + a single broker call; returns
+   * the parsed markdown.  Does NOT emit any event — the caller
+   * (DM) reviews/edits the draft + calls `appendSessionDigest`
+   * to commit.
+   *
+   * Throws (returns null with a typed reason) when:
+   *   - no session is active, or local viewer isn't coord
+   *   - no AI key is set
+   *   - the provider declines or errors
+   *   - no qualifying events to digest
+   *
+   * Per practice memo + the silent-player-firewall:
+   *   - The input bundle is PRE-FILTERED to player-visible event
+   *     kinds (SESSION_DIGEST_INPUT_KINDS).  DM-only events
+   *     (scratch-note, ai-prompt, accidental-grant-log, etc.)
+   *     never reach the prompt.
+   *   - The DRAFT is returned to the caller LOCALLY (no event
+   *     emit).  Until the DM clicks Save, no peer sees the draft.
+   *   - The AI is allowed to draft, but the DM gates the save.
+   */
+  async generateSessionDigest(opts?: {
+    dmGuidance?: string;
+    signal?: AbortSignal;
+  }): Promise<
+    | { ok: true; markdown: string; responseId: string }
+    | { ok: false; code: 'no-session' | 'no-coord' | 'no-key' | 'no-events' | 'provider-error' | 'provider-refused' | 'aborted'; message: string }
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return { ok: false, code: 'no-session', message: 'No active session.' };
+    }
+    if (!this.isCoordinator()) {
+      return { ok: false, code: 'no-coord', message: 'Only the coord (DM) can generate a digest.' };
+    }
+    if (!this.aiApiKey || this.aiApiKey.length === 0) {
+      return { ok: false, code: 'no-key', message: 'Set your AI API key first.' };
+    }
+    // Bundle = events with kind in the allowlist that happened
+    // AFTER the most recent prior digest (or all of them, if no
+    // prior digest exists).  Reads the live event log via the
+    // session controller — the most authoritative source.
+    const lastDigest =
+      v.filteredShared.sessionDigests[
+        v.filteredShared.sessionDigests.length - 1
+      ];
+    const cutoff = lastDigest?.ts ?? 0;
+    const sessionStartTs = cutoff;
+    const allEvents = this.session?.getEvents() ?? [];
+    // Sub-field DM-only firewall: pc-edit is allowlisted (player-
+    // visible fields like name + harm + stress feed the recap), but
+    // a pc-edit touching a DM-only top-level field (dmNotes,
+    // magicPhase, tax.*, threadDebt.*, accidentalGrants,
+    // alignmentDrift, knowsTheyCanCast) must NOT reach the AI prompt
+    // — the markdown the DM saves becomes a player-visible event,
+    // and even though the DM is the firewall, scaffolding from DM-
+    // only material would routinely surface in the draft.  Mirrors
+    // the field-level scrub used for player autosaves
+    // (scrubEventForPlayer in persistence.ts).
+    const dmOnlyFieldSet = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
+    const bundled = allEvents.filter((e) => {
+      if (e.ts <= cutoff) return false;
+      if (!SESSION_DIGEST_INPUT_KINDS.has(e.kind)) return false;
+      if (e.kind === 'pc-edit') {
+        const field = (e.payload as Record<string, unknown> | undefined)?.field;
+        if (typeof field === 'string') {
+          const topLevel = field.split('.', 1)[0];
+          if (topLevel && dmOnlyFieldSet.has(topLevel)) return false;
+        }
+      }
+      return true;
+    });
+    if (bundled.length === 0) {
+      return {
+        ok: false,
+        code: 'no-events',
+        message:
+          'No qualifying events since the last digest.  Nothing to recap.'
+      };
+    }
+    // Campaign anchor — name + current episode/scene slug if any.
+    const campaign = this.getCurrentCampaign();
+    const campaignContext: {
+      name?: string;
+      currentEpisode?: string;
+      currentScene?: string;
+    } = {};
+    if (campaign?.base.manifest.name) {
+      campaignContext.name = campaign.base.manifest.name;
+    }
+    if (this.appState.kind === 'episode' || this.appState.kind === 'scene') {
+      campaignContext.currentEpisode = this.appState.episode.slug;
+    }
+    if (this.appState.kind === 'scene') {
+      campaignContext.currentScene = this.appState.scene.path;
+    }
+    const { system, user } = buildSessionDigestPrompt({
+      events: bundled,
+      campaignContext,
+      ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {})
+    });
+    const provider = this.aiProviders[this.aiProvider];
+    try {
+      const result = await provider.callStructured<{ markdown: string }>(
+        {
+          apiKey: this.aiApiKey,
+          model: this.aiModel,
+          systemPrompt: system,
+          prompt: user,
+          ...(opts?.signal ? { signal: opts.signal } : {})
+        },
+        SESSION_DIGEST_CALL_SCHEMA
+      );
+      if (!result.ok) {
+        return {
+          ok: false,
+          code:
+            result.refusal.kind === 'provider-error'
+              ? 'provider-error'
+              : 'provider-refused',
+          message: result.refusal.message
+        };
+      }
+      const markdown =
+        typeof result.value?.markdown === 'string'
+          ? result.value.markdown
+          : '';
+      if (markdown.length === 0) {
+        return {
+          ok: false,
+          code: 'provider-error',
+          message: 'Provider returned empty markdown.'
+        };
+      }
+      // Remember the session-start boundary so the save can
+      // record what range this digest covers.
+      this._pendingDigestSessionStartTs = sessionStartTs;
+      return { ok: true, markdown, responseId: result.responseId };
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        return { ok: false, code: 'aborted', message: 'Generation cancelled.' };
+      }
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `Provider call failed: ${(e as Error).message}`
+      };
+    }
+  }
+
+  /**
+   * D4 (2026-05-26): commit a (possibly DM-edited) session-recap
+   * to the shared event log.  Coord-only.  `sessionStartTs` and
+   * `generatedByResponseId` are taken from the most-recent
+   * `generateSessionDigest` call when available; the DM hand-
+   * writing a digest from scratch can pass `0` + no responseId.
+   */
+  appendSessionDigest(
+    markdown: string,
+    opts?: { sessionStartTs?: number; generatedByResponseId?: string }
+  ): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const trimmed = markdown.trim();
+    if (trimmed.length === 0 || trimmed.length > 20_000) return false;
+    const sessionStartTs =
+      opts?.sessionStartTs ?? this._pendingDigestSessionStartTs ?? 0;
+    this.session.append('session-digest', {
+      v: 1,
+      sessionStartTs,
+      markdown: trimmed,
+      ...(opts?.generatedByResponseId
+        ? { generatedByResponseId: opts.generatedByResponseId }
+        : {})
+    });
+    // Clear the pending bookkeeping; a re-generation will set it
+    // again.
+    this._pendingDigestSessionStartTs = undefined;
+    return true;
+  }
+
+  /** Bookkeeping for the most-recent `generateSessionDigest`
+   *  call — used when the DM hits Save to record the start
+   *  boundary of the recap window.  Cleared on save. */
+  private _pendingDigestSessionStartTs: number | undefined = undefined;
 
   /**
    * P-R6 (2026-05-25): emit a `pc-archive` event flipping a seat

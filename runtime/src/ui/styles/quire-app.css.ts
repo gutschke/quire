@@ -2278,6 +2278,139 @@ export const quireAppStyles = css`
     .session-wrap-marks-bullet-checked {
       color: light-dark(#15803d, #4ade80);
     }
+
+    /* D4 (2026-05-26): session-digest panel — mounts as a sibling
+       of session-wrap-marks during the wrap flow.  Editable for
+       the coord; read-only "prior digests" list for players. */
+    .session-digest {
+      margin: 0.8rem 0 0;
+      padding: 0.8rem 1rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#fefce8, #1a1c0c);
+    }
+    .session-digest-head {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      margin: 0 0 0.6rem;
+      flex-wrap: wrap;
+    }
+    .session-digest-head h3 {
+      margin: 0;
+    }
+    .session-digest-hint {
+      font-size: 0.85rem;
+    }
+    .session-digest-prior {
+      margin: 0 0 0.8rem;
+      padding: 0.6rem;
+      background: light-dark(#ffffff, #0f172a);
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 4px;
+    }
+    .session-digest-prior h4 {
+      margin: 0 0 0.3rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .session-digest-prior-ts {
+      font-size: 0.78rem;
+      margin: 0 0 0.3rem;
+    }
+    .session-digest-prior-md {
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: 0.9rem;
+      margin: 0;
+      line-height: 1.45;
+    }
+    .session-digest-prior-older {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+    }
+    .session-digest-prior-older summary {
+      cursor: pointer;
+    }
+    .session-digest-error {
+      margin: 0 0 0.6rem;
+      padding: 0.4rem 0.6rem;
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+      border: 1px solid light-dark(#fca5a5, #991b1b);
+      border-radius: 3px;
+      font-size: 0.88rem;
+    }
+    .session-digest-label {
+      display: block;
+      font-weight: 500;
+      font-size: 0.9rem;
+      margin-bottom: 0.3rem;
+    }
+    .session-digest-draft {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.5rem;
+      font: inherit;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 4px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    .session-digest-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .session-digest-generate {
+      padding: 0.35rem 0.85rem;
+      border-radius: 4px;
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      border: 1px solid light-dark(#93c5fd, #2563eb);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .session-digest-generate:hover:not(:disabled) {
+      background: light-dark(#bfdbfe, #1e40af);
+    }
+    .session-digest-generate:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .session-digest-save {
+      padding: 0.35rem 0.85rem;
+      border-radius: 4px;
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #bbf7d0);
+      border: 1px solid light-dark(#86efac, #15803d);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .session-digest-save:hover:not(:disabled) {
+      background: light-dark(#bbf7d0, #15803d);
+    }
+    .session-digest-save:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .session-digest-discard {
+      padding: 0.35rem 0.7rem;
+      border-radius: 4px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      cursor: pointer;
+    }
+
     .dm-wrap-session-launcher {
       margin: 0.5rem 0;
     }

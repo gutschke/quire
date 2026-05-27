@@ -297,7 +297,11 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
   'seat-memory-edit',
   // Wave B: foci are player-visible at Realization; the focus-
   // grant event IS the moment the player sees it.
-  'focus-grant'
+  'focus-grant',
+  // D4 (2026-05-26): session-digest is the player-facing recap
+  // (DM-saved markdown that players read at session-open next
+  // time).  Player-visible by design.
+  'session-digest'
 ]);
 
 /**

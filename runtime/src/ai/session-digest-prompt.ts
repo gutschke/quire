@@ -1,0 +1,247 @@
+/**
+ * D4 (2026-05-26): session-digest prompt assembly.
+ *
+ * Bundles the player-visible events since the last digest (or
+ * session start) + structured state deltas (PCs hit Realization,
+ * gained foci, took harm, etc.) into an AI prompt asking for a
+ * one-page DM-facing recap.  The DM edits before saving.
+ *
+ * **Why this is NOT the silent-player-firewall anti-pattern**
+ * (practice memo): the silent-grant text / release-moment text /
+ * seat-memory rule says "DM-typed, never AI-suggested" because
+ * those are intimate DM-narrative beats with one-shot stakes.
+ * The session-digest is different — it's a long-form recap the
+ * DM will edit anyway; AI scaffolding accelerates the DM without
+ * substituting for them.  Same model as backstory synthesis
+ * (CC-19+): AI drafts, DM gates.
+ *
+ * **Spoiler-safety:** the prompt bundle is built from PLAYER-
+ * VISIBLE events only (chat, dice rolls, scene reveals,
+ * player-visible pc-edits, focus-grants).  Scratch-notes +
+ * accidental-grants + ai-prompt history are DM-only and stay
+ * out of the input.  This means the DRAFT cannot accidentally
+ * surface DM-only content even if the AI hallucinates.  Same
+ * filterForViewer / serializeSessionForViewer firewall that
+ * protects player autosaves applies to the digest input bundle.
+ *
+ * Pure string assembly + JSON schema construction — no
+ * provider call; the host owns broker dispatch.
+ */
+
+import type { QuireEvent } from '../core/event-log';
+import type { AiStructuredCallSchema } from './broker';
+
+export interface SessionDigestPromptInput {
+  /**
+   * Player-visible events since the last session-digest (or
+   * session start).  Caller is responsible for filtering — the
+   * canonical filter is `filterForViewer(state, '<non-coord>')`
+   * + a kind-allowlist for the recap-relevant kinds.
+   */
+  events: ReadonlyArray<QuireEvent>;
+  /**
+   * Brief campaign anchor — name + the loaded episode/scene if
+   * any.  Helps the AI frame the recap in the right register.
+   * Pure metadata; no DM-only content.
+   */
+  campaignContext: {
+    name?: string;
+    currentEpisode?: string;
+    currentScene?: string;
+  };
+  /**
+   * Optional DM-typed nudge — "focus on Mei's realization" or
+   * "lean into the tense Hadrian moment."  DM-typed so the
+   * `<untrusted_content>` wrapper applies (practice: ANY DM-
+   * typed text reaching a prompt gets wrapped).
+   */
+  dmGuidance?: string;
+}
+
+export const SESSION_DIGEST_SYSTEM_PROMPT = `You are a co-DM helping a TTRPG group remember last session by producing a campfire recap.
+
+# Tone
+Write 200-400 words of past-tense prose, in the voice of a thoughtful narrator looking back.  Three to five short paragraphs.  Player-facing — the digest IS what the players read at the start of the next session.
+
+# Inputs
+You will receive:
+- Campaign anchor (name + current episode/scene)
+- A timeline of player-visible events: chat lines, dice rolls (with stat + outcome), scene reveals, PC state changes (harm/stress/marks the players know about), focus grants, retirements
+- Optional DM guidance
+
+# Hard constraints
+- Past tense.  No second-person address to a specific player.  No "you all walked into..." — narrate as the campfire recap.
+- Honor every event you're given.  Don't invent new beats.
+- If a dice roll changed an outcome, mention the change (not the number).
+- If a PC took harm or stress, mention the moment in fiction, not the box number.
+- If a focus was granted, describe it as a discovery, not a stat assignment.
+- Do NOT explain mechanics ("they advanced", "they took 2 harm") — translate to fiction ("she came home limping").
+- Do NOT reveal DM-only material (you are not given any; the bundle is pre-filtered).  If your draft contains anything spoiler-shaped, the DM will edit it out before saving.
+
+# Output format
+Return JSON: { "markdown": "<the recap>" }`;
+
+/**
+ * Render the event timeline into compact prose lines the AI can
+ * narrate over.  Each line names the kind + a short payload
+ * summary; the AI translates to fiction.
+ */
+function renderEventTimeline(events: ReadonlyArray<QuireEvent>): string {
+  if (events.length === 0) return '(no events recorded)';
+  const lines: string[] = [];
+  for (const e of events) {
+    const t = new Date(e.ts).toISOString();
+    lines.push(`- [${t}] ${e.kind}: ${summarizePayload(e)}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Per-kind one-line payload summary.  Best-effort — falls back to
+ * the kind name when the payload doesn't match a known shape.
+ * Conservative on length to keep the prompt token budget tight.
+ */
+function summarizePayload(e: QuireEvent): string {
+  const p = (e.payload ?? {}) as Record<string, unknown>;
+  switch (e.kind) {
+    case 'chat':
+      return `(${e.peerId}) ${truncate(stringField(p, 'text'), 200)}`;
+    case 'dice-roll':
+      return `${e.peerId} rolled ${stringField(p, 'purpose') || '?'} → ${stringField(p, 'outcome') || '?'}`;
+    case 'scene-reveal':
+      return `revealed scene ${stringField(p, 'scene')}`;
+    case 'scene-reveal-paragraph':
+      return `revealed paragraph in ${stringField(p, 'scene')}`;
+    case 'pc-edit':
+      return `pc-edit ${stringField(p, 'pcId')}.${stringField(p, 'field')} = ${JSON.stringify(p.value)}`;
+    case 'pc-create':
+      return `new PC ${stringField(p, 'name')} (${stringField(p, 'pcId')})`;
+    case 'pc-slot-bind':
+      return `slot ${numField(p, 'slot')} → ${stringField(p, 'pcId')}`;
+    case 'pc-retire':
+      return `${stringField(p, 'pcId')} retired: ${truncate(stringField(p, 'inFictionReason'), 200)}`;
+    case 'pc-archive':
+      return `${stringField(p, 'pcId')} archived: ${truncate(stringField(p, 'inFictionReason'), 200)}`;
+    case 'focus-grant': {
+      const focus = (p.focus ?? {}) as Record<string, unknown>;
+      const name = stringField(focus, 'name');
+      const domain = stringField(focus, 'domain');
+      return `${stringField(p, 'pcId')} gained focus "${name}"${domain ? ` (domain: ${domain})` : ''}`;
+    }
+    case 'pc-mark-realization':
+      return `${stringField(p, 'pcId')} realized their magic (one-way gate)`;
+    case 'seat-memory-edit':
+      return `seat ${numField(p, 'slot')} memory: ${truncate(stringField(p, 'text'), 200)}`;
+    default:
+      return e.kind;
+  }
+}
+
+function stringField(p: Record<string, unknown>, key: string): string {
+  const v = p[key];
+  return typeof v === 'string' ? v : '';
+}
+
+function numField(p: Record<string, unknown>, key: string): number | string {
+  const v = p[key];
+  return typeof v === 'number' ? v : '';
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + '…';
+}
+
+/**
+ * Wrap untrusted user-typed text in the standard sentinel.
+ * Mirrors `src/ai/context.ts:wrapUntrusted` to avoid a circular
+ * import (this file is a leaf in the ai/ tree).
+ */
+function wrapUntrusted(body: string, source: string): string {
+  const safe = body.replace(/<\/untrusted_content>/g, '<!--UC_CLOSE-->');
+  return `<untrusted_content source="${source}">\n${safe}\n</untrusted_content>`;
+}
+
+export function buildSessionDigestPrompt(
+  input: SessionDigestPromptInput
+): { system: string; user: string } {
+  const parts: string[] = [];
+  parts.push('# Campaign anchor');
+  const cc = input.campaignContext;
+  const ccLines: string[] = [];
+  if (cc.name) ccLines.push(`- name: ${cc.name}`);
+  if (cc.currentEpisode) ccLines.push(`- episode: ${cc.currentEpisode}`);
+  if (cc.currentScene) ccLines.push(`- scene: ${cc.currentScene}`);
+  parts.push(ccLines.length > 0 ? ccLines.join('\n') : '(unknown)');
+  parts.push('');
+  parts.push('# Event timeline (player-visible, chronological)');
+  parts.push(renderEventTimeline(input.events));
+  if (input.dmGuidance && input.dmGuidance.trim().length > 0) {
+    parts.push('');
+    parts.push(
+      `# DM guidance (focus the recap):\n${wrapUntrusted(
+        input.dmGuidance.trim(),
+        'dm-digest-guidance'
+      )}`
+    );
+  }
+  parts.push('');
+  parts.push(
+    '# Your task\nWrite the campfire recap as the JSON object specified.  Past tense, 200-400 words, 3-5 short paragraphs.  Translate mechanics to fiction.  Honor every event.  Nothing else in the output — just the JSON.'
+  );
+  return {
+    system: SESSION_DIGEST_SYSTEM_PROMPT,
+    user: parts.join('\n')
+  };
+}
+
+/**
+ * JSON schema for constrained decoding.  Single-field object so
+ * the AI can return markdown directly without prose-extraction.
+ * Mirrors the pattern PC backstory synthesis uses.
+ */
+export const SESSION_DIGEST_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    markdown: {
+      type: 'string',
+      minLength: 50,
+      maxLength: 8000,
+      description:
+        'The campfire recap.  Past tense, 200-400 words, 3-5 short paragraphs.  Player-facing.'
+    }
+  },
+  required: ['markdown'],
+  additionalProperties: false
+} as const;
+
+export const SESSION_DIGEST_CALL_SCHEMA: AiStructuredCallSchema = {
+  name: 'emit_session_digest',
+  schema: SESSION_DIGEST_RESPONSE_SCHEMA as unknown as Record<string, unknown>
+};
+
+/**
+ * Kind allowlist for the digest input bundle.  Caller filters
+ * the event log down to ONLY these kinds before passing to
+ * `buildSessionDigestPrompt`.  Anything not on this list is
+ * either too noisy (peer-join/leave) or DM-only (scratch-note,
+ * ai-prompt, accidental-grant-log) and stays out.
+ *
+ * Pre-filter intent: even though the player-visible-events list
+ * is large, the digest only narrates the things a player remembers
+ * across sessions.  Chat moments, dice swings, reveals, lifecycle.
+ * Not slot binds or coord transitions.
+ */
+export const SESSION_DIGEST_INPUT_KINDS: ReadonlySet<string> = new Set([
+  'chat',
+  'dice-roll',
+  'scene-reveal',
+  'scene-reveal-paragraph',
+  'pc-edit',
+  'pc-create',
+  'pc-retire',
+  'pc-archive',
+  'focus-grant',
+  'pc-mark-realization',
+  'seat-memory-edit'
+]);

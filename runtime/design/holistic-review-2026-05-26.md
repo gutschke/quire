@@ -338,11 +338,29 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   can propose `clock-tick` ops.  Covers world-side time pressure
   (the only TTRPG tool the build doesn't already have for "ordinary
   scene → tense scene").
-- [ ] **D4** — scratch-note → session-digest pipeline (TTRPG-5, M
-  scope).  M4 starter: bundle {events since last open, scratch,
-  marks taken, state deltas} → AI prompt → markdown the DM commits
-  to `sessions/NNN.md`.  Without this, three sessions in Quire
-  today produces a fat events.jsonl nobody re-reads.
+- [x] **D4** ✓ SHIPPED — session-digest end-of-session campfire
+  recap.  New `session-digest` event kind (coord-only, append-only,
+  player-visible) + `applySessionDigestEvent` materializer with
+  bounds validation + `state.sessionDigests` array.  AI-side:
+  `buildSessionDigestPrompt` in `src/ai/session-digest-prompt.ts`
+  with `SESSION_DIGEST_INPUT_KINDS` allowlist + JSON-schema
+  constrained decoding ({markdown}).  Host: `generateSessionDigest`
+  (coord-gate + AI broker) + `appendSessionDigest`.  UI: new
+  `<session-digest>` Lit region mounts as sibling of
+  `<session-wrap-marks>`; 3-button Generate / Save / Discard flow,
+  prior digests render with latest primary + older behind
+  `<details>`.  **Field-level firewall (verifier-found pre-commit
+  blocker, fixed in same bundle):** `generateSessionDigest`
+  filters pc-edit events whose top-level field is in
+  `DM_ONLY_CHARACTER_FIELDS` (dmNotes, magicPhase, tax.*,
+  threadDebt.*, accidentalGrants, alignmentDrift,
+  knowsTheyCanCast) so the DM-only payloads never reach the AI
+  prompt — mirrors `scrubEventForPlayer` from D-prep-2-A.
+  21 new tests (10 engine + 9 UI component + 2 host regression).
+  Pending followups (verifier-flagged, deferred to a polish pass):
+  markdown-render saved digests (currently `<pre>`), input-token
+  cap for first-ever digest, AbortSignal wiring from UI, integration
+  test for sibling mount, co-DM concurrent-save UI nudge.
 - [ ] **D5** — session-zero bond/relationship web (TTRPG-3, H
   scope).  Per-PC "name one connection to another PC" surface; AI
   synthesizes the shape; DM ratifies.  Without it, early sessions
