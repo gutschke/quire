@@ -14,21 +14,19 @@
  * caps would erode invisibly.
  *
  * Caps (gzipped, in bytes):
- *   - main chunk:      175 KB  (in-session bundle for player + DM)
+ *   - main chunk:      150 KB  (in-session bundle for player + DM)
  *   - authoring chunk: 200 KB  (lazy-loaded CodeMirror + form + lint)
  *
  * History: the main cap was 110 KB through M3.  Raised to 150 KB in
  * P-R0a/b/c (chargen polish landed several new affordances: roster
  * lifecycle, drift banner, click-to-edit, stat swap, chip editor,
  * Patch-in-place) and the gate kept tripping CI for incremental
- * additions that were individually well-justified.  Raised to 175 KB
- * post-D4 / mid-D1: D4 added session-digest (+markdown render path)
- * and D1 added the diff-format engine, AI prompt, wrap-stepper, and
- * (incoming) diff-review-stage UI.  Architecture-review agent
- * spawned 2026-05-26 to advise on code-splitting + extraction
- * before the next jump.  Until that lands, 175 KB still loads in
- * ~700ms on 3G.  If the main cap trips routinely again, raise it
- * deliberately rather than band-aiding with `--no-verify`.
+ * additions that were individually well-justified.  Temporarily
+ * raised to 175 KB post-D4 / mid-D1 (D4 + D1 piled feature code +
+ * markdown render path on top); restored to 150 KB after E-LH6
+ * lazy-loaded the markdown pipeline (~31 KB main shrink → 128 KB
+ * with 22 KB headroom).  If the main cap trips routinely again,
+ * raise it deliberately rather than band-aiding with `--no-verify`.
  *
  * The runner identifies chunks by filename pattern (main chunk: any
  * file matching index-*.js; authoring chunk: any file matching
@@ -39,7 +37,7 @@
  * and `execution-plan.md` § "Cross-cutting expectations".
  */
 
-export const MAIN_CHUNK_CAP_BYTES = 175 * 1024; // 175 KB gzipped
+export const MAIN_CHUNK_CAP_BYTES = 150 * 1024; // 150 KB gzipped
 export const AUTHORING_CHUNK_CAP_BYTES = 200 * 1024; // 200 KB gzipped
 
 export type ChunkKind = 'main' | 'authoring' | 'other';

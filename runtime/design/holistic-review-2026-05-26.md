@@ -450,14 +450,21 @@ Bundle gate hit 151 KB during D1-D build.  Spawned senior eng
 architecture-review agent.  Verdict: 151 KB is **normal-to-good**
 for the feature surface (markdown + DOMPurify + js-yaml + Lit +
 WebRTC + 25-materializer event-sourced engine).  Bumped cap to
-175 KB; the recommended path forward is below.
+175 KB; took E-LH6 immediately; restored cap to 150 KB.
 
-- [ ] **E-LH6 [now]** — lazy-load markdown.ts (marked + DOMPurify
-  + js-yaml).  ~30 KB gzip main shrink; resets bundle gate to
-  green with comfortable headroom.  Touch every unsafeHTML
-  caller in `quire-app.ts`, `scene-stage.ts`, `session-digest.ts`;
-  wrap renderMarkdown in dynamic import.  Single highest-leverage
-  bundle win.
+- [x] **E-LH6** ✓ SHIPPED — lazy-loaded markdown pipeline.  Split
+  heavy implementation (marked + DOMPurify + js-yaml, ~30 KB
+  gzipped) into `src/markdown-pipeline.ts`; `src/markdown.ts`
+  became a thin sync facade with module-level pipeline cache +
+  `ensureMarkdownPipeline()` lazy-loader + `onMarkdownPipelineReady`
+  callback for re-render scheduling.  QuireApp's
+  `connectedCallback` kicks off warmup + requests update once the
+  chunk resolves; pre-load, sync `renderMarkdown` returns the
+  empty `SanitizedHtml` brand (one-frame placeholder).  Tests
+  `await ensureMarkdownPipeline()` in beforeAll where they assert
+  rendered HTML.  Main bundle: 159 → 127.92 KB gzipped (-31 KB,
+  matching the architecture review's prediction exactly).  Bundle
+  cap restored to 150 KB.
 - [ ] **WRAP-LAZY [defer, post-D2]** — bundle `<session-wrap-marks>`,
   `<session-digest>`, `<wrap-stepper>`, `<diff-review-stage>` into
   one lazy chunk loaded only when DM enters wrap mode.  Static

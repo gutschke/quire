@@ -16,8 +16,12 @@
  *     DOMPurify strips these by default)
  */
 
-import { describe, it, expect } from 'vitest';
-import { renderMarkdown } from './markdown';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { renderMarkdown, ensureMarkdownPipeline } from './markdown';
+
+beforeAll(async () => {
+  await ensureMarkdownPipeline();
+});
 
 function html(input: string): string {
   return renderMarkdown(input);

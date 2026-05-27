@@ -195,6 +195,8 @@ import {
   pcSlotsToBindings,
   renderMarkdown,
   renderMarkdownParagraphs,
+  ensureMarkdownPipeline,
+  onMarkdownPipelineReady,
   CryptoUnavailableError,
   type MarkdownBlock,
   type SanitizedHtml
@@ -952,6 +954,13 @@ export class QuireApp extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    // E-LH6 (2026-05-26): warm up the markdown pipeline asynchronously
+    // so the heavy chunk (marked + DOMPurify + js-yaml) doesn't block
+    // the first paint.  When it resolves, requestUpdate so consumers
+    // that returned the empty SanitizedHtml placeholder on the first
+    // render can re-render with real content.
+    onMarkdownPipelineReady(() => this.requestUpdate());
+    void ensureMarkdownPipeline();
     // Seed appMode from URL on first mount; popstate keeps it in sync
     // thereafter.  M1 — observed but not yet acted upon.
     this.appMode = parseMode(window.location.search);

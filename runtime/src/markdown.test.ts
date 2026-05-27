@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import {
   parseFrontmatter,
   renderMarkdown,
@@ -7,8 +7,33 @@ import {
   blockHash,
   normalizeBlock,
   CryptoUnavailableError,
-  substitutePcSlots
+  substitutePcSlots,
+  ensureMarkdownPipeline,
+  onMarkdownPipelineReady,
+  isMarkdownPipelineLoaded
 } from './markdown';
+
+// E-LH6 (2026-05-26): sync renderMarkdown / parseFrontmatter return
+// empty placeholders until the lazy pipeline loads.  Tests
+// asserting real rendering need the pipeline ready first.
+beforeAll(async () => {
+  await ensureMarkdownPipeline();
+});
+
+describe('E-LH6 pipeline lazy-load surface', () => {
+  it('ensureMarkdownPipeline is idempotent and resolves to the same module', async () => {
+    const a = await ensureMarkdownPipeline();
+    const b = await ensureMarkdownPipeline();
+    expect(a).toBe(b);
+    expect(isMarkdownPipelineLoaded()).toBe(true);
+  });
+
+  it('onMarkdownPipelineReady fires synchronously when already loaded', () => {
+    let fired = 0;
+    onMarkdownPipelineReady(() => fired++);
+    expect(fired).toBe(1);
+  });
+});
 
 describe('parseFrontmatter', () => {
   it('returns empty frontmatter and full body when there is no frontmatter block', () => {

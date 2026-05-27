@@ -1,8 +1,14 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import './session-digest';
 import type { SessionDigest, DigestEntry } from './session-digest';
+import { ensureMarkdownPipeline } from '../../markdown';
+
+// E-LH6: prior-digest renders markdown via the lazy pipeline.
+beforeAll(async () => {
+  await ensureMarkdownPipeline();
+});
 
 function mount(): SessionDigest {
   const el = document.createElement('session-digest') as SessionDigest;

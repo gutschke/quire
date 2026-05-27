@@ -1,127 +1,32 @@
 /**
- * Markdown rendering pipeline.
+ * Markdown facade.
  *
- * Trust boundary: this module is the *only* path by which campaign-authored
- * Markdown becomes HTML in the runtime.  It returns a branded `SanitizedHtml`
- * string that the caller hands to Lit's `unsafeHTML` directive — the type
- * system prevents accidentally passing raw strings.
+ * E-LH6 (2026-05-26): the heavy implementation (marked + DOMPurify
+ * + js-yaml, ~30 KB gzipped) lives in `./markdown-pipeline` and
+ * loads on demand via `ensureMarkdownPipeline()`.  This file
+ * stays light: types, brand, pure string helpers, block-hashing
+ * (Web Crypto), and thin facades that delegate to the pipeline
+ * after it's loaded.
  *
- * NOT pluggable.  Forks that swap this out forfeit the security guarantees
- * documented in design/security.md.
+ * Public surface unchanged for sync callers — they get an empty
+ * `SanitizedHtml` placeholder on the very first render before the
+ * pipeline loads.  QuireApp's connectedCallback kicks off
+ * `ensureMarkdownPipeline()` and triggers `requestUpdate()` once
+ * the chunk resolves, so the second render shows real content.
+ *
+ * Trust boundary: this is still the *only* path by which campaign-
+ * authored Markdown becomes HTML in the runtime.  The brand type
+ * `SanitizedHtml` is the contract; raw strings cannot satisfy it.
+ *
+ * NOT pluggable.  Forks that swap the pipeline out forfeit the
+ * security guarantees documented in design/security.md.
  */
 
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-import { load as parseYaml } from 'js-yaml';
-
-// Allow an optional leading BOM (UTF-8 byte-order mark) which some editors
-// emit on Windows.  Without this, a BOM-prefixed file silently loses its
-// frontmatter.
-const FRONTMATTER_RE = /^﻿?---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-
-// Tell marked we want GitHub-flavored Markdown (tables, strikethrough, task
-// lists).  `breaks: false` is the CommonMark default — single line breaks do
-// not become <br>; explicit blank lines start new paragraphs.
-marked.setOptions({
-  gfm: true,
-  breaks: false,
-  pedantic: false
-});
-
-// Forked DOMPurify instance bound to the page window.  Hooks installed on
-// this instance do not pollute the global DOMPurify singleton, so HMR module
-// re-loads cannot accumulate duplicate hooks and unrelated future modules
-// cannot interfere with our sanitization pipeline.
-const purify = DOMPurify(window);
-
-// Block dangerous URL schemes explicitly on href/src.  DOMPurify's defaults
-// already cover javascript: and vbscript: in most contexts; this hook makes
-// the policy explicit and resilient to library updates.  By the time this
-// hook runs, HTML entities have been decoded — `&#106;avascript:alert(1)`
-// arrives as `javascript:alert(1)`.
-const BAD_URL_SCHEMES = [
-  'javascript:',
-  'vbscript:',
-  'data:',
-  'blob:',
-  'filesystem:',
-  'about:'
-];
-purify.addHook('uponSanitizeAttribute', (_node, data) => {
-  if ((data.attrName === 'href' || data.attrName === 'src') && data.attrValue) {
-    const v = data.attrValue.trim().toLowerCase();
-    if (BAD_URL_SCHEMES.some((s) => v.startsWith(s))) {
-      data.keepAttr = false;
-    }
-  }
-});
-
-// Defense-in-depth element removal.  Per the campaign-content trust
-// model, we strip phishing surfaces (form / input / button / select /
-// textarea), CSS injection surfaces (style), and layout / focus traps
-// (dialog).  We use addHook with node.remove() rather than the
-// FORBID_TAGS option because DOMPurify's FORBID_TAGS proves
-// unreliable for form-associated elements in some DOM
-// implementations (notably happy-dom — children of a removed <form>
-// can survive a single sanitize pass).  The hook runs once per
-// element so reparented children are caught.
-const FORBID_TAG_NAMES = new Set([
-  // Phishing surfaces (form-control widgets render as ordinary UI).
-  'FORM',
-  'INPUT',
-  'BUTTON',
-  'SELECT',
-  'TEXTAREA',
-  'OPTION',
-  'OPTGROUP',
-  'FIELDSET',
-  'LEGEND',
-  'LABEL',
-  'OUTPUT',
-  'METER',
-  'PROGRESS',
-  // CSS injection + iframe smuggling + focus traps.
-  'STYLE',
-  'DIALOG',
-  'IFRAME',
-  // Image-beacon bypasses for <img>: <picture> + <source srcset>
-  // load arbitrary remote URLs even when img-src is constrained.
-  'PICTURE',
-  'SOURCE',
-  // Layout-disclosure / griefing widgets — not strictly needed and
-  // give a campaign author a way to hide hostile content behind a
-  // "click to expand" affordance.
-  'DETAILS',
-  'SUMMARY',
-  'MARQUEE',
-  'BGSOUND',
-  'MENU'
-]);
-purify.addHook('uponSanitizeElement', (node, data) => {
-  if (FORBID_TAG_NAMES.has(data.tagName.toUpperCase())) {
-    (node as Element).remove();
-  }
-});
-
-// External http(s) links get target=_blank + rel=noopener noreferrer so they
-// open in a new tab without leaking the runtime origin via the Referer header
-// or window.opener.  Protocol-relative `//host/path` URLs are deliberately
-// NOT promoted — they resolve to the runtime origin's protocol and the
-// new-tab affordance would mislead users about destination.
-purify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
-    const href = node.getAttribute('href');
-    if (href && /^https?:\/\//i.test(href)) {
-      node.setAttribute('target', '_blank');
-      node.setAttribute('rel', 'noopener noreferrer');
-    }
-  }
-});
-
 /**
- * Brand type: a string that has been through `renderMarkdown` and is safe to
- * pass to Lit's `unsafeHTML` directive.  Raw strings will not satisfy this
- * type — the compiler enforces the sanitize-before-inject invariant.
+ * Brand type: a string that has been through `renderMarkdown` and
+ * is safe to pass to Lit's `unsafeHTML` directive.  Raw strings
+ * will not satisfy this type — the compiler enforces the
+ * sanitize-before-inject invariant.
  */
 export type SanitizedHtml = string & { readonly __brand: 'SanitizedHtml' };
 
@@ -130,123 +35,15 @@ export interface MarkdownDocument {
   body: string;
 }
 
-/**
- * Split a Markdown document into its YAML frontmatter block (if present) and
- * the body.  A malformed frontmatter block is treated as if absent — the
- * whole text is returned as the body — so authors notice via the body
- * containing a stray `---` rather than via a hard parse error.
- */
-export function parseFrontmatter(text: string): MarkdownDocument {
-  const match = text.match(FRONTMATTER_RE);
-  if (!match) {
-    return { frontmatter: {}, body: text };
-  }
-  let frontmatter: Record<string, unknown> = {};
-  try {
-    const parsed = parseYaml(match[1]);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      frontmatter = parsed as Record<string, unknown>;
-    }
-  } catch {
-    return { frontmatter: {}, body: text };
-  }
-  return { frontmatter, body: text.slice(match[0].length) };
-}
-
-/**
- * Render a Markdown string to a sanitized HTML string.  The return value is
- * a branded `SanitizedHtml` and may be handed to Lit's `unsafeHTML`.
- *
- * Sanitize config rationale:
- *   - `USE_PROFILES: { html: true }` enables the HTML tag set and excludes
- *     SVG and MathML — both can carry script via nested handlers.
- *   - `ADD_ATTR` extends the profile's default attribute allowlist with the
- *     attributes added by our afterSanitizeAttributes hook.  We deliberately
- *     do NOT pass `ALLOWED_ATTR`, which would replace the profile's defaults
- *     and drop table/img attributes like colspan, rowspan, srcset, alt.
- *   - Dangerous URI schemes (javascript:, data:, vbscript:, blob:,
- *     filesystem:, about:) are blocked by the `uponSanitizeAttribute` hook
- *     above.  DOMPurify's default URI regex is permissive enough to allow
- *     relative campaign links like `npcs/alice.md`; tighter scheme control
- *     happens in the hook so the policy is explicit and testable.
- *
- * `style` attributes are not in ADD_ATTR and not in the default HTML profile
- * for sanitized output, so the page's CSP can tighten `style-src` to `'self'`
- * (no `unsafe-inline`) without breaking rendered campaign content.
- */
-/**
- * Attributes removed beyond DOMPurify's defaults.  `style` is the big
- * one — without it stripped, campaign content can position-fixed an
- * overlay on top of the entire app, including the AI API-key input.
- * `formaction` would override a sibling form's action; `autofocus`
- * can steal keyboard focus from chat / dice inputs.  on* handlers are
- * stripped by DOMPurify by default; listing them here is belt-and-
- * suspenders against config drift.
- *
- * Tag removal happens via the `uponSanitizeElement` hook above (see
- * FORBID_TAG_NAMES) — DOMPurify's `FORBID_TAGS` option proved
- * unreliable for form-associated elements.
- */
-const FORBID_ATTR = [
-  // Layout / phishing.
-  'style',
-  'formaction',
-  'autofocus',
-  // Image-beacon bypasses on surviving <img>/<a>.
-  'srcset',
-  'ping',
-  'download',
-  // Event handlers — DOMPurify defaults strip these, but belt-and-
-  // suspenders against config drift.
-  'onclick',
-  'onload',
-  'onerror',
-  'onmouseover',
-  'onfocus',
-  'onblur',
-  'onsubmit',
-  'onchange',
-  'oninput',
-  'onkeydown',
-  'onkeyup',
-  'onkeypress'
-] as const;
-
-export function renderMarkdown(text: string): SanitizedHtml {
-  const html = marked.parse(text, { async: false }) as string;
-  return purify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    ADD_ATTR: ['target', 'rel'],
-    FORBID_ATTR: [...FORBID_ATTR]
-  }) as SanitizedHtml;
-}
-
 export interface RenderedDocument extends MarkdownDocument {
   html: SanitizedHtml;
 }
 
 /**
- * Combined: split frontmatter, render body to sanitized HTML.
- */
-export function renderMarkdownDocument(text: string): RenderedDocument {
-  const doc = parseFrontmatter(text);
-  return { ...doc, html: renderMarkdown(doc.body) };
-}
-
-/**
- * One addressable block in a scene file.  Each block corresponds to
- * a top-level markdown construct: a paragraph, heading, list,
- * blockquote, fenced code block, or table.  The `blockHash` is the
- * first 16 hex chars of sha256(normalizeBlock(raw)) (`BLOCK_HASH_LENGTH`
- * in redesign-plan.md) — content-addressed so DM-side reveals
- * survive editorial reordering and unrelated edits, and lapse
- * cleanly when the block's text changes.
- *
- * Identical-text caveat: two blocks with the same normalized text
- * hash identically and share their reveal state.  This is rare in
- * prose (intentional refrains DM-side aside) and accepted by the
- * spec — the alternative (positional addressing) breaks under
- * editorial reordering, which is worse.
+ * One addressable block in a scene file.  Each block corresponds
+ * to a top-level markdown construct: a paragraph, heading, list,
+ * blockquote, fenced code block, or table.  The `blockHash` is
+ * the first 16 hex chars of sha256(normalizeBlock(raw)).
  */
 export interface MarkdownBlock {
   /** Stable 16-hex-char content hash; identifier in reveal events. */
@@ -264,12 +61,16 @@ export interface ParagraphsDocument {
   blocks: MarkdownBlock[];
 }
 
+// -----------------------------------------------------------------
+// Light-weight pure helpers (no heavy deps)
+// -----------------------------------------------------------------
+
 /**
  * Normalize a block's raw markdown for hashing: trim edges and
  * collapse internal whitespace runs (incl. line breaks, tabs) to a
- * single space.  Two blocks with the same text content but different
- * whitespace formatting hash identically — important so trivial
- * editorial reflow doesn't lapse reveals.
+ * single space.  Two blocks with the same text content but
+ * different whitespace formatting hash identically — important so
+ * trivial editorial reflow doesn't lapse reveals.
  */
 export function normalizeBlock(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim();
@@ -277,18 +78,13 @@ export function normalizeBlock(raw: string): string {
 
 /**
  * BLOCK_HASH_LENGTH from redesign-plan.md: 16 hex chars (64 bits).
- * At 256K hashes (256 blocks × 1000 scenes) the birthday-paradox
- * collision probability is ~1-in-130B — comfortable headroom.
  */
 const BLOCK_HASH_HEX_LENGTH = 16;
 
 /**
  * Specialized error thrown when `crypto.subtle` is unavailable —
  * usually because Quire is being served from an insecure context
- * (HTTP, file://) where browsers gate Web Crypto.  The runtime
- * catches this in navigateToRoute's scene-load path and surfaces
- * a helpful error banner so the user knows to switch to HTTPS or
- * localhost instead of seeing a silent failure.
+ * (HTTP, file://) where browsers gate Web Crypto.
  */
 export class CryptoUnavailableError extends Error {
   override readonly name = 'CryptoUnavailableError';
@@ -301,15 +97,7 @@ export class CryptoUnavailableError extends Error {
 
 /**
  * Async sha256 (Web Crypto), first 16 hex chars.  Used for block
- * identity in scene-reveal-paragraph events.  Async so we can use
- * the platform's crypto.subtle without bundling a JS implementation;
- * the only caller (renderMarkdownParagraphs) is itself async via
- * the navigateToRoute scene-load path.
- *
- * Throws {@link CryptoUnavailableError} when the platform doesn't
- * expose crypto.subtle (insecure-context HTTP serving).  Fails
- * closed — there's no fallback hash because a cross-peer hash
- * mismatch would silently desync the reveal mask.
+ * identity in scene-reveal-paragraph events.
  */
 export async function blockHash(raw: string): Promise<string> {
   if (typeof crypto === 'undefined' || !crypto.subtle?.digest) {
@@ -320,37 +108,167 @@ export async function blockHash(raw: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   const view = new Uint8Array(digest);
   let hex = '';
-  // 16 hex chars = 8 bytes.
   for (let i = 0; i < BLOCK_HASH_HEX_LENGTH / 2; i++) {
-    hex += view[i].toString(16).padStart(2, '0');
+    hex += view[i]!.toString(16).padStart(2, '0');
   }
   return hex;
 }
 
 /**
+ * PC-slot bindings: maps a slot number (1-9+) to the character
+ * name that fills it.
+ */
+export type PcSlotBindings = Readonly<Record<number, string>>;
+
+const PC_SLOT_RE = /\{\{pc:([1-9]\d*)\}\}/g;
+
+/**
+ * Substitute `{{pc:N}}` placeholders in sanitized HTML.  Pure
+ * string-replace — no heavy deps.
+ */
+export function substitutePcSlots(
+  html: string,
+  bindings?: PcSlotBindings
+): string {
+  return html.replace(PC_SLOT_RE, (_match, digit: string) => {
+    const slot = Number(digit);
+    const bound = bindings?.[slot];
+    return bound !== undefined && bound !== '' ? bound : `PC${slot}`;
+  });
+}
+
+/**
+ * Adapter from the new Seat-shaped slot map to the legacy
+ * PcSlotBindings consumed by `substitutePcSlots`.
+ */
+export function pcSlotsToBindings(
+  slotMap: Record<number, { pcId?: string }>,
+  getDisplayName: (pcId: string) => string | null
+): PcSlotBindings {
+  const out: Record<number, string> = {};
+  for (const [slotStr, seat] of Object.entries(slotMap)) {
+    if (!seat.pcId) continue;
+    const name = getDisplayName(seat.pcId);
+    if (name && name.length > 0) out[Number(slotStr)] = name;
+  }
+  return out;
+}
+
+// -----------------------------------------------------------------
+// Pipeline lazy-load (E-LH6)
+// -----------------------------------------------------------------
+
+type PipelineModule = typeof import('./markdown-pipeline');
+
+let _pipeline: PipelineModule | null = null;
+let _pipelinePromise: Promise<PipelineModule> | null = null;
+const _onReadyCallbacks: Array<() => void> = [];
+
+/**
+ * Eagerly load the heavy markdown pipeline (marked + DOMPurify +
+ * js-yaml).  Idempotent — repeat calls return the same Promise.
+ * QuireApp's connectedCallback calls this once at boot and
+ * requests a re-render when it resolves so the first paint can
+ * fall back to placeholders while the chunk loads.
+ *
+ * Returns the pipeline module so async callers (e.g. tests) can
+ * also use it directly: `const p = await ensureMarkdownPipeline()`.
+ */
+export function ensureMarkdownPipeline(): Promise<PipelineModule> {
+  if (_pipeline) return Promise.resolve(_pipeline);
+  if (!_pipelinePromise) {
+    _pipelinePromise = import('./markdown-pipeline').then((mod) => {
+      _pipeline = mod;
+      // Fire registered onReady callbacks; lets Lit components
+      // request a re-render once the pipeline is available.
+      for (const cb of _onReadyCallbacks) {
+        try {
+          cb();
+        } catch {
+          // Don't let one bad listener block others.
+        }
+      }
+      _onReadyCallbacks.length = 0;
+      return mod;
+    });
+  }
+  return _pipelinePromise;
+}
+
+/**
+ * Register a one-shot callback to fire when the pipeline becomes
+ * available.  If already loaded, fires synchronously.  Used by
+ * QuireApp to schedule `requestUpdate()` after the chunk resolves.
+ */
+export function onMarkdownPipelineReady(cb: () => void): void {
+  if (_pipeline) {
+    cb();
+    return;
+  }
+  _onReadyCallbacks.push(cb);
+}
+
+/** Test-only reset for the pipeline state.  Production code should
+ *  never call this. */
+export function resetMarkdownPipelineForTests(): void {
+  _pipeline = null;
+  _pipelinePromise = null;
+  _onReadyCallbacks.length = 0;
+}
+
+/** Whether the heavy pipeline has finished loading. */
+export function isMarkdownPipelineLoaded(): boolean {
+  return _pipeline !== null;
+}
+
+const EMPTY_HTML = '' as SanitizedHtml;
+
+/**
+ * Render a Markdown string to sanitized HTML.  Returns the empty
+ * brand if the pipeline hasn't loaded yet — caller should pair
+ * with `ensureMarkdownPipeline()` + `onMarkdownPipelineReady()` so
+ * the next render shows real content.
+ */
+export function renderMarkdown(text: string): SanitizedHtml {
+  if (!_pipeline) {
+    void ensureMarkdownPipeline();
+    return EMPTY_HTML;
+  }
+  return _pipeline.renderMarkdownImpl(text);
+}
+
+/**
+ * Split a Markdown document into its YAML frontmatter block (if
+ * present) and the body.  Returns empty frontmatter + the full
+ * input text when the pipeline hasn't loaded yet.
+ */
+export function parseFrontmatter(text: string): MarkdownDocument {
+  if (!_pipeline) {
+    void ensureMarkdownPipeline();
+    return { frontmatter: {}, body: text };
+  }
+  return _pipeline.parseFrontmatterImpl(text);
+}
+
+/**
+ * Combined: split frontmatter, render body to sanitized HTML.
+ */
+export function renderMarkdownDocument(text: string): RenderedDocument {
+  const doc = parseFrontmatter(text);
+  return { ...doc, html: renderMarkdown(doc.body) };
+}
+
+/**
  * P2-1: split a scene markdown source into addressable blocks.
- * Each top-level marked token of a content type (heading, paragraph,
- * list, blockquote, code, table) becomes one block.  `hr` and
- * `space` tokens are dropped — they're visual chrome, not
- * revealable content.
- *
- * The output preserves source order; each block carries its own
- * sanitized HTML so the caller can render or filter blocks
- * independently (DM gutter pip clicks toggle individual blocks;
- * the player-side renderer omits non-revealed blocks from the DOM
- * entirely, per the security boundary in design/security.md).
- *
- * Async because block-hash computation goes through the platform
- * sha256 (Web Crypto).
+ * Async — awaits the pipeline before lexing/rendering.  The block
+ * hashes go through Web Crypto.
  */
 export async function renderMarkdownParagraphs(
   text: string
 ): Promise<ParagraphsDocument> {
-  const doc = parseFrontmatter(text);
-  const tokens = marked.lexer(doc.body) as Array<{
-    type: string;
-    raw: string;
-  }>;
+  const pipeline = await ensureMarkdownPipeline();
+  const doc = pipeline.parseFrontmatterImpl(text);
+  const tokens = pipeline.lexBlocks(doc.body);
   const blockKinds = new Set([
     'heading',
     'paragraph',
@@ -365,95 +283,11 @@ export async function renderMarkdownParagraphs(
       const hash = await blockHash(t.raw);
       return {
         blockHash: hash,
-        html: renderMarkdown(t.raw),
+        html: pipeline.renderMarkdownImpl(t.raw),
         raw: t.raw,
         index
       };
     })
   );
   return { frontmatter: doc.frontmatter, blocks };
-}
-
-/**
- * PC-slot bindings: maps a slot number (1-9) to the character name
- * that fills it.  Today's M3c+ runtime does not yet populate this
- * map — campaigns use `{{pc:N}}` placeholders in their markdown
- * (see runtime/design/m3d-playtest-followups.md §5).  The renderer
- * substitutes the bound name when one is provided and falls back
- * to the literal `PC<N>` form otherwise, so existing campaigns
- * still read the way they did before the migration.
- */
-export type PcSlotBindings = Readonly<Record<number, string>>;
-
-// P-R2 (Phase B', 2026-05-25) dropped the hardcoded 1..9 cap from
-// the engine — `pc-slot-bind` now accepts any slot ≥ 1.  Update the
-// renderer regex accordingly so `{{pc:10}}` and beyond substitute
-// instead of silently rendering literal.  The capture group still
-// requires at least one digit, no leading zeros (so `{{pc:01}}`
-// stays literal — matches the materializer's slot validation in
-// `applyPcSlotBindEvent`).
-const PC_SLOT_RE = /\{\{pc:([1-9]\d*)\}\}/g;
-
-/**
- * Substitute `{{pc:N}}` placeholders in sanitized HTML.  Pure
- * string-replace on the rendered HTML (placeholders are HTML-safe
- * by construction — `{`, `}`, `:`, digits do not need escaping in
- * HTML text nodes).  Hashes computed from `block.raw` are stable
- * across bindings because the source-side `{{pc:N}}` token never
- * changes; only the rendered output does.
- *
- * When a slot has no binding, falls back to the literal `PC<N>`
- * so a campaign migrated from bare `PC1`/`PC2`/… tokens still
- * renders identically until the binding feature ships.
- *
- * Returns a string (not branded SanitizedHtml) because the caller
- * already holds a SanitizedHtml and this function preserves the
- * invariant — but the type system can't express "subset of valid
- * substitutions" cleanly, so the brand is dropped at the boundary
- * and re-applied by the caller via `unsafeHTML`.
- */
-export function substitutePcSlots(
-  html: string,
-  bindings?: PcSlotBindings
-): string {
-  return html.replace(PC_SLOT_RE, (_match, digit: string) => {
-    const slot = Number(digit);
-    const bound = bindings?.[slot];
-    return bound !== undefined && bound !== '' ? bound : `PC${slot}`;
-  });
-}
-
-/**
- * Phase B' (2026-05-25): adapter from the new Seat-shaped slot map
- * to the legacy `PcSlotBindings` (slot → display-name) consumed by
- * `substitutePcSlots`.  The substitution itself stays unchanged;
- * this helper bridges the engine layer (which now stores rich
- * Seat records) to the renderer layer (which only needs names).
- *
- * Sticky-N + narrative continuity: retired and archived seats
- * still carry pcId, so substitution keeps resolving to the
- * (possibly retired) PC's name — `{{pc:3}}'s bag` reads correctly
- * in scenes authored before that PC retired.
- *
- * The `getDisplayName` callback maps pcId → display name (or
- * returns null when the PC record hasn't loaded yet).  Caller
- * decides how to resolve names — typically from `synthesizedPcs`
- * + character-loader records.
- *
- * `slotMap` is parameterized as `Record<number, { pcId?: string }>`
- * so this helper doesn't depend on the full Seat type from
- * core/state.ts (avoids a circular import).  The contract is just
- * "give me something with optional pcId per slot."
- */
-export function pcSlotsToBindings(
-  slotMap: Record<number, { pcId?: string }>,
-  getDisplayName: (pcId: string) => string | null
-): PcSlotBindings {
-  const out: Record<number, string> = {};
-  for (const [slotStr, seat] of Object.entries(slotMap)) {
-    if (!seat.pcId) continue;
-    const name = getDisplayName(seat.pcId);
-    if (name && name.length > 0) out[Number(slotStr)] = name;
-  }
-  return out;
 }
