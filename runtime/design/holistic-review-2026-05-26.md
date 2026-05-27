@@ -415,13 +415,13 @@ discover them post-implementation.
 
 **Sub-wave plan:**
 
-- [ ] **D1-A [E] engine** — `src/living/diff-format.ts`
+- [x] **D1-A [E] engine** ✓ SHIPPED `3394913` — `src/living/diff-format.ts`
   (DiffProposal interface + Zod-equivalent validator);
   `src/living/proposals.ts` (`applyProposalsToWorkingCopy`,
   baseSha staleness rejection); `DM_ONLY_NPC_FIELDS` in
   `character-loader.ts`; extend `persistence.coverage.test.ts`.
   Hostile-proposal tests per redesign-plan.md:446.
-- [ ] **D1-B [E+C] AI prompt** — `src/ai/diff-proposal-prompt.ts`.
+- [x] **D1-B [E+C] AI prompt** ✓ SHIPPED `3394913` — `src/ai/diff-proposal-prompt.ts`.
   Input filter REUSES the extracted `isPcEditDmOnly` helper from
   D4-cleanup-3.  MVP scope: NPC memory of player choices only
   (TTRPG-narrowed).
