@@ -128,6 +128,31 @@ export interface ThreadDebt {
 export type MagicPhase = 'accidental' | 'realization' | 'tax' | 'free';
 
 /**
+ * D5 (2026-05-27): per-PC bond entry.  Player-authored connection
+ * anchor to another PC.  See `CharacterRecord.bonds` for the
+ * higher-level contract.  `dmNotes` is field-granularity DM-only
+ * (stripped per-entry by `filterForViewer` + by the
+ * `bond-ratify` arm of `scrubEventForPlayer`).
+ */
+export interface Bond {
+  /** PC-id of the bond's target (PC-only in MVP). */
+  targetPcId: string;
+  /** Player-visible bond text. */
+  text: string;
+  /** Optional DM-only spoiler anchor. */
+  dmNotes?: string;
+}
+
+/**
+ * D5 field names that are DM-only AT THE PER-ENTRY LEVEL inside
+ * each bond.  Stripped from each entry of `bonds[]` by
+ * `filterForViewer` for non-coord viewers, and from `bond-ratify`
+ * payloads by `scrubEventForPlayer`.  Mirrors the per-entry
+ * focus-grant strip pattern.
+ */
+export const BOND_DM_ONLY_ENTRY_FIELDS = ['dmNotes'] as const;
+
+/**
  * Phase B P1a: trying-too-hard tax (rules.md:180-184).  Activated
  * at Realization; released at a fiction beat.  DM-only.
  */
@@ -224,6 +249,27 @@ export interface CharacterRecord {
   signature?: string[];
   dmNotes?: string;
   relationships?: Array<{ who: string; kind?: string; notes?: string }>;
+  /**
+   * D5 (2026-05-27): per-PC bonds — player-authored connection
+   * anchors to other PCs in the same campaign.  Distinct from
+   * the legacy `relationships` field (which is NPC-side, DM-
+   * authored, free-form).  Bonds are STRUCTURED and PC-side:
+   *
+   *   - `targetPcId`: PC-id of the bound peer's PC (PC-only in
+   *     MVP; NPC bonds deferred to D5.5)
+   *   - `text`: player-visible, player-authored bond text
+   *   - `dmNotes`: optional DM-only spoiler-anchor sub-field
+   *     (e.g. "Hadrian saw her cast and never knew it was magic")
+   *
+   * Authoring: chargen flow, after backstory, before DM review.
+   * Event triplet `bond-propose` → `bond-ratify` → `bond-remove`
+   * (see state.ts D5 materializers).
+   *
+   * Field-firewall: `dmNotes` is per-entry stripped by
+   * `filterForViewer` for non-coord viewers + by
+   * `scrubEventForPlayer` on the `bond-ratify` event.
+   */
+  bonds?: Bond[];
   resources?: string[];
   // Background sub-object some NPCs include (free-form).
   background?: Record<string, string>;
@@ -412,6 +458,19 @@ export function stripDmOnlyFromCharacter(
   const result: Record<string, unknown> = { ...record };
   for (const field of DM_ONLY_CHARACTER_FIELDS) {
     delete result[field];
+  }
+  // D5-8 (per-entry sub-field strip): `bonds` itself is player-
+  // visible, but each bond's `dmNotes` is DM-only.  Per-entry
+  // strip (B-1 / D-prep-2-A class) — mirrors the focus-grant
+  // payload-field strip pattern.
+  if (Array.isArray(result.bonds)) {
+    result.bonds = (result.bonds as Bond[]).map((bond) => {
+      const safe: Record<string, unknown> = { ...bond };
+      for (const f of BOND_DM_ONLY_ENTRY_FIELDS) {
+        delete safe[f];
+      }
+      return safe as unknown as Bond;
+    });
   }
   return result as unknown as PlayerVisiblePc;
 }

@@ -95,15 +95,32 @@ const FOCUS_DM_ONLY_PAYLOAD_FIELDS = ['boundFor', 'notes'] as const;
  */
 const RETIRE_DM_ONLY_PAYLOAD_FIELDS = ['reason', 'scene'] as const;
 
-function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
-  if (event.kind === 'pc-edit') {
+/**
+ * D5-1 (2026-05-27 holistic-review Adversarial recommendation):
+ * `scrubEventForPlayer` converted to a registry as the 4th arm
+ * (bond-ratify) joins.  Each kind that carries a DM-only
+ * sub-field payload registers a scrubber.  Returns `null` to
+ * drop the event entirely; returns a (possibly scrubbed) event
+ * otherwise.  Per-kind scrubbers are documented inline at the
+ * registry.
+ *
+ * The registry approach catches the "engineer added a new
+ * DM-only-sub-field event kind but forgot the scrub arm" failure
+ * class — analogous to the materializer registry in state.ts.
+ */
+type EventScrubber = (event: QuireEvent) => QuireEvent | null;
+
+const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
+  // pc-edit: drop entirely when `field` is a DM-only top-level
+  // (per the dotted-field-path check from D-prep-2-A).
+  'pc-edit': (event) => {
     const p = event.payload as { field?: unknown } | null | undefined;
-    if (isDmOnlyCharacterFieldPath(p?.field)) {
-      return null;
-    }
+    if (isDmOnlyCharacterFieldPath(p?.field)) return null;
     return event;
-  }
-  if (event.kind === 'focus-grant') {
+  },
+  // focus-grant: strip DM-only sub-fields from the `focus` payload
+  // (boundFor + notes per D-prep-2-A).
+  'focus-grant': (event) => {
     const p = event.payload as
       | { v?: number; pcId?: string; focus?: Record<string, unknown> }
       | null
@@ -120,25 +137,45 @@ function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
     }
     if (!touched) return event;
     return { ...event, payload: { ...p, focus: safeFocus } };
-  }
-  if (event.kind === 'pc-retire' || event.kind === 'pc-archive') {
+  },
+  // pc-retire + pc-archive: strip DM-private `reason` + `scene`
+  // (D4-cleanup-4 / B-1 BLOCKER fix).
+  'pc-retire': scrubRetireOrArchive,
+  'pc-archive': scrubRetireOrArchive,
+  // bond-ratify (D5-9): strip the optional DM-only `dmNotes`
+  // sub-field from the payload.  Player save keeps the bond text
+  // (the player-visible part) but never the dmNotes.
+  'bond-ratify': (event) => {
     const p = event.payload;
     if (!p || typeof p !== 'object') return event;
     const obj = p as Record<string, unknown>;
-    let touched = false;
-    const safe: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      if (
-        (RETIRE_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)
-      ) {
-        touched = true;
-        continue;
-      }
-      safe[k] = v;
-    }
-    if (!touched) return event;
+    if (!('dmNotes' in obj)) return event;
+    const { dmNotes: _omit, ...safe } = obj;
+    void _omit;
     return { ...event, payload: safe };
   }
+};
+
+function scrubRetireOrArchive(event: QuireEvent): QuireEvent | null {
+  const p = event.payload;
+  if (!p || typeof p !== 'object') return event;
+  const obj = p as Record<string, unknown>;
+  let touched = false;
+  const safe: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if ((RETIRE_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)) {
+      touched = true;
+      continue;
+    }
+    safe[k] = v;
+  }
+  if (!touched) return event;
+  return { ...event, payload: safe };
+}
+
+function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
+  const scrubber = PER_KIND_SCRUBBERS[event.kind];
+  if (scrubber) return scrubber(event);
   return event;
 }
 
@@ -255,7 +292,11 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   // confirm + AI hard-gate.
   'dm-clock-create',
   'dm-clock-tick',
-  'dm-clock-delete'
+  'dm-clock-delete',
+  // D5 (2026-05-27): un-ratified bond drafts are DM-private.
+  // Players don't see other players' (or their own) un-ratified
+  // bonds — proposals are a holding area for DM ratification.
+  'bond-propose'
 ]);
 
 /**
@@ -357,7 +398,14 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
   'session-digest',
   // D2 (2026-05-26): session-open marker recording WHO began the
   // session.  Player-visible audit trail (per D2-3 lock).
-  'session-open'
+  'session-open',
+  // D5 (2026-05-27): bond-ratify is player-visible (the bond
+  // text IS what players see).  `scrubEventForPlayer` strips
+  // the optional `dmNotes` sub-field from the payload.
+  // bond-remove is coord-only authored but player-visible (a
+  // bond going away is a story signal).
+  'bond-ratify',
+  'bond-remove'
 ]);
 
 /**

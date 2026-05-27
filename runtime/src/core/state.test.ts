@@ -941,7 +941,9 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // D2 (2026-05-26): added session-open → 53.
     // D3 (2026-05-26): added dm-clock-create + dm-clock-tick +
     // dm-clock-delete → 56.
-    expect(KNOWN_EVENT_KINDS.size).toBe(56);
+    // D5 (2026-05-27): added bond-propose + bond-ratify +
+    // bond-remove → 59.
+    expect(KNOWN_EVENT_KINDS.size).toBe(59);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -4413,6 +4415,254 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
     const state = materialize(alice.events());
     expect(state.pcRetireRequests).toHaveLength(1);
     expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  // --- D5 (2026-05-27): per-PC bonds ---
+
+  describe('bond-propose / ratify / remove materializers (D5)', () => {
+    /**
+     * Returns `[aliceLog, bobLog]` — alice is the coord, bob is a
+     * non-coord peer who controls slot 1 (the seat for pc 'mei').
+     * Both logs have the setup events applied (alice authored,
+     * bob has them propagated via .apply).
+     */
+    function setupSessionWithBob(): [EventLog, EventLog] {
+      const alice = new EventLog('alice');
+      const bob = new EventLog('bob');
+      alice.append('coordinator-claim', {});
+      alice.append('seat-add', { v: 1, slot: 1 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mei',
+        name: 'Mei',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      // Coord-bind with explicit controllerPeerId='bob' so bob
+      // becomes the seat's controller (D5-3 authoring gate).
+      alice.append('pc-slot-bind', {
+        v: 1,
+        slot: 1,
+        pcId: 'mei',
+        controllerPeerId: 'bob'
+      });
+      alice.append('seat-add', { v: 1, slot: 2 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'iris',
+        name: 'Iris',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      // Propagate alice's events to bob's log so bob's clock
+      // advances past them.  Standard cross-peer test pattern.
+      for (const e of alice.events()) bob.apply(e);
+      return [alice, bob];
+    }
+
+    function setupSession(): EventLog {
+      const [alice] = setupSessionWithBob();
+      return alice;
+    }
+
+    it('bound peer (bob) can propose a bond for their own PC', () => {
+      const [alice, bob] = setupSessionWithBob();
+      bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'classmates at Berkeley'
+      });
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+      expect(state.pcBondProposals.mei[0].text).toBe(
+        'classmates at Berkeley'
+      );
+      expect(state.pcBondProposals.mei[0].proposedByPeerId).toBe('bob');
+    });
+
+    it('non-controller non-coord peer (eve) CANNOT propose a bond', () => {
+      const [alice] = setupSessionWithBob();
+      const eve = new EventLog('eve');
+      for (const e of alice.events()) eve.apply(e);
+      eve.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'evil bond'
+      });
+      const merged = [...alice.events(), ...eve.events()];
+      const state = materialize(merged);
+      expect(state.pcBondProposals.mei).toBeUndefined();
+    });
+
+    it('coord (alice) can propose on behalf of any PC', () => {
+      const log = setupSession();
+      log.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'coord-side draft'
+      });
+      const state = materialize(log.events());
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+    });
+
+    it('rejects self-targeting bonds (pcId === targetPcId)', () => {
+      const log = setupSession();
+      log.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'mei',
+        text: 'self'
+      });
+      const state = materialize(log.events());
+      expect(state.pcBondProposals.mei).toBeUndefined();
+    });
+
+    it('rejects __proto__ id (proto-pollution defense)', () => {
+      const log = setupSession();
+      log.append('bond-propose', {
+        v: 1,
+        id: '__proto__',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'evil'
+      });
+      const state = materialize(log.events());
+      expect(state.pcBondProposals.mei).toBeUndefined();
+    });
+
+    it('coord ratify moves proposal → pcBonds; optionally adds dmNotes', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const bobEvent = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'classmates'
+      });
+      alice.apply(bobEvent);
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        dmNotes: 'Iris saw Mei cast accidentally in their first year.'
+      });
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei).toEqual([]);
+      expect(state.pcBonds.mei).toHaveLength(1);
+      expect(state.pcBonds.mei[0].text).toBe('classmates');
+      expect(state.pcBonds.mei[0].dmNotes).toMatch(/Iris saw Mei cast/);
+      expect(state.pcBonds.mei[0].ratifiedByPeerId).toBe('alice');
+    });
+
+    it('non-coord ratify is rejected', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const bobEvent = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'classmates'
+      });
+      alice.apply(bobEvent);
+      // Non-coord (bob) attempts ratify — should be ignored.
+      bob.apply(alice.events()[alice.events().length - 1]!);
+      const bobRatify = bob.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei'
+      });
+      alice.apply(bobRatify);
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+      expect(state.pcBonds.mei).toBeUndefined();
+    });
+
+    it('ratify on unknown proposal id is a no-op', () => {
+      const log = setupSession();
+      log.append('bond-ratify', { v: 1, id: 'ghost', pcId: 'mei' });
+      const state = materialize(log.events());
+      expect(state.pcBonds.mei).toBeUndefined();
+    });
+
+    it('coord remove deletes from both proposals and ratified', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e1 = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'first'
+      });
+      const e2 = bob.append('bond-propose', {
+        v: 1,
+        id: 'b2',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'second'
+      });
+      alice.apply(e1);
+      alice.apply(e2);
+      alice.append('bond-ratify', { v: 1, id: 'b1', pcId: 'mei' });
+      alice.append('bond-remove', { v: 1, id: 'b1', pcId: 'mei' });
+      alice.append('bond-remove', { v: 1, id: 'b2', pcId: 'mei' });
+      const state = materialize(alice.events());
+      expect(state.pcBonds.mei).toEqual([]);
+      expect(state.pcBondProposals.mei).toEqual([]);
+    });
+
+    it('DoS cap: max 8 bonds per PC (proposals + ratified combined)', () => {
+      const log = setupSession();
+      for (let i = 0; i < 10; i++) {
+        log.append('bond-propose', {
+          v: 1,
+          id: `b${i}`,
+          pcId: 'mei',
+          targetPcId: 'iris',
+          text: `text ${i}`
+        });
+      }
+      const state = materialize(log.events());
+      expect(state.pcBondProposals.mei.length).toBe(8);
+    });
+
+    it('filterForViewer strips per-entry dmNotes for non-coord viewers', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const ev = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'classmates'
+      });
+      alice.apply(ev);
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        dmNotes: 'Iris saw Mei cast'
+      });
+      const state = materialize(alice.events());
+      // Coord view: dmNotes present.
+      const coordView = filterForViewer(state, 'alice');
+      expect(coordView.pcBonds.mei[0].dmNotes).toMatch(/Iris saw Mei cast/);
+      // Non-coord view: dmNotes stripped per-entry.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcBonds.mei[0].dmNotes).toBeUndefined();
+      // Player still sees the bond text.
+      expect(playerView.pcBonds.mei[0].text).toBe('classmates');
+      // Non-coord view: proposals wiped entirely.
+      expect(playerView.pcBondProposals).toEqual({});
+    });
   });
 
   // --- D3 (2026-05-26): DM-only progress clocks ---

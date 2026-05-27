@@ -724,10 +724,132 @@ post-D3.  Findings ranked + most ripe items captured below.
   `focus-grant`, the scrub function is becoming a Map of arms.
   Convert to `Map<kind, scrubFn>` registry parallel to the
   materializer registry.
-- [ ] **D5 bonds [next major]** — TTRPG #1.  Per-PC bond field;
-  player-authored, DM-ratified.  Per the chargen-authorship
-  division memo: player owns voice, DM owns fit, AI may help
-  phrasing later.  Pre-design 3-expert round next.
+### Wave D5 — per-PC bonds 🚧 IN PROGRESS
+
+3-expert pre-design round (TTRPG / UX / Adversarial) locked the
+MVP scope below.  Per the chargen-authorship division: player
+owns voice (bond text), DM owns fit (`dmNotes` sub-field +
+ratification gate).  AI is OUT OF MVP.
+
+**LOCKED DECISIONS (D5-0 through D5-14):**
+
+- **D5-0 (Adversarial, reuse vs supersede)** — `bonds` is a NEW
+  field on `CharacterRecord`, separate from existing
+  `relationships` (which stays NPC-side, DM-authored, free-form).
+  Two distinct fields with distinct semantics: cleaner than
+  conflating PC-side structured bonds with NPC-side free-form
+  notes.
+- **D5-1 (Adversarial BLOCKER)** — Bond shape:
+  `{ targetPcId: string, text: string, dmNotes?: string }`.
+  Field-firewall on `dmNotes` sub-field (NOT kind-level — the
+  bond itself is player-visible).  Adds 4th arm to
+  `scrubEventForPlayer`; converts the function to a registry
+  in the same commit (the "scrubEventForPlayer registry"
+  Adversarial flagged as ripe).
+- **D5-2 (Adversarial)** — `targetPcId` is a PC-id string
+  validated via `PC_ID_RE` + `POISONOUS_KEYS` denylist (practice
+  memo 6c).  PC-only target in MVP; NPC + freetext-target
+  deferred to D5.5.
+- **D5-3 (Adversarial BLOCKER)** — Authoring gate: `bond-propose`
+  events accepted only from the bound peer (`pcSlots[*].pcId`
+  controlled by `event.peerId`'s seat binding) OR coord.  Does
+  NOT follow `pc-edit`'s universal-write — D5 is the natural
+  first-use of the seat-binding gate.
+- **D5-4 (Adversarial BLOCKER)** — Three event kinds:
+  - `bond-propose` (DM-private, in PLAYER_SCOPE_STRIP_KINDS) —
+    player drafts; other players don't see un-ratified bonds
+  - `bond-ratify` (player-visible) — DM ratification broadcasts
+    the final bond; `scrubEventForPlayer` strips `dmNotes`
+  - `bond-remove` (player-visible) — coord-only
+  No direct `bond-set` kind — forces the ratification gate by
+  absence of a write-through path.
+- **D5-5** — No AI involvement in MVP.  Per
+  `project_quire_ai_player_facing_scope` + TTRPG-expert: bonds
+  are the most spoiler-leaky AI surface imaginable (the AI knows
+  Hadrian saw the cast; can't be trusted to paraphrase without
+  leaking).  AI-drafted bonds defer to D5.5 with the same
+  player-approves-or-rejects pattern chargen backstory uses.
+- **D5-6 (Adversarial NIT, watch-item)** — Spoiler-firewall on
+  player-typed bond text (player types "Mei: she's a caster
+  too" = silent-player-firewall in reverse).  No mitigation in
+  MVP since no AI; defer the soft-warn-DM semantic pass to
+  D5.5.  Captured as conscious debt.
+- **D5-7 (Adversarial FYI)** — Cross-PC reference integrity:
+  retired PCs' bond references stay; renderer falls back to
+  `seatMemory` or "retired companion."  Materializer accepts
+  dangling references; renderer handles display.
+- **D5-8 (Adversarial BLOCKER)** — `filterForViewer` strips
+  per-entry `dmNotes` from `synthesizedPcs[*].bonds[*]` for
+  non-coord viewers.  Mirrors the D-prep-2-A per-entry strip
+  pattern.  Regression test pins the B-1 class.
+- **D5-9 (Persistence)** — `bond-propose` ∈
+  `PLAYER_SCOPE_STRIP_KINDS`; `bond-ratify` ∈
+  `EVENT_KINDS_PLAYER_VISIBLE` + arm in `scrubEventForPlayer`;
+  `bond-remove` ∈ `EVENT_KINDS_PLAYER_VISIBLE`.
+- **D5-10 (rules.md cross-check per 6d)** — `rules.md:163` lists
+  "A relationship with an NPC who now appears when called for"
+  as an advancement.  **D5 chargen-bonds are NOT advancement-
+  spent** — they're the STARTING WEAVE per the
+  chargen-authorship voice/prose/fit triage.  Do NOT
+  auto-decrement marks on bond-add.  NPC-bond via the
+  advancement path is a SEPARATE flow (D5.5 or later).
+- **D5-11 (TTRPG)** — 1 mandatory + up to 2 optional bonds
+  per PC (cap 3).  FitD-canonical 3 is too many decisions in
+  a chargen flow that already has 21 affordances (per U-LT1).
+  1 is the floor that makes arc.md:18-22's "they were meant
+  to be there" land.
+- **D5-12 (TTRPG + UX, authoring location)** — Authored at
+  chargen, AFTER backstory, BEFORE DM review.  Composes with
+  the existing `<chargen-dm-review>` surface — DM ratifies
+  bonds when ratifying backstory.  TTRPG wins over UX's
+  "inline-on-Stage" because bonds are character-description
+  material that wants to land WITH the backstory, not as a
+  post-chargen edit.  Post-chargen inline-edit on the player
+  Rail PC card is the FOLLOWUP affordance (D5-14).
+- **D5-13 (TTRPG + UX, composability)** — `bond-ratify` added
+  to `SESSION_DIGEST_INPUT_KINDS` so D4 digest can reference
+  bonds ("Mei and Iris, classmates, fell out over X").
+  D1 NPC diff-review composability deferred to D5.5.
+  D2 session-open carryover: bonds appear on PC cards (where
+  they live), NOT as a separate carryover card.
+  D3 clocks: no bond-aware clocks; DM-authored clocks today.
+- **D5-14 (UX, post-chargen edit)** — After chargen completes,
+  the bond chip is editable on the player Rail PC card AND
+  read-only-mirrored on `<dm-pc-detail>` (same DmDetailView
+  extends pattern as MagicArcControlsView).  Click-to-rename
+  inline (clock-strip pattern).  Same event triplet
+  (propose → ratify) reused.
+
+**Conscious MVP debt (D5.5+):**
+
+- AI-drafted bond text (player approves/rejects, like backstory)
+- AI semantic spoiler-check on player-typed bond text
+- NPC-bond targets (broader address space; entangles with D1
+  living-doc proposals)
+- Bond as advancement-spend (rules.md:163)
+- Bond reorder / drag-sort
+- Co-DM concurrent-edit dedup (LWW per (pcId, bondIndex))
+- Reciprocal-bond enforcement (rejected outright — breaks
+  player voice ownership)
+- Bond `kind` enum (rejected outright — taxonomy debt)
+- "Connection web" visual graph rendering
+
+**Sub-wave plan:**
+
+- [ ] **D5-A** — locked scope above (DONE in this commit).
+- [ ] **D5-B [engine]** — `Bond` interface + `bonds?: Bond[]`
+  on CharacterRecord; 3 new event kinds + materializers;
+  seat-binding authoring gate; `filterForViewer` per-entry strip;
+  `scrubEventForPlayer` registry conversion + arm; persistence
+  classification; engine tests.
+- [ ] **D5-C [UI]** — chargen integration (post-backstory bond
+  authoring); `<bonds-card>` field-renderer mirroring
+  `<foci-card>`; chargen-dm-review ratification arm;
+  read-only mirror on dm-pc-detail.
+- [ ] **D5-D [composability + verifier]** — `bond-ratify` joins
+  `SESSION_DIGEST_INPUT_KINDS` + digest prompt update;
+  player-rail bond chip + edit affordance; end-of-wave
+  verifier; commit/push.
 
 **TTRPG re-prioritization (2026-05-26 third pass):**
 

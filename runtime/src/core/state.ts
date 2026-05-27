@@ -663,6 +663,28 @@ export interface SessionState {
    */
   diffProposals: PendingDiffProposal[];
   /**
+   * D5 (2026-05-27): per-PC bonds — ratified entries only.
+   * Player-visible at the array level; each entry's `dmNotes`
+   * sub-field is DM-only (per-entry stripped by
+   * `filterForViewer` for non-coord).  Merged onto
+   * `synthesizedPcs[pcId].bonds` at render time.
+   *
+   * Event lifecycle: `bond-propose` lands a draft in
+   * `pcBondProposals[pcId]`; DM `bond-ratify` moves an entry to
+   * `pcBonds[pcId]` (with optional DM-side `dmNotes`); coord-only
+   * `bond-remove` deletes by index.  Authoring gate (D5-3):
+   * proposals accepted only from the seat's controllerPeerId OR
+   * coord.
+   */
+  pcBonds: Record<string /*pcId*/, BondEntry[]>;
+  /**
+   * D5 (2026-05-27): un-ratified bond drafts awaiting DM ratification.
+   * DM-only: in `PLAYER_SCOPE_STRIP_KINDS` (bond-propose) +
+   * wiped by `filterForViewer` for non-coord.  Players don't see
+   * un-ratified bonds at all — neither their own nor other PCs'.
+   */
+  pcBondProposals: Record<string /*pcId*/, BondProposal[]>;
+  /**
    * D3 (2026-05-26): DM-only progress clocks.  Keyed by clock id
    * (DM-typed slug-shaped string).  Wiped by `filterForViewer`
    * for non-coord viewers.  Event kinds: `dm-clock-create` /
@@ -697,6 +719,44 @@ export interface DmClock {
   /** Epoch-ms of the most-recent tick (used for "tick last-
    *  modified" UX hooks; falls back to createdAt). */
   lastTickedAt: number;
+}
+
+/**
+ * D5 (2026-05-27): a ratified per-PC bond, materialized from a
+ * `bond-ratify` event.  Mirrors the `Bond` interface in
+ * `character-loader.ts` but adds audit fields (who proposed,
+ * who ratified, timestamps).  Player-visible at the entry level;
+ * `dmNotes` is DM-only and stripped per-entry by
+ * `filterForViewer` for non-coord viewers.
+ */
+export interface BondEntry {
+  /** Stable id (DM-typed/uuid; supports remove-by-id). */
+  id: string;
+  /** Target PC's pcId. */
+  targetPcId: string;
+  /** Player-visible bond text. */
+  text: string;
+  /** Optional DM-only spoiler-anchor. */
+  dmNotes?: string;
+  /** Peer that proposed (audit). */
+  proposedByPeerId: PeerId;
+  /** Coord peer that ratified (audit). */
+  ratifiedByPeerId: PeerId;
+  /** Epoch-ms when the ratify landed. */
+  ts: number;
+}
+
+/**
+ * D5 (2026-05-27): a pre-ratification bond draft.  DM-only in
+ * shared state.  Same shape as BondEntry minus the ratify audit
+ * fields.
+ */
+export interface BondProposal {
+  id: string;
+  targetPcId: string;
+  text: string;
+  proposedByPeerId: PeerId;
+  ts: number;
 }
 
 /**
@@ -761,7 +821,9 @@ export function emptyState(): SessionState {
     sessionDigests: [],
     sessionOpens: [],
     diffProposals: [],
-    dmClocks: {}
+    dmClocks: {},
+    pcBonds: {},
+    pcBondProposals: {}
   };
 }
 
@@ -984,6 +1046,15 @@ export function filterForViewer(
     // trackers; players see nothing until D3.5 ships the shared
     // family.
     dmClocks: {},
+    // D5 (2026-05-27): un-ratified bond drafts are DM-only.
+    // Players don't see other PCs' un-ratified bonds (nor their
+    // own — proposals are a DM-private holding area).
+    pcBondProposals: {},
+    // D5 (2026-05-27): per-PC bonds (ratified) pass through to
+    // players AT THE ARRAY LEVEL, but each entry's `dmNotes`
+    // sub-field is stripped per-entry (per D5-8; mirrors the
+    // D-prep-2-A per-entry strip pattern).
+    pcBonds: stripBondDmNotesPerEntry(state.pcBonds),
     // pcFoci passes through unchanged — foci are player-visible by
     // design at Realization onward.  The UI gate (Grant focus only
     // when magicPhase >= 'realization') is the firewall.
@@ -1134,6 +1205,15 @@ interface PcSlotBindPayload {
   v: 1;
   slot: number;
   pcId: string | null;
+  /**
+   * D5 (2026-05-27): optional explicit controller assignment.
+   * When supplied, overrides the default (`event.peerId`, the
+   * coord doing the bind).  Enables player-controller binding
+   * for the chargen invite-token flow + the D5 bond authoring
+   * gate.  Falls back to the prior seat's controllerPeerId
+   * (preserved from seat-add) if neither field is present.
+   */
+  controllerPeerId?: string;
 }
 
 /**
@@ -1652,6 +1732,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   'dm-clock-create',
   'dm-clock-tick',
   'dm-clock-delete',
+  // D5 (2026-05-27): per-PC bonds.  Player-authored draft →
+  // DM-ratified.  bond-propose is DM-private (proposals are a
+  // holding area); bond-ratify is player-visible w/ dmNotes
+  // stripped on the wire; bond-remove is coord-only player-
+  // visible.  See PendingDiffProposal-shaped lifecycle.
+  'bond-propose',
+  'bond-ratify',
+  'bond-remove',
   // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
   // All three are coord-only AND DM-private (PLAYER_SCOPE_STRIP_KINDS)
   // — the diff-review is the DM's pre-publication review.  Players
@@ -2540,10 +2628,23 @@ function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
   // workflow).  Without this, the bind would silently re-reveal
   // and break the firewall.
   const prior = state.pcSlots[p.slot];
+  // D5-3: controller resolution — explicit payload override wins;
+  // otherwise preserve the prior seat's controllerPeerId (set by
+  // seat-add for invite-token flows); otherwise default to the
+  // coord doing the bind.
+  let controllerPeerId: PeerId = event.peerId;
+  if (
+    typeof p.controllerPeerId === 'string' &&
+    p.controllerPeerId.length > 0
+  ) {
+    controllerPeerId = p.controllerPeerId;
+  } else if (prior?.controllerPeerId) {
+    controllerPeerId = prior.controllerPeerId;
+  }
   const seat: Seat = {
     state: 'bound-active',
     pcId: p.pcId,
-    controllerPeerId: event.peerId
+    controllerPeerId
   };
   if (prior?.revealed === false) {
     seat.revealed = false;
@@ -3335,6 +3436,222 @@ function applyDmClockDeleteEvent(
   state.dmClocks = next;
 }
 
+// -----------------------------------------------------------------
+// D5 (2026-05-27): per-PC bonds.  See `BondEntry` + `BondProposal`
+// for shape.  Event triplet:
+//   - bond-propose: player or coord drafts (DM-private)
+//   - bond-ratify: coord-only; moves proposal → pcBonds (player-
+//     visible, dmNotes per-entry stripped on the wire)
+//   - bond-remove: coord-only; deletes by id
+//
+// Authoring gate (D5-3): bond-propose is accepted only when:
+//   (a) the peerId controls the seat whose pcId matches the
+//       proposal's pcId (`seat.controllerPeerId === event.peerId`),
+//   OR
+//   (b) the peerId is in coordHolders.
+// This is the FIRST event kind to use the seat-binding gate
+// (pc-edit remains universal-write per the Q-LT1 trust gap).
+// -----------------------------------------------------------------
+
+const BOND_ID_MAX = 64;
+const BOND_TEXT_MAX = 500;
+const BOND_DM_NOTES_MAX = 2000;
+const BOND_MAX_PER_PC = 8;
+const BOND_ID_RE = /^[A-Za-z0-9._-]+$/;
+const BOND_POISONOUS_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
+function isValidBondId(id: unknown): id is string {
+  if (typeof id !== 'string') return false;
+  if (id.length === 0 || id.length > BOND_ID_MAX) return false;
+  if (!BOND_ID_RE.test(id)) return false;
+  for (const seg of id.split('.')) {
+    if (BOND_POISONOUS_SEGMENTS.has(seg)) return false;
+  }
+  return true;
+}
+
+/**
+ * D5-3 (Adversarial BLOCKER): authoring gate for bond-propose.
+ * Returns true if the event's peer is allowed to author a bond
+ * for the given pcId — either as the seat's controller or as
+ * coord.  Mirrors the seat-binding logic that materializers like
+ * `applyPcRetireRequestEvent` use.
+ */
+function isBondAuthorAllowed(
+  state: SessionState,
+  event: QuireEvent,
+  pcId: string
+): boolean {
+  if (state.coordHolders.has(event.peerId)) return true;
+  for (const seat of Object.values(state.pcSlots)) {
+    if (seat.pcId === pcId && seat.controllerPeerId === event.peerId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * D5-8 helper: per-entry `dmNotes` strip for `pcBonds`.  Applied
+ * by `filterForViewer` when projecting to a non-coord viewer.
+ * Mirrors the focus-grant payload-field strip pattern but at the
+ * record-level (an array of bond entries).
+ */
+function stripBondDmNotesPerEntry(
+  pcBonds: Record<string, BondEntry[]>
+): Record<string, BondEntry[]> {
+  const out: Record<string, BondEntry[]> = {};
+  for (const [pcId, bonds] of Object.entries(pcBonds)) {
+    out[pcId] = bonds.map((b) => {
+      if (b.dmNotes === undefined) return b;
+      const { dmNotes: _omit, ...safe } = b;
+      void _omit;
+      return safe as BondEntry;
+    });
+  }
+  return out;
+}
+
+interface BondProposePayload {
+  v: 1;
+  id: string;
+  pcId: string;
+  targetPcId: string;
+  text: string;
+}
+
+function applyBondProposeEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<BondProposePayload>;
+  if (!isValidBondId(p.id)) return;
+  if (!isCharacterId(p.pcId)) return;
+  if (!isCharacterId(p.targetPcId)) return;
+  // D5: self-bonds are nonsense; reject.
+  if (p.pcId === p.targetPcId) return;
+  if (typeof p.text !== 'string') return;
+  const trimmedText = p.text.trim();
+  if (trimmedText.length === 0 || trimmedText.length > BOND_TEXT_MAX) return;
+  // D5-3 authoring gate.
+  if (!isBondAuthorAllowed(state, event, p.pcId)) return;
+  // DoS guard + duplicate-create no-op.
+  const proposals = state.pcBondProposals[p.pcId] ?? [];
+  if (proposals.some((q) => q.id === p.id)) return;
+  // Cap counts proposals + ratified together; the proposal-then-
+  // ratify path is the same logical entry.
+  const ratifiedCount = (state.pcBonds[p.pcId] ?? []).length;
+  if (proposals.length + ratifiedCount >= BOND_MAX_PER_PC) return;
+  if (typeof p.pcId !== 'string' || BOND_POISONOUS_SEGMENTS.has(p.pcId)) {
+    return;
+  }
+  state.pcBondProposals = {
+    ...state.pcBondProposals,
+    [p.pcId]: [
+      ...proposals,
+      {
+        id: p.id,
+        targetPcId: p.targetPcId,
+        text: trimmedText,
+        proposedByPeerId: event.peerId,
+        ts: event.ts
+      }
+    ]
+  };
+}
+
+interface BondRatifyPayload {
+  v: 1;
+  id: string;
+  pcId: string;
+  /** Optional DM-typed text override; if absent, use proposal text. */
+  text?: string;
+  /** Optional DM-only spoiler-anchor. */
+  dmNotes?: string;
+}
+
+function applyBondRatifyEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<BondRatifyPayload>;
+  if (!isValidBondId(p.id)) return;
+  if (!isCharacterId(p.pcId)) return;
+  const proposals = state.pcBondProposals[p.pcId] ?? [];
+  const proposal = proposals.find((q) => q.id === p.id);
+  if (!proposal) return; // No matching draft to ratify.
+  if (p.text !== undefined && typeof p.text !== 'string') return;
+  if (p.dmNotes !== undefined) {
+    if (typeof p.dmNotes !== 'string') return;
+    if (p.dmNotes.length > BOND_DM_NOTES_MAX) return;
+  }
+  const ratifiedText =
+    p.text !== undefined ? p.text.trim() : proposal.text;
+  if (ratifiedText.length === 0 || ratifiedText.length > BOND_TEXT_MAX) return;
+  // Move from proposals → bonds.
+  const newProposals = proposals.filter((q) => q.id !== p.id);
+  state.pcBondProposals = {
+    ...state.pcBondProposals,
+    [p.pcId]: newProposals
+  };
+  const entry: BondEntry = {
+    id: proposal.id,
+    targetPcId: proposal.targetPcId,
+    text: ratifiedText,
+    proposedByPeerId: proposal.proposedByPeerId,
+    ratifiedByPeerId: event.peerId,
+    ts: event.ts
+  };
+  if (p.dmNotes !== undefined && p.dmNotes.length > 0) {
+    entry.dmNotes = p.dmNotes;
+  }
+  const existing = state.pcBonds[p.pcId] ?? [];
+  state.pcBonds = {
+    ...state.pcBonds,
+    [p.pcId]: [...existing, entry]
+  };
+}
+
+interface BondRemovePayload {
+  v: 1;
+  id: string;
+  pcId: string;
+}
+
+function applyBondRemoveEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<BondRemovePayload>;
+  if (!isValidBondId(p.id)) return;
+  if (!isCharacterId(p.pcId)) return;
+  // Remove from both proposals AND ratified bonds, idempotently.
+  const proposals = state.pcBondProposals[p.pcId] ?? [];
+  const bonds = state.pcBonds[p.pcId] ?? [];
+  const nextProposals = proposals.filter((q) => q.id !== p.id);
+  const nextBonds = bonds.filter((q) => q.id !== p.id);
+  if (
+    nextProposals.length === proposals.length &&
+    nextBonds.length === bonds.length
+  ) {
+    return; // No-op.
+  }
+  state.pcBondProposals = {
+    ...state.pcBondProposals,
+    [p.pcId]: nextProposals
+  };
+  state.pcBonds = { ...state.pcBonds, [p.pcId]: nextBonds };
+}
+
 function applySessionOpenEvent(
   state: SessionState,
   event: QuireEvent
@@ -3750,7 +4067,11 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   // doc-comment for the lifecycle contract.
   'proposal-create': applyProposalCreateEvent,
   'proposal-accept': applyProposalAcceptEvent,
-  'proposal-reject': applyProposalRejectEvent
+  'proposal-reject': applyProposalRejectEvent,
+  // D5 (2026-05-27): per-PC bonds lifecycle.
+  'bond-propose': applyBondProposeEvent,
+  'bond-ratify': applyBondRatifyEvent,
+  'bond-remove': applyBondRemoveEvent
 };
 
 /**
