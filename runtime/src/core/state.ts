@@ -633,6 +633,15 @@ export interface SessionState {
    */
   sessionDigests: SessionDigest[];
   /**
+   * D2 (2026-05-26): session-open ritual marker entries.  Each
+   * entry records WHO began a session and WHEN.  Used to drive the
+   * auto-open trigger in QuireApp: when
+   * `sessionDigests.length > sessionOpens.length`, there's a
+   * pending open ritual to fire.  Player-visible by design (the
+   * audit trail is part of the campaign chronology).
+   */
+  sessionOpens: SessionOpen[];
+  /**
    * D1-D (2026-05-26): pending NPC living-doc proposals awaiting
    * DM ratification.  DM-only state — never shipped to player
    * peers (`filterForViewer` wipes for non-coord).  Materialized
@@ -653,6 +662,18 @@ export interface SessionState {
    *     broadcast channel — out-of-band from the session event log
    */
   diffProposals: PendingDiffProposal[];
+}
+
+/**
+ * D2 (2026-05-26): one session-open ritual marker.  Recorded when
+ * the DM clicks "Begin session" in the open-ritual surface.
+ * Player-visible per D2-3 (audit trail of WHO opened the session).
+ */
+export interface SessionOpen {
+  /** Coord peer that began the session. */
+  openedByPeerId: PeerId;
+  /** Epoch-ms when the open landed. */
+  ts: number;
 }
 
 /**
@@ -703,6 +724,7 @@ export function emptyState(): SessionState {
     pcAccidentalGrants: {},
     pcFoci: {},
     sessionDigests: [],
+    sessionOpens: [],
     diffProposals: []
   };
 }
@@ -1559,6 +1581,12 @@ export const KNOWN_EVENT_KINDS = new Set([
   // recap IS what players read at the start of the next session.
   // Append-only; each save lands as a fresh entry.
   'session-digest',
+  // D2 (2026-05-26): session-open ritual.  Coord emits when the
+  // DM clicks "Begin session" after walking through the carryover
+  // ritual.  Player-visible (per Adversarial D2-3: "session N
+  // started" is fine for players to see; the audit trail captures
+  // WHICH coord opened the session).
+  'session-open',
   // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
   // All three are coord-only AND DM-private (PLAYER_SCOPE_STRIP_KINDS)
   // — the diff-review is the DM's pre-publication review.  Players
@@ -3087,6 +3115,36 @@ function applySessionDigestEvent(
   state.sessionDigests = [...state.sessionDigests, digest];
 }
 
+/**
+ * D2 (2026-05-26): record a coord clicking "Begin session" in the
+ * session-open ritual.  Player-visible audit entry — the count of
+ * opens drives the auto-open trigger (a fresh open is needed when
+ * `sessionDigests.length > sessionOpens.length`).
+ *
+ * Coord-only.  Payload v: 1 with no other fields (event.peerId +
+ * event.ts carry the entire signal).  Append-only.  Replay
+ * deterministic.
+ *
+ * Race semantics (D2-3): two co-DMs clicking Begin produce two
+ * `session-open` entries.  Each is its own audit record; the
+ * trigger condition is satisfied by the FIRST one.  No dedup —
+ * the second is a no-op for the trigger but stays in the log for
+ * "co-DM also opened" history.
+ */
+function applySessionOpenEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  // No other fields to validate — payload is just `v: 1`.  The
+  // isPayloadV1 gate above is sufficient.
+  state.sessionOpens = [
+    ...state.sessionOpens,
+    { openedByPeerId: event.peerId, ts: event.ts }
+  ];
+}
+
 // -----------------------------------------------------------------
 // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
 // All three events are coord-only AND DM-private; the materializer
@@ -3476,6 +3534,8 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'pc-mark-realization': applyPcMarkRealizationEvent,
   // D4 (2026-05-26): DM-saved session-digest recap.
   'session-digest': applySessionDigestEvent,
+  // D2 (2026-05-26): session-open ritual marker.
+  'session-open': applySessionOpenEvent,
   // D1-D (2026-05-26): living-doc diff-review proposal lifecycle.
   // All three coord-only AND DM-private; see PendingDiffProposal
   // doc-comment for the lifecycle contract.

@@ -24,6 +24,8 @@ import './ui/regions/wrap-stepper';
 import type { WrapStep } from './ui/regions/wrap-stepper';
 import './ui/regions/diff-review-stage';
 import type { DiffProposalView } from './ui/regions/diff-review-stage';
+import './ui/regions/session-open-stage';
+import type { CarryoverPcCard } from './ui/regions/session-open-stage';
 import './ui/regions/session-digest';
 import './ui/regions/dm-pc-detail';
 // Phase 3a Cluster E step 6: <seat-strip> mount removed; the
@@ -989,6 +991,25 @@ export class QuireApp extends LitElement {
       ) {
         this.saveStatus = { kind: 'idle' };
       }
+      // D2 (2026-05-26): auto-open trigger.  Per UX D2-7: when a
+      // session becomes active and the materialized state shows
+      // there's a pending open ritual (sessionDigests.length >
+      // sessionOpens.length), shift to session-open mode so the
+      // DM walks the carryover before resuming play.  Coord-only:
+      // player viewers stay in 'in-session' (the player-side
+      // welcome-back surface is D2.5 / out of scope for MVP).
+      // Reload during the ritual re-enters via this same trigger;
+      // Begin clears the trigger by emitting a session-open event.
+      if (
+        v.status === 'active' &&
+        this.appMode === 'in-session' &&
+        v.peerId !== null &&
+        v.shared.coordHolders.has(v.peerId) &&
+        (v.shared.sessionDigests?.length ?? 0) >
+          (v.shared.sessionOpens?.length ?? 0)
+      ) {
+        this.appMode = 'session-open';
+      }
       if (
         !wasActive &&
         v.status === 'active' &&
@@ -1609,7 +1630,191 @@ export class QuireApp extends LitElement {
       >
         Wrap session…
       </button>
+      ${this.renderSessionOpenLauncher()}
     </p>`;
+  }
+
+  /**
+   * D2 (2026-05-26): "Open session…" launcher.  Twin of wrap.
+   * Coord-only; visible only when there's at least one prior
+   * session-digest to pick up from.  Mostly redundant — the
+   * auto-open trigger in `applySessionViewChange` fires the
+   * ritual automatically — but provides explicit re-entry if the
+   * DM has dismissed the auto-open or wants to re-read the digest
+   * mid-session.
+   */
+  private renderSessionOpenLauncher(): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    if (this.appMode === 'session-open') return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    if ((v.shared.sessionDigests?.length ?? 0) === 0) return nothing;
+    return html`<button
+      type="button"
+      class="dm-wrap-session-button"
+      title="Re-read last session's recap and review the table's carryover"
+      @click=${() => {
+        this.appMode = 'session-open';
+      }}
+    >
+      Open session…
+    </button>`;
+  }
+
+  /**
+   * D2 (2026-05-26): render the session-open ritual surface.
+   * Coord-only (Adversarial D2-1); the carryover cards surface
+   * DM-only fields like tax + threadDebt rung + drift marks.
+   * Non-coord viewers see a stripped-down "the DM is re-orienting"
+   * pane to avoid leaking the surface's existence as a spoiler
+   * vector.
+   */
+  private renderSessionOpenStage(): TemplateResult {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return html`<section class="card">
+        <p class="muted">No active session.</p>
+      </section>`;
+    }
+    if (!this.isCoordinator()) {
+      // Player viewers see a placeholder — the surface itself is
+      // DM-only, but we acknowledge the mode so a player checking
+      // their viewport isn't confused by an unexplained empty body.
+      return html`<section class="card">
+        <h2>Session open — the DM is re-orienting the table</h2>
+        <p class="muted">
+          One moment while the DM walks the roster.  Play resumes
+          shortly.
+        </p>
+      </section>`;
+    }
+    const lastDigest =
+      v.filteredShared.sessionDigests[
+        v.filteredShared.sessionDigests.length - 1
+      ];
+    const sortedSlots = Object.keys(v.shared.pcSlots)
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    const carryover: CarryoverPcCard[] = [];
+    for (const slot of sortedSlots) {
+      const seat = v.shared.pcSlots[slot];
+      if (seat.state !== 'bound-active') continue;
+      const pcId = seat.pcId;
+      if (!pcId) continue;
+      const record = v.shared.synthesizedPcs[pcId];
+      if (!record) continue;
+      const edits = v.shared.pcEdits[pcId] ?? {};
+      const harm = this.numberOverlay(edits, 'harm', record.harm ?? 0);
+      const stress = this.numberOverlay(edits, 'stress', record.stress ?? 0);
+      const marks = this.numberOverlay(edits, 'marks', record.marks ?? 0);
+      const taxActive =
+        this.booleanOverlay(edits, 'tax.active',
+          (record.tax as { active?: boolean } | undefined)?.active ?? false);
+      const taxRemainingRaw = this.numberOverlay(
+        edits,
+        'tax.sessionsRemaining',
+        (record.tax as { sessionsRemaining?: number } | undefined)
+          ?.sessionsRemaining ?? 0
+      );
+      const driftMarks = this.numberOverlay(
+        edits,
+        'alignmentDrift.marks',
+        (record.alignmentDrift as { marks?: number } | undefined)?.marks ?? 0
+      );
+      const threadDebtRungRaw = (edits['threadDebt.rung'] ??
+        (record.threadDebt as { rung?: string } | undefined)?.rung) as
+        | string
+        | undefined;
+      const card: CarryoverPcCard = {
+        pcId,
+        name: (record.name as string | undefined) ?? pcId,
+        slot,
+        harm,
+        stress,
+        marks,
+        advancementReady: marks >= 5
+      };
+      if (taxActive && taxRemainingRaw > 0) {
+        card.taxSessionsRemaining = taxRemainingRaw;
+      }
+      if (typeof threadDebtRungRaw === 'string' && threadDebtRungRaw.length > 0) {
+        card.threadDebtRung = threadDebtRungRaw;
+      }
+      if (driftMarks > 0) {
+        card.driftMarks = driftMarks;
+      }
+      carryover.push(card);
+    }
+    return html`<session-open-stage
+      .lastDigestMarkdown=${lastDigest?.markdown ?? ''}
+      .carryover=${carryover}
+      .onBegin=${async () => this.beginSession()}
+    ></session-open-stage>`;
+  }
+
+  /**
+   * Helper: read a number-typed pc-edit overlay, falling back to
+   * the base record value.  DM-only fields (tax.*, alignmentDrift.*)
+   * use this same pattern via the dotted-field key.
+   */
+  private numberOverlay(
+    edits: Record<string, unknown>,
+    field: string,
+    fallback: number
+  ): number {
+    const v = edits[field];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return fallback;
+  }
+
+  private booleanOverlay(
+    edits: Record<string, unknown>,
+    field: string,
+    fallback: boolean
+  ): boolean {
+    const v = edits[field];
+    if (typeof v === 'boolean') return v;
+    return fallback;
+  }
+
+  /**
+   * D2 (2026-05-26): "Begin session" handler.  Coord-only.
+   *
+   * Emits one `session-open` event recording the coord + ts (D2-3
+   * audit trail; idempotency comes from the materializer's
+   * append-only contract) and transitions appMode to 'in-session'.
+   *
+   * **No tax-session decrement.**  D2-verifier (2026-05-26) caught
+   * a contradiction with rules.md:184: tax is "**not a fade-out**
+   * (no gradual -2 → -1 → 0); it's a gating beat" terminated by a
+   * fiction-driven release moment (rules.md:182, the existing B8
+   * "Release tax" button).  The earlier D2-4 lock prescribed a
+   * per-session decrement that would have introduced a fade-out
+   * mechanic the ruleset explicitly disclaims.  The lock is
+   * REVERSED: D2 records the session-open marker and shows tax-
+   * remaining info on the carryover card (DM-only) for context,
+   * but does NOT mechanically advance it.  Existing magic-arc-
+   * controls remain the only path to tax termination.
+   *
+   * Failure modes:
+   *   - no active session → no-op
+   *   - non-coord → no-op
+   */
+  async beginSession(): Promise<
+    | { ok: true }
+    | { ok: false; code: 'no-session' | 'no-coord'; message: string }
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return { ok: false, code: 'no-session', message: 'No active session.' };
+    }
+    if (!this.isCoordinator()) {
+      return { ok: false, code: 'no-coord', message: 'DM-only.' };
+    }
+    this.session?.append('session-open', { v: 1 });
+    this.appMode = 'in-session';
+    return { ok: true };
   }
 
   /**
@@ -3661,6 +3866,9 @@ export class QuireApp extends LitElement {
     // authority, that gap fix would also harden this surface.
     if (this.appMode === 'session-wrap-marks') {
       return this.renderSessionWrapMarks();
+    }
+    if (this.appMode === 'session-open') {
+      return this.renderSessionOpenStage();
     }
     switch (this.appState.kind) {
       case 'idle':

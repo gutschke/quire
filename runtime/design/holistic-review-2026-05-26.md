@@ -325,12 +325,97 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   two-pane diff-review per `ui.md` L298-363.  MVP: NPC-update
   category only.  Without this, "wrap session" is a checkbox sheet
   with no payoff; AI-living-doc value never reaches the table.
-- [ ] **D2** — session-open ritual (TTRPG-4, M-L scope).  Twin of P5
-  closing ritual.  Per-PC: carried-over state | advancement-due? |
-  drift-conversation-due?  One-button affordances to spend marks,
-  log downtime recovery, open the realignment chat.  Rules.md:158
-  ("every 5 marks take one advancement") and rules.md:170 (drift
-  conversation) need explicit triggers; currently silent.
+### Wave D2 — session-open ritual 🚧 IN PROGRESS
+
+3-expert pre-design round (TTRPG / UX / Adversarial) locked the
+MVP scope before coding.  Framing: **"the table picks up the
+thread."**  Twin of session-wrap; ritual is shared with both
+coords, but the SURFACE is DM-coord-only because so many fields
+are DM-only.
+
+**MUST-DECIDE-BEFORE-CODING (locked):**
+
+- **D2-1 (Adversarial B-1)** — D2 surface is DM-coord-only,
+  rendered like the dm-aside family.  NOT a shared cockpit region
+  whose CSS hides DM-only fields visually (that's the D-prep-2-A
+  bug class).  Player-side equivalent ("welcome back" narrower
+  view) is OUT OF SCOPE for MVP.
+- **D2-2 (Adversarial B-2)** — `drift-conversation-due` flag /
+  badge has NO player render path under any condition.
+  `alignmentDrift.marks` is DM-only; even the COUNT leaks state.
+- **D2-3 (Adversarial B-3)** — `appMode` stays local @state, NOT
+  shared.  "Begin session" is a per-peer local mode-flip.  The
+  new `session-open` event records WHO began (audit trail) but
+  doesn't synchronize co-DM appMode.  Cockpit MUST NOT imply
+  coords are mode-synced.
+- **D2-4 (REVERSED by D2-verifier 2026-05-26)** — **tax is NOT
+  decremented at session-open.**  The earlier lock (decrement
+  per-Begin via pc-edit) was caught by the D2 verifier as
+  contradicting rules.md:184: tax is "**not a fade-out** (no
+  gradual -2 → -1 → 0); it's a gating beat" terminated by a
+  fiction-driven release moment.  Implementing a per-session
+  decrement would have introduced a fade-out mechanic the
+  ruleset disclaims, AND contradicted the existing N5-followup
+  defer in this same doc.  D2 records the session-open marker
+  and surfaces `tax.sessionsRemaining` as DM-only carryover
+  context, but does NOT mechanically advance it.  Existing
+  magic-arc-controls B8 "Release tax" button remains the only
+  termination path.  Lesson captured in the practice memo
+  (rule 7a, new): when a TTRPG-expert proposal touches mechanical
+  state, cross-check against rules.md verbatim before locking —
+  expert recommendations don't override the source-of-truth.
+- **D2-5** — no new spend-mark / advancement-pick affordance.
+  Marks-ready is a passive badge; player Rail advancement-confirm
+  is a separate component (defer to D2.5 / U-LT2).
+- **D2-6 (UX)** — single pane, not a stepper.  Data is parallel
+  (one digest + N per-PC cards); stepper manufactures sequence
+  where none exists.
+- **D2-7 (UX, idempotent reload)** — auto-open trigger:
+  `sessionDigests.length > sessionOpens.length` AND coord viewer.
+  Reload mid-ritual re-enters; reload post-Begin skips.  Session 1
+  has no digest → no auto-open → drops straight into in-session.
+- **D2-8** — no AI surface in D2.  TTRPG + Adversarial agree:
+  D2 is the human handoff back to the table; AI scene-opening
+  would violate the prime directive.
+- **D2-9** — drop "downtime recovery" affordance.  No downtime
+  mechanic exists in `underleaf/rules.md` v0.1; harm/stress
+  recovery is fictional ("days", "a meaningful conversation"),
+  not a between-sessions ticked box.  Inventing a UI for a non-
+  existent mechanic crosses the engine-vs-campaign boundary
+  the wrong way.
+
+**Carryover-rank (per TTRPG-expert, by play-impact):**
+
+1. `tax.active` + `tax.sessionsRemaining` (DM-only) — live -2
+   modifier; the most rules-active carryover (rules.md:180-184).
+2. Persistent harm boxes (≥ 2) — roll penalties (rules.md:74-81).
+3. Persistent stress boxes (≥ 2) — WIS penalty + cast cap
+   (rules.md:85-94).
+4. `threadDebt.rung` (DM-only) — frames every cast adjudication
+   (rules.md:125-137).
+5. `marks ≥ 5` — advancement-ready trigger (rules.md:157).
+6. `alignmentDrift.marks` ≥ 5 (DM-only) — drift-conversation-due
+   (rules.md:170-172).
+
+**Sub-wave plan:**
+
+- [ ] **D2-A** — locked scope above (DONE in this commit).
+- [ ] **D2-B [engine + UI]** — new `session-open` event kind
+  (player-visible; coord-only authored); `state.sessionOpens`
+  array; materializer.  New AppMode `session-open`.  New region
+  `src/ui/regions/session-open-stage.ts`.  Launcher in dm-aside
+  ("Open session…" twin of wrap-launcher).  Host method
+  `beginSession()` emits session-open + tax-decrement pc-edits +
+  transitions appMode.  Auto-open wiring in QuireApp's
+  sessionView subscriber.
+- [ ] **D2-C** — tests + verifier + commit.
+
+**Conscious MVP debt:** no per-card "delta since last session"
+arrows (would require `state.lastWrapSnapshot`; defer to D2.5).
+No player-side welcome-back surface (defer to D2.5 / U-LT2).
+Realignment-acknowledge receipt is local @state only (re-fires
+on reload of the same session-open; acceptable since reload
+mid-open is rare).
 - [ ] **D3** — progress clocks as first-class primitive (TTRPG-2, M
   scope).  ~300 LOC: new `clock` event kind +
   `clocks: Record<id, ClockState>` shared state + `<clock-strip>`

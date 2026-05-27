@@ -878,7 +878,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // D4 (2026-05-26): added session-digest → 49.
     // D1-D (2026-05-26): added proposal-create + proposal-accept +
     // proposal-reject → 52.
-    expect(KNOWN_EVENT_KINDS.size).toBe(52);
+    // D2 (2026-05-26): added session-open → 53.
+    expect(KNOWN_EVENT_KINDS.size).toBe(53);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -4350,6 +4351,90 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
     const state = materialize(alice.events());
     expect(state.pcRetireRequests).toHaveLength(1);
     expect(state.pcRetireRejections).toHaveLength(0);
+  });
+
+  // --- D2 (2026-05-26): session-open ritual ---
+
+  describe('session-open materializer (D2)', () => {
+    function setupCoord(): EventLog {
+      const log = new EventLog('alice');
+      log.append('coordinator-claim', {});
+      return log;
+    }
+
+    it('coord begins session; entry lands with peerId + ts', () => {
+      const log = setupCoord();
+      log.append('session-open', { v: 1 });
+      const state = materialize(log.events());
+      expect(state.sessionOpens).toHaveLength(1);
+      expect(state.sessionOpens[0].openedByPeerId).toBe('alice');
+      expect(state.sessionOpens[0].ts).toBeGreaterThan(0);
+    });
+
+    it('append-only — multiple opens land in order', () => {
+      const log = setupCoord();
+      log.append('session-open', { v: 1 });
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 100,
+        markdown: 'first wrap'
+      });
+      log.append('session-open', { v: 1 });
+      const state = materialize(log.events());
+      expect(state.sessionOpens).toHaveLength(2);
+      expect(state.sessionDigests).toHaveLength(1);
+    });
+
+    it('non-coord cannot begin a session', () => {
+      const alice = setupCoord();
+      const bob = new EventLog('bob');
+      bob.append('session-open', { v: 1 });
+      const merged = [...alice.events(), ...bob.events()];
+      const state = materialize(merged);
+      expect(state.sessionOpens).toEqual([]);
+    });
+
+    it('rejects malformed payload (missing v)', () => {
+      const log = setupCoord();
+      log.append('session-open', {} as Record<string, never>);
+      const state = materialize(log.events());
+      expect(state.sessionOpens).toEqual([]);
+    });
+
+    it('auto-open trigger arithmetic: digests > opens means a fresh open is pending', () => {
+      const log = setupCoord();
+      log.append('session-open', { v: 1 }); // session 1 begin
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 100,
+        markdown: 'wrap 1'
+      });
+      // After session 1 wrap, before session 2 open: digests > opens.
+      const state = materialize(log.events());
+      expect(state.sessionDigests.length).toBe(1);
+      expect(state.sessionOpens.length).toBe(1);
+      // Now wrap session 2's digest WITHOUT a new open in between.
+      log.append('session-digest', {
+        v: 1,
+        sessionStartTs: 200,
+        markdown: 'wrap 2'
+      });
+      const state2 = materialize(log.events());
+      // digests=[d1, d2], opens=[o1] → digests > opens → ritual fires.
+      expect(state2.sessionDigests.length).toBe(2);
+      expect(state2.sessionOpens.length).toBe(1);
+      expect(state2.sessionDigests.length > state2.sessionOpens.length).toBe(
+        true
+      );
+    });
+
+    it('filterForViewer passes sessionOpens through unchanged (player-visible)', () => {
+      const log = setupCoord();
+      log.append('session-open', { v: 1 });
+      const state = materialize(log.events());
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.sessionOpens).toEqual(state.sessionOpens);
+    });
   });
 
   // --- D1-D (2026-05-26): living-doc diff-review proposal lifecycle ---

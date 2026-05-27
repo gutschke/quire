@@ -76,14 +76,16 @@ describe('setMode', () => {
 });
 
 describe('APP_MODES + DEFAULT_APP_MODE constants', () => {
-  it('APP_MODES contains exactly the six named modes', () => {
+  it('APP_MODES contains exactly the seven named modes', () => {
     // Phase B P5 (2026-05-26): added `session-wrap-marks` for the
     // end-of-session marks sheet (rules.md:149-154 advancement bullets).
-    expect(APP_MODES.size).toBe(6);
+    // D2 (2026-05-26): added `session-open` for the open ritual.
+    expect(APP_MODES.size).toBe(7);
     expect(APP_MODES.has('pre-session')).toBe(true);
     expect(APP_MODES.has('in-session')).toBe(true);
     expect(APP_MODES.has('post-session')).toBe(true);
     expect(APP_MODES.has('session-wrap-marks')).toBe(true);
+    expect(APP_MODES.has('session-open')).toBe(true);
     expect(APP_MODES.has('authoring')).toBe(true);
     expect(APP_MODES.has('solo-browse')).toBe(true);
   });

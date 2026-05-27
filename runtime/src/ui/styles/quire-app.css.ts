@@ -2692,6 +2692,148 @@ export const quireAppStyles = css`
       color: light-dark(#475569, #94a3b8);
     }
 
+    /* D2 (2026-05-26): session-open ritual surface. */
+    .session-open-stage {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      padding: 0.5rem;
+    }
+    .session-open-stage-head h2 {
+      margin: 0 0 0.2rem;
+    }
+    .session-open-stage-head p.muted {
+      margin: 0;
+    }
+    .session-open-stage-recap {
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 4px;
+      padding: 0.6rem 0.8rem;
+      background: light-dark(#fafaf9, #1c1917);
+    }
+    .session-open-stage-recap h3 {
+      margin: 0 0 0.4rem;
+      font-size: 1rem;
+    }
+    .session-open-stage-digest p {
+      margin: 0 0 0.5rem;
+    }
+    .session-open-stage-digest p:last-child {
+      margin-bottom: 0;
+    }
+    .session-open-stage-carryover h3 {
+      margin: 0 0 0.5rem;
+      font-size: 1rem;
+    }
+    .session-open-stage-cards {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.6rem;
+    }
+    .session-open-stage-card {
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      padding: 0.5rem 0.7rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .session-open-stage-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .session-open-stage-card-stats {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.88rem;
+    }
+    .session-open-stage-card-stat {
+      padding: 0.05rem 0;
+    }
+    .session-open-stage-dm-only {
+      color: light-dark(#92400e, #fbbf24);
+    }
+    .session-open-stage-badge {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      vertical-align: middle;
+    }
+    .session-open-stage-badge-adv {
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#1e40af, #93c5fd);
+    }
+    .session-open-stage-badge-drift {
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fde68a);
+    }
+    .session-open-stage-drift-banner {
+      margin-top: 0.3rem;
+      padding: 0.3rem 0.4rem;
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      background: light-dark(#fffbeb, #292524);
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.85rem;
+    }
+    .session-open-stage-drift-ack {
+      align-self: flex-start;
+      padding: 0.2rem 0.5rem;
+      border: 1px solid light-dark(#fcd34d, #d97706);
+      background: light-dark(#ffffff, #1c1917);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .session-open-stage-summary {
+      margin: 0;
+      font-size: 0.88rem;
+    }
+    .session-open-stage-footer {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      border-top: 1px solid light-dark(#e2e8f0, #334155);
+      padding-top: 0.6rem;
+    }
+    .session-open-stage-begin {
+      align-self: flex-end;
+      padding: 0.4rem 1rem;
+      border: 1px solid light-dark(#60a5fa, #3b82f6);
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .session-open-stage-begin:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .session-open-stage-error {
+      margin: 0;
+      padding: 0.3rem 0.5rem;
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+      border: 1px solid light-dark(#fca5a5, #991b1b);
+      border-radius: 3px;
+      font-size: 0.85rem;
+    }
+
     .dm-wrap-session-launcher {
       margin: 0.5rem 0;
     }

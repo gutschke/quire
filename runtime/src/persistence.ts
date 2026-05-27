@@ -306,7 +306,10 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
   // D4 (2026-05-26): session-digest is the player-facing recap
   // (DM-saved markdown that players read at session-open next
   // time).  Player-visible by design.
-  'session-digest'
+  'session-digest',
+  // D2 (2026-05-26): session-open marker recording WHO began the
+  // session.  Player-visible audit trail (per D2-3 lock).
+  'session-open'
 ]);
 
 /**
