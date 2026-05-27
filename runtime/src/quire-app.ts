@@ -2194,6 +2194,157 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * D5 (2026-05-27): propose a bond on a PC.  Player-side or
+   * coord-side.  The materializer's authoring gate (D5-3) checks
+   * that this peer is either coord OR the seat's controllerPeerId
+   * for the bound PC — but we pre-check here for UX (host
+   * returns false on rejection so the UI can disable the button).
+   * Returns true on emit.
+   */
+  proposeBond(opts: {
+    pcId: string;
+    targetPcId: string;
+    text: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    const trimmed = opts.text.trim();
+    if (trimmed.length === 0 || trimmed.length > 500) return false;
+    if (opts.pcId === opts.targetPcId) return false;
+    if (!v.peerId) return false;
+    // D5-3 gate pre-check.
+    const isCoord = this.isCoordinator();
+    let isController = false;
+    for (const seat of Object.values(v.shared.pcSlots)) {
+      if (
+        seat.pcId === opts.pcId &&
+        seat.controllerPeerId === v.peerId
+      ) {
+        isController = true;
+        break;
+      }
+    }
+    if (!isCoord && !isController) return false;
+    // Slug + random suffix; ≤ 64 chars (matches materializer regex).
+    const rand = Math.floor(Math.random() * 0xffffff)
+      .toString(16)
+      .padStart(6, '0');
+    const id = `bond-${rand}`;
+    this.session.append('bond-propose', {
+      v: 1,
+      id,
+      pcId: opts.pcId,
+      targetPcId: opts.targetPcId,
+      text: trimmed
+    });
+    return true;
+  }
+
+  /**
+   * D5 (2026-05-27): ratify a pending bond proposal.  Coord-only.
+   * Optionally overrides the proposal text (DM edit) and adds
+   * DM-only `dmNotes` (spoiler anchor).  Returns true on emit.
+   */
+  ratifyBond(opts: {
+    pcId: string;
+    id: string;
+    text?: string;
+    dmNotes?: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const proposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
+    if (!proposals.some((p) => p.id === opts.id)) return false;
+    const payload: Record<string, unknown> = {
+      v: 1,
+      id: opts.id,
+      pcId: opts.pcId
+    };
+    if (opts.text !== undefined) payload.text = opts.text;
+    if (opts.dmNotes !== undefined && opts.dmNotes.length > 0) {
+      payload.dmNotes = opts.dmNotes;
+    }
+    this.session.append('bond-ratify', payload);
+    return true;
+  }
+
+  /**
+   * D5 (2026-05-27): remove a bond (proposal or ratified) by id.
+   * Coord-only.  Returns true on emit.
+   */
+  /**
+   * D5 (2026-05-27): build the BondsCardEntry[] for `<bonds-card>`
+   * for a given PC.  Read from `filteredShared.pcBonds[pcId]`
+   * (viewer-scoped so non-coord viewers never see dmNotes) and
+   * resolve target labels via the synthesizedPcs name lookup.
+   * Falls back to "(retired PC)" or "(unknown)" for dangling
+   * targets per D5-7.
+   */
+  private buildBondsCardEntries(
+    pcId: string
+  ): import('./ui/field-renderers/bonds-card').BondsCardEntry[] {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return [];
+    const bonds = v.filteredShared.pcBonds?.[pcId] ?? [];
+    return bonds.map((b) => {
+      const target = v.filteredShared.synthesizedPcs?.[b.targetPcId];
+      const targetLabel =
+        (target?.name as string | undefined) ?? `(unknown: ${b.targetPcId})`;
+      const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
+        id: b.id,
+        targetPcId: b.targetPcId,
+        text: b.text,
+        targetLabel
+      };
+      if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
+      return entry;
+    });
+  }
+
+  /**
+   * D5 (2026-05-27): list of other PCs in the same campaign that
+   * this PC could bond to.  Excludes the PC itself.  Reads from
+   * `filteredShared.pcSlots` + `synthesizedPcs` to honor the
+   * spoiler-firewall (UX-expert pre-design lock: targets must be
+   * a PC the table has met).
+   */
+  private bondTargetCandidates(
+    selfPcId: string
+  ): Array<{ pcId: string; name: string }> {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return [];
+    const out: Array<{ pcId: string; name: string }> = [];
+    for (const seat of Object.values(v.filteredShared.pcSlots)) {
+      if (seat.state !== 'bound-active') continue;
+      const pcId = seat.pcId;
+      if (!pcId || pcId === selfPcId) continue;
+      const record = v.filteredShared.synthesizedPcs?.[pcId];
+      const name = (record?.name as string | undefined) ?? pcId;
+      out.push({ pcId, name });
+    }
+    return out;
+  }
+
+  removeBond(opts: { pcId: string; id: string }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    const proposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
+    const ratified = v.shared.pcBonds?.[opts.pcId] ?? [];
+    const inProposals = proposals.some((p) => p.id === opts.id);
+    const inRatified = ratified.some((b) => b.id === opts.id);
+    if (!inProposals && !inRatified) return false;
+    this.session.append('bond-remove', {
+      v: 1,
+      id: opts.id,
+      pcId: opts.pcId
+    });
+    return true;
+  }
+
+  /**
    * Phase 3a Cluster E step 2/6: the unified DM-review region —
    * subsumes the prior `<seat-strip>` + `<invite-manager>` mounts.
    * Lazy-mounts the module on first DM render.
@@ -3692,6 +3843,12 @@ export class QuireApp extends LitElement {
         .onNavigate=${(e: Event, route: AppRoute) =>
           this.navigate(e, route)}
         .onToggleClaim=${() => this.toggleClaimCharacter(bound)}
+        .bonds=${this.buildBondsCardEntries(bound.id)}
+        .bondTargetCandidates=${this.bondTargetCandidates(bound.id)}
+        .onProposeBond=${editable
+          ? (targetPcId: string, text: string) =>
+              void this.proposeBond({ pcId: bound.id, targetPcId, text })
+          : null}
       ></player-rail>
     `;
   }
@@ -6789,6 +6946,42 @@ export class QuireApp extends LitElement {
     if (record.alignmentDrift !== undefined)
       view.alignmentDrift = record.alignmentDrift;
     if (dmNotes !== undefined) view.dmNotes = dmNotes;
+    // D5 (2026-05-27): bonds (ratified) + proposals (pending) for
+    // the DM view.  Coord viewer; non-coord doesn't mount
+    // dm-pc-detail.  Pull from v.shared (DM read path) since
+    // dm-pc-detail is coord-gated upstream by the parent render
+    // method that branches on isCoordinator().
+    const ratifiedBonds = v.shared.pcBonds?.[character.id] ?? [];
+    if (ratifiedBonds.length > 0) {
+      view.bonds = ratifiedBonds.map((b) => {
+        const target = v.shared.synthesizedPcs?.[b.targetPcId];
+        const entry: import('./ui/field-renderers/bonds-card').BondsCardEntry = {
+          id: b.id,
+          targetPcId: b.targetPcId,
+          text: b.text,
+          targetLabel:
+            (target?.name as string | undefined) ??
+            `(unknown: ${b.targetPcId})`
+        };
+        if (b.dmNotes !== undefined) entry.dmNotes = b.dmNotes;
+        return entry;
+      });
+    }
+    const pendingBonds = v.shared.pcBondProposals?.[character.id] ?? [];
+    if (pendingBonds.length > 0) {
+      view.bondProposals = pendingBonds.map((p) => {
+        const target = v.shared.synthesizedPcs?.[p.targetPcId];
+        return {
+          id: p.id,
+          targetPcId: p.targetPcId,
+          text: p.text,
+          proposedByPeerId: p.proposedByPeerId,
+          targetLabel:
+            (target?.name as string | undefined) ??
+            `(unknown: ${p.targetPcId})`
+        };
+      });
+    }
     // Wave B (2026-05-26): wire the 4 magic-arc runtime control
     // callbacks ONLY when the local viewer is the coord.  Non-coord
     // viewers see the read-only card without arc controls.
@@ -6833,6 +7026,22 @@ export class QuireApp extends LitElement {
       .onResetSpamCounter=${
         isCoord
           ? (pcId: string) => this.resetSpamCounter(pcId)
+          : null
+      }
+      .onRatifyBond=${
+        isCoord
+          ? (pcId: string, id: string, opts?: { dmNotes?: string }) =>
+              this.ratifyBond({
+                pcId,
+                id,
+                ...(opts?.dmNotes ? { dmNotes: opts.dmNotes } : {})
+              })
+          : null
+      }
+      .onRemoveBond=${
+        isCoord
+          ? (pcId: string, id: string) =>
+              this.removeBond({ pcId, id })
           : null
       }
     ></dm-pc-detail>`;

@@ -44,6 +44,8 @@ import { routeToSearch } from '../../routing';
 import '../field-renderers/track-bar';
 import '../field-renderers/stat-grid';
 import '../field-renderers/foci-card';
+import '../field-renderers/bonds-card';
+import type { BondsCardEntry } from '../field-renderers/bonds-card';
 import '../field-renderers/conditions-list';
 import '../field-renderers/money-band-selector';
 
@@ -240,6 +242,29 @@ export class PlayerRail extends LitElement {
    * the entire surface is hidden (DM view, NPC sheet, no session).
    */
   @property({ attribute: false }) retirePip: RetireRequestPip | null = null;
+  /**
+   * D5 (2026-05-27): per-PC ratified bonds for THIS PC.
+   * Adapted by the host from `state.pcBonds[character.id]` +
+   * targetLabel lookups against `synthesizedPcs`.  Empty/null =
+   * no bonds card rendered.
+   */
+  @property({ attribute: false }) bonds: BondsCardEntry[] = [];
+  /**
+   * D5 (2026-05-27): inline-add affordance.  When set, the bonds
+   * card shows a "Propose bond" form.  Host wires to
+   * `QuireApp.proposeBond`.
+   */
+  @property({ attribute: false }) onProposeBond:
+    | ((targetPcId: string, text: string) => void)
+    | null = null;
+  /**
+   * D5 (2026-05-27): list of other PCs this PC can bond to (id +
+   * display name).  Used by the propose-bond form's target picker.
+   */
+  @property({ attribute: false }) bondTargetCandidates: Array<{
+    pcId: string;
+    name: string;
+  }> = [];
   @property({ attribute: false }) onRequestRetire:
     | RequestRetireCallback
     | null = null;
@@ -249,6 +274,10 @@ export class PlayerRail extends LitElement {
    * on submit / cancel.
    */
   @state() private retireFormOpen = false;
+  /** D5 (2026-05-27): bond-propose inline-form state. */
+  @state() private bondFormOpen = false;
+  @state() private bondFormTarget = '';
+  @state() private bondFormText = '';
   @state() private retireFormReason: 'died' | 'departed' | 'converted-to-npc' | 'other' =
     'departed';
   @state() private retireFormText = '';
@@ -379,6 +408,16 @@ export class PlayerRail extends LitElement {
               .onSetFocusStatus=${this.onSetFocusStatus}
               ?hideBoundFor=${true}
             ></foci-card>`
+          : nothing}
+        ${this.bonds.length > 0 ||
+        (editable && this.onProposeBond !== null)
+          ? html`<bonds-card
+              .bonds=${this.bonds}
+              .editablePcId=${null}
+            ></bonds-card>
+            ${editable && this.onProposeBond !== null
+              ? this.renderProposeBondForm(character.id)
+              : nothing}`
           : nothing}
         ${r.conditions?.length
           ? html`<conditions-list
@@ -677,6 +716,107 @@ export class PlayerRail extends LitElement {
       this.retireFormOpen = false;
       this.retireFormText = '';
     }
+  }
+
+  /**
+   * D5 (2026-05-27): inline form for proposing a bond.  Opens
+   * inside the bonds-card area when the local peer controls the
+   * PC.  Target picker is a `<select>` of other PCs in the
+   * campaign; text is a free-form string (200 char soft cap per
+   * UX-expert pre-design).  Submits via `onProposeBond` then
+   * clears + closes.
+   */
+  private renderProposeBondForm(pcId: string): TemplateResult {
+    void pcId;
+    if (!this.bondFormOpen) {
+      return html`<button
+        type="button"
+        class="bonds-card-add"
+        @click=${() => this.openBondForm()}
+      >
+        + Add bond
+      </button>`;
+    }
+    const candidates = this.bondTargetCandidates;
+    return html`<div class="bonds-card-compose">
+      <label class="bonds-card-compose-label">
+        Bond to
+        <select
+          class="bonds-card-compose-target"
+          .value=${this.bondFormTarget}
+          @change=${(e: Event) => {
+            this.bondFormTarget = (e.target as HTMLSelectElement).value;
+          }}
+        >
+          <option value="" ?selected=${this.bondFormTarget === ''}>
+            — pick a PC —
+          </option>
+          ${candidates.map(
+            (c) =>
+              html`<option
+                value=${c.pcId}
+                ?selected=${this.bondFormTarget === c.pcId}
+              >
+                ${c.name}
+              </option>`
+          )}
+        </select>
+      </label>
+      <label class="bonds-card-compose-label">
+        Bond text
+        <textarea
+          class="bonds-card-compose-text"
+          rows="2"
+          maxlength="500"
+          placeholder="e.g., we were classmates at Berkeley"
+          .value=${this.bondFormText}
+          @input=${(e: Event) => {
+            this.bondFormText = (e.target as HTMLTextAreaElement).value;
+          }}
+        ></textarea>
+      </label>
+      <div class="bonds-card-compose-actions">
+        <button
+          type="button"
+          class="bonds-card-compose-submit"
+          ?disabled=${this.bondFormTarget === '' ||
+          this.bondFormText.trim().length === 0}
+          @click=${() => this.submitBondForm()}
+        >
+          Propose bond
+        </button>
+        <button
+          type="button"
+          class="bonds-card-compose-cancel"
+          @click=${() => this.cancelBondForm()}
+        >
+          Cancel
+        </button>
+      </div>
+      <p class="muted bonds-card-compose-hint">
+        DM will review + ratify before others see this bond.
+      </p>
+    </div>`;
+  }
+
+  private openBondForm(): void {
+    this.bondFormOpen = true;
+    this.bondFormTarget = '';
+    this.bondFormText = '';
+  }
+
+  private cancelBondForm(): void {
+    this.bondFormOpen = false;
+    this.bondFormTarget = '';
+    this.bondFormText = '';
+  }
+
+  private submitBondForm(): void {
+    if (!this.onProposeBond) return;
+    const text = this.bondFormText.trim();
+    if (text.length === 0 || this.bondFormTarget === '') return;
+    this.onProposeBond(this.bondFormTarget, text);
+    this.cancelBondForm();
   }
 
   private renderClaimAffordance(): TemplateResult | typeof nothing {

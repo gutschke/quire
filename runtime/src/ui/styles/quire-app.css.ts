@@ -3007,6 +3007,177 @@ export const quireAppStyles = css`
     }
 
     /* Phase B P1d (2026-05-26): foci-card field-renderer. */
+    /* D5 (2026-05-27): bonds-card. */
+    .bonds-card {
+      margin-top: 0.6rem;
+    }
+    .bonds-card-head h4 {
+      margin: 0 0 0.4rem;
+      font-size: 0.95rem;
+    }
+    .bonds-card-empty {
+      margin: 0;
+      font-size: 0.85rem;
+    }
+    .bonds-card-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .bonds-card-row {
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 4px;
+      padding: 0.4rem 0.6rem;
+      position: relative;
+    }
+    .bonds-card-target {
+      font-size: 0.9rem;
+    }
+    .bonds-card-text {
+      margin: 0.2rem 0 0;
+      font-size: 0.88rem;
+    }
+    .bonds-card-dm-notes {
+      margin-top: 0.3rem;
+      padding: 0.3rem 0.5rem;
+      background: light-dark(#fffbeb, #292524);
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      font-size: 0.82rem;
+      color: light-dark(#92400e, #fde68a);
+    }
+    .bonds-card-remove {
+      position: absolute;
+      top: 0.3rem;
+      right: 0.3rem;
+      padding: 0.1rem 0.4rem;
+      background: transparent;
+      border: 1px solid transparent;
+      color: light-dark(#94a3b8, #64748b);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .bonds-card-remove:hover {
+      color: light-dark(#dc2626, #ef4444);
+      border-color: light-dark(#fca5a5, #991b1b);
+      border-radius: 3px;
+    }
+    .bonds-card-add {
+      margin-top: 0.4rem;
+      padding: 0.3rem 0.7rem;
+      border: 1px dashed light-dark(#cbd5e1, #475569);
+      background: transparent;
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.85rem;
+    }
+    .bonds-card-compose {
+      margin-top: 0.4rem;
+      padding: 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .bonds-card-compose-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.85rem;
+    }
+    .bonds-card-compose-target,
+    .bonds-card-compose-text {
+      padding: 0.3rem 0.4rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 3px;
+      font: inherit;
+      font-size: 0.88rem;
+    }
+    .bonds-card-compose-actions {
+      display: flex;
+      gap: 0.4rem;
+    }
+    .bonds-card-compose-submit,
+    .bonds-card-compose-cancel {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .bonds-card-compose-submit {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#60a5fa, #3b82f6);
+    }
+    .bonds-card-compose-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .bonds-card-compose-hint {
+      margin: 0;
+      font-size: 0.78rem;
+    }
+    /* D5 (2026-05-27): dm-pc-detail pending-bond-proposal list. */
+    .dm-pc-detail-bond-proposals {
+      border-top: 1px solid light-dark(#e2e8f0, #334155);
+      padding-top: 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .dm-pc-detail-bond-proposals h3 {
+      margin: 0 0 0.4rem;
+      font-size: 0.95rem;
+    }
+    .dm-pc-detail-bond-proposal-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .dm-pc-detail-bond-proposal {
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      border-radius: 4px;
+      padding: 0.4rem 0.6rem;
+    }
+    .dm-pc-detail-bond-proposal p {
+      margin: 0 0 0.2rem;
+      font-size: 0.88rem;
+    }
+    .dm-pc-detail-bond-proposal-text {
+      font-style: italic;
+    }
+    .dm-pc-detail-bond-proposal-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-top: 0.3rem;
+    }
+    .dm-pc-detail-bond-ratify,
+    .dm-pc-detail-bond-reject {
+      padding: 0.2rem 0.6rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .dm-pc-detail-bond-ratify {
+      background: light-dark(#dbeafe, #1e3a8a);
+      border-color: light-dark(#60a5fa, #3b82f6);
+    }
+
     .foci-card {
       margin-top: 0.6rem;
     }

@@ -35,6 +35,7 @@ import type {
 } from '../../character-loader';
 import type { CasterState, ThreadDebtLevel } from '../../core/state';
 import './magic-arc-controls';
+import '../field-renderers/bonds-card';
 import type {
   LogAccidentalGrantCallback,
   MarkRealizationCallback,
@@ -102,6 +103,25 @@ export interface DmDetailView extends MagicArcControlsView {
   foci?: Focus[];
   alignmentDrift?: AlignmentDrift;
   dmNotes?: string;
+  /**
+   * D5 (2026-05-27): ratified bonds for this PC.  Host builds
+   * these from `state.pcBonds[pcId]` + target-label lookups.
+   * Empty array when none; per-entry `dmNotes` is visible here
+   * (DM view); rendered via `<bonds-card>` with editablePcId set.
+   */
+  bonds?: import('../field-renderers/bonds-card').BondsCardEntry[];
+  /**
+   * D5 (2026-05-27): pending bond proposals for this PC awaiting
+   * DM ratification.  Empty array when none.  Each entry has
+   * `id`, `targetPcId`, `targetLabel`, `text`, `proposedByPeerId`.
+   */
+  bondProposals?: Array<{
+    id: string;
+    targetPcId: string;
+    targetLabel: string;
+    text: string;
+    proposedByPeerId: string;
+  }>;
 }
 
 // (Wave C5: callback types now live in `./magic-arc-controls.ts`
@@ -133,7 +153,9 @@ function hasAnyDmField(view: DmDetailView): boolean {
       view.accidentalGrants.length > 0) ||
     (Array.isArray(view.foci) && view.foci.length > 0) ||
     view.alignmentDrift !== undefined ||
-    (typeof view.dmNotes === 'string' && view.dmNotes.length > 0)
+    (typeof view.dmNotes === 'string' && view.dmNotes.length > 0) ||
+    (Array.isArray(view.bonds) && view.bonds.length > 0) ||
+    (Array.isArray(view.bondProposals) && view.bondProposals.length > 0)
   );
 }
 
@@ -190,6 +212,18 @@ export class DmPcDetail extends LitElement {
   @property({ attribute: false })
   casterState: CasterState | null = null;
 
+  /**
+   * D5 (2026-05-27): bond callbacks — coord-only.  Host wires
+   * to `QuireApp.ratifyBond` / `QuireApp.removeBond`.  Null when
+   * the host wants read-only.
+   */
+  @property({ attribute: false })
+  onRatifyBond:
+    | ((pcId: string, id: string, opts?: { dmNotes?: string }) => void)
+    | null = null;
+  @property({ attribute: false })
+  onRemoveBond: ((pcId: string, id: string) => void) | null = null;
+
   // (Wave C5: inline-draft state + willUpdate guard moved into the
   // <magic-arc-controls> child component along with the arc-control
   // render methods.  This file stays a read-only renderer; arc
@@ -223,7 +257,76 @@ export class DmPcDetail extends LitElement {
       ${this.renderFoci(view.foci)}
       ${this.renderDmNotes(view.dmNotes)}
       ${this.renderArcControlsChild(view)}
+      ${this.renderBonds(view)}
+      ${this.renderBondProposals(view)}
     </section>`;
+  }
+
+  /**
+   * D5 (2026-05-27): render the ratified bonds list for the DM
+   * view.  Per-entry `dmNotes` visible here.  Delete callback
+   * removes the bond (coord-only).  Hidden when no bonds.
+   */
+  private renderBonds(view: DmDetailView): TemplateResult | typeof nothing {
+    const bonds = view.bonds ?? [];
+    if (bonds.length === 0) return nothing;
+    return html`<div class="dm-pc-detail-section">
+      <bonds-card
+        .bonds=${bonds}
+        .editablePcId=${view.pcId}
+        .onRemove=${this.onRemoveBond
+          ? (pcId: string, id: string) => this.onRemoveBond?.(pcId, id)
+          : null}
+      ></bonds-card>
+    </div>`;
+  }
+
+  /**
+   * D5 (2026-05-27): pending bond proposals awaiting DM
+   * ratification.  Each row shows the proposed bond text + target
+   * + the player who proposed it.  Ratify (coord-only) accepts
+   * the proposal as-is (DM can optionally add dmNotes via the
+   * inline form); Remove rejects the proposal.
+   */
+  private renderBondProposals(
+    view: DmDetailView
+  ): TemplateResult | typeof nothing {
+    const proposals = view.bondProposals ?? [];
+    if (proposals.length === 0) return nothing;
+    return html`<div class="dm-pc-detail-section dm-pc-detail-bond-proposals">
+      <h3>Pending bond proposals (${proposals.length})</h3>
+      <ul class="dm-pc-detail-bond-proposal-list">
+        ${proposals.map(
+          (p) => html`<li class="dm-pc-detail-bond-proposal">
+            <p>
+              <strong>${p.targetLabel}</strong>
+              <span class="muted"> · ${p.proposedByPeerId}</span>
+            </p>
+            <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
+            <div class="dm-pc-detail-bond-proposal-actions">
+              ${this.onRatifyBond
+                ? html`<button
+                    type="button"
+                    class="dm-pc-detail-bond-ratify"
+                    @click=${() => this.onRatifyBond?.(view.pcId, p.id)}
+                  >
+                    Ratify
+                  </button>`
+                : nothing}
+              ${this.onRemoveBond
+                ? html`<button
+                    type="button"
+                    class="dm-pc-detail-bond-reject"
+                    @click=${() => this.onRemoveBond?.(view.pcId, p.id)}
+                  >
+                    Reject
+                  </button>`
+                : nothing}
+            </div>
+          </li>`
+        )}
+      </ul>
+    </div>`;
   }
 
   /** True when ANY write callback is wired (host is coord).
