@@ -187,4 +187,83 @@ describe('QuireApp pc-edit', () => {
       expect(host.effectiveCharacter(fakePc('p1')).dmNotes).toBeUndefined();
     });
   });
+
+  // -----------------------------------------------------------
+  // Wave B (2026-05-26) magic-arc DM runtime controls — host
+  // method coverage.  Verifier S4: pin the appendMarkRealization
+  // 4-event contract so a future refactor of pc-edit field names
+  // doesn't silently no-op the Realization beat.
+  // -----------------------------------------------------------
+
+  describe('Wave B: magic-arc DM runtime control host methods', () => {
+    it('appendMarkRealization emits the 4-field pc-edit batch in order', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(app.appendMarkRealization('p1')).toBe(true);
+      const merged = app.effectiveCharacter(fakePc('p1'));
+      expect(merged.magicPhase).toBe('realization');
+      expect(merged.knowsTheyCanCast).toBe(true);
+      expect(merged.tax?.active).toBe(true);
+      expect(merged.tax?.sessionsRemaining).toBe(3);
+    });
+
+    it('appendMarkRealization is a no-op for non-coord viewers', async () => {
+      const net = new InMemoryNetwork();
+      const host = mountApp(inMemoryFactory(net, 'HOST'));
+      host.startHosting();
+      await flush();
+      const guest = mountApp(inMemoryFactory(net, 'GUEST'));
+      guest.joinCodeDraft = 'HOST';
+      guest.joinSession();
+      await flush();
+      expect(guest.isCoordinator()).toBe(false);
+      expect(guest.appendMarkRealization('p1')).toBe(false);
+      const merged = host.effectiveCharacter(fakePc('p1'));
+      expect(merged.magicPhase).toBeUndefined();
+    });
+
+    it('appendAccidentalGrantLog appends to shared state.pcAccidentalGrants', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(
+        app.appendAccidentalGrantLog('p1', 'cabinet code came to mind')
+      ).toBe(true);
+      const grants = app.sessionView!.shared.pcAccidentalGrants.p1;
+      expect(grants).toHaveLength(1);
+      expect(grants[0].note).toBe('cabinet code came to mind');
+    });
+
+    it('appendFocusGrant appends to shared state.pcFoci with active default', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      expect(
+        app.appendFocusGrant('p1', { name: 'pattern-sense', domain: 'perception' })
+      ).toBe(true);
+      const foci = app.sessionView!.shared.pcFoci.p1;
+      expect(foci).toHaveLength(1);
+      expect(foci[0].name).toBe('pattern-sense');
+      expect(foci[0].domain).toBe('perception');
+      expect(foci[0].status).toBe('active');
+    });
+
+    it('appendReleaseTax flips tax.active to false + records the moment', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      // Set up: activate tax first.
+      app.submitPcEdit('p1', 'tax.active', true);
+      await flush();
+      expect(
+        app.appendReleaseTax('p1', 'she let her sister see the trick')
+      ).toBe(true);
+      const merged = app.effectiveCharacter(fakePc('p1'));
+      expect(merged.tax?.active).toBe(false);
+      expect(merged.tax?.releaseMoment).toBe(
+        'she let her sister see the trick'
+      );
+    });
+  });
 });

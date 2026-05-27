@@ -2058,6 +2058,159 @@ export const quireAppStyles = css`
       margin: 0;
       white-space: pre-wrap;
     }
+    /* Wave B (2026-05-26): foci list + magic-arc DM runtime controls. */
+    .dm-pc-detail-foci {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .dm-pc-detail-focus {
+      padding: 0.25rem 0;
+      border-bottom: 1px dotted light-dark(#e2e8f0, #334155);
+    }
+    .dm-pc-detail-focus:last-child {
+      border-bottom: none;
+    }
+    .dm-pc-detail-focus-name {
+      font-weight: 500;
+    }
+    .dm-pc-detail-focus-domain {
+      font-size: 0.85em;
+    }
+    .dm-pc-detail-focus-status {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.72em;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .dm-pc-detail-focus-status[data-status='active'] {
+      background: light-dark(#dcfce7, #14532d);
+      color: light-dark(#14532d, #bbf7d0);
+    }
+    .dm-pc-detail-focus-status[data-status='broken'],
+    .dm-pc-detail-focus-status[data-status='corrupted'] {
+      background: light-dark(#fee2e2, #7f1d1d);
+      color: light-dark(#7f1d1d, #fecaca);
+    }
+    .dm-pc-detail-focus-status[data-status='faded'],
+    .dm-pc-detail-focus-status[data-status='transformed'] {
+      background: light-dark(#fef3c7, #78350f);
+      color: light-dark(#78350f, #fde68a);
+    }
+    .dm-pc-detail-focus-notes {
+      font-size: 0.85em;
+      margin: 0.2rem 0 0;
+    }
+    .dm-pc-detail-arc-controls {
+      border-top: 1px dashed light-dark(#fde68a, #92400e);
+      padding-top: 0.6rem;
+      margin-top: 0.5rem;
+    }
+    .dm-pc-detail-arc-controls h3 {
+      color: light-dark(#92400e, #fcd34d);
+    }
+    .dm-pc-detail-arc-row {
+      padding: 0.5rem 0;
+      border-bottom: 1px dotted light-dark(#e2e8f0, #334155);
+    }
+    .dm-pc-detail-arc-row:last-child {
+      border-bottom: none;
+    }
+    .dm-pc-detail-arc-label {
+      display: block;
+      font-weight: 500;
+      font-size: 0.9em;
+      margin-bottom: 0.2rem;
+    }
+    .dm-pc-detail-arc-hint {
+      display: block;
+      font-size: 0.78em;
+      color: light-dark(#64748b, #94a3b8);
+      font-weight: 400;
+      margin-top: 0.1rem;
+    }
+    .dm-pc-detail-arc-text {
+      display: block;
+      width: 100%;
+      margin-top: 0.3rem;
+      padding: 0.35rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+    .dm-pc-detail-arc-focus-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.3rem;
+    }
+    .dm-pc-detail-arc-focus-form input {
+      flex: 1 1 12rem;
+      min-width: 0;
+      padding: 0.3rem 0.45rem;
+      font: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border-radius: 3px;
+    }
+    .dm-pc-detail-arc-commit {
+      margin-top: 0.35rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 3px;
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fcd34d);
+      border: 1px solid light-dark(#fcd34d, #92400e);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .dm-pc-detail-arc-commit:hover:not(:disabled) {
+      background: light-dark(#fde68a, #78350f);
+    }
+    .dm-pc-detail-arc-commit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .dm-pc-detail-arc-cancel {
+      margin-top: 0.35rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 3px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      cursor: pointer;
+    }
+    .dm-pc-detail-arc-realize {
+      margin-top: 0.2rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 4px;
+      background: light-dark(#dbeafe, #1e3a8a);
+      color: light-dark(#0b3d7f, #dbeafe);
+      border: 1px solid light-dark(#93c5fd, #2563eb);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .dm-pc-detail-arc-realize:hover {
+      background: light-dark(#bfdbfe, #1e40af);
+    }
+    .dm-pc-detail-arc-confirm {
+      background: light-dark(#fffbeb, #1c1917);
+      padding: 0.5rem;
+      border-radius: 4px;
+      border-left: 3px solid light-dark(#f59e0b, #b45309);
+    }
+    .dm-pc-detail-arc-confirm-actions {
+      display: flex;
+      gap: 0.4rem;
+      margin-top: 0.5rem;
+    }
 
     /* Phase B P5 (2026-05-26): session-wrap-marks end-of-session sheet. */
     .session-wrap-marks-head {

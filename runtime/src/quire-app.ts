@@ -1920,6 +1920,162 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Wave B (2026-05-26): magic-arc DM runtime controls — coord-
+   * only event emitters for the four beat-affordances exposed on
+   * `<dm-pc-detail>`.  Each returns true on append, false when
+   * off-session / non-coord / payload invalid; the UI uses the
+   * boolean to decide whether to clear its inline-editor draft.
+   *
+   * Per TTRPG-expert anti-pattern warning: these accept DM-typed
+   * strings only.  Do NOT add an AI auto-suggest wrapper around
+   * any of these — the silent-player-firewall principle requires
+   * the DM to author silent grants / release moments in their own
+   * words.
+   */
+  appendAccidentalGrantLog(pcId: string, note: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!pcId || pcId.length === 0) return false;
+    const trimmed = note.trim();
+    if (trimmed.length === 0 || trimmed.length > 200) return false;
+    this.session.append('accidental-grant-log', {
+      v: 1,
+      pcId,
+      note: trimmed
+    });
+    return true;
+  }
+
+  /**
+   * Wave B: one-click Realization-beat affordance.  Multi-field
+   * pc-edit batch — flips knowsTheyCanCast=true + sets
+   * magicPhase=realization + activates the trying-too-hard tax
+   * with 3 sessions remaining (rules.md:180-184 default).  The DM
+   * narrates the beat in fiction first; this is the bookkeeping
+   * after.
+   *
+   * Implementation: sends a sequence of pc-edit events (one per
+   * field) since pc-edit currently carries one field per event.
+   * Each event applied in log order; final shared state is the
+   * union per LWW semantics on each field.
+   */
+  appendMarkRealization(pcId: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!pcId || pcId.length === 0) return false;
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'magicPhase',
+      value: 'realization'
+    });
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'knowsTheyCanCast',
+      value: true
+    });
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'tax.active',
+      value: true
+    });
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'tax.sessionsRemaining',
+      value: 3
+    });
+    return true;
+  }
+
+  /**
+   * Wave B: grant a focus to a PC.  Coord-only; append-only.
+   * Player-visible by design — once granted, the player's rail
+   * surfaces the focus (rules.md:139).  Caller-side gate in the
+   * UI ensures magicPhase >= 'realization' before this fires;
+   * the engine doesn't check phase (campaigns may want to grant
+   * a focus mid-Accidental for narrative reasons — the campaign-
+   * policy boundary applies, not engine policy).
+   */
+  appendFocusGrant(
+    pcId: string,
+    focus: {
+      name: string;
+      domain?: string;
+      condition?: string;
+      notes?: string;
+      status?: 'active' | 'broken' | 'faded' | 'corrupted' | 'transformed';
+      boundFor?: string;
+    }
+  ): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!pcId || pcId.length === 0) return false;
+    const name = focus.name?.trim();
+    if (!name || name.length === 0 || name.length > 80) return false;
+    const payloadFocus: typeof focus = { name };
+    if (focus.domain && focus.domain.trim().length > 0) {
+      payloadFocus.domain = focus.domain.trim();
+    }
+    if (focus.condition && focus.condition.trim().length > 0) {
+      payloadFocus.condition = focus.condition.trim();
+    }
+    if (focus.notes && focus.notes.trim().length > 0) {
+      payloadFocus.notes = focus.notes.trim();
+    }
+    if (focus.status !== undefined) payloadFocus.status = focus.status;
+    if (focus.boundFor && focus.boundFor.trim().length > 0) {
+      payloadFocus.boundFor = focus.boundFor.trim();
+    }
+    this.session.append('focus-grant', {
+      v: 1,
+      pcId,
+      focus: payloadFocus
+    });
+    return true;
+  }
+
+  /**
+   * Wave B: release the trying-too-hard tax in fiction (rules.md:182).
+   * Coord-only.  Drops tax.active to false and records the DM-
+   * authored release moment as a player-safe label.  The release
+   * IS a fiction beat — narrate first, click after.
+   *
+   * **Note (Verifier N5):** this is the CANONICAL termination
+   * path for the tax.  No engine-level decay decrements
+   * `tax.sessionsRemaining` automatically; the DM either releases
+   * here OR pc-edits the field manually if the campaign uses a
+   * different cadence.  A session-end auto-decrement could land
+   * in a future wave but is intentionally out of scope today.
+   */
+  appendReleaseTax(pcId: string, releaseMoment: string): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!pcId || pcId.length === 0) return false;
+    const trimmed = releaseMoment.trim();
+    if (trimmed.length === 0 || trimmed.length > 200) return false;
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'tax.active',
+      value: false
+    });
+    this.session.append('pc-edit', {
+      v: 1,
+      pcId,
+      field: 'tax.releaseMoment',
+      value: trimmed
+    });
+    return true;
+  }
+
+  /**
    * #294 (2026-05-26): coord-only seat-memory edit on a retired or
    * archived seat.  Empty string clears the memory.  Returns true on
    * append; refuses (returns false) when off-session / non-coord /
@@ -5522,6 +5678,7 @@ export class QuireApp extends LitElement {
           ? record.dmNotes
           : undefined;
     const view: import('./ui/regions/dm-pc-detail').DmDetailView = {
+      pcId: character.id,
       pcName:
         typeof record.name === 'string' && record.name.length > 0
           ? record.name
@@ -5532,12 +5689,54 @@ export class QuireApp extends LitElement {
       view.knowsTheyCanCast = record.knowsTheyCanCast;
     if (record.tax !== undefined) view.tax = record.tax;
     if (record.threadDebt !== undefined) view.threadDebt = record.threadDebt;
-    if (record.accidentalGrants !== undefined)
-      view.accidentalGrants = record.accidentalGrants;
+    // Wave B (2026-05-26): merge disk-authored grants + session
+    // grants from state.pcAccidentalGrants[pcId].  filterForViewer
+    // wipes pcAccidentalGrants for non-coord, so this read is
+    // DM-only by construction.
+    const sessionGrants = v.shared.pcAccidentalGrants?.[character.id] ?? [];
+    const diskGrants = record.accidentalGrants ?? [];
+    const mergedGrants = [...diskGrants, ...sessionGrants];
+    if (mergedGrants.length > 0) view.accidentalGrants = mergedGrants;
+    // Wave B (2026-05-26): merge disk-authored foci + session
+    // focus-grants.  Player-visible (pcFoci flows through
+    // filterForViewer).
+    const sessionFoci = v.shared.pcFoci?.[character.id] ?? [];
+    const diskFoci = record.foci ?? [];
+    const mergedFoci = [...diskFoci, ...sessionFoci];
+    if (mergedFoci.length > 0) view.foci = mergedFoci;
     if (record.alignmentDrift !== undefined)
       view.alignmentDrift = record.alignmentDrift;
     if (dmNotes !== undefined) view.dmNotes = dmNotes;
-    return html`<dm-pc-detail .view=${view}></dm-pc-detail>`;
+    // Wave B (2026-05-26): wire the 4 magic-arc runtime control
+    // callbacks ONLY when the local viewer is the coord.  Non-coord
+    // viewers see the read-only card without arc controls.
+    const isCoord = this.isCoordinator();
+    return html`<dm-pc-detail
+      .view=${view}
+      .onLogAccidentalGrant=${
+        isCoord
+          ? (pcId: string, note: string) =>
+              this.appendAccidentalGrantLog(pcId, note)
+          : null
+      }
+      .onMarkRealization=${
+        isCoord ? (pcId: string) => this.appendMarkRealization(pcId) : null
+      }
+      .onGrantFocus=${
+        isCoord
+          ? (
+              pcId: string,
+              focus: { name: string; domain?: string; notes?: string }
+            ) => this.appendFocusGrant(pcId, focus)
+          : null
+      }
+      .onReleaseTax=${
+        isCoord
+          ? (pcId: string, moment: string) =>
+              this.appendReleaseTax(pcId, moment)
+          : null
+      }
+    ></dm-pc-detail>`;
   }
 
   /**

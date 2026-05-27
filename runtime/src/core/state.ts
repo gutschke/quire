@@ -9,7 +9,11 @@
  */
 
 import type { PeerId, QuireEvent } from './event-log';
-import type { CharacterRecord } from '../character-loader';
+import type {
+  CharacterRecord,
+  AccidentalGrant,
+  Focus
+} from '../character-loader';
 import type { ChargenPackDocument } from '../chargen-pack';
 import { CHARGEN_PACK_MAX_SIZE_BYTES } from '../chargen-pack';
 import {
@@ -580,6 +584,34 @@ export interface SessionState {
    * authorship via `pc-create` events.
    */
   synthesizedPcs: Record<string /*pcId*/, CharacterRecord>;
+
+  /**
+   * Wave B (2026-05-26): append-only log of DM-private Accidental-
+   * phase grants (rules.md:178).  Coord-authored via the new
+   * `accidental-grant-log` event.  Surfaced ONLY to the DM via
+   * `dm-pc-detail`; stripped from the non-coord projection in
+   * `filterForViewer` (it carries spoiler material — pre-Realization
+   * the player doesn't know they're being silently aided).
+   *
+   * Render merges `record.accidentalGrants ∪ pcAccidentalGrants[pcId]`
+   * so legacy disk-authored grants stay visible alongside session
+   * additions.
+   */
+  pcAccidentalGrants: Record<string /*pcId*/, AccidentalGrant[]>;
+
+  /**
+   * Wave B (2026-05-26): append-only list of foci granted to a PC
+   * during the session, via the new `focus-grant` event.  Coord-
+   * only authorship.  Player-visible at Realization (foci is NOT a
+   * DM-only field; players see their own foci once the DM grants
+   * them — that's the Realization-beat payoff).
+   *
+   * Render merges `record.foci ∪ pcFoci[pcId]`.  The TTRPG-firewall
+   * gate lives in the UI: `<dm-pc-detail>` only exposes "Grant
+   * focus" when magicPhase >= 'realization', so pre-realization
+   * accidents can't sneak a focus onto a player's sheet.
+   */
+  pcFoci: Record<string /*pcId*/, Focus[]>;
 }
 
 export function emptyState(): SessionState {
@@ -605,7 +637,9 @@ export function emptyState(): SessionState {
     synthesizedPcs: {},
     pcRetireRequests: [],
     pcRetireRejections: [],
-    pendingChargenPacks: []
+    pendingChargenPacks: [],
+    pcAccidentalGrants: {},
+    pcFoci: {}
   };
 }
 
@@ -814,6 +848,15 @@ export function filterForViewer(
     pcRetireRequests: filteredPcRetireRequests,
     pcRetireRejections: filteredPcRetireRejections,
     pendingChargenPacks: filteredPendingChargenPacks,
+    // Wave B (2026-05-26): the DM-private Accidental-phase grant
+    // log is wiped from non-coord projections.  Pre-Realization
+    // the player doesn't know they're being aided (rules.md:178);
+    // post-Realization the DM can choose to narrate callbacks but
+    // the grant log itself stays DM-only.
+    pcAccidentalGrants: {},
+    // pcFoci passes through unchanged — foci are player-visible by
+    // design at Realization onward.  The UI gate (Grant focus only
+    // when magicPhase >= 'realization') is the firewall.
     // Reveal-mask-gated:
     mapBlobs: filteredMapBlobs
   };
@@ -1428,7 +1471,14 @@ export const KNOWN_EVENT_KINDS = new Set([
   // backfill or revise the one-liner that future readers of
   // `{{pc:N}}` will see at the seat's Retired tile.  Idempotent —
   // re-emitting with the same text is a no-op.
-  'seat-memory-edit'
+  'seat-memory-edit',
+  // Wave B (2026-05-26): magic-arc DM runtime controls.
+  // `accidental-grant-log` appends to a PC's DM-private grant log
+  // during the Accidental phase (rules.md:178); `focus-grant`
+  // appends to a PC's foci list at Realization onward (one-way
+  // append; rules.md:139).  Both coord-only.
+  'accidental-grant-log',
+  'focus-grant'
 ]);
 
 /**
@@ -2692,6 +2742,145 @@ function applySeatMemoryEditEvent(
 }
 
 /**
+ * Wave B (2026-05-26): DM logs a silent Accidental-phase grant.
+ * Coord-only.  Append-only — each event records one moment in the
+ * arc (a coincidence, a near-miss, a remembered detail per
+ * rules.md:178).  Useful for narrative callbacks at Realization
+ * and for the post-session recap.  Carries spoiler material
+ * (pre-Realization the player doesn't know they're being aided);
+ * the grant log is stripped from the non-coord projection.
+ *
+ * LWW does NOT apply — every event creates a new entry, ordered by
+ * event.ts.  Replays preserve order.
+ */
+interface AccidentalGrantLogPayload {
+  v: 1;
+  pcId: string;
+  /** What the DM granted — short narrative line.  ≤200 chars. */
+  note: string;
+  /** Scene id where the grant landed, if applicable. */
+  sceneId?: string;
+}
+const ACCIDENTAL_GRANT_NOTE_MAX = 200;
+const ACCIDENTAL_GRANT_SCENE_MAX = 200;
+function applyAccidentalGrantLogEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<AccidentalGrantLogPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.note !== 'string') return;
+  if (p.note.length === 0 || p.note.length > ACCIDENTAL_GRANT_NOTE_MAX) {
+    return;
+  }
+  if (p.sceneId !== undefined) {
+    if (typeof p.sceneId !== 'string') return;
+    if (p.sceneId.length > ACCIDENTAL_GRANT_SCENE_MAX) return;
+  }
+  const grant: AccidentalGrant = {
+    ts: event.ts,
+    note: p.note
+  };
+  if (p.sceneId !== undefined) grant.sceneId = p.sceneId;
+  const prior = state.pcAccidentalGrants[p.pcId] ?? [];
+  state.pcAccidentalGrants[p.pcId] = [...prior, grant];
+}
+
+/**
+ * Wave B (2026-05-26): DM grants a focus to a PC.  Coord-only.
+ * Append-only — once granted, a focus exists for the PC's life;
+ * status changes (active → broken / faded / corrupted / transformed
+ * per rules.md:139) flow through a future focus-edit event.  The
+ * TTRPG firewall lives in the UI: `<dm-pc-detail>` only exposes
+ * "Grant focus" when magicPhase >= 'realization' so a pre-
+ * realization accident can't sneak a focus onto a player's sheet.
+ *
+ * Player-visible: foci are NOT a DM-only field.  Once a focus
+ * lands, the player sees it on their rail — that's the
+ * Realization-beat payoff.
+ *
+ * [E] Engine policy DELIBERATELY does NOT enforce the
+ * `magicPhase >= 'realization'` gate at the materializer.  Per
+ * the locked engine-vs-campaign-policy boundary, a future
+ * campaign might want pre-Realization foci for narrative reasons
+ * (e.g., heritage focus a PC inherits but doesn't know how to
+ * use yet).  The UI is the firewall, and the civilized-peers
+ * threat model tolerates UI-only gates.  Do NOT add a phase
+ * check here without a campaign-config opt-in.
+ */
+interface FocusGrantPayload {
+  v: 1;
+  pcId: string;
+  focus: {
+    name: string;
+    domain?: string;
+    condition?: string;
+    notes?: string;
+    status?: 'active' | 'broken' | 'faded' | 'corrupted' | 'transformed';
+    boundFor?: string;
+  };
+}
+const FOCUS_NAME_MAX = 80;
+const FOCUS_TEXT_MAX = 200;
+const FOCUS_VALID_STATUSES = new Set([
+  'active',
+  'broken',
+  'faded',
+  'corrupted',
+  'transformed'
+]);
+function applyFocusGrantEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<FocusGrantPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (!p.focus || typeof p.focus !== 'object') return;
+  const f = p.focus as Partial<FocusGrantPayload['focus']>;
+  if (typeof f.name !== 'string') return;
+  if (f.name.length === 0 || f.name.length > FOCUS_NAME_MAX) return;
+  // Optional fields — validate each shape when present.
+  if (f.domain !== undefined) {
+    if (typeof f.domain !== 'string') return;
+    if (f.domain.length > FOCUS_TEXT_MAX) return;
+  }
+  if (f.condition !== undefined) {
+    if (typeof f.condition !== 'string') return;
+    if (f.condition.length > FOCUS_TEXT_MAX) return;
+  }
+  if (f.notes !== undefined) {
+    if (typeof f.notes !== 'string') return;
+    if (f.notes.length > FOCUS_TEXT_MAX) return;
+  }
+  if (f.status !== undefined) {
+    if (typeof f.status !== 'string') return;
+    if (!FOCUS_VALID_STATUSES.has(f.status)) return;
+  }
+  if (f.boundFor !== undefined) {
+    if (typeof f.boundFor !== 'string') return;
+    if (f.boundFor.length > FOCUS_TEXT_MAX) return;
+  }
+  const focus: Focus = { name: f.name };
+  if (f.domain !== undefined) focus.domain = f.domain;
+  if (f.condition !== undefined) focus.condition = f.condition;
+  if (f.notes !== undefined) focus.notes = f.notes;
+  if (f.status !== undefined) {
+    focus.status = f.status;
+  } else {
+    // Default to 'active' on grant per rules.md:139 (a focus you
+    // hold IS active; status enum is for later state transitions).
+    focus.status = 'active';
+  }
+  if (f.boundFor !== undefined) focus.boundFor = f.boundFor;
+  const prior = state.pcFoci[p.pcId] ?? [];
+  state.pcFoci[p.pcId] = [...prior, focus];
+}
+
+/**
  * P-R11 (2026-05-25): record a player's request to retire their own
  * PC.  Player-authored — the event.peerId IS the requesting peer.
  * Validates the seat is bound-active and that the peer actually
@@ -2880,7 +3069,10 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'chargen-pack-clear': applyChargenPackClearEvent,
   // #294 (2026-05-26): edit the player-safe "seat memory" on a
   // retired or archived seat.
-  'seat-memory-edit': applySeatMemoryEditEvent
+  'seat-memory-edit': applySeatMemoryEditEvent,
+  // Wave B (2026-05-26): magic-arc DM runtime controls.
+  'accidental-grant-log': applyAccidentalGrantLogEvent,
+  'focus-grant': applyFocusGrantEvent
 };
 
 /**

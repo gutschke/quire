@@ -873,7 +873,8 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // #301 (2026-05-26): added seat-reveal → 42.
     // #253 (2026-05-26): added chargen-pack-deliver + chargen-pack-clear → 44.
     // #294 (2026-05-26): added seat-memory-edit → 45.
-    expect(KNOWN_EVENT_KINDS.size).toBe(45);
+    // Wave B (2026-05-26): added accidental-grant-log + focus-grant → 47.
+    expect(KNOWN_EVENT_KINDS.size).toBe(47);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -3290,6 +3291,255 @@ describe('materialize — pc-retire seatMemory + seat-memory-edit (#294)', () =>
     expect(playerView.pcSlots[1]?.retireReason).toBeUndefined();
     expect(playerView.pcSlots[1]?.retiredScene).toBeUndefined();
     expect(playerView.pcSlots[1]?.retiredAt).toBeUndefined();
+  });
+});
+
+describe('materialize — accidental-grant-log + focus-grant (Wave B magic-arc)', () => {
+  function setupBound(): { log: EventLog } {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', { name: 'Bob' });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    return { log };
+  }
+
+  it('accidental-grant-log: coord appends a grant to pcAccidentalGrants[pcId]', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'Mei found her keys exactly where she needed them'
+    });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants.mei).toHaveLength(1);
+    expect(state.pcAccidentalGrants.mei[0].note).toBe(
+      'Mei found her keys exactly where she needed them'
+    );
+    expect(state.pcAccidentalGrants.mei[0].ts).toBeGreaterThan(0);
+  });
+
+  it('accidental-grant-log: multiple events append in order', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', { v: 1, pcId: 'mei', note: 'first' });
+    log.append('accidental-grant-log', { v: 1, pcId: 'mei', note: 'second' });
+    log.append('accidental-grant-log', { v: 1, pcId: 'mei', note: 'third' });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants.mei.map((g) => g.note)).toEqual([
+      'first',
+      'second',
+      'third'
+    ]);
+  });
+
+  it('accidental-grant-log: optional sceneId is preserved when supplied', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'in fiction',
+      sceneId: 'ep1/scene-3'
+    });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants.mei[0].sceneId).toBe('ep1/scene-3');
+  });
+
+  it('accidental-grant-log: non-coord is silently dropped', () => {
+    const alice = new EventLog('alice');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Bob' });
+    alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const bob = new EventLog('bob');
+    bob.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'bob should not be able to write this'
+    });
+    const merged = [...alice.events(), ...bob.events()];
+    const state = materialize(merged);
+    expect(state.pcAccidentalGrants.mei).toBeUndefined();
+  });
+
+  it('accidental-grant-log: rejects empty note', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', { v: 1, pcId: 'mei', note: '' });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants.mei).toBeUndefined();
+  });
+
+  it('accidental-grant-log: rejects oversized note (>200 chars)', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'x'.repeat(201)
+    });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants.mei).toBeUndefined();
+  });
+
+  it('accidental-grant-log: rejects invalid pcId (path traversal)', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: '../escape',
+      note: 'hostile'
+    });
+    const state = materialize(log.events());
+    expect(state.pcAccidentalGrants['../escape']).toBeUndefined();
+  });
+
+  it('filterForViewer: pcAccidentalGrants STRIPPED from non-coord projection (DM-only spoiler firewall)', () => {
+    const { log } = setupBound();
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'DM-private aid'
+    });
+    const state = materialize(log.events());
+    const playerView = filterForViewer(state, 'bob');
+    expect(playerView.pcAccidentalGrants).toEqual({});
+    // Belt-and-suspenders: secret text is nowhere in the projection
+    expect(JSON.stringify(playerView)).not.toContain('DM-private aid');
+  });
+
+  it('focus-grant: coord appends a focus to pcFoci[pcId] with default active status', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'pattern-sense', domain: 'perception' }
+    });
+    const state = materialize(log.events());
+    expect(state.pcFoci.mei).toHaveLength(1);
+    expect(state.pcFoci.mei[0].name).toBe('pattern-sense');
+    expect(state.pcFoci.mei[0].domain).toBe('perception');
+    expect(state.pcFoci.mei[0].status).toBe('active');
+  });
+
+  it('focus-grant: caller-supplied status is preserved', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'old-bond', status: 'broken' }
+    });
+    const state = materialize(log.events());
+    expect(state.pcFoci.mei[0].status).toBe('broken');
+  });
+
+  it('focus-grant: optional fields all flow through when valid', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: {
+        name: 'the-grandmother-stone',
+        domain: 'memory',
+        condition: 'when held to forehead',
+        notes: 'inherited; warm to touch',
+        status: 'active',
+        boundFor: 'the recurring intent to remember home'
+      }
+    });
+    const state = materialize(log.events());
+    const f = state.pcFoci.mei[0];
+    expect(f.condition).toBe('when held to forehead');
+    expect(f.notes).toBe('inherited; warm to touch');
+    expect(f.boundFor).toBe('the recurring intent to remember home');
+  });
+
+  it('focus-grant: non-coord is silently dropped', () => {
+    const alice = new EventLog('alice');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Bob' });
+    alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    const bob = new EventLog('bob');
+    bob.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'bob-injected-focus' }
+    });
+    const merged = [...alice.events(), ...bob.events()];
+    const state = materialize(merged);
+    expect(state.pcFoci.mei).toBeUndefined();
+  });
+
+  it('focus-grant: rejects missing/empty/oversized name', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', { v: 1, pcId: 'mei', focus: { name: '' } });
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'x'.repeat(81) }
+    });
+    log.append('focus-grant', { v: 1, pcId: 'mei', focus: {} });
+    const state = materialize(log.events());
+    expect(state.pcFoci.mei).toBeUndefined();
+  });
+
+  it('focus-grant: rejects unknown status enum', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'x', status: 'shattered' as unknown as 'active' }
+    });
+    const state = materialize(log.events());
+    expect(state.pcFoci.mei).toBeUndefined();
+  });
+
+  it('filterForViewer: pcFoci SURVIVES player projection (player-visible at Realization)', () => {
+    const { log } = setupBound();
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'pattern-sense', domain: 'perception' }
+    });
+    const state = materialize(log.events());
+    const playerView = filterForViewer(state, 'bob');
+    expect(playerView.pcFoci.mei).toHaveLength(1);
+    expect(playerView.pcFoci.mei[0].name).toBe('pattern-sense');
+  });
+
+  it('emptyState includes pcAccidentalGrants + pcFoci as empty maps', () => {
+    const state = emptyState();
+    expect(state.pcAccidentalGrants).toEqual({});
+    expect(state.pcFoci).toEqual({});
+  });
+
+  it('verifier-S5: concurrent grants from two coordHolders both land (append-only, no LWW collision)', () => {
+    // Co-DM scenario: alice yields to bob; both are in
+    // coordHolders for authorship purposes.  Both fire
+    // accidental-grant-log on the same PC at the same wall-clock.
+    // Append-only semantics mean BOTH grants land; deterministic
+    // event-log ordering means replays produce the same array.
+    const alice = new EventLog('alice');
+    alice.append('coordinator-claim', {});
+    alice.append('peer-join', { name: 'Bob' });
+    alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    // Bob takes coord (the test relies on a reclaim being valid;
+    // the materializer puts bob in coordHolders).
+    const bob = new EventLog('bob');
+    bob.append('coordinator-reclaim', { fromPeerId: 'alice' });
+    // Both coords append a grant.
+    alice.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'alice-grant'
+    });
+    bob.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'bob-grant'
+    });
+    const merged = [...alice.events(), ...bob.events()];
+    const state = materialize(merged);
+    // Both grants land; order is deterministic by event-log
+    // append order in `merged` (alice-events first, then bob).
+    expect(state.pcAccidentalGrants.mei).toHaveLength(2);
+    const notes = state.pcAccidentalGrants.mei.map((g) => g.note);
+    expect(notes).toContain('alice-grant');
+    expect(notes).toContain('bob-grant');
   });
 });
 

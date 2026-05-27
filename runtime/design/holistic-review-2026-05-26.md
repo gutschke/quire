@@ -40,42 +40,67 @@ Unanimous "do first" — XS-S scope, BLOCKER-grade adversarial findings.
 - [x] **A5** — re-order Aside to spec (`dmAside+roster+chat+ai`);
   add `chat>` / `ai (DM)>` input glyph prefixes.
 
-### Wave B — magic-arc DM runtime controls 🚧 IN PROGRESS
+### Wave B — magic-arc DM runtime controls ✓ SHIPPED `<TBD>`
 
-TTRPG expert #1 — engine has the data, UI is read-only.  Discovery
+TTRPG expert #1 — engine had the data, UI was read-only.  Discovery
 arc is rules.md's act-1-to-act-2 spine.  Engineering also flagged
 character-edits.ts:31-35 explicit deferral of array ops.
 
 **Engine work:**
-- [ ] **B1** — new event kind `accidental-grant-log` (coord-only, append
-  to `state.pcAccidentalGrants[pcId]`); materializer + tests.
-- [ ] **B2** — new event kind `focus-grant` (coord-only, append to
-  `state.pcFoci[pcId]`); materializer + tests.  Gate UI on
-  `magicPhase >= 'realization'` per TTRPG firewall.
-- [ ] **B3** — extend `filterForViewer` to strip `pcAccidentalGrants`
+- [x] **B1** — new event kind `accidental-grant-log` (coord-only, append
+  to `state.pcAccidentalGrants[pcId]`); materializer + 8 tests.
+- [x] **B2** — new event kind `focus-grant` (coord-only, append to
+  `state.pcFoci[pcId]`); materializer + 7 tests.  Engine
+  deliberately does NOT enforce the magicPhase gate per
+  engine-vs-campaign-policy; UI is the firewall.
+- [x] **B3** — extend `filterForViewer` to strip `pcAccidentalGrants`
   for non-coord; `pcFoci` passes through (player-visible at
-  Realization).
-- [ ] **B4** — render-merge helper: `effective foci = record.foci ∪
-  state.pcFoci[pcId]`; same for accidentalGrants.
+  Realization).  Belt-and-suspenders firewall test pins it.
+- [x] **B4** — render-merge helper in `quire-app.ts:5524`:
+  `effective foci = record.foci ∪ state.pcFoci[pcId]`; same for
+  accidentalGrants.
 
 **UI work (dm-pc-detail.ts):**
-- [ ] **B5** — "Log silent grant" textarea + Save (Accidental phase
-  only).
-- [ ] **B6** — "Mark Realization" button → multi-field pc-edit
+- [x] **B5** — "Log silent grant" textarea + Save (Accidental phase).
+- [x] **B6** — "Mark Realization" button → multi-field pc-edit
   (`knowsTheyCanCast=true` + `magicPhase=realization` +
-  `tax.active=true` + `tax.sessionsRemaining=3`).
-- [ ] **B7** — "Grant focus" form (name + domain) → `focus-grant`
-  event.
-- [ ] **B8** — "Release tax" button + releaseMoment textarea →
+  `tax.active=true` + `tax.sessionsRemaining=3`); confirm dialog
+  + re-entry guard per verifier S2.
+- [x] **B7** — "Grant focus" form (name + domain) → `focus-grant`
+  event.  Gated on `magicPhase >= 'realization'` at UI layer.
+- [x] **B8** — "Release tax" button + releaseMoment textarea →
   pc-edit (`tax.active=false`, `tax.releaseMoment=text`).
 
-**Host wiring + tests + commit/push:**
-- [ ] **B9** — `quire-app` host methods for each new event.
-- [ ] **B10** — verification expert pass + commit + push.
+**Host wiring + verification:**
+- [x] **B9** — `quire-app` host methods: appendAccidentalGrantLog,
+  appendMarkRealization, appendFocusGrant, appendReleaseTax.
+- [x] **B10** — verifier pass: no BLOCKERS; addressed S1
+  (draft-leak across PC selection — `willUpdate` resets all
+  drafts on pcId change), S2 (re-entry guard on Realization
+  commit), S3 (TODO comment on under-captured focus fields), S4
+  (host-method batch test), S5 (concurrent-grants test from two
+  coordHolders), N1 (engine-vs-campaign-policy doc on focus
+  materializer), N5 (release-tax termination-path doc).
 
-**Anti-pattern from TTRPG expert (do NOT do):** don't auto-suggest
-the accidental-grant text via AI.  Must be DM-typed to preserve
-silent-player-firewall.
+**Anti-pattern from TTRPG expert (recorded so it doesn't drift):**
+DO NOT auto-suggest the accidental-grant text via AI.  Must be
+DM-typed to preserve silent-player-firewall.  Same rule applies
+to release-moment text.
+
+**Verifier deferred-to-followup items:**
+- S2 (atomic mark-realization event): the current implementation
+  fires 4 sequential pc-edit events.  Re-entry guard mitigates
+  double-click but a network drop mid-batch can leave
+  half-applied state.  An atomic `mark-realization` event would
+  be cleaner.  Defer to follow-up (composes with the broader
+  "more atomic multi-field pc-edits" theme).
+- S3 (expose focus condition/notes/status/boundFor in UI):
+  engine accepts these; UI captures only name+domain.  Wave C+.
+- N3 (dmNotes hint pointing at grant log): nice-to-have UX hint.
+- N4 (Realization confirm not a real `<dialog>`): hotkey-driven
+  flow is OK; upgrade if a11y audit demands it.
+- N5-followup (session-end auto-decrement of tax.sessionsRemaining):
+  campaign-side mechanic; defer.
 
 ### Wave C — DM cliff + chargen extraction (deferred)
 

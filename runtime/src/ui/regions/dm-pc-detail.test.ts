@@ -23,7 +23,7 @@ describe('<dm-pc-detail>', () => {
   });
 
   it('renders empty-state card when view has only pcName', async () => {
-    const el = mount({ pcName: 'Mei' });
+    const el = mount({ pcId: 'mei', pcName: 'Mei' });
     await el.updateComplete;
     expect(el.querySelector('.dm-pc-detail')).not.toBeNull();
     expect(el.textContent).toMatch(/No DM-only state/);
@@ -31,7 +31,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders magic-arc section when magicPhase + knowsTheyCanCast set', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       magicPhase: 'realization',
       knowsTheyCanCast: true
     });
@@ -43,7 +43,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders tax section when tax is set', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       tax: { active: true, sessionsRemaining: 2, releaseMoment: 'face Yui' }
     });
     await el.updateComplete;
@@ -54,7 +54,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders thread-debt section', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       threadDebt: { rung: 'watched', spamCount: 2 }
     });
     await el.updateComplete;
@@ -65,7 +65,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders alignment-drift section with 5 pips', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       alignmentDrift: { marks: 3 }
     });
     await el.updateComplete;
@@ -78,7 +78,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders accidental-grants when array non-empty', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       accidentalGrants: [
         { ts: 1700000000000, note: 'silent nudge at the cafe' }
       ]
@@ -90,7 +90,7 @@ describe('<dm-pc-detail>', () => {
 
   it('omits accidental-grants section when array empty', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       accidentalGrants: []
     });
     await el.updateComplete;
@@ -99,7 +99,7 @@ describe('<dm-pc-detail>', () => {
 
   it('renders dmNotes section when present', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       dmNotes: 'remember the cabinet code is 5519'
     });
     await el.updateComplete;
@@ -108,14 +108,14 @@ describe('<dm-pc-detail>', () => {
   });
 
   it('omits dmNotes section when empty string', async () => {
-    const el = mount({ pcName: 'Mei', dmNotes: '' });
+    const el = mount({ pcId: 'mei', pcName: 'Mei', dmNotes: '' });
     await el.updateComplete;
     expect(el.textContent).not.toMatch(/DM notes/);
   });
 
   it('full kitchen-sink view renders every section', async () => {
     const el = mount({
-      pcName: 'Mei',
+      pcId: 'mei', pcName: 'Mei',
       magicPhase: 'tax',
       knowsTheyCanCast: true,
       tax: { active: true, sessionsRemaining: 1 },
@@ -128,5 +128,113 @@ describe('<dm-pc-detail>', () => {
     const sections = el.querySelectorAll('.dm-pc-detail-section');
     // magic-arc, tax, thread-debt, alignment-drift, accidental-grants, dm-notes
     expect(sections.length).toBe(6);
+  });
+
+  // ---- Wave B (2026-05-26) magic-arc DM runtime controls ----
+
+  it('Wave B: no arc-controls section when host wires no callbacks (non-coord viewer)', async () => {
+    const el = mount({ pcId: 'mei', pcName: 'Mei', magicPhase: 'accidental' });
+    await el.updateComplete;
+    expect(el.querySelector('.dm-pc-detail-arc-controls')).toBeNull();
+  });
+
+  it('Wave B: log-silent-grant + commit fires onLogAccidentalGrant with pcId + trimmed note', async () => {
+    const calls: Array<[string, string]> = [];
+    const el = mount({ pcId: 'mei', pcName: 'Mei', magicPhase: 'accidental' });
+    el.onLogAccidentalGrant = (pcId, note) => {
+      calls.push([pcId, note]);
+      return true;
+    };
+    await el.updateComplete;
+    const textarea = el.querySelector(
+      '.dm-pc-detail-arc-text'
+    ) as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    textarea.value = '   found her keys exactly when she needed them  ';
+    textarea.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    const commitBtn = el.querySelector(
+      '.dm-pc-detail-arc-commit'
+    ) as HTMLButtonElement;
+    commitBtn.click();
+    expect(calls).toEqual([
+      ['mei', 'found her keys exactly when she needed them']
+    ]);
+  });
+
+  it('Wave B: grant-focus only renders when phase >= realization', async () => {
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'accidental'
+    });
+    el.onGrantFocus = () => true;
+    await el.updateComplete;
+    // Phase=accidental: grant-focus form NOT in DOM (placeholder is
+    // unique to that form).
+    expect(
+      el.querySelector(
+        'input[placeholder^="Focus name"]'
+      )
+    ).toBeNull();
+    // Flip to realization → form appears.
+    el.view = {
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    };
+    await el.updateComplete;
+    expect(
+      el.querySelector('input[placeholder^="Focus name"]')
+    ).not.toBeNull();
+  });
+
+  it('Wave B verifier-S1: drafts are wiped when view.pcId changes (no cross-PC leak)', async () => {
+    const calls: Array<[string, string]> = [];
+    const el = mount({ pcId: 'mei', pcName: 'Mei', magicPhase: 'accidental' });
+    el.onLogAccidentalGrant = (pcId, note) => {
+      calls.push([pcId, note]);
+      return true;
+    };
+    await el.updateComplete;
+    // Type into Mei's silent-grant textarea but don't commit.
+    const meiTextarea = el.querySelector(
+      '.dm-pc-detail-arc-text'
+    ) as HTMLTextAreaElement;
+    meiTextarea.value = 'Mei found her keys';
+    meiTextarea.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    // Navigate to Iris.
+    el.view = { pcId: 'iris', pcName: 'Iris', magicPhase: 'accidental' };
+    await el.updateComplete;
+    // Iris's textarea must be empty — NOT carry Mei's draft.
+    const irisTextarea = el.querySelector(
+      '.dm-pc-detail-arc-text'
+    ) as HTMLTextAreaElement;
+    expect(irisTextarea.value).toBe('');
+    // Commit on Iris's empty form is a no-op (button disabled).
+    const commitBtn = el.querySelector(
+      '.dm-pc-detail-arc-commit'
+    ) as HTMLButtonElement;
+    expect(commitBtn.disabled).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it('Wave B verifier-S1: Realization confirm dialog state resets across pcId change', async () => {
+    const el = mount({ pcId: 'mei', pcName: 'Mei', magicPhase: 'accidental' });
+    el.onMarkRealization = () => true;
+    await el.updateComplete;
+    const realizeBtn = el.querySelector(
+      '.dm-pc-detail-arc-realize'
+    ) as HTMLButtonElement;
+    realizeBtn.click();
+    await el.updateComplete;
+    expect(el.querySelector('.dm-pc-detail-arc-confirm')).not.toBeNull();
+    // Navigate away.
+    el.view = { pcId: 'iris', pcName: 'Iris', magicPhase: 'accidental' };
+    await el.updateComplete;
+    // Iris's view does NOT carry Mei's confirm-Realization panel.
+    expect(el.querySelector('.dm-pc-detail-arc-confirm')).toBeNull();
   });
 });
