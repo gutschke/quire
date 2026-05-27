@@ -3119,6 +3119,121 @@ export const quireAppStyles = css`
       cursor: help;
     }
 
+    /* Wave C1 (2026-05-26): topbar "?" chip → hotkey cheatsheet.
+       Sits inline with the session-bar; same visual weight as the
+       broker-badge so it doesn't dominate.  Also serves as the
+       only on-screen affordance teaching the "?" keyboard
+       shortcut exists. */
+    .quire-topbar-help-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.7rem;
+      height: 1.7rem;
+      padding: 0;
+      margin-left: 0.4rem;
+      border-radius: 50%;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#f1f5f9, #1e293b);
+      color: light-dark(#334155, #cbd5e1);
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: help;
+    }
+    .quire-topbar-help-chip:hover {
+      background: light-dark(#e2e8f0, #334155);
+      color: light-dark(#0f172a, #f1f5f9);
+    }
+    .quire-topbar-help-chip:focus-visible {
+      outline: 2px solid light-dark(#0050a0, #6bb6ff);
+      outline-offset: 1px;
+    }
+
+    /* Wave C1 (2026-05-26): hotkey cheatsheet overlay (uses
+       <quire-modal> primitive for showModal + esc + backdrop).
+       Two grouped sections (Shared / DM); each row is keys → action. */
+    .quire-help-overlay {
+      max-width: 32rem;
+      padding: 1rem 1.2rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 6px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+    }
+    .quire-help-overlay::backdrop {
+      background: rgba(0, 0, 0, 0.4);
+    }
+    .quire-help-overlay-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin: 0 0 0.6rem;
+    }
+    .quire-help-overlay-head h3 {
+      margin: 0;
+    }
+    .quire-help-overlay-close {
+      padding: 0.05rem 0.4rem;
+      border-radius: 3px;
+      background: transparent;
+      color: inherit;
+      border: 1px solid transparent;
+      font-size: 1.1rem;
+      cursor: pointer;
+    }
+    .quire-help-overlay-close:hover {
+      background: light-dark(#f1f5f9, #1e293b);
+    }
+    .quire-help-overlay-group {
+      margin: 0 0 0.8rem;
+    }
+    .quire-help-overlay-group h4 {
+      margin: 0 0 0.3rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .quire-help-overlay-list {
+      margin: 0;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.35rem 0.9rem;
+    }
+    .quire-help-overlay-row {
+      display: contents;
+    }
+    .quire-help-overlay-keys {
+      margin: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      white-space: nowrap;
+    }
+    .quire-help-overlay-keys kbd {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-bottom-width: 2px;
+      border-radius: 3px;
+      background: light-dark(#f8fafc, #1e293b);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.85rem;
+      color: light-dark(#0f172a, #f1f5f9);
+    }
+    .quire-help-overlay-sep {
+      font-size: 0.78rem;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .quire-help-overlay-action {
+      margin: 0;
+      font-size: 0.92rem;
+    }
+    .quire-help-overlay-foot {
+      margin: 0.6rem 0 0;
+      font-size: 0.78rem;
+    }
+
     .session-bar .session-error-msg {
       color: light-dark(#a01010, #ff7070);
     }

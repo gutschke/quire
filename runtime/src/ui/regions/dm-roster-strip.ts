@@ -27,8 +27,9 @@ import { customElement, property } from 'lit/decorators.js';
 import type { CharacterRecord } from '../../character-loader';
 import type { SeatCardSeat } from '../components/seat-card';
 
-export type AddSeatCallback = () => number | null;
-export type DisplayNameLookup = (pcId: string) => string | null;
+// Wave C3 (2026-05-26): import + re-export shared callback-types.
+import type { AddSeatCallback, DisplayNameLookup } from '../callback-types';
+export type { AddSeatCallback, DisplayNameLookup };
 
 @customElement('dm-roster-strip')
 export class DmRosterStrip extends LitElement {

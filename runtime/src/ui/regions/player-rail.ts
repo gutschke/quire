@@ -40,21 +40,16 @@ import {
   substitutePcSlots,
   type PcSlotBindings
 } from '../../markdown';
-import { routeToSearch, type AppRoute } from '../../routing';
+import { routeToSearch } from '../../routing';
 import '../field-renderers/track-bar';
 import '../field-renderers/stat-grid';
 import '../field-renderers/foci-card';
 import '../field-renderers/conditions-list';
 import '../field-renderers/money-band-selector';
 
-type StatKey = 'str' | 'dex' | 'con' | 'int' | 'wis' | 'cha';
-
-export type BumpStatCallback = (
-  pcId: string,
-  key: StatKey,
-  current: number,
-  delta: number
-) => void;
+// Wave C3 (2026-05-26): import + re-export shared BumpStatCallback.
+import type { BumpStatCallback } from '../callback-types';
+export type { BumpStatCallback };
 
 export type ToggleTrackBoxCallback = (
   pcId: string,
@@ -78,7 +73,8 @@ export type SetTrackValueCallback = (
   value: number
 ) => void;
 
-export type NavigateCallback = (e: Event, route: AppRoute) => void;
+import type { NavigateCallback } from '../callback-types';
+export type { NavigateCallback };
 
 /**
  * P-R7 (2026-05-25): one entry in the player-rail name-row

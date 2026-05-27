@@ -15,9 +15,10 @@
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { routeToSearch, type AppRoute } from '../../routing';
-
-export type NavigateCallback = (e: Event, route: AppRoute) => void;
+import { routeToSearch } from '../../routing';
+// Wave C3 (2026-05-26): import + re-export shared NavigateCallback.
+import type { NavigateCallback } from '../callback-types';
+export type { NavigateCallback };
 
 export interface DmRailEpisode {
   slug: string;

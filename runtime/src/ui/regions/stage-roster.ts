@@ -31,8 +31,19 @@ import type { CharacterRecord } from '../../character-loader';
 import '../components/seat-card';
 import type { SeatCardSeat } from '../components/seat-card';
 
-export type RetirePcCallback = (slot: number) => void;
-export type DisplayNameLookup = (pcId: string) => string | null;
+// Wave C3 (2026-05-26): the old `RetirePcCallback` name was
+// shared with chargen-dm-review for two DIVERGENT shapes.  Split
+// into two clearly-named types in `../callback-types.ts`.
+// Stage-roster's "open the retire dialog for slot N" affordance
+// uses RetireSeatRequestCallback; chargen-dm-review's commit-
+// shaped callback is RetirePcCommitCallback.  Local `RetirePcCallback`
+// alias kept so existing local consumers don't churn.
+import type {
+  RetireSeatRequestCallback,
+  DisplayNameLookup
+} from '../callback-types';
+export type RetirePcCallback = RetireSeatRequestCallback;
+export type { DisplayNameLookup };
 /**
  * Task #295: persist a soft-notes edit on an accepted PC.  Returns
  * true when the host accepted the edit (coord, length ok, session

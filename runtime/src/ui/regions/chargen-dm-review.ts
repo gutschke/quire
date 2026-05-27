@@ -100,7 +100,16 @@ export type AcceptWithEditsCallback = (
  * pcId in that case.  A subsequent render after the lazy load
  * resolves will see the name.
  */
-export type DisplayNameLookup = (pcId: string) => string | null;
+// Wave C3 (2026-05-26): shared callback-types — used locally
+// AND re-exported so any future cross-file consumer can pick
+// them up from here (current pattern in the codebase).
+import type {
+  DisplayNameLookup,
+  AddSeatCallback,
+  RetirePcCommitCallback
+} from '../callback-types';
+export type { DisplayNameLookup, AddSeatCallback };
+export type RetirePcCallback = RetirePcCommitCallback;
 /**
  * CC-24: DM accepts the synthesized PC.
  *
@@ -132,7 +141,7 @@ export type ReviseCallback = (
  * unused integer.  Host wires to the seat-add event emitter.
  * Returns the slot number allocated.
  */
-export type AddSeatCallback = () => number | null;
+// (Wave C3: AddSeatCallback imported + re-exported above.)
 /**
  * Wave 1 (2026-05-25): DM drops an unbound, empty seat that was
  * added accidentally.  Host wires to ChargenController.removeSeat.
@@ -175,23 +184,7 @@ export type PatchInPlaceCallback = (slot: number) => boolean;
  * drift or no synth result).
  */
 export type ResyncBackstoryCallback = (slot: number) => Promise<void>;
-/**
- * P-R6 (2026-05-25): DM retires a bound PC.  Host wires to
- * quire-app.appendPcRetire.  Returns true on append.
- */
-export type RetirePcCallback = (payload: {
-  pcId: string;
-  inFictionReason: string;
-  reason: 'died' | 'departed' | 'converted-to-npc' | 'other';
-  scene?: string;
-  /**
-   * #294 (2026-05-26): optional player-safe "seat memory" — the
-   * DM's one-line legacy for the seat.  Empty/undefined means "no
-   * memory set"; the UI tile then displays only the in-fiction
-   * reason.  Cap: 200 chars.
-   */
-  seatMemory?: string;
-}) => boolean;
+// (Wave C3: RetirePcCallback aliased from RetirePcCommitCallback above.)
 /**
  * P3T-16: load the player's saved chargen answers for a slot.
  * Used by the SA-vs-backstory diff view.  Returns null when no

@@ -20,10 +20,12 @@
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import { routeToSearch, type AppRoute } from '../../routing';
+import { routeToSearch } from '../../routing';
 import type { CasterState, ThreadDebtLevel } from '../../core/state';
-
-export type NavigateCallback = (e: Event, route: AppRoute) => void;
+// Wave C3 (2026-05-26): callback-type consolidation — import +
+// re-export so local usage AND any external import keeps working.
+import type { NavigateCallback } from '../callback-types';
+export type { NavigateCallback };
 export type UnpinCallback = (npcId: string) => void;
 export type SetThreadDebtCallback = (
   pcId: string,

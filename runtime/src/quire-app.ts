@@ -54,6 +54,8 @@ import './ui/regions/chat-panel';
 import './ui/regions/session-bar';
 import './ui/regions/ai-panel';
 import './ui/components/quire-modal';
+import './ui/components/quire-help-overlay';
+import { HELP_OPEN_EVENT } from './ui/components/quire-help-overlay';
 import {
   lintChatDraftSync,
   lintChatDraftAi,
@@ -1429,6 +1431,11 @@ export class QuireApp extends LitElement {
              ai-panel (Aside-bottom per ui.md L196). -->
         <quire-aside slot="aside">${dmAside}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}${this.renderChatSpoilerLintModal()}</quire-aside>
         <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
+        <!-- Wave C1 (2026-05-26): hotkey overlay.  Self-contained;
+             owns the "?" global keydown listener.  No prop wiring
+             needed.  Topbar "?" chip dispatches a custom event the
+             overlay listens for. -->
+        <quire-help-overlay></quire-help-overlay>
       </quire-shell>
     `;
   }
@@ -3674,6 +3681,21 @@ export class QuireApp extends LitElement {
         .onSave=${() => this.saveToFile()}
         .onLoad=${(f: File) => this.loadFromFile(f)}
       ></session-bar>
+      <!-- Wave C1 (2026-05-26): topbar "?" chip opens the hotkey
+           cheatsheet.  Sits inline after session-bar; one keystroke
+           or one click from anywhere.  Click dispatches a window
+           event the overlay listens for (avoids prop-drilling). -->
+      <button
+        type="button"
+        class="quire-topbar-help-chip"
+        title="Keyboard shortcuts (?)"
+        aria-label="Open keyboard shortcuts cheatsheet"
+        @click=${() => {
+          window.dispatchEvent(new CustomEvent(HELP_OPEN_EVENT));
+        }}
+      >
+        ?
+      </button>
       ${this.renderReclaimConfirmation()}
       ${this.renderYieldPrompt()}
       ${this.renderResumePrompt()}

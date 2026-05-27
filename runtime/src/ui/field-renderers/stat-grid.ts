@@ -48,12 +48,9 @@ export const DEFAULT_STAT_RULES: StatRuleText = {
   cha: 'CHA — social leverage, persuasion, performance'
 } as const;
 
-export type BumpStatCallback = (
-  pcId: string,
-  key: StatKey,
-  current: number,
-  delta: number
-) => void;
+// Wave C3 (2026-05-26): import + re-export shared BumpStatCallback.
+import type { BumpStatCallback } from '../callback-types';
+export type { BumpStatCallback };
 
 const STAT_ORDER: Array<[Uppercase<StatKey>, StatKey]> = [
   ['STR', 'str'],

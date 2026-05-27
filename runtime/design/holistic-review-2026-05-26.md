@@ -102,24 +102,34 @@ to release-moment text.
 - N5-followup (session-end auto-decrement of tax.sessionsRemaining):
   campaign-side mechanic; defer.
 
-### Wave C — DM cliff + chargen extraction (deferred)
+### Wave C — DM cliff + chargen extraction 🚧 PARTIAL
 
-UX expert flagged these as next after firewall.  Medium scope.
+UX expert flagged these as next after firewall.  C1 + C3 shipped
+together; C2 + C4 (larger scope) deferred.
 
-- [ ] **C1** — hotkey `?` overlay (UX-1, S scope).  Top-bar `?` chip
-  + global `?` key → modal listing the 18 hotkeys from `ui.md`
-  L518-537, grouped DM / player / shared.  Per UX expert: this is
-  the highest-frequency-friction fix.
+- [x] **C1** — hotkey `?` overlay ✓ SHIPPED `<TBD>`.  New
+  `<quire-help-overlay>` self-contained component owns global `?`
+  keydown + custom-event open; topbar `?` chip is the click
+  affordance.  Lists 8 shipped hotkeys (single source of truth in
+  the component file — `SHIPPED_HOTKEYS` constant) grouped
+  Shared / DM.  Editable-target gate respects text inputs.  8
+  tests pin the contract (mount, key open, event open, input
+  gate, content, sections, close button, listener cleanup).
 - [ ] **C2** — move `<chargen-dm-review>` OUT of the DM Aside (UX-3
   + Engineering #2, M scope).  During chargen IS the Stage (mode 1
   per `ui.md` L100); after chargen, unmount entirely.  Composes with
   the engineering recommendation to extract the modal forms as
   child components.
-- [ ] **C3** — callback-type consolidation (Engineering #4, XS
-  scope).  New `src/ui/callback-types.ts` for `NavigateCallback`
-  (duplicated in 4 files), `AddSeatCallback`, `BumpStatCallback`,
-  `DisplayNameLookup` (each duplicated twice).  Rename divergent
-  `RetirePcCallback` (different shapes in 2 files) to disambiguate.
+- [x] **C3** — callback-type consolidation ✓ SHIPPED `<TBD>`.
+  New `src/ui/callback-types.ts` is the single source of truth for
+  `NavigateCallback` (was duplicated in 4 files),
+  `DisplayNameLookup` (was 3), `AddSeatCallback` + `BumpStatCallback`
+  (was 2 each), and split the divergent `RetirePcCallback` into
+  `RetireSeatRequestCallback` (stage-roster's open-dialog shape)
+  vs `RetirePcCommitCallback` (chargen-dm-review's payload shape).
+  Region files now use `import + re-export` pattern so existing
+  local consumers stay green AND any future cross-file import
+  resolves to the same source.
 - [ ] **C4** — single active-PC focus card in Rail (UX-5, S/M
   scope).  Today thread-debt + caster-state live in both
   `dm-aside.ts:239` AND should live in the Rail's active-PC card.
