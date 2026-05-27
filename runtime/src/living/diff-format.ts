@@ -167,6 +167,31 @@ const VALID_NPC_ID = /^[A-Za-z0-9._\-]+$/;
 const VALID_FIELD = /^[A-Za-z0-9._\-]+$/;
 
 /**
+ * D1-D verifier-found BLOCKER (2026-05-26): the AI is an untrusted
+ * input source.  An AI proposal carrying `field: '__proto__.polluted'`
+ * or `field: 'constructor.prototype.x'` would walk JS prototype
+ * machinery during `setByDottedPath`'s bracket assignment, mutating
+ * `Object.prototype` of the cloned root and poisoning every plain-
+ * object lookup process-wide.  `VALID_FIELD` permits these segments
+ * (they're all `[A-Za-z0-9._-]`); add an explicit segment-name
+ * denylist at every entry point (validator + materializer + apply
+ * function) — defense-in-depth, since each layer has a different
+ * blast radius if a future change opens a hole in another.
+ */
+export const PROTOTYPE_POLLUTION_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
+export function hasPrototypePollutionSegment(field: string): boolean {
+  for (const seg of field.split('.')) {
+    if (PROTOTYPE_POLLUTION_SEGMENTS.has(seg)) return true;
+  }
+  return false;
+}
+
+/**
  * Validate a proposal's shape.  Returns ok or a structured error
  * the host surfaces to the DM ("this proposal is malformed; AI
  * misbehaved").  Does NOT check the proposal applies cleanly to
@@ -187,6 +212,13 @@ export function validateProposal(p: DiffProposal): ProposalValidation {
   }
   if (!p.field || !VALID_FIELD.test(p.field) || p.field.length > MAX_PROPOSAL_FIELD_LEN) {
     return { ok: false, code: 'invalid-field', message: 'field is missing or malformed' };
+  }
+  if (hasPrototypePollutionSegment(p.field)) {
+    return {
+      ok: false,
+      code: 'invalid-field',
+      message: 'field contains a prototype-pollution segment (__proto__, constructor, prototype)'
+    };
   }
   try {
     const afterJson = JSON.stringify(p.after);
@@ -348,6 +380,19 @@ function setByDottedPath(
   const segments = field.split('.');
   if (segments.length === 0 || segments.some((s) => s.length === 0)) {
     return { ok: false, message: `field path has empty segment(s): ${field}` };
+  }
+  // Defense-in-depth (verifier B-1): refuse prototype-pollution
+  // segments even if the validator was somehow bypassed.  Bracket
+  // assignment to `__proto__` / `constructor.prototype` mutates
+  // JS prototype machinery; the validator is the primary guard
+  // but this layer enforces the invariant locally.
+  for (const seg of segments) {
+    if (PROTOTYPE_POLLUTION_SEGMENTS.has(seg)) {
+      return {
+        ok: false,
+        message: `prototype-pollution segment refused: ${seg}`
+      };
+    }
   }
   // Clone the spine we'll touch; leave untouched branches by-reference.
   const newRoot: Record<string, unknown> = { ...root };

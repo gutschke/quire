@@ -4475,6 +4475,51 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
       expect(state.diffProposals).toEqual([]);
     });
 
+    it('rejects field with __proto__ segment (prototype-pollution defense)', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload({ field: '__proto__' }));
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it('rejects field with constructor.prototype chain', () => {
+      const log = setupCoord();
+      log.append(
+        'proposal-create',
+        validCreatePayload({ field: 'constructor.prototype.x' })
+      );
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('rejects nested __proto__ segment (background.__proto__.y)', () => {
+      const log = setupCoord();
+      log.append(
+        'proposal-create',
+        validCreatePayload({ field: 'background.__proto__.y' })
+      );
+      const state = materialize(log.events());
+      expect(state.diffProposals).toEqual([]);
+    });
+
+    it('proposal-accept rejects shell-shaped id (defense-in-depth)', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      log.append('proposal-accept', { v: 1, id: '; rm -rf /' });
+      const state = materialize(log.events());
+      // proposal still pending because the accept was rejected.
+      expect(state.diffProposals).toHaveLength(1);
+    });
+
+    it('proposal-reject rejects shell-shaped id (defense-in-depth)', () => {
+      const log = setupCoord();
+      log.append('proposal-create', validCreatePayload());
+      log.append('proposal-reject', { v: 1, id: 'evil; cat /etc/passwd' });
+      const state = materialize(log.events());
+      expect(state.diffProposals).toHaveLength(1);
+    });
+
     it('filterForViewer wipes diffProposals for non-coord viewers', () => {
       const log = setupCoord();
       log.append('proposal-create', validCreatePayload());

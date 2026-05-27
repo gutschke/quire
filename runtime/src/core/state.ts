@@ -3120,6 +3120,19 @@ const PROPOSAL_FIELD_RE = /^[A-Za-z0-9._\-]+$/;
 const PROPOSAL_NPCID_RE = /^[A-Za-z0-9._\-]+$/;
 
 /**
+ * D1-D verifier-found BLOCKER (2026-05-26): explicit denylist on
+ * proposal field segments to block prototype-pollution via AI-
+ * controlled `field` strings.  Mirrors the denylist in
+ * `src/living/diff-format.ts`; duplicated here to keep core/state.ts
+ * self-contained (no dep on the living/ tree).
+ */
+const PROPOSAL_PROTO_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype'
+]);
+
+/**
  * Materialized view of a DiffProposal in shared state.  Subset of
  * the `DiffProposal` shape from `src/living/diff-format.ts` —
  * imports avoided to keep `core/state.ts` engine-pure.  The fields
@@ -3174,6 +3187,9 @@ function applyProposalCreateEvent(
   if (p.path.startsWith('/') || p.path.includes('..')) return;
   if (typeof p.field !== 'string' || !PROPOSAL_FIELD_RE.test(p.field)) return;
   if (p.field.length > PROPOSAL_FIELD_MAX) return;
+  for (const seg of p.field.split('.')) {
+    if (PROPOSAL_PROTO_SEGMENTS.has(seg)) return;
+  }
   if (typeof p.rationale !== 'string') return;
   if (p.rationale.length > PROPOSAL_RATIONALE_MAX) return;
   let afterJson: string;
@@ -3235,7 +3251,8 @@ function applyProposalAcceptEvent(
   if (!state.coordHolders.has(event.peerId)) return;
   if (!isPayloadV1(event.payload)) return;
   const p = event.payload as Partial<ProposalAcceptPayload>;
-  if (typeof p.id !== 'string' || p.id.length === 0) return;
+  if (typeof p.id !== 'string' || !PROPOSAL_ID_RE.test(p.id)) return;
+  if (p.id.length > PROPOSAL_ID_MAX) return;
   // Idempotent: removing an already-removed id is a no-op (Adversarial B-4).
   state.diffProposals = state.diffProposals.filter((q) => q.id !== p.id);
 }
@@ -3255,7 +3272,8 @@ function applyProposalRejectEvent(
   if (!state.coordHolders.has(event.peerId)) return;
   if (!isPayloadV1(event.payload)) return;
   const p = event.payload as Partial<ProposalRejectPayload>;
-  if (typeof p.id !== 'string' || p.id.length === 0) return;
+  if (typeof p.id !== 'string' || !PROPOSAL_ID_RE.test(p.id)) return;
+  if (p.id.length > PROPOSAL_ID_MAX) return;
   if (p.reason !== undefined && typeof p.reason !== 'string') return;
   if (p.reason !== undefined && p.reason.length > 1000) return;
   state.diffProposals = state.diffProposals.filter((q) => q.id !== p.id);

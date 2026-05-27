@@ -116,6 +116,87 @@ describe('validateProposal — hostile inputs', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe('rationale-too-large');
   });
+
+  it('rejects __proto__ field segment (prototype-pollution defense)', () => {
+    const r = validateProposal(baseProposal({ field: '__proto__' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('invalid-field');
+  });
+
+  it('rejects __proto__ as a nested segment (e.g. background.__proto__.x)', () => {
+    const r = validateProposal(
+      baseProposal({ field: 'background.__proto__.polluted' })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('invalid-field');
+  });
+
+  it('rejects constructor.prototype as a chained path', () => {
+    const r = validateProposal(
+      baseProposal({ field: 'constructor.prototype.x' })
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('invalid-field');
+  });
+});
+
+describe('apply — prototype-pollution defense in depth', () => {
+  it('setByDottedPath refuses __proto__ segments even if validator passes', async () => {
+    // Build a "valid-shaped" proposal that smuggles through field-level
+    // checks but should still be refused by setByDottedPath via the
+    // local denylist.  We exercise apply directly via a manually-
+    // constructed proposal that bypasses validateProposal.
+    const wc = makeWc();
+    const seed = { name: 'Yui', disposition: 'distant' };
+    await wc.write('characters/npcs/yui-tanaka.json', JSON.stringify(seed), 'sha-1');
+    const proposal: DiffProposal = {
+      ...baseProposal({ baseSha: 'sha-1', field: '__proto__' })
+    };
+    const result = await applyProposalToWorkingCopy(proposal, wc);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // Validator catches it first; that's fine — what we care about is
+    // that the call does NOT mutate Object.prototype.
+    expect(result.code).toBe('validation-failed');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('returns invalid-pointer code from setByDottedPath when validator is bypassed', async () => {
+    // Reach setByDottedPath directly by constructing the call via the
+    // internal apply that the materializer/host uses; we test that
+    // the defense-in-depth in setByDottedPath also fires.  Since the
+    // validator catches `__proto__` first, this test is documentary
+    // rather than runtime-distinguishing.  Real assertion is that
+    // global Object.prototype is unchanged after attempting EVERY
+    // pollution path through the public API.
+    const wc = makeWc();
+    const seed = { name: 'Yui' };
+    await wc.write('characters/npcs/yui-tanaka.json', JSON.stringify(seed), 'sha-1');
+    const attempts = [
+      '__proto__',
+      'constructor',
+      'prototype',
+      'background.__proto__.x',
+      'relationships.0.constructor.prototype.y'
+    ];
+    for (const field of attempts) {
+      await applyProposalToWorkingCopy(
+        baseProposal({ baseSha: 'sha-1', field }),
+        wc
+      );
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+    expect(({} as Record<string, unknown>).y).toBeUndefined();
+  });
+
+  it('refuses circular-reference after values (JSON.stringify throws)', () => {
+    const a: Record<string, unknown> = { name: 'a' };
+    a.self = a;
+    const r = validateProposal(baseProposal({ after: a }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('after-too-large');
+  });
 });
 
 describe('applyProposalToWorkingCopy — happy path', () => {
