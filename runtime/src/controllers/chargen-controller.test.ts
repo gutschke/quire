@@ -25,6 +25,44 @@ import type { LoadedCampaign as LoadedCampaignBase } from '../campaign-loader';
 import type { LoadedCharacter } from '../character-loader';
 import * as backstorySynthesizer from '../ai/backstory-synthesizer';
 import type { SynthesizeBackstoryResult } from '../ai/backstory-synthesizer';
+import type { ChargenSynthLifecycle } from './chargen-synth-lifecycle';
+import type { ChargenAcceptanceMachine } from './chargen-acceptance-machine';
+
+/**
+ * Test helper: peek at the controller's private state-cluster
+ * fields.  Tests that exercise downstream behavior on top of a
+ * seeded state use this to inject synth results / in-flight flags
+ * without driving the full async synthesize pipeline (which would
+ * require mocking the AI provider, campaign context, etc.).  Use
+ * sparingly — public-surface tests are still preferred.
+ */
+function peekPrivate(ctrl: ChargenController): {
+  synth: ChargenSynthLifecycle;
+  acceptance: ChargenAcceptanceMachine;
+} {
+  return ctrl as unknown as {
+    synth: ChargenSynthLifecycle;
+    acceptance: ChargenAcceptanceMachine;
+  };
+}
+
+/**
+ * Test helper: read the slot's synth result + narrow to the
+ * `ok: true` branch.  Throws if missing or `ok: false` — every
+ * test that calls this seeded an ok result.
+ */
+function okSynth(
+  ctrl: ChargenController,
+  slot: number
+): SynthesizeBackstoryResult & { ok: true } {
+  const r = peekPrivate(ctrl).synth.getResult(slot);
+  if (!r || !r.ok) {
+    throw new Error(
+      `expected ok synth result for slot ${slot}; got ${JSON.stringify(r)}`
+    );
+  }
+  return r;
+}
 
 function makeHost() {
   let updateCalls = 0;
@@ -1512,7 +1550,7 @@ describe('ChargenController — addSeat / removeSeat (Wave 1)', () => {
     const env = makeEnv(makeCampaign());
     env.mockSlots[3] = { state: 'unbound' };
     const ctrl = new ChargenController(host, env);
-    (ctrl as unknown as { _synthInFlight: Set<number> })._synthInFlight.add(3);
+    peekPrivate(ctrl).synth.markSynthInFlight(3);
     expect(ctrl.removeSeat(3)).toBe(false);
   });
 
@@ -1527,11 +1565,7 @@ describe('ChargenController — addSeat / removeSeat (Wave 1)', () => {
 
 describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
   function seedResult(ctrl: ChargenController, slot: number) {
-    (
-      ctrl as unknown as {
-        _synthResults: Map<number, unknown>;
-      }
-    )._synthResults.set(slot, {
+    peekPrivate(ctrl).synth.setResult(slot, {
       ok: true,
       response: {
         name: 'Mei Tanaka',
@@ -1558,10 +1592,7 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     const drift = ctrl.getPreAcceptDrift(1);
     expect(drift?.name).toBe('Mei Tanaka');
     // Synth result mutated in place — accept-flow will read the new name.
-    const result = (
-      ctrl as unknown as { _synthResults: Map<number, { response: { name: string } }> }
-    )._synthResults.get(1);
-    expect(result?.response.name).toBe('Mai Tanaka');
+    expect(okSynth(ctrl, 1).response.name).toBe('Mai Tanaka');
   });
 
   it('patches pronouns independently from name (drift map accumulates)', () => {
@@ -1711,9 +1742,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     backstory: string,
     overrides: Partial<{ name: string; pronouns: string }> = {}
   ): void {
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(slot, {
+    peekPrivate(ctrl).synth.setResult(slot, {
       ok: true,
       response: {
         name: overrides.name ?? 'Mei Tanaka',
@@ -1742,9 +1771,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     );
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' });
     expect(ctrl.patchInPlace(1)).toBe(true);
-    const result = (
-      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
-    )._synthResults.get(1)!;
+    const result = okSynth(ctrl, 1);
     expect(result.response.backstory).toMatch(/Mai Tanaka was/);
     expect(
       (result.response.backstory.match(/Mai Tanaka/g) || []).length
@@ -1766,9 +1793,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     );
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai Tanaka' });
     ctrl.patchInPlace(1);
-    const text = (
-      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
-    )._synthResults.get(1)!.response.backstory;
+    const text = okSynth(ctrl, 1).response.backstory;
     // "Mei" remains because we replaced "Mei Tanaka" (original full
     // name) with "Mai Tanaka" but the prose uses just "Mei".
     expect(text).toMatch(/\bMei\b/);
@@ -1784,9 +1809,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     );
     ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
     expect(ctrl.patchInPlace(1)).toBe(true);
-    const text = (
-      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
-    )._synthResults.get(1)!.response.backstory;
+    const text = okSynth(ctrl, 1).response.backstory;
     // Subject substitutions happen — only matches lowercase "she" word-bounded.
     // (Capital-S "She" at sentence start won't match the lowercase pattern;
     // case-handling is a Wave 3b polish item, not 3a scope.)
@@ -1805,9 +1828,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     );
     ctrl.editSynthFieldPreAccept(1, { pronouns: 'they/them' });
     ctrl.patchInPlace(1);
-    const text = (
-      ctrl as unknown as { _synthResults: Map<number, { response: { backstory: string } }> }
-    )._synthResults.get(1)!.response.backstory;
+    const text = okSynth(ctrl, 1).response.backstory;
     expect(text).toMatch(/\bher\b/);
   });
 
@@ -1939,11 +1960,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'X');
-    const before = (
-      ctrl as unknown as {
-        _synthResults: Map<number, { response: { stats: Record<string, number> } }>;
-      }
-    )._synthResults.get(1)!;
+    const before = okSynth(ctrl, 1);
     const beforeStatsRef = before.response.stats;
     const beforeSTR = beforeStatsRef.STR;
     ctrl.editSynthFieldPreAccept(1, {
@@ -1952,11 +1969,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     // The OLD stats ref should NOT have been mutated.
     expect(beforeStatsRef.STR).toBe(beforeSTR);
     // The CURRENT cached stats wrapper should have the new values.
-    const after = (
-      ctrl as unknown as {
-        _synthResults: Map<number, { response: { stats: Record<string, number> } }>;
-      }
-    )._synthResults.get(1)!;
+    const after = okSynth(ctrl, 1);
     expect(after.response.stats.STR).toBe(2);
     // Identity: the after.response.stats is a fresh object.
     expect(after.response.stats).not.toBe(beforeStatsRef);
@@ -1966,21 +1979,13 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'Mei was here.');
-    const before = (
-      ctrl as unknown as {
-        _synthResults: Map<number, { response: { name: string } }>;
-      }
-    )._synthResults.get(1)!;
+    const before = okSynth(ctrl, 1);
     const beforeName = before.response.name;
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
     // Old reference's name is UNCHANGED (the controller swapped in a new
     // wrapper object); only the controller's own pointer sees the edit.
     expect(before.response.name).toBe(beforeName);
-    const after = (
-      ctrl as unknown as {
-        _synthResults: Map<number, { response: { name: string } }>;
-      }
-    )._synthResults.get(1)!;
+    const after = okSynth(ctrl, 1);
     expect(after.response.name).toBe('Mai');
     expect(after).not.toBe(before); // wrapper identity differs
   });
@@ -1991,7 +1996,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const ctrl = new ChargenController(host, env);
     seedResultWithBackstory(ctrl, 1, 'X');
     // Force the in-flight set (simulating an outstanding resync).
-    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
+    peekPrivate(ctrl).synth.markResyncInFlight(1);
     ctrl.acceptSlot(1);
     expect(env.pcCreates.length).toBe(0);
   });
@@ -2001,7 +2006,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const env = makeEnv(makeCampaign());
     const ctrl = new ChargenController(host, env);
     seedResultWithBackstory(ctrl, 1, 'X');
-    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
+    peekPrivate(ctrl).synth.markResyncInFlight(1);
     ctrl.requestReviseSlot(1, 'try again');
     expect(env.scratchNotes.length).toBe(0);
   });
@@ -2010,7 +2015,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'X');
-    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
+    peekPrivate(ctrl).synth.markResyncInFlight(1);
     expect(ctrl.editSynthFieldPreAccept(1, { name: 'New' })).toBe(false);
   });
 
@@ -2019,7 +2024,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     seedResultWithBackstory(ctrl, 1, 'Mei was here.');
     ctrl.editSynthFieldPreAccept(1, { name: 'Mai' });
-    (ctrl as unknown as { acceptance: { markResyncInFlight(s: number): void } }).acceptance.markResyncInFlight(1);
+    peekPrivate(ctrl).synth.markResyncInFlight(1);
     expect(ctrl.patchInPlace(1)).toBe(false);
   });
 
@@ -2050,9 +2055,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     // Seed an original "She was a fighter" backstory.
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, {
+    peekPrivate(ctrl).synth.setResult(1, {
       ok: true,
       response: {
         name: 'Mei',
@@ -2099,9 +2102,7 @@ describe('ChargenController — patchInPlace (Wave 3a)', () => {
       } as SynthesizeBackstoryResult);
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, {
+    peekPrivate(ctrl).synth.setResult(1, {
       ok: true,
       response: {
         name: 'Mei',
@@ -2201,9 +2202,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
   it('returns null when the slot has no drift to re-sync', async () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     expect(await ctrl.resyncBackstoryForSlot(1)).toBeNull();
   });
 
@@ -2217,9 +2216,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
       .mockResolvedValue(resyncedResult());
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     ctrl.editSynthFieldPreAccept(1, {
       tags: ['data analyst', 't2', 't3'],
       skillMastery: ['Tech', 'Insight']
@@ -2255,9 +2252,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
       .mockResolvedValue(resyncedResult());
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     ctrl.editSynthFieldPreAccept(1, {
       tags: ['data analyst', 't2', 't3'],
       name: 'Mai'
@@ -2272,9 +2267,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
     const env = makeEnv(makeCampaign());
     const ctrl = new ChargenController(host, env);
     // Need a synth result for revise to fire.
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     ctrl.requestReviseSlot(1, 'tag mismatch with hook', [
       'archetype',
       'intent-moment'
@@ -2290,9 +2283,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
     const { host } = makeHost();
     const env = makeEnv(makeCampaign());
     const ctrl = new ChargenController(host, env);
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     ctrl.requestReviseSlot(1, 'general redo');
     expect(env.scratchNotes[0]).not.toMatch(/Kept answers/);
   });
@@ -2311,9 +2302,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
       } as SynthesizeBackstoryResult);
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult());
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult());
     ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
     await ctrl.resyncBackstoryForSlot(1);
     expect(ctrl.getPreAcceptDrift(1)?.tags).toBeDefined();
@@ -2346,9 +2335,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
         moneyBand: 'comfortable'
       }
     } as SynthesizeBackstoryResult;
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, synthWithPhaseB);
+    peekPrivate(ctrl).synth.setResult(1, synthWithPhaseB);
     ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
     await ctrl.resyncBackstoryForSlot(1);
     expect(synthSpy).toHaveBeenCalledTimes(1);
@@ -2375,9 +2362,7 @@ describe('ChargenController — resyncBackstoryForSlot (Wave 3b)', () => {
       .mockResolvedValue(resyncedResult());
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, freshSynthResult()); // no Phase-B fields
+    peekPrivate(ctrl).synth.setResult(1, freshSynthResult()); // no Phase-B fields
     ctrl.editSynthFieldPreAccept(1, { tags: ['data analyst', 't2', 't3'] });
     await ctrl.resyncBackstoryForSlot(1);
     expect(synthSpy).toHaveBeenCalledTimes(1);
@@ -2583,18 +2568,14 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
   it('returns true while a synth is in-flight', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthInFlight: Set<number> }
-    )._synthInFlight.add(1);
+    peekPrivate(ctrl).synth.markSynthInFlight(1);
     expect(ctrl.hasPendingSynth()).toBe(true);
   });
 
   it('returns true when a synth result exists but the slot is not yet accepted', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, { ok: true } as unknown);
+    peekPrivate(ctrl).synth.setResult(1, { ok: true } as unknown as SynthesizeBackstoryResult);
     expect(ctrl.hasPendingSynth()).toBe(true);
   });
 
@@ -2604,9 +2585,7 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
     // work, chargen-dm-review should unmount from the Aside.
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, { ok: true } as unknown);
+    peekPrivate(ctrl).synth.setResult(1, { ok: true } as unknown as SynthesizeBackstoryResult);
     (
       ctrl as unknown as { acceptance: { markAccepted(s: number): void } }
     ).acceptance.markAccepted(1);
@@ -2616,12 +2595,8 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
   it('returns true when SOME slot has a pending synth even if another is accepted', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(1, { ok: true } as unknown);
-    (
-      ctrl as unknown as { _synthResults: Map<number, unknown> }
-    )._synthResults.set(2, { ok: true } as unknown);
+    peekPrivate(ctrl).synth.setResult(1, { ok: true } as unknown as SynthesizeBackstoryResult);
+    peekPrivate(ctrl).synth.setResult(2, { ok: true } as unknown as SynthesizeBackstoryResult);
     (
       ctrl as unknown as { acceptance: { markAccepted(s: number): void } }
     ).acceptance.markAccepted(1);

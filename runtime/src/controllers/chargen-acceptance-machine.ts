@@ -17,11 +17,15 @@
  * owns no Lit host — callers thread `host.requestUpdate()` at the
  * existing call sites.
  *
- * Synth-result state (`_synthResults` + `_synthInFlight`) is
- * intentionally NOT bundled here.  "Has the DM accepted this?"
- * (acceptance) and "is a synth in flight / what did it return?"
- * (synthesis) are different lifecycles — synth state outlives
- * acceptance + gets cleared on different events.
+ * Async / synth-lifecycle state lives in `ChargenSynthLifecycle`
+ * (synthResults, synthInFlight, resyncInFlight, slotGeneration).
+ * "Has the DM accepted this?" (acceptance) and "is a synth in
+ * flight / what did it return?" (synthesis) are different
+ * lifecycles — synth state outlives acceptance + gets cleared on
+ * different events.  Pre-D5.5-A step 3, `resyncInFlight` lived
+ * here; the engineering review flagged it as a cluster-boundary
+ * smell (resyncInFlight is async-lifecycle, like synthInFlight)
+ * and step 3 moved it out.
  */
 
 import type { PcBackstorySynthesisResponse } from '../ai/schema';
@@ -64,13 +68,6 @@ export class ChargenAcceptanceMachine {
    * this to render a "Re-sync to clean up verb agreement" hint.
    */
   private readonly pronounPatched = new Set<number>();
-
-  /**
-   * Post-R5 fix (QA-BUG-3): re-sync is async (10-30s).  While
-   * it's in flight, accept / revise / edit calls must be gated so
-   * a stale-pre-resync commit doesn't race the new AI output.
-   */
-  private readonly resyncInFlight = new Set<number>();
 
   /**
    * Post-R5 fix (QA-BUG-4): last resync failure for the slot.
@@ -159,21 +156,6 @@ export class ChargenAcceptanceMachine {
     return new Set(this.pronounPatched);
   }
 
-  // ============ resyncInFlight ============
-
-  isResyncInFlight(slot: number): boolean {
-    return this.resyncInFlight.has(slot);
-  }
-  markResyncInFlight(slot: number): void {
-    this.resyncInFlight.add(slot);
-  }
-  clearResyncInFlight(slot: number): boolean {
-    return this.resyncInFlight.delete(slot);
-  }
-  resyncInFlightSnapshot(): ReadonlySet<number> {
-    return new Set(this.resyncInFlight);
-  }
-
   // ============ resyncFailures ============
 
   getResyncFailure(slot: number): ResyncFailure | undefined {
@@ -237,6 +219,11 @@ export class ChargenAcceptanceMachine {
    *     cleared on revise, forcing the DM to re-pick N every
    *     revise round (or silently downgrading to N=1 on commit).
    *     Post-D5.5-A playthrough Scenario 6: preserve it.
+   *
+   * Async-lifecycle state (`resyncInFlight`) lives in
+   * `ChargenSynthLifecycle`; the controller's `requestReviseSlot`
+   * is already gated on `isResyncInFlight` so we never reach
+   * `resetForRevise` mid-resync.
    */
   resetForRevise(slot: number): void {
     this.accepted.delete(slot);
@@ -276,10 +263,11 @@ export class ChargenAcceptanceMachine {
 
   /**
    * Reset when the slot's data is wiped wholesale (clearSynth /
-   * slot removal).  Clears every lifecycle slot EXCEPT
-   * `resyncInFlight` — that in-flight async resolves + cleans
-   * itself up via its own finally block.  Mirrors the inline
-   * block in deleteSlotData().
+   * slot removal).  Clears every acceptance-cluster slot.  Async-
+   * lifecycle state (`synthInFlight`, `resyncInFlight`) lives in
+   * `ChargenSynthLifecycle` + is preserved by its `clearSlot`
+   * aggregate so the in-flight finally-blocks own their own
+   * teardown.  Mirrors the inline block in clearSynth().
    */
   resetForDelete(slot: number): void {
     this.accepted.delete(slot);

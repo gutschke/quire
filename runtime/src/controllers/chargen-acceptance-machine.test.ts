@@ -103,24 +103,6 @@ describe('ChargenAcceptanceMachine — pronounPatched', () => {
   });
 });
 
-describe('ChargenAcceptanceMachine — resyncInFlight', () => {
-  it('mark + clear', () => {
-    const m = new ChargenAcceptanceMachine();
-    m.markResyncInFlight(1);
-    expect(m.isResyncInFlight(1)).toBe(true);
-    expect(m.clearResyncInFlight(1)).toBe(true);
-    expect(m.isResyncInFlight(1)).toBe(false);
-  });
-
-  it('snapshot mutation-safe', () => {
-    const m = new ChargenAcceptanceMachine();
-    m.markResyncInFlight(1);
-    const snap = m.resyncInFlightSnapshot() as unknown as Set<number>;
-    snap.add(99);
-    expect(m.isResyncInFlight(99)).toBe(false);
-  });
-});
-
 describe('ChargenAcceptanceMachine — resyncFailures', () => {
   it('set + get + clear', () => {
     const m = new ChargenAcceptanceMachine();
@@ -180,13 +162,12 @@ describe('ChargenAcceptanceMachine — joiningSession', () => {
 });
 
 describe('ChargenAcceptanceMachine — resetForRevise', () => {
-  it('clears the 5-slot subset; KEEPS raceMismatch + resyncInFlight + joiningSession', () => {
+  it('clears the 5-slot subset; KEEPS raceMismatch + joiningSession', () => {
     const m = new ChargenAcceptanceMachine();
     m.markAccepted(1);
     m.markRaceMismatch(1);
     m.setPreAcceptOriginal(1, { name: 'x' });
     m.markPronounPatched(1);
-    m.markResyncInFlight(1);
     m.setResyncFailure(1, { code: 'a', message: 'b' });
     m.setOriginalBackstoryForResync(1, 'prose');
     m.setJoiningSession(1, 3);
@@ -198,12 +179,13 @@ describe('ChargenAcceptanceMachine — resetForRevise', () => {
     expect(m.hasPronounPatch(1)).toBe(false);
     expect(m.hasOriginalBackstoryForResync(1)).toBe(false);
     expect(m.hasResyncFailure(1)).toBe(false);
-    // Critically:
+    // Critically: raceMismatch survives.
     expect(m.hasRaceMismatch(1)).toBe(true);
-    expect(m.isResyncInFlight(1)).toBe(true);
     // Post-D5.5-A playthrough Scenario 6: joiningSession is table-
     // state, not per-attempt — revise must preserve it.
     expect(m.getJoiningSession(1)).toBe(3);
+    // Note: resyncInFlight lives in ChargenSynthLifecycle now
+    // (step-3 cluster move) — not tested here.
   });
 });
 
@@ -260,13 +242,12 @@ describe('ChargenAcceptanceMachine — resetAfterFreshSynth', () => {
 });
 
 describe('ChargenAcceptanceMachine — resetForDelete', () => {
-  it('clears all lifecycle state EXCEPT resyncInFlight', () => {
+  it('clears all acceptance-cluster state for the slot', () => {
     const m = new ChargenAcceptanceMachine();
     m.markAccepted(1);
     m.markRaceMismatch(1);
     m.setPreAcceptOriginal(1, { name: 'x' });
     m.markPronounPatched(1);
-    m.markResyncInFlight(1);
     m.setResyncFailure(1, { code: 'a', message: 'b' });
     m.setOriginalBackstoryForResync(1, 'prose');
     m.setJoiningSession(1, 3);
@@ -280,9 +261,10 @@ describe('ChargenAcceptanceMachine — resetForDelete', () => {
     expect(m.hasResyncFailure(1)).toBe(false);
     expect(m.hasOriginalBackstoryForResync(1)).toBe(false);
     expect(m.getJoiningSession(1)).toBe(1);
-    // Critically: resyncInFlight survives so the in-flight async
-    // cleans itself up via its own finally block.
-    expect(m.isResyncInFlight(1)).toBe(true);
+    // Note: async-lifecycle state (synthInFlight, resyncInFlight)
+    // lives in ChargenSynthLifecycle now (step-3 cluster move) —
+    // its `clearSlot` preserves the in-flight flags so the
+    // finally-blocks own teardown.  Not tested here.
   });
 
   it('does not affect other slots', () => {

@@ -167,12 +167,14 @@ describe('QuireApp Wave C2 chargen-dm-review mount gate', () => {
     // unit-style poke at the same internal map).
     const ctrl = (
       app as unknown as { chargen: unknown }
-    ).chargen as unknown as { _synthResults: Map<number, unknown> };
+    ).chargen as unknown as {
+      synth: { setResult(slot: number, result: unknown): void };
+    };
     // Inject a minimally-renderable synth result.  The chargen-
     // dm-review surface reads `synth.response.stats` for the
     // party-stats nudge — needs the full stat block to avoid
     // crashing during render.
-    ctrl._synthResults.set(1, {
+    ctrl.synth.setResult(1, {
       ok: true,
       response: {
         name: 'Test',

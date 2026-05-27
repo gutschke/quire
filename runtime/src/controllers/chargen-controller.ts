@@ -46,6 +46,7 @@ import { routeToSearch } from '../routing';
 import { loadChargenState, saveChargenState } from '../chargen-persistence';
 import { ChargenPersistenceQueue } from './chargen-persistence-queue';
 import { ChargenAcceptanceMachine } from './chargen-acceptance-machine';
+import { ChargenSynthLifecycle } from './chargen-synth-lifecycle';
 import {
   packChargen,
   parseChargenPack,
@@ -257,46 +258,30 @@ export class ChargenController implements ReactiveController {
   sendToDmFeedback: '' | 'sent' | 'send-failed' | 'send-too-large' = '';
 
   /**
-   * Per-slot AI synthesis result map.  Populated by
-   * `synthesizeForSlot`; consumed by the `<chargen-dm-review>`
-   * region via the public accessor methods.  The result shape is
-   * the load-bearing frozen contract `SynthesizeBackstoryResult`.
+   * D5.5-A step 3 (2026-05-27 E-LARGE-2): async + result lifecycle
+   * cluster.  Owns synthResults + synthInFlight + resyncInFlight
+   * + slotGeneration.  Pre-step-3 these were 3 controller fields +
+   * 1 acceptance-machine field; engineering's post-D5.5-A review
+   * flagged the resyncInFlight placement as a cluster-boundary
+   * smell, so step 3 consolidates the four into one owner.
    *
-   * Private + accessor-gated (Engine M1, c91ac1f post-review): a
-   * consumer mutating the Map directly would silently skip the
-   * `host.requestUpdate()` call.  Read via `getSynthResult(slot)`;
-   * write via the controller's own paths (`synthesizeForSlot`,
-   * `clearSynth`).
+   * Consumers MUST go through the public accessor methods rather
+   * than mutating any internal Map/Set — a direct mutation skips
+   * `host.requestUpdate` + (worse) the Scenario-4 generation-
+   * counter invalidation that `clearSlot` performs.
    */
-  private readonly _synthResults = new Map<number, SynthesizeBackstoryResult>();
-
-  /** Slots whose synthesis is currently in-flight (for UI dim/spinner). */
-  private readonly _synthInFlight = new Set<number>();
-
-  /**
-   * Post-D5.5-A playthrough Scenario 4: per-slot generation counter.
-   * Bumped by `clearSynth` so an in-flight synth (or resync — they
-   * route through the same `synthesizeForSlot` path) that resolves
-   * AFTER the DM cleared the slot can detect the invalidation +
-   * suppress its own `_synthResults.set`.  Without this guard, a
-   * 10-30s resync resolving on a cleared slot resurrects it with a
-   * stale result or a failure banner the DM doesn't expect.
-   *
-   * Lives on the controller for now; will move to a future
-   * `ChargenSynthLifecycle` extraction (E-LARGE-2 step 3) alongside
-   * `_synthInFlight` + the machine's `resyncInFlight`.
-   */
-  private readonly _slotGeneration = new Map<number, number>();
+  private readonly synth = new ChargenSynthLifecycle();
 
   /**
    * D5.5-A step 2 (2026-05-27 E-LARGE-2): accept / pre-accept /
    * re-sync slot lifecycle state, bundled into a single owner.
    * Pre-extraction this was 8 separate fields scattered across
    * ~70 lines + 3 nearly-identical inline reset blocks.  See
-   * `ChargenAcceptanceMachine` for the per-slot semantics.
-   *
-   * Synth-result state (`_synthResults` + `_synthInFlight`) stays
-   * separate above — different lifecycle, different clear events.
+   * `ChargenAcceptanceMachine` for the per-slot semantics.  Async /
+   * synth-result lifecycle (synthResults, synthInFlight,
+   * resyncInFlight, slotGeneration) lives in
+   * `ChargenSynthLifecycle` (the `synth` field above) — different
+   * lifecycle, different clear events.
    */
   private readonly acceptance = new ChargenAcceptanceMachine();
 
@@ -358,7 +343,7 @@ export class ChargenController implements ReactiveController {
     // a real AbortSignal is plumbed through; until then, just clear
     // the inflight flag so an HMR reconnect doesn't see a wedged
     // spinner.
-    this._synthInFlight.clear();
+    this.synth.clearAllSynthInFlight();
   }
 
   // ---- setters that re-render the host ----
@@ -388,25 +373,25 @@ export class ChargenController implements ReactiveController {
 
   /** Latest synthesis result for the slot, or undefined. */
   getSynthResult(slot: number): SynthesizeBackstoryResult | undefined {
-    return this._synthResults.get(slot);
+    return this.synth.getResult(slot);
   }
 
   /** True when synthesis is in-flight for the slot. */
   isSynthInFlight(slot: number): boolean {
-    return this._synthInFlight.has(slot);
+    return this.synth.isSynthInFlight(slot);
   }
 
   /**
    * Wave C2 (2026-05-26): does any slot have a chargen step
    * pending DM attention?  Pending = synth in-flight, OR a synth
-   * result waiting in `_synthResults` that the DM hasn't yet
+   * result waiting that the DM hasn't yet
    * accepted (the dm-aside mount gate calls this; when false
    * AND no unbound seats exist, the chargen-dm-review surface
    * unmounts).  Pure read; no mutation.
    */
   hasPendingSynth(): boolean {
-    if (this._synthInFlight.size > 0) return true;
-    for (const slot of this._synthResults.keys()) {
+    if (this.synth.synthInFlightSize() > 0) return true;
+    for (const slot of this.synth.resultKeys()) {
       if (!this.acceptance.isAccepted(slot)) return true;
     }
     return false;
@@ -437,7 +422,7 @@ export class ChargenController implements ReactiveController {
    */
   slotsWithSynthState(): number[] {
     const slots = new Set<number>();
-    for (const s of this._synthResults.keys()) slots.add(s);
+    for (const s of this.synth.resultKeys()) slots.add(s);
     for (const s of this.acceptance.acceptedIterator()) slots.add(s);
     return [...slots].sort((a, b) => a - b);
   }
@@ -521,8 +506,8 @@ export class ChargenController implements ReactiveController {
     const slots = this.env.getPcSlots();
     const seat = slots[slot];
     if (!seat || seat.state !== 'unbound') return false;
-    if (this._synthResults.has(slot)) return false;
-    if (this._synthInFlight.has(slot)) return false;
+    if (this.synth.hasResult(slot)) return false;
+    if (this.synth.isSynthInFlight(slot)) return false;
     if (this.acceptance.isAccepted(slot)) return false;
     if (!this.env.appendSeatRemove(slot)) return false;
     return true;
@@ -565,8 +550,8 @@ export class ChargenController implements ReactiveController {
     if (this.acceptance.isAccepted(slot)) return false;
     // Post-R5 fix (QA-BUG-3): no edits during re-sync — the AI is
     // about to overwrite the response anyway.
-    if (this.acceptance.isResyncInFlight(slot)) return false;
-    const result = this._synthResults.get(slot);
+    if (this.synth.isResyncInFlight(slot)) return false;
+    const result = this.synth.getResult(slot);
     if (!result || !result.ok) return false;
     let original = this.acceptance.getPreAcceptOriginal(slot);
     if (!original) {
@@ -589,7 +574,7 @@ export class ChargenController implements ReactiveController {
       if (!(key in origAny)) origAny[key] = respClone[key];
       respClone[key] = patchAny[key];
     }
-    this._synthResults.set(slot, {
+    this.synth.setResult(slot, {
       ...result,
       response: respClone as unknown as PcBackstorySynthesisResponse
     });
@@ -680,8 +665,8 @@ export class ChargenController implements ReactiveController {
   patchInPlace(slot: number): boolean {
     if (this.acceptance.isAccepted(slot)) return false;
     // Post-R5 fix (QA-BUG-3): no Patch during re-sync.
-    if (this.acceptance.isResyncInFlight(slot)) return false;
-    const result = this._synthResults.get(slot);
+    if (this.synth.isResyncInFlight(slot)) return false;
+    const result = this.synth.getResult(slot);
     if (!result || !result.ok) return false;
     const drift = this.acceptance.getPreAcceptOriginal(slot);
     if (!drift) return false;
@@ -723,7 +708,7 @@ export class ChargenController implements ReactiveController {
       ...deepCloneSynthResponse(result.response),
       backstory: text
     };
-    this._synthResults.set(slot, { ...result, response: respClone });
+    this.synth.setResult(slot, { ...result, response: respClone });
     const pronounWasPatched = patchable.includes('pronouns');
     for (const field of patchable) {
       delete (drift as Record<string, unknown>)[field];
@@ -794,8 +779,8 @@ export class ChargenController implements ReactiveController {
     // in flight — the result is about to be replaced.  Belt-and-
     // suspenders alongside the UI-level gate so non-UI callers
     // (tests, hotkeys) can't sneak past.
-    if (this.acceptance.isResyncInFlight(slot)) return;
-    const result = this._synthResults.get(slot);
+    if (this.synth.isResyncInFlight(slot)) return;
+    const result = this.synth.getResult(slot);
     if (!result || !result.ok) return; // can't accept failures
     const r = result.response;
     // Phase B P2 verification fix (S2): race-safe accept.  When the
@@ -935,7 +920,7 @@ export class ChargenController implements ReactiveController {
     slot: number,
     edits: { name: string; backstory: string }
   ): boolean {
-    const failed = this._synthResults.get(slot);
+    const failed = this.synth.getResult(slot);
     if (
       !failed ||
       failed.ok ||
@@ -960,7 +945,7 @@ export class ChargenController implements ReactiveController {
       ],
       retried: true
     };
-    this._synthResults.set(slot, cleaned);
+    this.synth.setResult(slot, cleaned);
     this.host.requestUpdate();
     // Now commit via the normal accept path.
     this.acceptSlot(slot);
@@ -979,11 +964,11 @@ export class ChargenController implements ReactiveController {
     reason?: string,
     pinnedQuestionIds?: readonly string[]
   ): void {
-    if (!this._synthResults.has(slot) && !this.acceptance.isAccepted(slot)) return;
+    if (!this.synth.hasResult(slot) && !this.acceptance.isAccepted(slot)) return;
     // Post-R5 fix (QA-BUG-3): the re-sync about to land will
     // produce a new synth-result.  Revise would clear it anyway,
     // but firing both creates a race — refuse during the window.
-    if (this.acceptance.isResyncInFlight(slot)) return;
+    if (this.synth.isResyncInFlight(slot)) return;
     // Post-D5.5-A playthrough Scenario 1: revise on an already-
     // accepted slot is a silent data-leak — the engine has already
     // committed pc-create + pc-slot-bind, so wiping our local
@@ -1001,7 +986,7 @@ export class ChargenController implements ReactiveController {
       this.host.requestUpdate();
       return;
     }
-    this._synthResults.delete(slot);
+    this.synth.deleteResult(slot);
     this.acceptance.resetForRevise(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
@@ -1466,7 +1451,7 @@ export class ChargenController implements ReactiveController {
     // bump the counter unseen by this synthesis.  Capturing at
     // function entry (before any microtask boundary) is the
     // load-bearing position.
-    const generationAtStart = this._slotGeneration.get(slot) ?? 0;
+    const generationAtStart = this.synth.captureGeneration(slot);
     const campaign = this.env.getCurrentCampaign();
     if (!campaign) {
       return {
@@ -1542,7 +1527,7 @@ export class ChargenController implements ReactiveController {
     const aiBackstory = campaign.base.manifest.aiBackstory;
     const spoilerTokens = aiBackstory?.spoilerTokens;
     const placeAllowlist = aiBackstory?.placeAllowlist;
-    this._synthInFlight.add(slot);
+    this.synth.markSynthInFlight(slot);
     this.host.requestUpdate();
     try {
       const mod = await this.loadSynthesizerModule();
@@ -1566,14 +1551,14 @@ export class ChargenController implements ReactiveController {
       // Scenario-4 gate: caller (clearSynth) bumped the generation
       // while we were awaiting → the slot was wiped intentionally.
       // Return the result for the caller's inspection but DO NOT
-      // touch _synthResults / acceptance state.  The caller in
+      // touch synth result / acceptance state.  The caller in
       // resyncBackstoryForSlot also gates its setResyncFailure on
       // this same generation comparison.
-      const generationNow = this._slotGeneration.get(slot) ?? 0;
+      const generationNow = this.synth.currentGeneration(slot);
       if (generationNow !== generationAtStart) {
         return result;
       }
-      this._synthResults.set(slot, result);
+      this.synth.setResult(slot, result);
       // Re-synthesizing clears any prior accept for the same slot —
       // accepting the OLD result and then re-synthesizing would
       // otherwise leave the accept stale.  When this was a
@@ -1585,7 +1570,7 @@ export class ChargenController implements ReactiveController {
       });
       return result;
     } finally {
-      this._synthInFlight.delete(slot);
+      this.synth.clearSynthInFlight(slot);
       this.host.requestUpdate();
     }
   }
@@ -1603,8 +1588,8 @@ export class ChargenController implements ReactiveController {
     slot: number,
     options: { playerDisplayName?: string; dmConstraints?: string } = {}
   ): Promise<SynthesizeBackstoryResult | null> {
-    if (this.acceptance.isResyncInFlight(slot)) return null;
-    const synth = this._synthResults.get(slot);
+    if (this.synth.isResyncInFlight(slot)) return null;
+    const synth = this.synth.getResult(slot);
     if (!synth || !synth.ok) return null;
     const drift = this.acceptance.getPreAcceptOriginal(slot);
     if (!drift || Object.keys(drift).length === 0) return null;
@@ -1658,8 +1643,8 @@ export class ChargenController implements ReactiveController {
     // so a clearSynth mid-resync also suppresses the failure-banner
     // write below (synthesizeForSlot already suppresses its own
     // state-write under the same condition).
-    const generationAtStart = this._slotGeneration.get(slot) ?? 0;
-    this.acceptance.markResyncInFlight(slot);
+    const generationAtStart = this.synth.captureGeneration(slot);
+    this.synth.markResyncInFlight(slot);
     // Clear any prior failure banner — we're trying again.
     this.acceptance.clearResyncFailure(slot);
     this.host.requestUpdate();
@@ -1668,7 +1653,7 @@ export class ChargenController implements ReactiveController {
         ...options,
         resync
       });
-      const generationNow = this._slotGeneration.get(slot) ?? 0;
+      const generationNow = this.synth.currentGeneration(slot);
       if (generationNow !== generationAtStart) {
         // Slot cleared mid-resync; do NOT raise a failure banner
         // on a slot the DM intentionally wiped.
@@ -1686,7 +1671,7 @@ export class ChargenController implements ReactiveController {
       }
       return result;
     } finally {
-      this.acceptance.clearResyncInFlight(slot);
+      this.synth.clearResyncInFlight(slot);
       this.host.requestUpdate();
     }
   }
@@ -1708,11 +1693,11 @@ export class ChargenController implements ReactiveController {
    * @property comparison sees a fresh value (mirrors BUG-1 fix).
    */
   resyncInFlightSet(): ReadonlySet<number> {
-    return this.acceptance.resyncInFlightSnapshot();
+    return this.synth.resyncInFlightSnapshot();
   }
 
   isResyncInFlight(slot: number): boolean {
-    return this.acceptance.isResyncInFlight(slot);
+    return this.synth.isResyncInFlight(slot);
   }
 
   /**
@@ -1750,12 +1735,13 @@ export class ChargenController implements ReactiveController {
 
   /** Forget a slot's synthesis state (DM rejected or wants to start over). */
   clearSynth(slot: number): void {
-    const had = this._synthResults.has(slot) || this.acceptance.isAccepted(slot);
-    this._synthResults.delete(slot);
+    // synth.clearSlot wipes the result + bumps the generation
+    // counter (Scenario-4 gate); returns whether anything was
+    // actually deleted.  OR with acceptance.isAccepted so the
+    // host re-renders when a previously-accepted slot is wiped
+    // (acceptance.resetForDelete clears the flag below).
+    const had = this.synth.clearSlot(slot) || this.acceptance.isAccepted(slot);
     this.acceptance.resetForDelete(slot);
-    // Scenario-4 gate: bump the generation so any in-flight synth /
-    // resync resolving after this point suppresses its state-write.
-    this._slotGeneration.set(slot, (this._slotGeneration.get(slot) ?? 0) + 1);
     if (had) this.host.requestUpdate();
   }
 
