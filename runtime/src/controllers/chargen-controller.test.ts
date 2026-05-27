@@ -2432,3 +2432,60 @@ describe('ChargenController — race-safe acceptSlot (verification S2)', () => {
     synthSpy.mockRestore();
   });
 });
+
+describe('ChargenController — hasPendingSynth (Wave C2)', () => {
+  it('returns false when no synth is in-flight and no synth result exists', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.hasPendingSynth()).toBe(false);
+  });
+
+  it('returns true while a synth is in-flight', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthInFlight: Set<number> }
+    )._synthInFlight.add(1);
+    expect(ctrl.hasPendingSynth()).toBe(true);
+  });
+
+  it('returns true when a synth result exists but the slot is not yet accepted', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, { ok: true } as unknown);
+    expect(ctrl.hasPendingSynth()).toBe(true);
+  });
+
+  it('returns false once the slot has been accepted (Wave C2 gate)', () => {
+    // Wave C2 mount gate: post-accept, the DM has nothing more
+    // to do for this slot.  If accepted AND no other pending
+    // work, chargen-dm-review should unmount from the Aside.
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, { ok: true } as unknown);
+    (
+      ctrl as unknown as { _acceptedSlots: Set<number> }
+    )._acceptedSlots.add(1);
+    expect(ctrl.hasPendingSynth()).toBe(false);
+  });
+
+  it('returns true when SOME slot has a pending synth even if another is accepted', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(1, { ok: true } as unknown);
+    (
+      ctrl as unknown as { _synthResults: Map<number, unknown> }
+    )._synthResults.set(2, { ok: true } as unknown);
+    (
+      ctrl as unknown as { _acceptedSlots: Set<number> }
+    )._acceptedSlots.add(1);
+    // Slot 2 still pending → gate stays open.
+    expect(ctrl.hasPendingSynth()).toBe(true);
+  });
+});

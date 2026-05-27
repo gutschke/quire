@@ -417,6 +417,22 @@ export class ChargenController implements ReactiveController {
     return this._synthInFlight.has(slot);
   }
 
+  /**
+   * Wave C2 (2026-05-26): does any slot have a chargen step
+   * pending DM attention?  Pending = synth in-flight, OR a synth
+   * result waiting in `_synthResults` that the DM hasn't yet
+   * accepted (the dm-aside mount gate calls this; when false
+   * AND no unbound seats exist, the chargen-dm-review surface
+   * unmounts).  Pure read; no mutation.
+   */
+  hasPendingSynth(): boolean {
+    if (this._synthInFlight.size > 0) return true;
+    for (const slot of this._synthResults.keys()) {
+      if (!this._acceptedSlots.has(slot)) return true;
+    }
+    return false;
+  }
+
   /** True when the DM has accepted the slot's current synth result. */
   isAccepted(slot: number): boolean {
     return this._acceptedSlots.has(slot);

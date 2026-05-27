@@ -115,11 +115,29 @@ together; C2 + C4 (larger scope) deferred.
   Shared / DM.  Editable-target gate respects text inputs.  8
   tests pin the contract (mount, key open, event open, input
   gate, content, sections, close button, listener cleanup).
-- [ ] **C2** — move `<chargen-dm-review>` OUT of the DM Aside (UX-3
-  + Engineering #2, M scope).  During chargen IS the Stage (mode 1
-  per `ui.md` L100); after chargen, unmount entirely.  Composes with
-  the engineering recommendation to extract the modal forms as
-  child components.
+- [x] **C2** — chargen-dm-review unmount-when-complete ✓ SHIPPED `<TBD>`.
+  Simpler than the original "move to Stage" framing — just gate
+  the mount on `isChargenActive` (any unbound seat OR pending
+  synth via new `ChargenController.hasPendingSynth`).  Re-entry
+  path is already wired: dm-roster-strip's ⊕ button (+ F1
+  hotkey) → `chargen.addSeat()` → unbound seat exists → gate
+  re-opens.  No "Resume chargen" affordance needed because
+  add-seat IS the re-entry verb.
+
+  5 new C2 integration tests in `quire-app.chargen-mount.test.ts`
+  (mounts on unbound, unmounts on clean, re-mounts on add-seat,
+  remains on pending synth, dm-aside-independent-of-chargen) + 5
+  new controller tests on `hasPendingSynth`.  2115 total tests
+  pass (+10).  Practice memo gained item #6b: QuireApp uses
+  Shadow DOM, integration tests MUST use `app.shadowRoot?.querySelector`
+  not `app.querySelector` (cost 3 test runs to find on this wave).
+
+  **Future ambition (NOT in v1):** the original UX-3 framing was
+  "during chargen IS the Stage (mode 1 per ui.md L100)."  That's
+  a bigger change — would require route-aware mount + a "back
+  to play" verb.  v1 of C2 keeps the Aside mount but gates it;
+  the bigger change can come if the table reports the Aside
+  surface still distracts even when chargen is genuinely active.
 - [x] **C3** — callback-type consolidation ✓ SHIPPED `50d303d`.
   New `src/ui/callback-types.ts` is the single source of truth for
   `NavigateCallback` (was duplicated in 4 files),

@@ -1496,6 +1496,16 @@ export class QuireApp extends LitElement {
     // <dm-pc-detail>.  Per UX expert: "Rail wins as the canonical
     // home; dm-aside sheds thread-debt + caster-state entirely."
     // dm-aside is now strictly the pinned-NPC aide.
+    // Wave C2 (2026-05-26): gate the chargen-dm-review mount on
+    // chargenActive.  Pre-fix the 3,339-LOC region permanently
+    // squatted the Aside even after every PC was bound and
+    // accepted — UX-3 audit called it "the largest cognitive-load
+    // drain in the cockpit."  Re-entry path: dm-roster-strip's
+    // ⊕ button (F1 hotkey) adds an unbound seat → flips
+    // chargenActive back true → component re-mounts.  No "Resume
+    // chargen" affordance needed because the add-seat verb IS the
+    // re-entry verb.
+    const chargenActive = this.isChargenActive(v.filteredShared.pcSlots);
     return html`
       ${this.renderDmRosterStrip()}
       ${this.renderWrapSessionLauncher()}
@@ -1505,8 +1515,33 @@ export class QuireApp extends LitElement {
         .onUnpin=${(npcId: string) => this.toggleNpcPin(npcId)}
         .onNavigate=${(e: Event, route: AppRoute) => this.navigate(e, route)}
       ></dm-aside>
-      ${this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)}
+      ${chargenActive
+        ? this.renderChargenDmReviewLazy(v.filteredShared.pcSlots)
+        : nothing}
     `;
+  }
+
+  /**
+   * Wave C2 (2026-05-26): is there any chargen work pending?
+   * The dm-aside mounts `<chargen-dm-review>` ONLY when this
+   * returns true.  Definition: any unbound seat OR any pending
+   * synth (in-flight or result-not-yet-accepted) OR any drift
+   * the DM has yet to dismiss/apply.  When all three are quiet,
+   * chargen is "done" and the surface unmounts.
+   *
+   * Note on race-safety: this is a render-time read of the
+   * controller state.  When the controller state changes (synth
+   * lands, slot accepted, seat added), Lit re-renders the parent
+   * and re-evaluates this gate — no manual notification needed.
+   */
+  private isChargenActive(pcSlots: Record<number, Seat>): boolean {
+    for (const seat of Object.values(pcSlots)) {
+      if (seat.state === 'unbound') return true;
+    }
+    // Any in-flight synth OR un-accepted synth result counts as
+    // "chargen still has something to show the DM."
+    if (this.chargen.hasPendingSynth()) return true;
+    return false;
   }
 
   /**
