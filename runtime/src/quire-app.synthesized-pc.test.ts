@@ -223,6 +223,84 @@ describe('QuireApp Phase 3b-1 — synthesized PC end-to-end', () => {
     });
   });
 
+  /**
+   * Firewall regression (2026-05-27): post-extraction session
+   * simulation flagged that pcCharacterCache populates ONCE at
+   * coord-time (unstripped — DM sees full record).  If the local
+   * peer then loses coord (co-DM reclaim), the cache survives
+   * untouched + subsequent reads see the unstripped record from
+   * a now-player viewpoint, leaking DM-only fields.  Fix: clear
+   * the cache on any coord-status transition + on leaveSession.
+   */
+  it('pcCharacterCache clears on coord-loss (firewall regression)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    injectCampaign(app);
+    const session = (
+      app as unknown as {
+        session: { append: Function; reclaimCoordinator: Function };
+      }
+    ).session;
+    // Seed: as coord, pre-populate the cache via the overlay path.
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'slot-1-syn-test',
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech'],
+      backstory: 'x',
+      causedByResponseId: 'syn-r1'
+    });
+    await flush();
+    const appLoader = app as unknown as {
+      loadCharacterByPcId: (id: string) => void;
+      pcCharacterCache: Map<string, unknown>;
+    };
+    appLoader.loadCharacterByPcId('slot-1-syn-test');
+    expect(appLoader.pcCharacterCache.has('slot-1-syn-test')).toBe(true);
+    // Force coord-loss: append a coordinator-yield from this peer.
+    // Without a peer-rejoin, the session will report
+    // coordinator=undefined which still flips isCoordinator() false.
+    session.append('coordinator-yield', {});
+    await flush();
+    // Cache must be cleared so subsequent reads re-strip from the
+    // current (non-coord) viewer's perspective.
+    expect(appLoader.pcCharacterCache.has('slot-1-syn-test')).toBe(false);
+  });
+
+  it('pcCharacterCache clears on leaveSession (memory + firewall hygiene)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    injectCampaign(app);
+    const session = (app as unknown as { session: { append: Function } })
+      .session;
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'slot-1-syn-test',
+      name: 'Mei',
+      pronouns: 'she/her',
+      tags: ['a', 'b', 'c'],
+      stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+      skills: ['Tech'],
+      backstory: 'x',
+      causedByResponseId: 'syn-r1'
+    });
+    await flush();
+    const appLoader = app as unknown as {
+      loadCharacterByPcId: (id: string) => void;
+      pcCharacterCache: Map<string, unknown>;
+      leaveSession: () => void;
+    };
+    appLoader.loadCharacterByPcId('slot-1-syn-test');
+    expect(appLoader.pcCharacterCache.has('slot-1-syn-test')).toBe(true);
+    appLoader.leaveSession();
+    expect(appLoader.pcCharacterCache.size).toBe(0);
+  });
+
   it('overlay miss falls through to the GitHub fetch path (regression)', async () => {
     // A pcId NOT in synthesizedPcs should NOT short-circuit; the
     // existing async fetch path takes over.  Since the fetch will

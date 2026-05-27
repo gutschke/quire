@@ -1086,7 +1086,32 @@ export class QuireApp extends LitElement {
     this.session = new SessionController(this.sessionFactory);
     this.unsubscribeSession = this.session.subscribe((v) => {
       const wasActive = this.sessionView?.status === 'active';
+      const prevCoord =
+        this.sessionView?.status === 'active'
+          ? this.sessionView.filteredShared.coordinator
+          : null;
+      const prevPeerId =
+        this.sessionView?.status === 'active'
+          ? this.sessionView.peerId
+          : null;
+      const wasLocalCoord =
+        prevCoord !== null && prevPeerId !== null && prevCoord === prevPeerId;
       this.sessionView = v;
+      const nowLocalCoord =
+        v.status === 'active' &&
+        v.peerId !== null &&
+        v.filteredShared.coordinator === v.peerId;
+      // Firewall hygiene (2026-05-27): local-peer coord-status
+      // CHANGE invalidates the pcCharacter cache.  The cache is
+      // populated once with a strip decision based on coord state
+      // at fetch time; without this clear, a coord→player
+      // transition leaves unstripped DM-only fields visible to a
+      // now-player viewer.  Clear in BOTH directions — a player→
+      // coord transition wants the unstripped record too.
+      if (wasLocalCoord !== nowLocalCoord) {
+        this.pcCharacterCache.clear();
+        this.pcCharacterInFlight.clear();
+      }
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.
       if (v.status === 'active') this.scheduleAutosave();
@@ -5862,6 +5887,11 @@ export class QuireApp extends LitElement {
     doLeaveSession(this.session);
     this.joinCodeDraft = '';
     this.chatDraft = '';
+    // Firewall hygiene (2026-05-27): drop cached PC character
+    // records on session leave so a follow-up session can't reuse
+    // stale records (with a different viewer's role/permissions).
+    this.pcCharacterCache.clear();
+    this.pcCharacterInFlight.clear();
   }
 
   /**
