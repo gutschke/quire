@@ -2025,19 +2025,20 @@ export const quireAppStyles = css`
       font-weight: 500;
       color: light-dark(#475569, #94a3b8);
     }
-    .dm-pc-detail-drift-pips {
-      display: inline-flex;
-      gap: 0.2rem;
-    }
-    .dm-pc-detail-drift-pip {
-      width: 0.7rem;
-      height: 0.7rem;
-      border-radius: 999px;
-      border: 1px solid light-dark(#d97706, #f59e0b);
-      background: transparent;
-    }
-    .dm-pc-detail-drift-pip-filled {
-      background: light-dark(#d97706, #f59e0b);
+    /* Wave D-prep-2-C (T-LT2 2026-05-26): pip widget collapsed
+       to one-line counter — old .dm-pc-detail-drift-pip styles
+       deleted with the widget.  New .dm-pc-detail-drift-due is
+       the "conversation due" chip that appears at marks >= 5. */
+    .dm-pc-detail-drift-due {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: 3px;
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#92400e, #fcd34d);
+      border: 1px solid light-dark(#fde68a, #92400e);
+      font-size: 0.8em;
+      font-weight: 500;
     }
     .dm-pc-detail-grants {
       list-style: none;

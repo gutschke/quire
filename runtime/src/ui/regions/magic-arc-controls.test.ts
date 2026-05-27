@@ -88,6 +88,93 @@ describe('<magic-arc-controls> (Wave C5 extraction)', () => {
     ).not.toBeNull();
   });
 
+  it('Wave D-prep-2-B (T-LT4): grant-focus form includes the condition input', async () => {
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    });
+    el.onGrantFocus = () => true;
+    await el.updateComplete;
+    // Three inputs now: name, domain, condition.
+    expect(el.querySelector('input[placeholder^="Focus name"]')).not.toBeNull();
+    expect(el.querySelector('input[placeholder^="Domain"]')).not.toBeNull();
+    expect(
+      el.querySelector('input[placeholder^="Condition"]')
+    ).not.toBeNull();
+  });
+
+  it('Wave D-prep-2-B: commit passes the trimmed condition through to onGrantFocus', async () => {
+    let received:
+      | { name: string; domain?: string; condition?: string }
+      | null = null;
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    });
+    el.onGrantFocus = (_pcId, focus) => {
+      received = focus;
+      return true;
+    };
+    await el.updateComplete;
+    const nameInput = el.querySelector(
+      'input[placeholder^="Focus name"]'
+    ) as HTMLInputElement;
+    nameInput.value = 'pattern-sense';
+    nameInput.dispatchEvent(new Event('input'));
+    const domainInput = el.querySelector(
+      'input[placeholder^="Domain"]'
+    ) as HTMLInputElement;
+    domainInput.value = 'perception';
+    domainInput.dispatchEvent(new Event('input'));
+    const conditionInput = el.querySelector(
+      'input[placeholder^="Condition"]'
+    ) as HTMLInputElement;
+    conditionInput.value = '  when held in moonlight  ';
+    conditionInput.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    const commitBtn = el.querySelector(
+      '.dm-pc-detail-arc-commit'
+    ) as HTMLButtonElement;
+    commitBtn.click();
+    expect(received).toEqual({
+      name: 'pattern-sense',
+      domain: 'perception',
+      condition: 'when held in moonlight'
+    });
+  });
+
+  it('Wave D-prep-2-B: omits condition from payload when not supplied', async () => {
+    let received:
+      | { name: string; domain?: string; condition?: string }
+      | null = null;
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    });
+    el.onGrantFocus = (_pcId, focus) => {
+      received = focus;
+      return true;
+    };
+    await el.updateComplete;
+    const nameInput = el.querySelector(
+      'input[placeholder^="Focus name"]'
+    ) as HTMLInputElement;
+    nameInput.value = 'pattern-sense';
+    nameInput.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    (el.querySelector('.dm-pc-detail-arc-commit') as HTMLButtonElement).click();
+    expect(received).toEqual({ name: 'pattern-sense' });
+    // No spurious undefined keys on the payload.
+    expect(received).not.toHaveProperty('condition');
+    expect(received).not.toHaveProperty('domain');
+  });
+
   it('mark-realization renders only when knowsTheyCanCast is not true', async () => {
     const el = mount({
       pcId: 'mei',
@@ -130,6 +217,39 @@ describe('<magic-arc-controls> (Wave C5 extraction)', () => {
     };
     await el.updateComplete;
     expect(el.textContent).not.toMatch(/Release the tax/);
+  });
+
+  it('Wave D-prep-2-B (verifier #4): focusConditionDraft wipes on view.pcId change (practice memo #2)', async () => {
+    // The willUpdate guard MUST move WITH the drafts (practice
+    // memo item #2).  When D-prep-2-B added focusConditionDraft,
+    // it had to also extend the wipe — pin that here so a future
+    // draft addition without the wipe-extension breaks loudly.
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    });
+    el.onGrantFocus = () => true;
+    await el.updateComplete;
+    const conditionInput = el.querySelector(
+      'input[placeholder^="Condition"]'
+    ) as HTMLInputElement;
+    conditionInput.value = 'when held in moonlight';
+    conditionInput.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    // Navigate to Iris.
+    el.view = {
+      pcId: 'iris',
+      pcName: 'Iris',
+      magicPhase: 'realization',
+      knowsTheyCanCast: true
+    };
+    await el.updateComplete;
+    const irisConditionInput = el.querySelector(
+      'input[placeholder^="Condition"]'
+    ) as HTMLInputElement;
+    expect(irisConditionInput.value).toBe('');
   });
 
   it('Wave B verifier-S1 (preserved in extraction): drafts wipe on view.pcId change', async () => {

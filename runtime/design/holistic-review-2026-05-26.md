@@ -234,6 +234,81 @@ before the bigger Wave-D items begin.
 - Engineering audit said `chargen-controller` had "101 host.*
   taps" — current count is 36.  Original was inflated.
 
+### Wave D-prep-2 — field-granularity firewall + T-LT4 + alignmentDrift cleanup ✓ SHIPPED `<TBD>`
+
+Triggered by the post-C2 4-expert round (2026-05-26 second pass).
+Adversarial sweep found 2 NEW pre-existing field-granularity
+firewall gaps (one latent, one real-today).  TTRPG named
+T-LT4 (focus condition) as the on-ramp to Wave D.  TTRPG + UX
+convergently flagged alignmentDrift 5-pip as the cockpit's
+worst signal-to-noise.  Bundled.
+
+- [x] **2-A (Adversarial Findings A+B)** — `serializeSessionForViewer`
+  gained a field-granularity scrub (`scrubEventForPlayer`):
+  pc-edit events whose top-level field is in
+  `DM_ONLY_CHARACTER_FIELDS` get DROPPED for non-coord viewers
+  (handles dotted like `tax.releaseMoment`, `threadDebt.rung`,
+  `alignmentDrift.marks`); focus-grant events get their
+  `boundFor` + `notes` fields stripped from the payload (focus
+  itself still lands).  Real dmNotes text like "the Quiet is
+  speaking through Mei" was reaching player autosaves pre-fix.
+  Plus a field-coverage CI lint in `persistence.coverage.test.ts`
+  that iterates the source-of-truth `DM_ONLY_CHARACTER_FIELDS`
+  list — converts "I remembered the examples I wrote" into
+  "every future addition is automatically covered" (same pattern
+  as the kind-level lint Wave D-prep-1 introduced).
+- [x] **2-B (T-LT4)** — focus-grant form on `<magic-arc-controls>`
+  gained the `condition` input.  Cross-expert resolution:
+  condition is player-visible per rules.md:139.  Practice-memo
+  draft-wipe extension applied (focusConditionDraft joins the
+  willUpdate guard).  3 new tests pin the form rendering,
+  commit threading, blank-omission.
+- [x] **2-C (T-LT2)** — alignmentDrift 5-pip widget collapsed to
+  one-line counter "N / 5" + "conversation due" chip at marks
+  >= 5 (rules.md:170 trigger).  Dead `.dm-pc-detail-drift-pip*`
+  CSS removed.  TTRPG + UX convergent removal-flavor recommendation.
+
+**4 next-wave findings deferred (recorded so they don't rot):**
+
+- **Engineering:** D3 (clocks) is the lowest-risk D-item — no
+  overlap with shipped surfaces, additive primitive, the
+  persistence-coverage lint already covers any new event kind.
+- **Engineering:** chargen-controller-extraction (E-LARGE-2) more
+  urgent post-C2 — `hasPendingSynth` is the new canonical
+  chargen-active predicate; extract `ChargenAcceptanceMachine`
+  + `ChargenPersistenceQueue` BEFORE D5 (bonds) which will plug
+  into the same controller.
+- **Engineering:** quire-app.css.ts split-per-region (start with
+  chargen.css.ts extract, ~600 LOC).  Bit twice by backticks-in-
+  comments; per-region unlocks tree-shaking + scoped CSS-rename
+  lint.
+- **Engineering:** CSS-class-rename CI lint ("class referenced in
+  *.ts but no matching rule in css.ts").  Cheap; fills the gap
+  practice memo #6 calls out (happy-dom doesn't see visual
+  regressions).
+- **TTRPG:** order D4 → D1 → D5 → D2 → D3.  Digest is the
+  campfire recap; you always recap before you canonize.  Skipping
+  recap to canonize first produces "wait, who is that NPC?"
+  three sessions later.
+- **TTRPG:** D5 bonds materially easier post-C5 — `extends
+  MagicArcControlsView` pattern + chargen-dm-review unmount-when-
+  complete means bonds can live inside chargen without later
+  eviction work.
+- **TTRPG/UX convergent:** swing focus to post-session (D4 + D1)
+  — chargen has had 5 consecutive waves; diminishing returns.
+- **UX:** D-wave chrome cost ranking D3 < D5 < D4 < D1 < D2.
+  D2 has most chrome (per-PC × multiple decision rows).
+- **UX:** promote U-LT2 (player-advancement-confirm) — composes
+  with D2, shrinks D2 from M-L → M.
+- **UX:** D1 has a real S-MVP — strip per-item accept/reject,
+  per-category commits, edit affordance; keep two-pane diff +
+  NPC-update only + ONE "Commit all" button.  Add accept/reject
+  in D1.5 if DMs report wanting it.
+- **UX:** proactively add orphan-rungs indicator on Stage roster
+  Retired tab — XS, regression-shaped gap, cheap insurance.
+- **Adversarial:** Q-LT4 grep lint (no `v.shared.synthesizedPcs`
+  outside an allowlist) still uncreated.
+
 ### Wave D — between-sessions ritual + clocks (longer-term)
 
 Genuine unique-feature payload but L scope.
@@ -363,24 +438,39 @@ make the Wave A-D ranking.  Captured so they don't rot.
   mechanically heavy part of the build for one specific edge case.
   Watch for adding more enforcement primitives — at some point the
   table will route around them.  No action; watch-item.
-- [ ] **T-LT2** — `alignmentDrift.marks` is a 5-pip surface for a
-  mechanic the rules say is "DM privately notes" and resolves via
-  conversation.  Risk of UI ceremony where prose belongs.  Consider
-  collapsing to a one-line counter (no pip widget) if the surface
-  gets in the way.
+- [x] **T-LT2** ✓ SHIPPED in D-prep-2-C — `alignmentDrift.marks`
+  collapsed from 5-pip widget to one-line counter "N / 5" with
+  "conversation due" chip appearing at marks >= 5 (rules.md:170
+  trigger).  TTRPG + UX experts convergently flagged this as the
+  worst signal-to-noise ratio in the cockpit; both rated it
+  removal-flavor XS.  Dead `.dm-pc-detail-drift-pip*` CSS deleted.
+  2 new tests pin the counter format + due-chip appearance.
 - [ ] **T-LT3** — `magicPhase` enum in code is `'accidental' |
   'realization' | 'tax' | 'free'`; some memory notes and prose
   said "aware / realized" — code is source of truth.  Tracker for
   future memory hygiene.
-- [ ] **T-LT4 (new 2026-05-26)** — focus form on `dm-pc-detail`
-  captures `name + domain` only.  TTRPG-expert re-review flagged
-  this as a **semantic hole, not polish**: rules.md says foci
-  "have a domain... and only apply within it" — `condition` IS
-  the in-fiction trigger that lets AI reason about WHEN the focus
-  applies.  Without it, the AI write API can't compose with
-  focus-grant cleanly.  Expose `condition` (and optionally
-  `notes` + `boundFor`) in the chargen-Realization-beat form OR
-  add a follow-up focus-edit affordance.  S scope.
+- [x] **T-LT4 partial** ✓ SHIPPED in D-prep-2-B — focus form on
+  `<magic-arc-controls>` gained a `condition` input (the
+  in-fiction trigger).  Cross-expert resolution: TTRPG over
+  Adversarial — condition IS player-visible per rules.md:139
+  (player owns the focus + needs to know when it triggers); only
+  `boundFor` + `notes` stay DM-only.  The save-stream scrub
+  (D-prep-2-A) hardcodes that split in `persistence.ts:76`
+  `FOCUS_DM_ONLY_PAYLOAD_FIELDS`.
+
+  **Deferred:** `notes` + `boundFor` form fields + `status`
+  enum cycle (Wave C+ verifier S3).  Engine accepts these; UI
+  doesn't capture them today.  Hold until a real campaign
+  scenario needs the surface.
+
+  **Long-tail [C] item (verifier #2):** the
+  `FOCUS_DM_ONLY_PAYLOAD_FIELDS` constant in `persistence.ts:76`
+  is currently engine-policy.  Per the
+  `feedback_engine_vs_campaign_policy` boundary, this should
+  drift toward campaign-authored config — a campaign that treats
+  `notes` as player-visible should be able to opt out of the
+  strip.  Watch-item; no action until a second campaign needs
+  the difference.
 
 ### UX (long-tail)
 

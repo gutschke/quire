@@ -372,26 +372,34 @@ export class DmPcDetail extends LitElement {
     </div>`;
   }
 
+  /**
+   * Wave D-prep-2-C (T-LT2 2026-05-26): collapsed 5-pip widget to
+   * a one-line counter.  TTRPG + UX both flagged the pip widget
+   * as "ceremony where prose belongs" — rules.md:170 says
+   * "DM privately notes... resolves via conversation."  A pip
+   * widget is glance-bait for a mechanic the rules explicitly say
+   * is conversational + DM-internal.  Counter format keeps the
+   * number scannable + cues the "have the conversation at 5"
+   * trigger without inviting cross-PC pip comparison the rules
+   * don't intend.
+   */
   private renderAlignmentDrift(
     drift: AlignmentDrift | undefined
   ): TemplateResult | typeof nothing {
     if (!drift) return nothing;
-    const pips: TemplateResult[] = [];
-    for (let i = 1; i <= 5; i++) {
-      const filled = i <= drift.marks;
-      pips.push(
-        html`<span
-          class="dm-pc-detail-drift-pip ${filled
-            ? 'dm-pc-detail-drift-pip-filled'
-            : ''}"
-        ></span>`
-      );
-    }
+    const due = drift.marks >= 5;
     return html`<div class="dm-pc-detail-section">
       <h3>Alignment drift</h3>
       <p class="dm-pc-detail-row">
-        <span class="dm-pc-detail-drift-pips">${pips}</span>
-        <span class="dm-pc-detail-value muted">${drift.marks}/5</span>
+        <span class="dm-pc-detail-label">Marks:</span>
+        <span class="dm-pc-detail-value">${drift.marks} / 5</span>
+        ${due
+          ? html`<span
+              class="dm-pc-detail-drift-due"
+              title="rules.md:170 — at 5 marks, schedule a realignment conversation with the player"
+              >conversation due</span
+            >`
+          : nothing}
       </p>
     </div>`;
   }

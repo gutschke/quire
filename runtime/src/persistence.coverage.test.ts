@@ -24,8 +24,11 @@ import { describe, it, expect } from 'vitest';
 import { KNOWN_EVENT_KINDS } from './core/state';
 import {
   EVENT_KINDS_PLAYER_VISIBLE,
-  PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS
+  PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS,
+  serializeSessionForViewer
 } from './persistence';
+import { DM_ONLY_CHARACTER_FIELDS } from './character-loader';
+import type { QuireEvent } from './core/event-log';
 
 describe('event-kind firewall classification (Wave D-prep-1)', () => {
   it('every KNOWN_EVENT_KIND is classified in exactly one of the two visibility sets', () => {
@@ -87,5 +90,147 @@ describe('event-kind firewall classification (Wave D-prep-1)', () => {
   it('seat-memory-edit is player-visible (player-safe by construction)', () => {
     expect(EVENT_KINDS_PLAYER_VISIBLE.has('seat-memory-edit')).toBe(true);
     expect(PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS.has('seat-memory-edit')).toBe(false);
+  });
+});
+
+describe('field-granularity firewall classification (Wave D-prep-2-A)', () => {
+  /**
+   * Verifier finding #8 (build d03f888 D-prep-2 audit): iterate
+   * the SOURCE-OF-TRUTH list `DM_ONLY_CHARACTER_FIELDS` and assert
+   * every field gets stripped when emitted as a `pc-edit` payload
+   * for a non-coord viewer.  Pre-fix, the regression tests
+   * hardcoded 6 example fields and missed `accidentalGrants`.
+   * This lint converts "I remembered the examples I wrote" into
+   * "every future addition to `DM_ONLY_CHARACTER_FIELDS` is
+   * automatically covered" — same pattern that turned the Wave
+   * A→B `accidental-grant-log` regression from a 30-minute
+   * adversarial catch into a compile-time fail.
+   */
+
+  function pcEditEvent(
+    field: string,
+    value: unknown = 'DM-only test value'
+  ): QuireEvent {
+    return {
+      id: `evt-${field}-${Math.random()}`,
+      kind: 'pc-edit',
+      ts: 1,
+      peerId: 'p1',
+      seq: 1,
+      clock: {},
+      payload: { v: 1, pcId: 'mei', field, value }
+    };
+  }
+
+  it('every DM_ONLY_CHARACTER_FIELDS entry strips via serializeSessionForViewer when emitted as pc-edit', () => {
+    // Build one pc-edit per DM-only field; serialize for a
+    // non-coord viewer; assert ZERO of them survive.
+    const events = DM_ONLY_CHARACTER_FIELDS.map((f) => pcEditEvent(f));
+    // Plus a player-visible pc-edit as a positive control —
+    // proves the test mechanism actually runs the filter.
+    events.push(pcEditEvent('harm', 2));
+    const doc = serializeSessionForViewer(
+      events,
+      { owner: 'o', repo: 'r', ref: 'main' },
+      'PLAYER',
+      'HOST'
+    );
+    const survivingFields = (
+      doc.events.filter((e) => e.kind === 'pc-edit') as Array<{
+        payload?: { field?: string };
+      }>
+    ).map((e) => e.payload?.field ?? '');
+    // Positive control: harm survives.
+    expect(survivingFields).toContain('harm');
+    // Every DM-only field stripped.
+    for (const f of DM_ONLY_CHARACTER_FIELDS) {
+      expect(survivingFields, `field "${f}" leaked to player save`).not.toContain(f);
+    }
+  });
+
+  it('dotted-field forms of DM-only fields ALSO strip (tax.releaseMoment, threadDebt.rung, etc.)', () => {
+    // Top-level prefix match: any pc-edit whose field starts with
+    // a DM-only top-level field name should drop.
+    const dottedExamples: string[] = [];
+    for (const f of DM_ONLY_CHARACTER_FIELDS) {
+      // Two common dotted shapes per top-level field.
+      dottedExamples.push(`${f}.someSubField`);
+      dottedExamples.push(`${f}.deep.nested.path`);
+    }
+    const events = dottedExamples.map((f) => pcEditEvent(f));
+    const doc = serializeSessionForViewer(
+      events,
+      { owner: 'o', repo: 'r', ref: 'main' },
+      'PLAYER',
+      'HOST'
+    );
+    // None of the dotted forms should survive.
+    expect(
+      doc.events.filter((e) => e.kind === 'pc-edit').length,
+      'dotted DM-only pc-edits leaked'
+    ).toBe(0);
+  });
+
+  it('coord viewer keeps every DM_ONLY_CHARACTER_FIELDS pc-edit (DM resilience)', () => {
+    // The scrub is non-coord ONLY.  The DM's own save needs the
+    // full DM-only event log for crash-recovery.
+    const events = DM_ONLY_CHARACTER_FIELDS.map((f) => pcEditEvent(f));
+    const doc = serializeSessionForViewer(
+      events,
+      { owner: 'o', repo: 'r', ref: 'main' },
+      'HOST',
+      'HOST'
+    );
+    const survivingFields = (
+      doc.events.filter((e) => e.kind === 'pc-edit') as Array<{
+        payload?: { field?: string };
+      }>
+    ).map((e) => e.payload?.field ?? '');
+    for (const f of DM_ONLY_CHARACTER_FIELDS) {
+      expect(survivingFields).toContain(f);
+    }
+  });
+
+  it('focus-grant DM-only payload fields (boundFor, notes) strip; condition + name + domain survive', () => {
+    // condition is player-visible per cross-expert resolution
+    // (TTRPG over Adversarial — rules.md:139 says the player who
+    // owns the focus needs to know when it fires).
+    const event: QuireEvent = {
+      id: 'evt-fg-1',
+      kind: 'focus-grant',
+      ts: 1,
+      peerId: 'p1',
+      seq: 1,
+      clock: {},
+      payload: {
+        v: 1,
+        pcId: 'mei',
+        focus: {
+          name: 'pattern-sense',
+          domain: 'perception',
+          condition: 'when held in moonlight',
+          boundFor: 'DM-private narrative anchor',
+          notes: 'DM observation about this focus'
+        }
+      }
+    };
+    const doc = serializeSessionForViewer(
+      [event],
+      { owner: 'o', repo: 'r', ref: 'main' },
+      'PLAYER',
+      'HOST'
+    );
+    const grants = doc.events.filter((e) => e.kind === 'focus-grant') as Array<{
+      payload?: { focus?: Record<string, unknown> };
+    }>;
+    expect(grants).toHaveLength(1);
+    const focus = grants[0].payload?.focus ?? {};
+    // Player-visible fields survive.
+    expect(focus.name).toBe('pattern-sense');
+    expect(focus.domain).toBe('perception');
+    expect(focus.condition).toBe('when held in moonlight');
+    // DM-only fields stripped.
+    expect(focus.boundFor).toBeUndefined();
+    expect(focus.notes).toBeUndefined();
   });
 });

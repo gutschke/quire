@@ -439,6 +439,164 @@ describe('QuireApp persistence — localStorage autosave', () => {
     expect(kinds.has('scratch-note')).toBe(true);
   });
 
+  it('Wave D-prep-2-A: player autosave DROPS pc-edit events whose field is DM-only (Finding B)', async () => {
+    // Adversarial sweep on build d03f888 found: pc-edit events
+    // for dmNotes / magicPhase / tax.* / threadDebt.* /
+    // alignmentDrift.* / knowsTheyCanCast flow into non-coord
+    // autosaves verbatim.  Materialized state strips these via
+    // filterForViewer, but the event log itself wasn't scrubbed.
+    // Real "the Quiet is speaking through Mei" dmNotes text was
+    // landing in player-autosave-localStorage.json.  Fix in
+    // serializeSessionForViewer via scrubEventForPlayer.
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    injectCampaign(host);
+    await host.startHosting();
+    await flush();
+    const player = mountApp(inMemoryFactory(network, 'PLAYER'));
+    injectCampaign(player);
+    (player as unknown as { sessionFactory: TransportFactory }).sessionFactory = {
+      createHost: async () => ({
+        transport: new InMemoryTransport('PLAYER', network),
+        pairingCode: 'PLAYER'
+      }),
+      createGuest: async () => ({
+        transport: new InMemoryTransport('PLAYER', network)
+      })
+    };
+    player.joinCodeDraft = 'HOST';
+    player.joinSession();
+    await flush();
+    // HOST appends DM-only pc-edits.  Each one carries a different
+    // class of DM-only field (top-level, dotted, the long-form
+    // dmNotes prose).
+    host.submitPcEdit('mei', 'dmNotes', 'the Quiet is speaking through Mei');
+    host.submitPcEdit('mei', 'magicPhase', 'realization');
+    host.submitPcEdit('mei', 'tax.releaseMoment', 'she let her sister see');
+    host.submitPcEdit('mei', 'threadDebt.rung', 'hunted');
+    host.submitPcEdit('mei', 'alignmentDrift.marks', 4);
+    host.submitPcEdit('mei', 'knowsTheyCanCast', true);
+    // Plus a player-visible pc-edit that MUST land in the player's save.
+    host.submitPcEdit('mei', 'harm', 2);
+    await flush();
+    expect(player.sessionView?.status).toBe('active');
+    const doc = player.buildShareableSaveDocument();
+    expect(doc).not.toBeNull();
+    // Player-visible pc-edit (harm) survived.
+    const pcEdits = doc!.events.filter((e) => e.kind === 'pc-edit') as Array<{
+      kind: 'pc-edit';
+      payload?: { field?: string };
+    }>;
+    const fieldsLanded = pcEdits.map((e) => e.payload?.field ?? '');
+    expect(fieldsLanded).toContain('harm');
+    // DM-only fields stripped.
+    expect(fieldsLanded).not.toContain('dmNotes');
+    expect(fieldsLanded).not.toContain('magicPhase');
+    expect(fieldsLanded).not.toContain('tax.releaseMoment');
+    expect(fieldsLanded).not.toContain('threadDebt.rung');
+    expect(fieldsLanded).not.toContain('alignmentDrift.marks');
+    expect(fieldsLanded).not.toContain('knowsTheyCanCast');
+    // Belt-and-suspenders: scan all event payloads for the secret text.
+    const allTexts = doc!.events.map((e) => JSON.stringify(e)).join(' ');
+    expect(allTexts).not.toContain('the Quiet is speaking through Mei');
+    expect(allTexts).not.toContain('she let her sister see');
+  });
+
+  it('Wave D-prep-2-A: player autosave STRIPS focus-grant boundFor/notes/condition (Finding A)', async () => {
+    // Adversarial Finding A: focus-grant carries optional DM-
+    // typed boundFor/notes/condition fields verbatim into the
+    // event log; D-prep-3 hid boundFor from RENDER but not from
+    // SAVE STREAM.  Becomes a real leak the moment T-LT4 (focus
+    // condition field UI) ships.  Fix scrubs those 3 fields from
+    // the focus-grant payload for non-coord viewers.
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    injectCampaign(host);
+    await host.startHosting();
+    await flush();
+    const player = mountApp(inMemoryFactory(network, 'PLAYER'));
+    injectCampaign(player);
+    (player as unknown as { sessionFactory: TransportFactory }).sessionFactory = {
+      createHost: async () => ({
+        transport: new InMemoryTransport('PLAYER', network),
+        pairingCode: 'PLAYER'
+      }),
+      createGuest: async () => ({
+        transport: new InMemoryTransport('PLAYER', network)
+      })
+    };
+    player.joinCodeDraft = 'HOST';
+    player.joinSession();
+    await flush();
+    // HOST grants a focus with DM-typed text in the 3 spoiler-
+    // shaped optional fields.
+    expect(
+      host.appendFocusGrant('mei', {
+        name: 'pattern-sense',
+        domain: 'perception',
+        condition: 'bind-on-mother-reveal-ep4',
+        notes: 'the Quiet speaks through this',
+        boundFor: 'the secret intent to remember'
+      })
+    ).toBe(true);
+    await flush();
+    expect(player.sessionView?.status).toBe('active');
+    const doc = player.buildShareableSaveDocument();
+    expect(doc).not.toBeNull();
+    // focus-grant event still lands (foci are player-visible at
+    // Realization).
+    const focusGrants = doc!.events.filter(
+      (e) => e.kind === 'focus-grant'
+    ) as Array<{
+      kind: 'focus-grant';
+      payload?: { focus?: Record<string, unknown> };
+    }>;
+    expect(focusGrants).toHaveLength(1);
+    const focus = focusGrants[0].payload?.focus ?? {};
+    // Safe fields survive.
+    expect(focus.name).toBe('pattern-sense');
+    expect(focus.domain).toBe('perception');
+    // Cross-expert resolution: `condition` IS player-visible (the
+    // in-fiction trigger the player needs to know about per
+    // TTRPG-expert + rules.md:139).  Survives the scrub.
+    expect(focus.condition).toBe('bind-on-mother-reveal-ep4');
+    // DM-only optional fields stripped from payload.
+    expect(focus.boundFor).toBeUndefined();
+    expect(focus.notes).toBeUndefined();
+    // Belt-and-suspenders: DM-only spoiler text stripped.
+    const allTexts = doc!.events.map((e) => JSON.stringify(e)).join(' ');
+    expect(allTexts).not.toContain('the Quiet speaks through this');
+    expect(allTexts).not.toContain('the secret intent to remember');
+  });
+
+  it('Wave D-prep-2-A: DM (coord) save preserves field-granularity DM material', async () => {
+    // The scrub is non-coord only.  The DM's own save must retain
+    // pc-edit{field:dmNotes} + focus-grant{boundFor} for restore.
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    injectCampaign(app);
+    await app.startHosting();
+    await flush();
+    app.submitPcEdit('mei', 'dmNotes', 'DM private');
+    app.appendFocusGrant('mei', {
+      name: 'f1',
+      boundFor: 'DM-private intent'
+    });
+    await flush();
+    const doc = app.buildShareableSaveDocument();
+    const pcEdits = doc!.events.filter((e) => e.kind === 'pc-edit') as Array<{
+      kind: 'pc-edit';
+      payload?: { field?: string };
+    }>;
+    expect(pcEdits.map((e) => e.payload?.field)).toContain('dmNotes');
+    const focusGrants = doc!.events.filter(
+      (e) => e.kind === 'focus-grant'
+    ) as Array<{
+      kind: 'focus-grant';
+      payload?: { focus?: Record<string, unknown> };
+    }>;
+    expect(focusGrants[0].payload?.focus?.boundFor).toBe('DM-private intent');
+  });
+
   it('Wave D-prep-1 firewall: player autosave STRIPS accidental-grant-log (Wave B regression fix)', async () => {
     // Adversarial expert caught this 30 minutes after Wave B
     // shipped: accidental-grant-log was a coord-only event

@@ -63,7 +63,20 @@ export type LogAccidentalGrantCallback = (
 export type MarkRealizationCallback = (pcId: string) => boolean;
 export type GrantFocusCallback = (
   pcId: string,
-  focus: { name: string; domain?: string; notes?: string }
+  focus: {
+    name: string;
+    domain?: string;
+    /**
+     * Wave D-prep-2-B (T-LT4 2026-05-26): in-fiction trigger that
+     * lets AI write API + session-digest reason about WHEN the
+     * focus applies (rules.md:139 "have a domain... and only
+     * apply within it" — condition IS the in-fiction trigger).
+     * DM-typed.  Player-visible at Realization per the same rule
+     * as `domain` — both describe the focus to its owner.
+     */
+    condition?: string;
+    notes?: string;
+  }
 ) => boolean;
 export type ReleaseTaxCallback = (
   pcId: string,
@@ -92,6 +105,9 @@ export class MagicArcControls extends LitElement {
   @state() private grantDraft: string = '';
   @state() private focusNameDraft: string = '';
   @state() private focusDomainDraft: string = '';
+  /** Wave D-prep-2-B (T-LT4): in-fiction trigger phrasing.
+   *  Optional; when present, threaded through onGrantFocus.payload. */
+  @state() private focusConditionDraft: string = '';
   @state() private releaseDraft: string = '';
   @state() private confirmingRealization: boolean = false;
 
@@ -128,6 +144,7 @@ export class MagicArcControls extends LitElement {
         this.grantDraft = '';
         this.focusNameDraft = '';
         this.focusDomainDraft = '';
+        this.focusConditionDraft = '';
         this.releaseDraft = '';
         this.confirmingRealization = false;
         this.lastPcId = nextId;
@@ -258,12 +275,14 @@ export class MagicArcControls extends LitElement {
   }
 
   private renderGrantFocusForm(view: MagicArcControlsView): TemplateResult {
-    // Verifier S3 (still deferred): v1 UI captures name + domain
-    // only.  Engine accepts condition / notes / status / boundFor.
-    // T-LT4 in the holistic-review plan doc tracks the semantic
-    // hole (rules.md treats `condition` as the in-fiction trigger
-    // that lets AI reason about WHEN the focus applies).
-    // TODO Wave C+: expose condition / notes / status.
+    // Wave D-prep-2-B (T-LT4 2026-05-26): added `condition` row.
+    // Rules.md:139 treats condition as the in-fiction trigger
+    // that lets AI write API + session-digest reason about WHEN
+    // the focus applies — without it, downstream automation
+    // can't compose with focus state intelligently.  `notes` /
+    // `status` / `boundFor` deferred (still outside the v1 form
+    // surface area).  Adversarial Finding A (D-prep-2-A) closed
+    // the matching save-stream leak so condition can land safely.
     const canSubmit = this.focusNameDraft.trim().length > 0;
     return html`<div class="dm-pc-detail-arc-row">
       <label class="dm-pc-detail-arc-label">
@@ -292,6 +311,17 @@ export class MagicArcControls extends LitElement {
           .value=${this.focusDomainDraft}
           @input=${(e: Event) => {
             this.focusDomainDraft = (e.target as HTMLInputElement).value;
+          }}
+        />
+        <input
+          type="text"
+          maxlength="200"
+          placeholder="Condition (optional, e.g., when held in moonlight)"
+          aria-label="Focus condition — the in-fiction trigger"
+          title="Player-visible.  When the focus 'fires' — the in-fiction trigger phrase the AI write API + session-digest use to reason about WHEN the focus applies (rules.md:139)."
+          .value=${this.focusConditionDraft}
+          @input=${(e: Event) => {
+            this.focusConditionDraft = (e.target as HTMLInputElement).value;
           }}
         />
         <button
@@ -364,13 +394,25 @@ export class MagicArcControls extends LitElement {
     const name = this.focusNameDraft.trim();
     if (name.length === 0) return;
     const domain = this.focusDomainDraft.trim();
-    const ok = this.onGrantFocus(
-      view.pcId,
-      domain.length > 0 ? { name, domain } : { name }
-    );
+    const condition = this.focusConditionDraft.trim();
+    // Build payload conditionally so undefined optional fields
+    // don't land in the event log.  D-prep-2-A scrub treats
+    // condition as player-visible — DM intends it as the in-
+    // fiction trigger phrase, which IS player-safe (the player
+    // sees their own focus's trigger).  Different from
+    // boundFor/notes which D-prep-2-A scrubs from player saves.
+    const payload: {
+      name: string;
+      domain?: string;
+      condition?: string;
+    } = { name };
+    if (domain.length > 0) payload.domain = domain;
+    if (condition.length > 0) payload.condition = condition;
+    const ok = this.onGrantFocus(view.pcId, payload);
     if (ok) {
       this.focusNameDraft = '';
       this.focusDomainDraft = '';
+      this.focusConditionDraft = '';
     }
   }
 

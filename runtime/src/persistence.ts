@@ -18,6 +18,95 @@
 
 import { EventLog, type QuireEvent } from './core/event-log';
 import { KNOWN_EVENT_KINDS } from './core/state';
+import { DM_ONLY_CHARACTER_FIELDS } from './character-loader';
+
+/**
+ * Wave D-prep-2-A (2026-05-26) — field-granularity firewall.
+ *
+ * Adversarial sweep on build `d03f888` found that the kind-level
+ * `PLAYER_SCOPE_STRIP_KINDS` filter, while correct for events
+ * whose payload is uniformly DM-only, leaks DM-typed material on
+ * events whose payload is PARTIALLY DM-only:
+ *
+ *   - `pc-edit` is correctly classified player-visible (most
+ *     writes target harm/stress/stats which the bound player
+ *     sees on their own sheet) but writes whose `payload.field`
+ *     is a DM-only field (dmNotes, magicPhase, tax.*,
+ *     threadDebt.*, alignmentDrift.*) reach non-coord autosaves
+ *     verbatim.  Real `dmNotes: "the Quiet is speaking through
+ *     Mei"` text lands in player-autosave-localStorage.json
+ *     pre-fix.  See `filterForViewer` at state.ts which DOES
+ *     strip the materialized state — the event log itself wasn't
+ *     scrubbed.
+ *
+ *   - `focus-grant` is correctly classified player-visible (foci
+ *     are the Realization-beat payoff) but optional payload
+ *     fields `boundFor` / `notes` / `condition` may carry DM-
+ *     typed spoiler-shaped text.  D-prep-3 hid `boundFor` from
+ *     the RENDER path via `<foci-card hideBoundFor>` but the
+ *     SAVE STREAM still carries the raw event.  Latent today
+ *     (UI form captures only name+domain) — becomes a real leak
+ *     the moment T-LT4 ships the `condition` field UI.
+ *
+ * `scrubEventForPlayer` runs AFTER `PLAYER_SCOPE_STRIP_KINDS` on
+ * each surviving event:
+ *
+ *   - `pc-edit` whose top-level field is DM-only → DROP entirely.
+ *     The player's view of that PC's state is rebuilt from other
+ *     events; dropping the DM-only edits doesn't break replay.
+ *
+ *   - `focus-grant` → strip the 3 optional DM-shaped fields from
+ *     payload.focus.  The event still lands (name + domain are
+ *     player-safe by design).
+ *
+ * Returns null when the event should be dropped entirely; returns
+ * the (possibly scrubbed) event otherwise.
+ */
+const DM_ONLY_FIELDS_SET = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
+/**
+ * Wave D-prep-2-A (2026-05-26) cross-expert resolution: adversarial
+ * named `condition` as DM-only on `focus-grant`, but TTRPG-expert
+ * advice clarifies that `condition` IS player-visible (the player
+ * owns the focus + needs to know when it triggers — rules.md:139).
+ * Only `boundFor` (DM's narrative anchor) and `notes` (free-form
+ * DM observation) are DM-only.  Keep this list narrow; widening
+ * would over-strip and break the AI-write-API composition T-LT4
+ * unlocked.
+ */
+const FOCUS_DM_ONLY_PAYLOAD_FIELDS = ['boundFor', 'notes'] as const;
+
+function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
+  if (event.kind === 'pc-edit') {
+    const p = event.payload as { field?: unknown } | null | undefined;
+    const field = typeof p?.field === 'string' ? p.field : '';
+    // Dotted fields (tax.releaseMoment, threadDebt.rung,
+    // alignmentDrift.marks) — match by top-level prefix.
+    const topLevel = field.split('.')[0];
+    if (topLevel.length > 0 && DM_ONLY_FIELDS_SET.has(topLevel)) {
+      return null;
+    }
+    return event;
+  }
+  if (event.kind === 'focus-grant') {
+    const p = event.payload as
+      | { v?: number; pcId?: string; focus?: Record<string, unknown> }
+      | null
+      | undefined;
+    if (!p || !p.focus || typeof p.focus !== 'object') return event;
+    let touched = false;
+    const safeFocus: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(p.focus)) {
+      if ((FOCUS_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)) {
+        touched = true;
+        continue;
+      }
+      safeFocus[k] = v;
+    }
+    if (!touched) return event;
+    return { ...event, payload: { ...p, focus: safeFocus } };
+  }
+  return event;
+}
 
 export interface CampaignRef {
   owner: string;
@@ -234,9 +323,22 @@ export function serializeSessionForViewer(
 ): SaveDocument {
   const isCoord =
     currentCoordinator !== undefined && savedByPeerId === currentCoordinator;
-  const filtered = isCoord
-    ? events.slice()
-    : events.filter((e) => !PLAYER_SCOPE_STRIP_KINDS.has(e.kind));
+  // Wave D-prep-2-A (2026-05-26): two-stage filter for non-coord
+  // viewers.  Stage 1: drop DM-only event kinds (the existing
+  // strip).  Stage 2: field-level scrub on pc-edit + focus-grant
+  // for the partially-DM-only payloads adversarial found.  Coord
+  // viewer keeps the full event log unchanged.
+  let filtered: QuireEvent[];
+  if (isCoord) {
+    filtered = events.slice();
+  } else {
+    filtered = [];
+    for (const e of events) {
+      if (PLAYER_SCOPE_STRIP_KINDS.has(e.kind)) continue;
+      const scrubbed = scrubEventForPlayer(e);
+      if (scrubbed !== null) filtered.push(scrubbed);
+    }
+  }
   return {
     $schemaVersion: SAVE_SCHEMA_VERSION,
     savedAt: new Date().toISOString(),

@@ -68,17 +68,34 @@ describe('<dm-pc-detail>', () => {
     expect(el.textContent).toMatch(/Persistent spam count/);
   });
 
-  it('renders alignment-drift section with 5 pips', async () => {
+  it('Wave D-prep-2-C (T-LT2): alignment-drift renders as one-line counter (no pip widget)', async () => {
     const el = mount({
-      pcId: 'mei', pcName: 'Mei',
+      pcId: 'mei',
+      pcName: 'Mei',
       alignmentDrift: { marks: 3 }
     });
     await el.updateComplete;
     expect(el.textContent).toMatch(/Alignment drift/);
-    const filled = el.querySelectorAll('.dm-pc-detail-drift-pip-filled');
-    expect(filled.length).toBe(3);
-    const total = el.querySelectorAll('.dm-pc-detail-drift-pip');
-    expect(total.length).toBe(5);
+    expect(el.textContent).toMatch(/3 \/ 5/);
+    // Old pip widgets are GONE — converted to ceremony-free counter
+    // per TTRPG+UX convergent recommendation (rules.md:170 says
+    // "DM privately notes... resolves via conversation").
+    expect(el.querySelector('.dm-pc-detail-drift-pip')).toBeNull();
+    expect(el.querySelector('.dm-pc-detail-drift-pip-filled')).toBeNull();
+    // marks=3 → no "conversation due" chip yet.
+    expect(el.querySelector('.dm-pc-detail-drift-due')).toBeNull();
+  });
+
+  it('Wave D-prep-2-C: "conversation due" chip appears at 5 marks (rules.md:170 trigger)', async () => {
+    const el = mount({
+      pcId: 'mei',
+      pcName: 'Mei',
+      alignmentDrift: { marks: 5 }
+    });
+    await el.updateComplete;
+    const due = el.querySelector('.dm-pc-detail-drift-due');
+    expect(due).not.toBeNull();
+    expect(due?.textContent).toMatch(/conversation due/);
   });
 
   it('renders accidental-grants when array non-empty', async () => {
