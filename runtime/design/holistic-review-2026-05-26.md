@@ -416,7 +416,7 @@ No player-side welcome-back surface (defer to D2.5 / U-LT2).
 Realignment-acknowledge receipt is local @state only (re-fires
 on reload of the same session-open; acceptable since reload
 mid-open is rare).
-### Wave D3 — progress clocks (DM-only MVP) 🚧 IN PROGRESS
+### Wave D3 — progress clocks (DM-only MVP) ✓ SHIPPED `dc65b4f`
 
 3-expert pre-design round (TTRPG / UX / Adversarial) locked the
 MVP scope.  **TTRPG-expert reframed**: clocks aren't for "scene
@@ -510,13 +510,13 @@ the primitive proves out).
 
 **Sub-wave plan:**
 
-- [ ] **D3-A** — locked scope (DONE in this commit).
-- [ ] **D3-B [engine]** — 3 new event kinds + DmClock interface
+- [x] **D3-A** — locked scope (DONE in this commit).
+- [x] **D3-B [engine]** — 3 new event kinds + DmClock interface
   + materializers + persistence classification + filterForViewer
   wipe + engine tests.
-- [ ] **D3-C [UI]** — `<clock-strip>` region + host methods +
+- [x] **D3-C [UI]** — `<clock-strip>` region + host methods +
   dm-aside mount + CSS + component tests.
-- [ ] **D3-D** — verifier + commit + push.
+- [x] **D3-D** — verifier + commit + push.
 ### Wave D4-cleanup — post-ship 4-expert sanity check findings ✓ SHIPPED `d6eb8e5`
 
 Triggered by the post-D4 4-expert sanity-check round (2026-05-26
