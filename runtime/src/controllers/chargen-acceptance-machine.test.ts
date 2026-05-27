@@ -202,7 +202,7 @@ describe('ChargenAcceptanceMachine — resetForRevise', () => {
 });
 
 describe('ChargenAcceptanceMachine — resetAfterFreshSynth', () => {
-  it('fresh-synth (not a resync): clears accepted + raceMismatch only', () => {
+  it('fresh-synth ok (not a resync): clears accepted + raceMismatch only', () => {
     const m = new ChargenAcceptanceMachine();
     m.markAccepted(1);
     m.markRaceMismatch(1);
@@ -210,7 +210,7 @@ describe('ChargenAcceptanceMachine — resetAfterFreshSynth', () => {
     m.setOriginalBackstoryForResync(1, 'prose');
     m.setResyncFailure(1, { code: 'a', message: 'b' });
 
-    m.resetAfterFreshSynth(1, { resyncSucceeded: false });
+    m.resetAfterFreshSynth(1, { resultOk: true, resyncSucceeded: false });
 
     expect(m.isAccepted(1)).toBe(false);
     expect(m.hasRaceMismatch(1)).toBe(false);
@@ -220,6 +220,23 @@ describe('ChargenAcceptanceMachine — resetAfterFreshSynth', () => {
     expect(m.hasResyncFailure(1)).toBe(true);
   });
 
+  /**
+   * Post-D5.5-A playthrough Scenario 3 nit: a FAILED synth (or
+   * failed resync) must NOT clear the raceMismatch banner — the
+   * prior synth result is still the live one + the DM still
+   * needs the "re-review" hint.
+   */
+  it('failed synth: clears accepted but KEEPS raceMismatch', () => {
+    const m = new ChargenAcceptanceMachine();
+    m.markAccepted(1);
+    m.markRaceMismatch(1);
+
+    m.resetAfterFreshSynth(1, { resultOk: false, resyncSucceeded: false });
+
+    expect(m.isAccepted(1)).toBe(false);
+    expect(m.hasRaceMismatch(1)).toBe(true);
+  });
+
   it('successful resync: ALSO clears drift + original-backstory', () => {
     const m = new ChargenAcceptanceMachine();
     m.markAccepted(1);
@@ -227,7 +244,7 @@ describe('ChargenAcceptanceMachine — resetAfterFreshSynth', () => {
     m.setPreAcceptOriginal(1, { name: 'x' });
     m.setOriginalBackstoryForResync(1, 'prose');
 
-    m.resetAfterFreshSynth(1, { resyncSucceeded: true });
+    m.resetAfterFreshSynth(1, { resultOk: true, resyncSucceeded: true });
 
     expect(m.isAccepted(1)).toBe(false);
     expect(m.hasRaceMismatch(1)).toBe(false);

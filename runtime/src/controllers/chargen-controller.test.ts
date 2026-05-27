@@ -409,6 +409,60 @@ describe('ChargenController — clearSynth + acceptedSlots bookkeeping', () => {
     ctrl.clearSynth(7);
     expect(updateCount()).toBe(before);
   });
+
+  /**
+   * Post-D5.5-A playthrough Scenario 4: a synth started for slot N,
+   * cleared mid-await via clearSynth(N), must not resurrect the slot
+   * when the synth resolves seconds later.  Pre-fix, the result of a
+   * 10-30s resync would land in _synthResults after the DM clicked
+   * Clear, producing a zombie banner / phantom result.  Post-fix:
+   * each clearSynth bumps a per-slot generation counter; the in-
+   * flight synth captures the generation at start + suppresses its
+   * own state-write when it has bumped.
+   */
+  it('synthesizeForSlot suppresses its write when clearSynth bumped the generation mid-await', async () => {
+    saveChargenState('o-r-main', 4, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    let resolveSynth: (value: SynthesizeBackstoryResult) => void = () => {};
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockReturnValueOnce(
+        new Promise<SynthesizeBackstoryResult>((resolve) => {
+          resolveSynth = resolve;
+        })
+      );
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    // Kick off the synth (resolves only when we let it).
+    const synthPromise = ctrl.synthesizeForSlot(4);
+    // Mid-await: DM clears the slot.
+    ctrl.clearSynth(4);
+    // Now let the synth complete.
+    resolveSynth({
+      ok: true,
+      response: {
+        name: 'Mei',
+        pronouns: 'she/her',
+        tags: ['a', 'b', 'c'],
+        stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+        skillMastery: ['Tech', 'Knowledge'],
+        backstory: 'x',
+        raw: '{}',
+        tokensIn: 0,
+        tokensOut: 0,
+        responseId: 'r1'
+      },
+      warnings: [],
+      retried: false
+    } as SynthesizeBackstoryResult);
+    await synthPromise;
+    // The stale synth must NOT have resurrected the cleared slot.
+    expect(ctrl.getSynthResult(4)).toBeUndefined();
+    expect(ctrl.isAccepted(4)).toBe(false);
+    synthSpy.mockRestore();
+  });
 });
 
 // ---- Engine B3 / Test-cov BIG #1: packAndDownload ----

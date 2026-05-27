@@ -247,20 +247,27 @@ export class ChargenAcceptanceMachine {
   }
 
   /**
-   * Reset when a new synth result has just landed (fresh synth or
-   * successful re-sync).  Always clears acceptance (the prior
-   * accept is now stale against the new prose) + raceMismatch
-   * (fresh synth supersedes the race banner).  Conditionally
-   * clears the drift Maps when `resyncSucceeded` — the AI just
-   * folded the drift back into the new prose.  Mirrors the inline
-   * block in synthesizeForSlot().
+   * Reset when a new synth result has just landed.  Always clears
+   * acceptance (the prior accept is now stale against the new
+   * prose).  Conditional clears:
+   *   - `raceMismatch` cleared only when the new synth landed
+   *     successfully — a fresh OK result supersedes the race
+   *     banner, but a FAILED resync leaves the prior result
+   *     intact + should keep the race banner so the DM still
+   *     sees the "re-review" hint.  Post-D5.5-A playthrough
+   *     Scenario 3 nit fix.
+   *   - drift Maps cleared only when `resyncSucceeded` — the AI
+   *     just folded the drift back into the new prose.
+   * Mirrors the inline block in synthesizeForSlot().
    */
   resetAfterFreshSynth(
     slot: number,
-    opts: { resyncSucceeded: boolean }
+    opts: { resultOk: boolean; resyncSucceeded: boolean }
   ): void {
     this.accepted.delete(slot);
-    this.raceMismatch.delete(slot);
+    if (opts.resultOk) {
+      this.raceMismatch.delete(slot);
+    }
     if (opts.resyncSucceeded) {
       this.preAcceptOriginals.delete(slot);
       this.originalBackstoryForResync.delete(slot);
