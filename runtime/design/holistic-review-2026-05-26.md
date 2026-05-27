@@ -149,7 +149,7 @@ together; C2 + C4 (larger scope) deferred.
   Extract before crossing 800 LOC; establishes the extraction
   pattern for D5 (bonds) which will have identical shape.
 
-### Wave D-prep — firewall regression fix + atomicity + UI gates ✓ SHIPPED `<TBD>`
+### Wave D-prep — firewall regression fix + atomicity + UI gates ✓ SHIPPED `d98daf4`
 
 Triggered by the 2026-05-26 re-prioritization round: adversarial
 expert caught a Wave B firewall regression (same class Wave A
