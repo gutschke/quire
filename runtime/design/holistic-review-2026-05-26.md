@@ -452,7 +452,7 @@ for the feature surface (markdown + DOMPurify + js-yaml + Lit +
 WebRTC + 25-materializer event-sourced engine).  Bumped cap to
 175 KB; took E-LH6 immediately; restored cap to 150 KB.
 
-- [x] **E-LH6** ✓ SHIPPED — lazy-loaded markdown pipeline.  Split
+- [x] **E-LH6** ✓ SHIPPED `fa0fa02` — lazy-loaded markdown pipeline.  Split
   heavy implementation (marked + DOMPurify + js-yaml, ~30 KB
   gzipped) into `src/markdown-pipeline.ts`; `src/markdown.ts`
   became a thin sync facade with module-level pipeline cache +
