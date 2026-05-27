@@ -325,7 +325,7 @@ D-prep-2 → C5 (extract magic-arc-controls) → C4 → D1 + D4 paired.
   two-pane diff-review per `ui.md` L298-363.  MVP: NPC-update
   category only.  Without this, "wrap session" is a checkbox sheet
   with no payoff; AI-living-doc value never reaches the table.
-### Wave D2 — session-open ritual 🚧 IN PROGRESS
+### Wave D2 — session-open ritual ✓ SHIPPED `1830c9a`
 
 3-expert pre-design round (TTRPG / UX / Adversarial) locked the
 MVP scope before coding.  Framing: **"the table picks up the
@@ -399,8 +399,8 @@ are DM-only.
 
 **Sub-wave plan:**
 
-- [ ] **D2-A** — locked scope above (DONE in this commit).
-- [ ] **D2-B [engine + UI]** — new `session-open` event kind
+- [x] **D2-A** — locked scope above (DONE in this commit).
+- [x] **D2-B [engine + UI]** — new `session-open` event kind
   (player-visible; coord-only authored); `state.sessionOpens`
   array; materializer.  New AppMode `session-open`.  New region
   `src/ui/regions/session-open-stage.ts`.  Launcher in dm-aside
@@ -408,7 +408,7 @@ are DM-only.
   `beginSession()` emits session-open + tax-decrement pc-edits +
   transitions appMode.  Auto-open wiring in QuireApp's
   sessionView subscriber.
-- [ ] **D2-C** — tests + verifier + commit.
+- [x] **D2-C** — tests + verifier + commit.
 
 **Conscious MVP debt:** no per-card "delta since last session"
 arrows (would require `state.lastWrapSnapshot`; defer to D2.5).
