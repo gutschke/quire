@@ -997,7 +997,7 @@ describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-1
     synthSpy.mockRestore();
   });
 
-  it('requestReviseSlot clears synth result + accept flag', async () => {
+  it('requestReviseSlot clears synth result on pre-accept slots', async () => {
     saveChargenState('o-r-main', 6, {
       chosenPath: 'qa',
       answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
@@ -1024,10 +1024,99 @@ describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-1
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     await ctrl.synthesizeForSlot(6);
-    ctrl.acceptSlot(6);
+    // Do NOT accept — revise is for pre-accept revision.
     ctrl.requestReviseSlot(6);
     expect(ctrl.getSynthResult(6)).toBeUndefined();
     expect(ctrl.isAccepted(6)).toBe(false);
+    synthSpy.mockRestore();
+  });
+
+  /**
+   * Post-D5.5-A playthrough Scenario 1: pre-extraction this case
+   * silently `_synthResults.delete`d + `_acceptedSlots.delete`d but
+   * the engine still carries the pc-create + pc-slot-bind events,
+   * leaving the player roster with a ghost PC.  Post-fix: revise is
+   * refused on accepted slots; the DM must retire the bound PC
+   * first.  An audit scratch-note records the refusal.
+   */
+  it('requestReviseSlot refuses on an already-accepted slot + audits', async () => {
+    saveChargenState('o-r-main', 6, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(6);
+    ctrl.acceptSlot(6);
+    const scratchBefore = env.scratchNotes.length;
+    ctrl.requestReviseSlot(6, 'oops');
+    // Refusal: synth + accept flag intact, no mid-state.
+    expect(ctrl.getSynthResult(6)).toBeDefined();
+    expect(ctrl.isAccepted(6)).toBe(true);
+    // Audit-note appended so the refusal is investigable.
+    expect(env.scratchNotes.length).toBe(scratchBefore + 1);
+    expect(env.scratchNotes[scratchBefore]).toMatch(/already-accepted/i);
+    synthSpy.mockRestore();
+  });
+
+  /**
+   * Post-D5.5-A playthrough Scenario 6: joiningSession is table-
+   * state ("this PC is joining at session 5"), not per-attempt.
+   * Pre-fix, `resetForRevise` cleared it, forcing the DM to re-pick
+   * N every revise round (or silently downgrading to N=1).  Post-
+   * fix: revise preserves the joining-session.
+   */
+  it('requestReviseSlot preserves joiningSession across revise rounds', async () => {
+    saveChargenState('o-r-main', 6, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker', 'intent-moment': 'I held the line.' }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech', 'Knowledge'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setJoiningSessionForSlot(6, 5);
+    await ctrl.synthesizeForSlot(6);
+    ctrl.requestReviseSlot(6);
+    // The table-fact "joining at session 5" survives the revise.
+    expect(ctrl.joiningSessionForSlot(6)).toBe(5);
     synthSpy.mockRestore();
   });
 });

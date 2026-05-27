@@ -2103,10 +2103,12 @@ export class ChargenDmReview extends LitElement {
           ? html`<button
               type="button"
               class="chargen-dm-review-revise"
-              ?disabled=${!this.onRevise || resyncing}
+              ?disabled=${!this.onRevise || resyncing || accepted}
               title="${resyncing
                 ? 'Re-sync in flight — wait for the new backstory'
-                : 'Ask the player to revise an answer + clear this result'}"
+                : accepted
+                  ? 'PC already accepted; retire the bound PC first if you want to free the seat'
+                  : 'Ask the player to revise an answer + clear this result'}"
               @click=${() => this.handleRevise(slot)}
             >
               Ask player to revise

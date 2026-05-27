@@ -174,7 +174,7 @@ describe('ChargenAcceptanceMachine — joiningSession', () => {
 });
 
 describe('ChargenAcceptanceMachine — resetForRevise', () => {
-  it('clears the 6-slot subset; KEEPS raceMismatch + resyncInFlight', () => {
+  it('clears the 5-slot subset; KEEPS raceMismatch + resyncInFlight + joiningSession', () => {
     const m = new ChargenAcceptanceMachine();
     m.markAccepted(1);
     m.markRaceMismatch(1);
@@ -192,10 +192,12 @@ describe('ChargenAcceptanceMachine — resetForRevise', () => {
     expect(m.hasPronounPatch(1)).toBe(false);
     expect(m.hasOriginalBackstoryForResync(1)).toBe(false);
     expect(m.hasResyncFailure(1)).toBe(false);
-    expect(m.getJoiningSession(1)).toBe(1); // back to default
     // Critically:
     expect(m.hasRaceMismatch(1)).toBe(true);
     expect(m.isResyncInFlight(1)).toBe(true);
+    // Post-D5.5-A playthrough Scenario 6: joiningSession is table-
+    // state, not per-attempt — revise must preserve it.
+    expect(m.getJoiningSession(1)).toBe(3);
   });
 });
 

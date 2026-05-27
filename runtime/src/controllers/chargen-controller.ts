@@ -969,6 +969,23 @@ export class ChargenController implements ReactiveController {
     // produce a new synth-result.  Revise would clear it anyway,
     // but firing both creates a race — refuse during the window.
     if (this.acceptance.isResyncInFlight(slot)) return;
+    // Post-D5.5-A playthrough Scenario 1: revise on an already-
+    // accepted slot is a silent data-leak — the engine has already
+    // committed pc-create + pc-slot-bind, so wiping our local
+    // acceptance state would leave a ghost PC in the player roster.
+    // Refuse + audit; the DM must explicitly retire the bound PC
+    // first (pc-retire, with narrative metadata).  The UI mirrors
+    // this by disabling the Revise button on accepted slots so the
+    // refusal path is normally unreachable; the controller-side
+    // gate is the load-bearing defense.
+    if (this.acceptance.isAccepted(slot)) {
+      this.env.appendScratchNote(
+        `DM asked to revise slot ${slot} but it is already-accepted.  ` +
+          `Retire the bound PC first if you want to free the seat.`
+      );
+      this.host.requestUpdate();
+      return;
+    }
     this._synthResults.delete(slot);
     this.acceptance.resetForRevise(slot);
     const trimmedReason = reason?.trim() ?? '';

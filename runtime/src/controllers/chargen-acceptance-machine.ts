@@ -228,11 +228,15 @@ export class ChargenAcceptanceMachine {
   /**
    * Reset when the DM asks the player to revise.  Clears
    * acceptance + drift + pronoun-patch + original-backstory +
-   * resync-failure + joining-session.  Does NOT clear
-   * `raceMismatch` (revise can land alongside a queued race-
-   * mismatch banner — the banner is for re-review, not for
-   * the new revise flow).  Mirrors the pre-extraction inline
-   * block in revise().
+   * resync-failure.  Does NOT clear:
+   *   - `raceMismatch` — revise can land alongside a queued race
+   *     banner; the banner is for re-review, not for the new
+   *     revise flow.
+   *   - `joiningSession` — this is table-state ("the PC is joining
+   *     at session N"), not per-attempt.  Pre-D5.5-A this WAS
+   *     cleared on revise, forcing the DM to re-pick N every
+   *     revise round (or silently downgrading to N=1 on commit).
+   *     Post-D5.5-A playthrough Scenario 6: preserve it.
    */
   resetForRevise(slot: number): void {
     this.accepted.delete(slot);
@@ -240,7 +244,6 @@ export class ChargenAcceptanceMachine {
     this.pronounPatched.delete(slot);
     this.originalBackstoryForResync.delete(slot);
     this.resyncFailures.delete(slot);
-    this.joiningSession.delete(slot);
   }
 
   /**
