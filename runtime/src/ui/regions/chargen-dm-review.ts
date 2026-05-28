@@ -269,6 +269,18 @@ export class ChargenDmReview extends LitElement {
   answersLookup: AnswersLookup | null = null;
 
   /**
+   * First-session Gap B (2026-05-28): substring spoiler scan for a
+   * player-authored answer.  Host wires to QuireApp.spoilerTokenHits
+   * (campaign spoilerTokens).  When an answer trips a token the DM
+   * sees an amber "possible spoiler" chip on the answers diff — a
+   * DM-only assist (this whole region is coord-gated; the player
+   * who typed it is never told, per silent-player-firewall).  Null
+   * → no scan (chip never shows).
+   */
+  @property({ attribute: false })
+  spoilerScan: ((text: string) => string[]) | null = null;
+
+  /**
    * Phase 3b polish (2026-05-23): the campaign's declared chargen
    * questions.  Used to (a) iterate the diff view in the
    * campaign's authored order rather than a hardcoded Underleaf-
@@ -2993,12 +3005,24 @@ export class ChargenDmReview extends LitElement {
                   answers to display.
                 </p>`
               : html`<dl>
-                  ${items.map(
-                    (item) => html`<dt>${item.label}</dt>
+                  ${items.map((item) => {
+                    const hits =
+                      item.display && this.spoilerScan
+                        ? this.spoilerScan(item.display)
+                        : [];
+                    return html`<dt>${item.label}</dt>
                       <dd class=${item.display === null ? 'muted' : ''}>
                         ${item.display ?? '(not answered)'}
-                      </dd>`
-                  )}
+                        ${hits.length > 0
+                          ? html`<span
+                              class="chargen-dm-review-answer-spoiler"
+                              role="note"
+                              title="The player's answer mentions campaign secrets.  The AI synthesis won't echo a flagged term, but check the backstory + any bond/chat you broadcast."
+                              >⚠ possible spoiler: ${hits.join(', ')}</span
+                            >`
+                          : nothing}
+                      </dd>`;
+                  })}
                 </dl>`}
         </div>
         <div class="chargen-dm-review-diff-backstory">

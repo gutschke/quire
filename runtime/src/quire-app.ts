@@ -2456,16 +2456,18 @@ export class QuireApp extends LitElement {
    * Used by both outbound + inbound bond rendering.
    */
   /**
-   * D5.5-B deferred-enhancement (2026-05-28): substring-scan a
-   * bond's player-authored text + free-text placeholder for
-   * campaign spoiler tokens.  Returns the matched tokens (lowercased,
-   * deduped) so the DM review surfaces can render an amber "possible
-   * spoiler" chip BEFORE ratify.
+   * Substring-scan player-authored free text (a bond's text +
+   * placeholder, OR a chargen Q&A short-answer) for campaign
+   * spoiler tokens.  Returns the matched tokens (lowercased,
+   * deduped) so a DM review surface can render an amber "possible
+   * spoiler" chip.  Generic since D5.5-B Gap B (2026-05-28) — the
+   * `placeholder` arg is optional for the answer-scan case.
    *
-   * Per [[feedback_silent_player_firewall]]: this is a DM-ONLY
-   * signal — the chip surfaces only on coord-gated surfaces
-   * (dm-aside queue, dm-pc-detail ratify form).  The player who
-   * typed the spoiler is NEVER told (telling them IS the spoiler).
+   * Per [[feedback_silent_player_firewall]]: a DM-ONLY signal —
+   * surfaced only on coord-gated surfaces (dm-aside bond queue,
+   * dm-pc-detail ratify form, chargen-dm-review answers diff).  The
+   * player who typed the spoiler is NEVER told (telling them IS the
+   * spoiler).
    *
    * Uses the campaign's declared `aiBackstory.spoilerTokens` when
    * present (the curated Underleaf secret list), else the default
@@ -2473,7 +2475,7 @@ export class QuireApp extends LitElement {
    * No AI call: a substring pass is the right weight for a passive
    * review chip; the DM makes the final call.
    */
-  private bondTextSpoilerHits(text: string, placeholder?: string): string[] {
+  private spoilerTokenHits(text: string, placeholder?: string): string[] {
     const campaign = this.getCurrentCampaign();
     const declared = campaign?.base.manifest.aiBackstory?.spoilerTokens;
     const tokens = declared && declared.length > 0 ? declared : undefined;
@@ -2534,7 +2536,7 @@ export class QuireApp extends LitElement {
         const isPlaceholder =
           p.targetPcId.length === 0 &&
           (p.targetPlaceholder?.length ?? 0) > 0;
-        const spoilerHits = this.bondTextSpoilerHits(
+        const spoilerHits = this.spoilerTokenHits(
           p.text,
           p.targetPlaceholder
         );
@@ -2693,6 +2695,7 @@ export class QuireApp extends LitElement {
           this.chargen.displayNameForBound(pcId)}
         .answersLookup=${(slot: number) =>
           this.chargen.loadPersistedAnswers(slot)}
+        .spoilerScan=${(text: string) => this.spoilerTokenHits(text)}
         .questions=${campaign?.base.manifest.characterCreation?.questions ??
         []}
         .onGenerate=${(slot: number) => this.chargen.generateInviteUrl(slot)}
@@ -7133,7 +7136,7 @@ export class QuireApp extends LitElement {
           p.targetPcId.length === 0 &&
           (p.targetPlaceholder?.length ?? 0) > 0;
         const target = v.shared.synthesizedPcs?.[p.targetPcId];
-        const spoilerHits = this.bondTextSpoilerHits(
+        const spoilerHits = this.spoilerTokenHits(
           p.text,
           p.targetPlaceholder
         );

@@ -717,6 +717,44 @@ describe('<chargen-dm-review> — full review card (Step 5)', () => {
     expect(answers!.textContent).not.toMatch(/last-72h/);
   });
 
+  it('Gap B: shows an amber spoiler chip on an answer that trips the scan', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.answersLookup = () => ({
+      'intent-moment': 'I felt the Quiet stir when my dad lost his job.',
+      'meaningful-item': 'a brass key'
+    });
+    // Scan flags the campaign secret "Quiet" (case-insensitive
+    // substring; mirrors the host's spoilerTokenHits).
+    el.spoilerScan = (text: string) =>
+      /quiet/i.test(text) ? ['quiet'] : [];
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    const chip = el.querySelector('.chargen-dm-review-answer-spoiler');
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toMatch(/possible spoiler/i);
+    // The clean answer ("a brass key") gets no chip — exactly one.
+    expect(
+      el.querySelectorAll('.chargen-dm-review-answer-spoiler').length
+    ).toBe(1);
+  });
+
+  it('Gap B: no chip when spoilerScan is unset or finds nothing', async () => {
+    const el = mountWith9Seats();
+    el.synthResults = new Map([[1, okResult()]]);
+    el.answersLookup = () => ({
+      'intent-moment': 'I held the line.'
+    });
+    el.spoilerScan = () => [];
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.chargen-dm-review-expand')!.click();
+    await el.updateComplete;
+    expect(
+      el.querySelector('.chargen-dm-review-answer-spoiler')
+    ).toBeNull();
+  });
+
   it('shows "no saved answers" copy when answersLookup returns null', async () => {
     const el = mountWith9Seats();
     el.synthResults = new Map([[1, okResult()]]);

@@ -1582,6 +1582,18 @@ export const quireAppStyles = css`
       margin: 0 0 0.3rem 0;
       color: light-dark(#475569, #cbd5e1);
     }
+    /* Gap B: DM-only amber spoiler chip on a player's Q&A answer.
+       Same treatment as the bond spoiler chip. */
+    .chargen-dm-review-answer-spoiler {
+      display: inline-block;
+      margin-left: 0.4rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: 0.25rem;
+      font-size: 0.75em;
+      color: light-dark(#7c2d12, #fbbf24);
+      background: light-dark(#fef3c7, #422006);
+      border: 1px solid light-dark(#f59e0b, #92660e);
+    }
     .chargen-dm-review-backstory-body p {
       margin: 0 0 0.4rem;
       font-size: 0.92em;
