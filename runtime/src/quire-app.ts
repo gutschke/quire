@@ -7094,15 +7094,24 @@ export class QuireApp extends LitElement {
     const pendingBonds = v.shared.pcBondProposals?.[character.id] ?? [];
     if (pendingBonds.length > 0) {
       view.bondProposals = pendingBonds.map((p) => {
+        // D5.5-B: a chargen placeholder bond has targetPcId === ''
+        // + a free-text targetPlaceholder.  Show the placeholder as
+        // the label + flag unresolved so the ratify form renders
+        // the target-resolution picker.
+        const isPlaceholder =
+          p.targetPcId.length === 0 &&
+          (p.targetPlaceholder?.length ?? 0) > 0;
         const target = v.shared.synthesizedPcs?.[p.targetPcId];
         return {
           id: p.id,
           targetPcId: p.targetPcId,
           text: p.text,
           proposedByPeerId: p.proposedByPeerId,
-          targetLabel:
-            (target?.name as string | undefined) ??
-            `(unknown: ${p.targetPcId})`
+          targetLabel: isPlaceholder
+            ? (p.targetPlaceholder as string)
+            : ((target?.name as string | undefined) ??
+              `(unknown: ${p.targetPcId})`),
+          unresolved: isPlaceholder
         };
       });
     }
@@ -7152,13 +7161,19 @@ export class QuireApp extends LitElement {
           ? (pcId: string) => this.resetSpamCounter(pcId)
           : null
       }
+      .bondTargetCandidates=${this.bondTargetCandidates(character.id)}
       .onRatifyBond=${
         isCoord
-          ? (pcId: string, id: string, opts?: { dmNotes?: string }) =>
+          ? (
+              pcId: string,
+              id: string,
+              opts?: { dmNotes?: string; targetPcId?: string }
+            ) =>
               this.ratifyBond({
                 pcId,
                 id,
-                ...(opts?.dmNotes ? { dmNotes: opts.dmNotes } : {})
+                ...(opts?.dmNotes ? { dmNotes: opts.dmNotes } : {}),
+                ...(opts?.targetPcId ? { targetPcId: opts.targetPcId } : {})
               })
           : null
       }

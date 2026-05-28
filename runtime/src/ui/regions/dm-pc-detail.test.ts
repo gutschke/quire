@@ -371,3 +371,141 @@ describe('<dm-pc-detail>', () => {
     expect(el.querySelector('.dm-pc-detail-arc-confirm')).toBeNull();
   });
 });
+
+describe('<dm-pc-detail> — D5.5-B placeholder bond resolve picker', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function mountWithUnresolvedBond(): DmPcDetail {
+    const el = document.createElement('dm-pc-detail') as DmPcDetail;
+    el.view = {
+      pcId: 'mei',
+      pcName: 'Mei',
+      bondProposals: [
+        {
+          id: 'b1',
+          targetPcId: '',
+          targetLabel: 'the medic on our team',
+          text: 'I trust her.',
+          proposedByPeerId: 'bob',
+          unresolved: true
+        }
+      ]
+    };
+    el.bondTargetCandidates = [
+      { pcId: 'iris', name: 'Iris' },
+      { pcId: 'mei', name: 'Mei' } // self — must be filtered out
+    ];
+    el.onRatifyBond = () => {};
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('shows the unresolved marker + placeholder text on the proposal row', async () => {
+    const el = mountWithUnresolvedBond();
+    await el.updateComplete;
+    expect(el.innerHTML).toContain('the medic on our team');
+    expect(el.querySelector('.dm-pc-detail-bond-unresolved')).not.toBeNull();
+  });
+
+  it('opening ratify on an unresolved bond shows a target picker (self excluded) + disables Ratify', async () => {
+    const el = mountWithUnresolvedBond();
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.dm-pc-detail-bond-ratify')!.click();
+    await el.updateComplete;
+    const select = el.querySelector<HTMLSelectElement>(
+      '.dm-pc-detail-bond-resolve-target'
+    );
+    expect(select).not.toBeNull();
+    // Candidate options: the placeholder "pick" option + Iris only
+    // (Mei is the source PC, filtered out).
+    const optionValues = Array.from(select!.options).map((o) => o.value);
+    expect(optionValues).toContain('iris');
+    expect(optionValues).not.toContain('mei');
+    // Ratify button disabled until a target is picked.
+    const ratifyBtn = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.dm-pc-detail-bond-ratify')
+    ).find((b) => b.textContent?.includes('Ratify bond'))!;
+    expect(ratifyBtn.disabled).toBe(true);
+  });
+
+  it('picking a target enables Ratify + submits targetPcId', async () => {
+    const el = mountWithUnresolvedBond();
+    let captured: { pcId: string; id: string; opts?: unknown } | null = null;
+    el.onRatifyBond = (pcId, id, opts) => {
+      captured = { pcId, id, opts };
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.dm-pc-detail-bond-ratify')!.click();
+    await el.updateComplete;
+    const select = el.querySelector<HTMLSelectElement>(
+      '.dm-pc-detail-bond-resolve-target'
+    )!;
+    select.value = 'iris';
+    select.dispatchEvent(new Event('change'));
+    await el.updateComplete;
+    const ratifyBtn = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.dm-pc-detail-bond-ratify')
+    ).find((b) => b.textContent?.includes('Ratify bond'))!;
+    expect(ratifyBtn.disabled).toBe(false);
+    ratifyBtn.click();
+    await el.updateComplete;
+    expect(captured).not.toBeNull();
+    expect(captured!.opts).toMatchObject({ targetPcId: 'iris' });
+  });
+
+  it('unresolved bond with no candidates shows a "create the PC first" notice', async () => {
+    const el = document.createElement('dm-pc-detail') as DmPcDetail;
+    el.view = {
+      pcId: 'mei',
+      pcName: 'Mei',
+      bondProposals: [
+        {
+          id: 'b1',
+          targetPcId: '',
+          targetLabel: 'a stranger',
+          text: 't',
+          proposedByPeerId: 'bob',
+          unresolved: true
+        }
+      ]
+    };
+    el.bondTargetCandidates = []; // no other PCs yet
+    el.onRatifyBond = () => {};
+    document.body.appendChild(el);
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.dm-pc-detail-bond-ratify')!.click();
+    await el.updateComplete;
+    expect(el.querySelector('.dm-pc-detail-bond-resolve-empty')).not.toBeNull();
+  });
+
+  it('a RESOLVED proposal (real target) shows no picker + Ratify enabled', async () => {
+    const el = document.createElement('dm-pc-detail') as DmPcDetail;
+    el.view = {
+      pcId: 'mei',
+      pcName: 'Mei',
+      bondProposals: [
+        {
+          id: 'b1',
+          targetPcId: 'iris',
+          targetLabel: 'Iris',
+          text: 'classmates',
+          proposedByPeerId: 'bob'
+        }
+      ]
+    };
+    el.onRatifyBond = () => {};
+    document.body.appendChild(el);
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>('.dm-pc-detail-bond-ratify')!.click();
+    await el.updateComplete;
+    expect(
+      el.querySelector('.dm-pc-detail-bond-resolve-target')
+    ).toBeNull();
+    const ratifyBtn = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.dm-pc-detail-bond-ratify')
+    ).find((b) => b.textContent?.includes('Ratify bond'))!;
+    expect(ratifyBtn.disabled).toBe(false);
+  });
+});

@@ -125,6 +125,14 @@ export interface DmDetailView extends MagicArcControlsView {
     targetLabel: string;
     text: string;
     proposedByPeerId: string;
+    /**
+     * D5.5-B: true when this is a chargen PLACEHOLDER bond — the
+     * target is a free-text string (`targetLabel`) the player
+     * typed, with no real `targetPcId` yet.  The DM MUST resolve
+     * it to a real PC (via the ratify-form picker) before the
+     * bond can be ratified.
+     */
+    unresolved?: boolean;
   }>;
 }
 
@@ -223,10 +231,22 @@ export class DmPcDetail extends LitElement {
    */
   @property({ attribute: false })
   onRatifyBond:
-    | ((pcId: string, id: string, opts?: { dmNotes?: string }) => void)
+    | ((
+        pcId: string,
+        id: string,
+        opts?: { dmNotes?: string; targetPcId?: string }
+      ) => void)
     | null = null;
   @property({ attribute: false })
   onRemoveBond: ((pcId: string, id: string) => void) | null = null;
+  /**
+   * D5.5-B: candidate PCs the DM can resolve a placeholder bond's
+   * target to (other bound-active PCs in the campaign).  Host
+   * builds via `bondTargetCandidates`.  Empty/absent → the resolve
+   * picker shows a "no other PCs yet" notice.
+   */
+  @property({ attribute: false })
+  bondTargetCandidates: Array<{ pcId: string; name: string }> = [];
 
   /**
    * D5-C-fix (2026-05-27 scenario-playthrough TTRPG-B / UX-3):
@@ -238,6 +258,12 @@ export class DmPcDetail extends LitElement {
    */
   @state() private bondRatifyOpenId: string | null = null;
   @state() private bondRatifyDmNotes: string = '';
+  /**
+   * D5.5-B: the real targetPcId the DM picked to resolve a
+   * placeholder bond.  Empty until the DM selects from the picker.
+   * Only meaningful when the open proposal is `unresolved`.
+   */
+  @state() private bondRatifyTargetPcId: string = '';
   /**
    * UX-polish (2026-05-27 post-D5 sweep): two-step reject confirm.
    * Reject was one-click destructive; only recovery was
@@ -371,11 +397,18 @@ export class DmPcDetail extends LitElement {
     return html`<li class="dm-pc-detail-bond-proposal">
       <p>
         <strong>${p.targetLabel}</strong>
+        ${p.unresolved
+          ? html`<span
+              class="dm-pc-detail-bond-unresolved"
+              title="Player-typed target — pick a real PC below to ratify"
+              >· unresolved</span
+            >`
+          : nothing}
         <span class="muted"> · ${p.proposedByPeerId}</span>
       </p>
       <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
       ${isOpen
-        ? this.renderBondRatifyForm(view.pcId, p.id)
+        ? this.renderBondRatifyForm(view.pcId, p)
         : this.bondRejectConfirmId === p.id
           ? html`<div class="dm-pc-detail-bond-proposal-actions">
               <span class="dm-pc-detail-bond-reject-prompt"
@@ -432,8 +465,46 @@ export class DmPcDetail extends LitElement {
     this.bondRejectConfirmId = null;
   }
 
-  private renderBondRatifyForm(pcId: string, id: string): TemplateResult {
+  private renderBondRatifyForm(
+    pcId: string,
+    p: NonNullable<DmDetailView['bondProposals']>[number]
+  ): TemplateResult {
+    // D5.5-B: a placeholder bond can't be ratified until the DM
+    // resolves its free-text target to a real PC.  Candidates
+    // exclude this PC itself (host-filtered).  Ratify stays
+    // disabled until a target is picked.
+    const candidates = this.bondTargetCandidates.filter(
+      (c) => c.pcId !== pcId
+    );
+    const needsResolve = p.unresolved === true;
+    const resolveReady = !needsResolve || this.bondRatifyTargetPcId !== '';
     return html`<div class="dm-pc-detail-bond-ratify-form">
+      ${needsResolve
+        ? html`<label class="dm-pc-detail-bond-ratify-label">
+            Resolve target — the player wrote
+            <em>"${p.targetLabel}"</em>; pick the real PC:
+            ${candidates.length === 0
+              ? html`<span class="muted dm-pc-detail-bond-resolve-empty"
+                  >No other PCs to bond to yet.  The target PC must be
+                  created first.</span
+                >`
+              : html`<select
+                  class="dm-pc-detail-bond-resolve-target"
+                  .value=${this.bondRatifyTargetPcId}
+                  @change=${(e: Event) => {
+                    this.bondRatifyTargetPcId = (
+                      e.target as HTMLSelectElement
+                    ).value;
+                  }}
+                >
+                  <option value="">— pick a PC —</option>
+                  ${candidates.map(
+                    (c) =>
+                      html`<option value=${c.pcId}>${c.name}</option>`
+                  )}
+                </select>`}
+          </label>`
+        : nothing}
       <label class="dm-pc-detail-bond-ratify-label">
         DM-only spoiler anchor (optional)
         <textarea
@@ -457,7 +528,11 @@ export class DmPcDetail extends LitElement {
         <button
           type="button"
           class="dm-pc-detail-bond-ratify"
-          @click=${() => this.submitBondRatify(pcId, id)}
+          ?disabled=${!resolveReady}
+          title=${needsResolve && !resolveReady
+            ? 'Pick a target PC first'
+            : 'Ratify this bond'}
+          @click=${() => this.submitBondRatify(pcId, p.id)}
         >
           Ratify bond
         </button>
@@ -475,18 +550,27 @@ export class DmPcDetail extends LitElement {
   private openBondRatifyForm(id: string): void {
     this.bondRatifyOpenId = id;
     this.bondRatifyDmNotes = '';
+    this.bondRatifyTargetPcId = '';
   }
 
   private cancelBondRatifyForm(): void {
     this.bondRatifyOpenId = null;
     this.bondRatifyDmNotes = '';
+    this.bondRatifyTargetPcId = '';
   }
 
   private submitBondRatify(pcId: string, id: string): void {
     if (!this.onRatifyBond) return;
     const notes = this.bondRatifyDmNotes.trim();
-    const opts = notes.length > 0 ? { dmNotes: notes } : undefined;
-    this.onRatifyBond(pcId, id, opts);
+    const target = this.bondRatifyTargetPcId.trim();
+    const opts: { dmNotes?: string; targetPcId?: string } = {};
+    if (notes.length > 0) opts.dmNotes = notes;
+    if (target.length > 0) opts.targetPcId = target;
+    this.onRatifyBond(
+      pcId,
+      id,
+      Object.keys(opts).length > 0 ? opts : undefined
+    );
     this.cancelBondRatifyForm();
   }
 
