@@ -49,11 +49,24 @@ suspect synthResults" (not a leak — dm-aside render gates on live
 isCoordinator() at quire-app.ts:1688); UX "yield default unconfirmed"
 (fate:'keep' IS seeded, reclaim-controller.ts:174).
 
-**Still deferred after this round:** task #398 (post-Realization magic
-legibility — firewall-sensitive feature, own session); the full
-6-option advancement PICKER (D2-5); minor copy watch-items (yield
-"Keep" label, 140-char bond soft-cap nudge); TTRPG P1-3 (stale
-unresolved bond proposals need a more prominent DM-queue surface).
+**Still deferred after this round:** the full 6-option advancement
+PICKER (D2-5); minor copy watch-items (yield "Keep" label, 140-char
+bond soft-cap nudge); TTRPG P1-3 (stale unresolved bond proposals need
+a more prominent DM-queue surface).
+
+**SHIPPED `22cbd40` (2026-05-28): task #398 — post-Realization magic
+legibility.** filterForViewer un-strips a curated {knowsTheyCanCast,
+tax.active} slice on the viewer's OWN realized PC (scoped via
+peers[viewerPeerId].pcId; hidden-seat-guarded; overlay-only so the base
+record never carries the reveal). Rail gains a "The Quiet" section
+(can-cast line + amber −2 tax line). Design AND implementation
+adversarial-reviewed (no leaks); firewall locked with own-PC reveal,
+cross-PC isolation (multi-peer e2e + per-viewer unit test),
+pre-Realization no-window, and save-fail-closed tests. The
+record.tax.active vs casterState.taxActive two-source split is a
+documented correctness watch-item (the Rail trusts record.tax.active;
+the AI/M3c caster-state path must mirror into it or the player won't
+see an AI-set tax).
 
 ---
 
