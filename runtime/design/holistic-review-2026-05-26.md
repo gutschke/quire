@@ -20,6 +20,40 @@ experts and supersede this doc with `holistic-review-YYYY-MM-DD.md`.
 
 ---
 
+## Senior consultancy round 2026-05-28 (Architect / Test / Creative, build `22cbd40`)
+
+Added a senior tier ABOVE the tactical 4-expert panel — a Principal
+Software Architect, a Principal Test/Verification Architect, and a
+Creative/Game Director — to review docs + implementation + tests
+holistically, reprioritize, and **coach the tactical experts**.  Their
+coaching is distilled into **`reviewer-playbook.md`** (now the canonical
+briefing source — paste the relevant expert's section + the universal
+verification creed when spawning a tactical expert).
+
+Cross-cutting verdict: the firewall + event-sourcing core are strong and
+the coord-flip bug class is genuinely contained; the real frontier is
+(a) **verification depth** (no property/fuzz tests; an untested LWW
+peerId-tiebreak hazard), (b) **architectural END-STATE** (quire-app.ts
+has no defined target; ~7465 LOC / 41 @state / ~137 methods), and
+(c) **ceremony** (correctness is ahead of the felt three-act drama — the
+Realization act-break ships as a silent card).
+
+New prioritized work (tasks #405-#410):
+- **#405 [P1]** LWW concurrent-write matrix + replay-convergence property test (E-TEST-1).
+- **#406 [P1]** Firewall fuzz target + self-completing classification SSOTs (filterForViewer↔persistence strip lists; FIREWALL_PATTERNS coverage).
+- **#407 [P0 experience]** Realization act-break reveal ritual (not a silent card).
+- **#408 [P1 XS]** Demote the player "Growth: N/5" meter line (prime-directive fix to Gap A #396).
+- **#409 [Arch]** Define quire-app.ts target architecture + promote memoized materialization / requestUpdate debounce.
+- **#410 [Arch/Test]** Per-line firewall-lint pragma, hostile pc-edit test (E-TEST-2), AI-wrap lint (Q-LT5), explicit flake policy, multi-peer race test.
+
+Trust-but-verify note: the consultants confirmed several existing
+defenses are exemplary (persistence.coverage.test.ts is schema-driven;
+coord-flip-firewall.test.ts is a real tripwire) and corrected stale
+claims (the "25-materializer switch" already routes through a
+`MATERIALIZERS` registry).
+
+---
+
 ## Review round 2026-05-28 (4-expert re-run, build `46198fd`)
 
 Ran the parallel 4-expert review again after the first-session stack
