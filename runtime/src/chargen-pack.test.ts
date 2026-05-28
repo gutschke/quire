@@ -257,3 +257,150 @@ describe('suggestedPackFilename', () => {
     expect(suggestedPackFilename(doc)).toContain('campaign');
   });
 });
+
+/**
+ * D5.5-B (2026-05-27): bond drafts as an optional pre-acceptance
+ * field on the chargen pack.  Schema bumped 0.1.0 → 0.2.0;
+ * legacy 0.1.0 packs still parse cleanly with `bondDrafts: []`.
+ */
+describe('packChargen — bondDrafts (D5.5-B)', () => {
+  const base = {
+    campaignFingerprint: 'fpabc123',
+    slot: 3,
+    chosenPath: 'qa' as const,
+    answers: {},
+    nowMs: 1700000000000
+  };
+
+  it('omitting bondDrafts produces an empty array (always present in 0.2.0+)', () => {
+    const out = packChargen(base);
+    expect(out.bondDrafts).toEqual([]);
+  });
+
+  it('accepts up to 3 well-formed bond drafts', () => {
+    const out = packChargen({
+      ...base,
+      bondDrafts: [
+        { targetPlaceholder: 'My brother', text: 'I owe him for the night of the fire.' },
+        { targetPlaceholder: 'Reggie', text: 'We grew up together.' },
+        { targetPlaceholder: 'The medic', text: 'I trust her more than I trust myself.' }
+      ]
+    });
+    expect(out.bondDrafts).toHaveLength(3);
+    expect(out.bondDrafts?.[0].targetPlaceholder).toBe('My brother');
+  });
+
+  it('trims whitespace on both fields', () => {
+    const out = packChargen({
+      ...base,
+      bondDrafts: [
+        { targetPlaceholder: '  Mei  ', text: '  We were colleagues.  ' }
+      ]
+    });
+    expect(out.bondDrafts?.[0]).toEqual({
+      targetPlaceholder: 'Mei',
+      text: 'We were colleagues.'
+    });
+  });
+
+  it('rejects more than 3 drafts', () => {
+    expect(() =>
+      packChargen({
+        ...base,
+        bondDrafts: [
+          { targetPlaceholder: 'a', text: 'a' },
+          { targetPlaceholder: 'b', text: 'b' },
+          { targetPlaceholder: 'c', text: 'c' },
+          { targetPlaceholder: 'd', text: 'd' }
+        ]
+      })
+    ).toThrow(ChargenPackError);
+  });
+
+  it('rejects empty targetPlaceholder', () => {
+    expect(() =>
+      packChargen({
+        ...base,
+        bondDrafts: [{ targetPlaceholder: '   ', text: 'something' }]
+      })
+    ).toThrow(/targetPlaceholder/i);
+  });
+
+  it('rejects empty text', () => {
+    expect(() =>
+      packChargen({
+        ...base,
+        bondDrafts: [{ targetPlaceholder: 'Mei', text: '' }]
+      })
+    ).toThrow(/text/i);
+  });
+
+  it('rejects targetPlaceholder over 80 chars', () => {
+    expect(() =>
+      packChargen({
+        ...base,
+        bondDrafts: [{ targetPlaceholder: 'x'.repeat(81), text: 'a' }]
+      })
+    ).toThrow(/targetPlaceholder/i);
+  });
+
+  it('rejects text over 500 chars', () => {
+    expect(() =>
+      packChargen({
+        ...base,
+        bondDrafts: [{ targetPlaceholder: 'Mei', text: 'x'.repeat(501) }]
+      })
+    ).toThrow(/text/i);
+  });
+});
+
+describe('parseChargenPack — bondDrafts round-trip + legacy', () => {
+  it('round-trips bondDrafts via stringify → parse', () => {
+    const doc = packChargen({
+      campaignFingerprint: 'fp',
+      slot: 1,
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker' },
+      bondDrafts: [
+        { targetPlaceholder: 'Reggie', text: 'We grew up together.' }
+      ],
+      nowMs: 1700000000000
+    });
+    const parsed = parseChargenPack(stringifyChargenPack(doc));
+    expect(parsed.bondDrafts).toEqual([
+      { targetPlaceholder: 'Reggie', text: 'We grew up together.' }
+    ]);
+  });
+
+  it('reads a legacy 0.1.0 pack (no bondDrafts field) as bondDrafts: []', () => {
+    // Hand-built legacy doc — older devices serialized 0.1.0 packs
+    // without the bondDrafts field.  The read path MUST tolerate
+    // the missing field, falling back to [].
+    const legacy = JSON.stringify({
+      $schemaVersion: '0.1.0',
+      campaignFingerprint: 'fp',
+      slot: 1,
+      chosenPath: 'qa',
+      answers: {},
+      packedAt: 1700000000000
+    });
+    const parsed = parseChargenPack(legacy);
+    expect(parsed.bondDrafts).toEqual([]);
+  });
+
+  it('rejects malformed bondDrafts in a parsed pack', () => {
+    // A pack with garbage in the bondDrafts field — corrupted
+    // download / hand-edited file.  Refuse rather than load
+    // partial.
+    const bad = JSON.stringify({
+      $schemaVersion: '0.2.0',
+      campaignFingerprint: 'fp',
+      slot: 1,
+      chosenPath: 'qa',
+      answers: {},
+      bondDrafts: [{ targetPlaceholder: 'Mei' }], // missing text
+      packedAt: 1700000000000
+    });
+    expect(() => parseChargenPack(bad)).toThrow(/text/i);
+  });
+});

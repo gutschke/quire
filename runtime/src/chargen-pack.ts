@@ -22,7 +22,36 @@
  * module testable in node + e2e-environment-agnostic.
  */
 
-export const CHARGEN_PACK_SCHEMA_VERSION = '0.1.0';
+/**
+ * 0.2.0 (2026-05-27 D5.5-B): added optional `bondDrafts` field.
+ * Read path is backward-compatible — a 0.1.0 pack parses cleanly
+ * with `bondDrafts: undefined`; the DM-side intake treats missing
+ * drafts as "player skipped the optional step."
+ */
+export const CHARGEN_PACK_SCHEMA_VERSION = '0.2.0';
+
+/**
+ * D5.5-B (2026-05-27): pre-acceptance bond draft.  Captured during
+ * chargen step 4.5 ("Connections") so the player can author 0-3
+ * relationships alongside their backstory.
+ *
+ * `targetPlaceholder` is free text the player typed for the other
+ * person (a name, a role, "the medic on our team", "my brother").
+ * The DM resolves this to a real `targetPcId` at ratify time via
+ * the existing dm-aside bond-queue flow — at chargen time the
+ * target PC may not exist yet (parallel chargen) or may live on
+ * the player's mental model only.
+ *
+ * Per the chargen-authorship triage: player owns the voice (text +
+ * placeholder), AI may suggest in a later ship (Ship 2), DM owns
+ * the fit (review + resolve).
+ */
+export interface BondDraft {
+  /** Free-text label for the relationship target.  1-80 chars. */
+  targetPlaceholder: string;
+  /** Bond text (the actual relationship sentence).  1-500 chars. */
+  text: string;
+}
 
 /**
  * Stable on-the-wire shape.  Fields are author-tuned to be minimal:
@@ -39,6 +68,13 @@ export interface ChargenPackDocument {
   chosenPath: 'qa' | 'free-write' | 'pre-gen' | '';
   /** Map of question-id → answer.  Empty when no answers entered. */
   answers: Record<string, string>;
+  /**
+   * D5.5-B (2026-05-27): optional pre-acceptance bond drafts.
+   * Player authors 0-3 entries during chargen step 4.5.  Missing
+   * field means "0.1.0 pack from a pre-D5.5-B device" — treat as
+   * empty.  Always present (possibly empty) for 0.2.0+.
+   */
+  bondDrafts?: BondDraft[];
   /** Epoch ms when the player packed.  Useful for the DM to spot stale packs. */
   packedAt: number;
 }
@@ -48,6 +84,8 @@ export interface ChargenPackInput {
   slot: number;
   chosenPath: 'qa' | 'free-write' | 'pre-gen' | '';
   answers: Record<string, string>;
+  /** D5.5-B: optional bond drafts.  Caller passes [] when unused. */
+  bondDrafts?: BondDraft[];
   /** Optional injection for tests.  Defaults to `Date.now()` at the boundary. */
   nowMs?: number;
 }
@@ -72,6 +110,11 @@ const MAX_FINGERPRINT_LEN = 64;
 const MAX_ANSWER_KEY_LEN = 80;
 const MAX_ANSWER_VALUE_LEN = 4000;
 const MAX_ANSWER_COUNT = 50;
+
+/** D5.5-B caps.  Matches the engine bond limits (D5-3). */
+export const MAX_BOND_DRAFTS = 3;
+export const MAX_BOND_TARGET_LEN = 80;
+export const MAX_BOND_TEXT_LEN = 500;
 
 /**
  * #253 (2026-05-26): hard cap on the stringified pack size at the
@@ -114,14 +157,75 @@ export function packChargen(input: ChargenPackInput): ChargenPackDocument {
       'Pack campaignFingerprint must be a non-empty short string.'
     );
   }
+  const bondDrafts = validateBondDrafts(input.bondDrafts ?? []);
   return {
     $schemaVersion: CHARGEN_PACK_SCHEMA_VERSION,
     campaignFingerprint: input.campaignFingerprint,
     slot: input.slot,
     chosenPath: input.chosenPath,
     answers: { ...input.answers },
+    bondDrafts,
     packedAt: input.nowMs ?? Date.now()
   };
+}
+
+/**
+ * D5.5-B helper: validate + normalize an array of bond drafts.
+ * Throws `ChargenPackError('malformed', …)` on out-of-spec input.
+ * Returns a fresh array (caller-mutation safe).  Empty input is
+ * valid — bonds are optional throughout chargen.
+ */
+function validateBondDrafts(input: BondDraft[]): BondDraft[] {
+  if (!Array.isArray(input)) {
+    throw new ChargenPackError(
+      'malformed',
+      'Pack bondDrafts must be an array.'
+    );
+  }
+  if (input.length > MAX_BOND_DRAFTS) {
+    throw new ChargenPackError(
+      'malformed',
+      `Pack bondDrafts has ${input.length} entries; cap is ${MAX_BOND_DRAFTS}.`
+    );
+  }
+  const out: BondDraft[] = [];
+  for (let i = 0; i < input.length; i++) {
+    const d = input[i];
+    if (!d || typeof d !== 'object') {
+      throw new ChargenPackError(
+        'malformed',
+        `Pack bondDrafts[${i}] is not an object.`
+      );
+    }
+    if (typeof d.targetPlaceholder !== 'string') {
+      throw new ChargenPackError(
+        'malformed',
+        `Pack bondDrafts[${i}].targetPlaceholder must be a string.`
+      );
+    }
+    if (typeof d.text !== 'string') {
+      throw new ChargenPackError(
+        'malformed',
+        `Pack bondDrafts[${i}].text must be a string.`
+      );
+    }
+    const target = d.targetPlaceholder.trim();
+    const text = d.text.trim();
+    if (target.length === 0 || target.length > MAX_BOND_TARGET_LEN) {
+      throw new ChargenPackError(
+        'malformed',
+        `Pack bondDrafts[${i}].targetPlaceholder must be 1-${MAX_BOND_TARGET_LEN} chars (after trim).`
+      );
+    }
+    if (text.length === 0 || text.length > MAX_BOND_TEXT_LEN) {
+      throw new ChargenPackError(
+        'malformed',
+        `Pack bondDrafts[${i}].text must be 1-${MAX_BOND_TEXT_LEN} chars (after trim).`
+      );
+    }
+    out.push({ targetPlaceholder: target, text });
+  }
+  return out;
 }
 
 /**
@@ -243,12 +347,19 @@ export function parseChargenPack(raw: string): ChargenPackDocument {
       'Pack packedAt must be a finite number.'
     );
   }
+  // D5.5-B: bondDrafts is optional for 0.1.0 packs from pre-D5.5-B
+  // devices.  Missing → []; present → validated as 0.2.0+ shape.
+  let bondDrafts: BondDraft[] = [];
+  if (p.bondDrafts !== undefined) {
+    bondDrafts = validateBondDrafts(p.bondDrafts as BondDraft[]);
+  }
   return {
     $schemaVersion: p.$schemaVersion,
     campaignFingerprint: p.campaignFingerprint,
     slot: p.slot,
     chosenPath: p.chosenPath,
     answers,
+    bondDrafts,
     packedAt: p.packedAt
   };
 }
