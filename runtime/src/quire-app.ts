@@ -574,6 +574,35 @@ export class QuireApp extends LitElement {
     this.pcCharacterCache.set(pcId, stripped);
   }
 
+  /**
+   * COORD-FLIP FIREWALL INVARIANT (2026-05-27).  Every local cache
+   * or `@state` mirror that holds character data with a strip
+   * decision baked in AT WRITE TIME must be invalidated when the
+   * local peer's coordinator status changes — otherwise a
+   * coord→player transition leaves unstripped DM-only fields
+   * readable by a now-player viewer (the bug class that hit 3×:
+   * #392 chat-spoiler-lint, #393 pcCharacterCache, #395
+   * boundCharacter).  The session subscriber calls this on the
+   * `wasLocalCoord !== nowLocalCoord` edge.
+   *
+   * ⚠️ When you add a NEW character-bearing cache/@state mirror to
+   * QuireApp, CLEAR IT HERE + add it to the coord-flip invariant
+   * test (`quire-app.coord-flip-firewall.test.ts`).  A static read-
+   * lint (Q-LT4) can't catch this class — the guard is this method
+   * + its test.  The chat-spoiler-lint modal clears itself via its
+   * own controller `hostUpdated`; it's listed in the test for
+   * completeness.
+   */
+  private invalidateViewerScopedCachesOnCoordChange(): void {
+    // pcCharacterCache: per-pcId loaded records, stripped-on-write.
+    this.pcCharacterCache.clear();
+    this.pcCharacterInFlight.clear();
+    // boundCharacterFor: the short-circuit key for the
+    // `boundCharacter` @state mirror — reset so refreshBoundCharacter
+    // re-resolves with the current strip decision next render.
+    this.boundCharacterFor = '';
+  }
+
   private loadCharacterByPcId(pcId: string): void {
     if (pcId === '' || this.pcCharacterCache.has(pcId)) return;
     if (this.pcCharacterInFlight.has(pcId)) return;
@@ -1110,26 +1139,8 @@ export class QuireApp extends LitElement {
         v.status === 'active' &&
         v.peerId !== null &&
         v.filteredShared.coordinator === v.peerId;
-      // Firewall hygiene (2026-05-27): local-peer coord-status
-      // CHANGE invalidates the pcCharacter cache.  The cache is
-      // populated once with a strip decision based on coord state
-      // at fetch time; without this clear, a coord→player
-      // transition leaves unstripped DM-only fields visible to a
-      // now-player viewer.  Clear in BOTH directions — a player→
-      // coord transition wants the unstripped record too.
-      //
-      // ALSO invalidate `boundCharacterFor` (the cache-mirror
-      // short-circuit key).  refreshBoundCharacter returns early
-      // when the key is unchanged across renders, so without
-      // resetting it here the @state `boundCharacter` mirror
-      // keeps the OLD strip decision even after the cache clears.
-      // Post-extraction sim (2026-05-27 Session A) caught this as
-      // the third firewall gap in the same coord-flip class as
-      // chat-spoiler-lint + pcCharacterCache.
       if (wasLocalCoord !== nowLocalCoord) {
-        this.pcCharacterCache.clear();
-        this.pcCharacterInFlight.clear();
-        this.boundCharacterFor = '';
+        this.invalidateViewerScopedCachesOnCoordChange();
       }
       // Debounced autosave to localStorage whenever the session state
       // changes — covers new events from any peer.
