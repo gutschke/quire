@@ -3556,6 +3556,21 @@ export const quireAppStyles = css`
       font-size: 0.78rem;
       color: light-dark(#64748b, #94a3b8);
     }
+    /* #398: post-Realization casting section.  Quiet, in-fiction; the
+       tax line is amber (a live cost) and disappears when the DM
+       releases the tax in fiction. */
+    .player-rail-casting-known {
+      margin: 0 0 0.4rem;
+      font-size: 0.9rem;
+    }
+    .player-rail-casting-tax {
+      margin: 0;
+      padding: 0.35rem 0.6rem;
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      background: light-dark(#fffbeb, #292524);
+      font-size: 0.88rem;
+      color: light-dark(#7a4400, #fbbf24);
+    }
 
     nav.breadcrumb {
       font-size: 0.9rem;

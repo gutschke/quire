@@ -866,6 +866,24 @@ export function emptyState(): SessionState {
  *   - Reveal-mask-gated (DM sees all, players see only revealed):
  *     mapBlobs (filtered through mapBlobReveals).
  */
+/**
+ * #398 (2026-05-28): the ONLY pc-edit overlay fields a player may
+ * perceive on their OWN post-Realization PC.  After the DM delivers
+ * the Realization beat (`pc-mark-realization` sets
+ * `knowsTheyCanCast=true` + `tax.active=true`), rules.md:179-184 say
+ * the player gains cast mechanics on their sheet and the -2 tax is
+ * player-perceivable.  These two fields are un-stripped for the
+ * viewer's OWN PC only; every other DM-only magic field
+ * (`magicPhase`, `tax.sessionsRemaining`, `tax.releaseMoment`,
+ * `threadDebt.*`, `alignmentDrift.*`, `accidentalGrants`, `dmNotes`)
+ * stays stripped.  `record.tax.active` is the player-trusted tax
+ * source; `casterState.taxActive` remains a DM-only meter.
+ */
+const PLAYER_VISIBLE_MAGIC_EDIT_FIELDS = new Set<string>([
+  'knowsTheyCanCast',
+  'tax.active'
+]);
+
 export function filterForViewer(
   state: SessionState,
   viewerPeerId: PeerId
@@ -975,8 +993,30 @@ export function filterForViewer(
   // `DM_ONLY_CHARACTER_FIELDS` — single source of truth so the two
   // projections can't drift.
   const dmOnlyFieldSet = new Set<string>(DM_ONLY_CHARACTER_FIELDS);
+  // #398 (2026-05-28): the PC this viewer plays.  Determined the SAME
+  // way the runtime resolves the bound character (quire-app
+  // refreshBoundCharacter: `peers[peerId].pcId`) — NOT via
+  // seat.controllerPeerId, which the bind path doesn't reliably set.
+  // A hidden-seat pcId never qualifies (those records are stripped
+  // entirely above), so a player can't surface magic for an unrevealed
+  // seat they happen to claim.  Used to gate the post-Realization
+  // magic un-strip to the viewer's OWN PC only.
+  // If two peers legitimately share a pcId (co-DM-as-player, a
+  // deliberate double-bind), both see that PC's own realization — by
+  // design and within the threat model (both play it).  The reveal is
+  // symmetric-per-viewer: each peer's projection un-strips only the
+  // pcId in ITS OWN peer entry, never another peer's.
+  const viewerOwnPcId = state.peers[viewerPeerId]?.pcId;
   const filteredPcEdits: Record<string, Record<string, unknown>> = {};
   for (const [pcId, edits] of Object.entries(state.pcEdits)) {
+    // #398: un-strip the curated magic slice ONLY on the viewer's own
+    // realized PC.  Gate on the live overlay `knowsTheyCanCast` — the
+    // same atomic write that flips `tax.active`, so the tax can never
+    // surface before Realization.
+    const revealOwnMagic =
+      pcId === viewerOwnPcId &&
+      !hiddenSeatPcIds.has(pcId) &&
+      edits.knowsTheyCanCast === true;
     const safe: Record<string, unknown> = {};
     for (const [field, value] of Object.entries(edits)) {
       // Phase B P3 verification (run ac7a1cdcc81285f0c) follow-up:
@@ -987,7 +1027,15 @@ export function filterForViewer(
       // doesn't match the set.  Compare the prefix-before-first-dot.
       const topLevel =
         field.indexOf('.') >= 0 ? field.slice(0, field.indexOf('.')) : field;
-      if (dmOnlyFieldSet.has(topLevel)) continue;
+      if (dmOnlyFieldSet.has(topLevel)) {
+        // #398: the player's own post-Realization PC keeps exactly the
+        // curated slice (knowsTheyCanCast + tax.active); everything
+        // else DM-only still drops.
+        if (revealOwnMagic && PLAYER_VISIBLE_MAGIC_EDIT_FIELDS.has(field)) {
+          safe[field] = value;
+        }
+        continue;
+      }
       safe[field] = value;
     }
     filteredPcEdits[pcId] = safe;

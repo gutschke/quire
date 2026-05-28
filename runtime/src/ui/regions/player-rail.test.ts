@@ -409,3 +409,71 @@ describe('<player-rail> Gap A — advancement signal', () => {
     expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
   });
 });
+
+describe('<player-rail> #398 — post-Realization casting signal', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('renders nothing pre-Realization (knowsTheyCanCast absent)', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    el.character = c;
+    el.effective = c.record; // no knowsTheyCanCast
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-casting')).toBeNull();
+  });
+
+  it('renders the casting acknowledgement once the PC knows they can cast', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    (c.record as { knowsTheyCanCast?: boolean }).knowsTheyCanCast = true;
+    el.character = c;
+    el.effective = c.record;
+    await el.updateComplete;
+    const sec = el.querySelector('.player-rail-casting');
+    expect(sec).not.toBeNull();
+    expect(sec?.textContent?.toLowerCase()).toContain('shape the quiet');
+    // No tax line when the tax isn't active.
+    expect(el.querySelector('.player-rail-casting-tax')).toBeNull();
+  });
+
+  it('shows the amber "trying too hard" line while the tax is active', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    (c.record as { knowsTheyCanCast?: boolean }).knowsTheyCanCast = true;
+    (c.record as { tax?: { active: boolean } }).tax = { active: true };
+    el.character = c;
+    el.effective = c.record;
+    await el.updateComplete;
+    const tax = el.querySelector('.player-rail-casting-tax');
+    expect(tax).not.toBeNull();
+    expect(tax?.textContent?.toLowerCase()).toContain('trying too hard');
+    expect(tax?.textContent).toContain('−2');
+    // Deliberately does NOT name the release condition (rules.md:182,184).
+    expect(tax?.textContent?.toLowerCase()).not.toContain('release');
+  });
+
+  it('drops the tax line when the tax is released (active false)', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    (c.record as { knowsTheyCanCast?: boolean }).knowsTheyCanCast = true;
+    (c.record as { tax?: { active: boolean } }).tax = { active: false };
+    el.character = c;
+    el.effective = c.record;
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-casting')).not.toBeNull();
+    expect(el.querySelector('.player-rail-casting-tax')).toBeNull();
+  });
+
+  it('does NOT render for an NPC even if knowsTheyCanCast is set', async () => {
+    const el = mount();
+    const npc = pc('quiet-thing', 'The Thing');
+    (npc as { kind: string }).kind = 'npc';
+    (npc.record as { knowsTheyCanCast?: boolean }).knowsTheyCanCast = true;
+    el.character = npc;
+    el.effective = npc.record;
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-casting')).toBeNull();
+  });
+});

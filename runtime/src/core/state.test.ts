@@ -1311,6 +1311,128 @@ describe('filterForViewer (P0-4)', () => {
     expect('tax' in projected).toBe(false);
   });
 
+  // #398 (2026-05-28): post-Realization magic legibility.  The DM's
+  // pc-mark-realization writes knowsTheyCanCast + tax.active into
+  // pcEdits.  filterForViewer un-strips a CURATED slice on the
+  // VIEWER'S OWN realized PC — and nothing else.
+  describe('#398 post-Realization magic legibility', () => {
+    function realizedState(): SessionState {
+      const s = emptyState();
+      s.coordHolders.add('dm');
+      s.coordinator = 'dm';
+      s.peers['dm'] = { peerId: 'dm', name: 'DM', joinedAt: 1 };
+      // Alice plays pc-mei (her own); Bob plays pc-rhea.  The runtime
+      // resolves "own PC" via peers[peerId].pcId, so set it there.
+      s.peers['alice'] = {
+        peerId: 'alice',
+        name: 'Alice',
+        joinedAt: 2,
+        pcId: 'pc-mei'
+      };
+      s.peers['bob'] = {
+        peerId: 'bob',
+        name: 'Bob',
+        joinedAt: 3,
+        pcId: 'pc-rhea'
+      };
+      s.pcSlots[1] = {
+        state: 'bound-active',
+        pcId: 'pc-mei',
+        controllerPeerId: 'alice'
+      };
+      s.pcSlots[2] = {
+        state: 'bound-active',
+        pcId: 'pc-rhea',
+        controllerPeerId: 'bob'
+      };
+      return s;
+    }
+
+    it("un-strips the curated slice on the viewer's OWN realized PC", () => {
+      const s = realizedState();
+      // pc-mark-realization-shaped overlay + extra DM-only magic fields.
+      s.pcEdits['pc-mei'] = {
+        knowsTheyCanCast: true,
+        'tax.active': true,
+        'tax.sessionsRemaining': 3,
+        'tax.releaseMoment': 'a quiet moment by the water',
+        magicPhase: 'realization',
+        'threadDebt.rung': 'watched',
+        'alignmentDrift.marks': 2,
+        accidentalGrants: [{ ts: 1, note: 'silent nudge' }],
+        dmNotes: 'she is closer than she knows',
+        harm: 1 // ordinary player-visible edit
+      };
+      const edits = filterForViewer(s, 'alice').pcEdits['pc-mei'];
+      // The two player-perceivable fields survive (rules.md:179-184).
+      expect(edits.knowsTheyCanCast).toBe(true);
+      expect(edits['tax.active']).toBe(true);
+      // Ordinary edits still pass.
+      expect(edits.harm).toBe(1);
+      // Everything else DM-only stays stripped.
+      expect('tax.sessionsRemaining' in edits).toBe(false);
+      expect('tax.releaseMoment' in edits).toBe(false);
+      expect('magicPhase' in edits).toBe(false);
+      expect('threadDebt.rung' in edits).toBe(false);
+      expect('alignmentDrift.marks' in edits).toBe(false);
+      expect('accidentalGrants' in edits).toBe(false);
+      expect('dmNotes' in edits).toBe(false);
+    });
+
+    it("does NOT reveal another player's realized PC (cross-PC firewall)", () => {
+      const s = realizedState();
+      // Bob's PC has also realized.  Alice must not see it.
+      s.pcEdits['pc-rhea'] = {
+        knowsTheyCanCast: true,
+        'tax.active': true
+      };
+      const edits = filterForViewer(s, 'alice').pcEdits['pc-rhea'];
+      expect('knowsTheyCanCast' in edits).toBe(false);
+      expect('tax.active' in edits).toBe(false);
+    });
+
+    it('per-viewer scoping: even when the viewer\'s OWN PC is realized, another realized PC stays hidden', () => {
+      // The property a future "memoize one shared projection" refactor
+      // would silently break (adversarial re-review 2026-05-28): the
+      // un-strip is per-viewer, keyed on THIS viewer's own pcId.
+      const s = realizedState();
+      s.pcEdits['pc-mei'] = { knowsTheyCanCast: true, 'tax.active': true };
+      s.pcEdits['pc-rhea'] = { knowsTheyCanCast: true, 'tax.active': true };
+      const filtered = filterForViewer(s, 'alice'); // alice plays pc-mei
+      expect(filtered.pcEdits['pc-mei'].knowsTheyCanCast).toBe(true);
+      expect(filtered.pcEdits['pc-mei']['tax.active']).toBe(true);
+      expect('knowsTheyCanCast' in filtered.pcEdits['pc-rhea']).toBe(false);
+      expect('tax.active' in filtered.pcEdits['pc-rhea']).toBe(false);
+    });
+
+    it('pre-Realization: a stray tax.active edit without the knows-flag stays stripped', () => {
+      const s = realizedState();
+      // tax.active present but knowsTheyCanCast NOT true → the gate is
+      // closed; the player must perceive nothing (silent firewall).
+      s.pcEdits['pc-mei'] = {
+        'tax.active': true,
+        magicPhase: 'accidental'
+      };
+      const edits = filterForViewer(s, 'alice').pcEdits['pc-mei'];
+      expect('tax.active' in edits).toBe(false);
+      expect('knowsTheyCanCast' in edits).toBe(false);
+      expect('magicPhase' in edits).toBe(false);
+    });
+
+    it('the DM still sees every magic field on every PC', () => {
+      const s = realizedState();
+      s.pcEdits['pc-mei'] = {
+        knowsTheyCanCast: true,
+        'tax.active': true,
+        'tax.sessionsRemaining': 3,
+        'threadDebt.rung': 'watched'
+      };
+      const edits = filterForViewer(s, 'dm').pcEdits['pc-mei'];
+      expect(edits['tax.sessionsRemaining']).toBe(3);
+      expect(edits['threadDebt.rung']).toBe('watched');
+    });
+  });
+
   it('Phase B P1b: filter does not mutate the source state synthesizedPcs', () => {
     const s = dmState();
     s.synthesizedPcs['pc-mei'] = {

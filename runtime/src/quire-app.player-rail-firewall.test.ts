@@ -110,7 +110,9 @@ describe('Phase B P4 — player-rail spoiler-firewall', () => {
     });
     await flush();
     await flush();
-    // Guest's filteredShared should NOT carry the DM-only fields.
+    // The base synthesizedPcs record is FULLY stripped (the #398
+    // reveal lives only in the pcEdits overlay, never re-added to the
+    // base record — so a roster reader can't see another PC's status).
     const pc = guest.sessionView!.filteredShared.synthesizedPcs['mei'];
     expect(pc).toBeDefined();
     expect(
@@ -122,11 +124,69 @@ describe('Phase B P4 — player-rail spoiler-firewall', () => {
     expect(
       (pc as unknown as Record<string, unknown>).dmNotes
     ).toBeUndefined();
-    // And the pcEdits projection also strips DM-only fields.
+    // #398: the pcEdits overlay for the guest's OWN realized PC keeps
+    // knowsTheyCanCast (the player perceives their cast capability),
+    // but magicPhase / dmNotes still strip.
     const edits = guest.sessionView!.filteredShared.pcEdits['mei'] ?? {};
+    expect((edits as Record<string, unknown>).knowsTheyCanCast).toBe(true);
     expect((edits as Record<string, unknown>).dmNotes).toBeUndefined();
-    expect((edits as Record<string, unknown>).knowsTheyCanCast).toBeUndefined();
     expect((edits as Record<string, unknown>).magicPhase).toBeUndefined();
+  });
+
+  it('#398: one realized player cannot see another realized PC\'s cast state (cross-PC firewall, real-path e2e)', async () => {
+    const network = new InMemoryNetwork();
+    const host = mountApp(inMemoryFactory(network, 'HOST'));
+    host.startHosting();
+    await flush();
+    const session = (host as unknown as { session: { append: Function } })
+      .session;
+    // Two PCs, both realized by the DM.
+    for (const [slot, pcId] of [
+      [1, 'mei'],
+      [2, 'rhea']
+    ] as const) {
+      session.append('seat-add', { v: 1, slot });
+      session.append('pc-create', {
+        v: 1,
+        pcId,
+        name: pcId,
+        pronouns: 'they/them',
+        tags: ['a', 'b', 'c'],
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        skills: ['Tech'],
+        backstory: 'X'
+      });
+      session.append('pc-slot-bind', { v: 1, slot, pcId });
+      session.append('pc-edit', { v: 1, pcId, field: 'knowsTheyCanCast', value: true });
+      session.append('pc-edit', { v: 1, pcId, field: 'tax.active', value: true });
+    }
+    await flush();
+    // Two guests, each claiming a different PC.
+    const g1 = mountApp(inMemoryFactory(network, 'G1'));
+    g1.joinCodeDraft = 'HOST';
+    g1.joinSession();
+    const g2 = mountApp(inMemoryFactory(network, 'G2'));
+    g2.joinCodeDraft = 'HOST';
+    g2.joinSession();
+    await flush();
+    await flush();
+    (g1 as unknown as { session: { rename: Function } }).session.rename({ pcId: 'mei' });
+    (g2 as unknown as { session: { rename: Function } }).session.rename({ pcId: 'rhea' });
+    await flush();
+    await flush();
+    const g1Mei = g1.sessionView!.filteredShared.pcEdits['mei'] ?? {};
+    const g1Rhea = g1.sessionView!.filteredShared.pcEdits['rhea'] ?? {};
+    // G1 sees its OWN (mei) cast state …
+    expect((g1Mei as Record<string, unknown>).knowsTheyCanCast).toBe(true);
+    expect((g1Mei as Record<string, unknown>)['tax.active']).toBe(true);
+    // … but NOT rhea's, even though rhea is also realized.
+    expect((g1Rhea as Record<string, unknown>).knowsTheyCanCast).toBeUndefined();
+    expect((g1Rhea as Record<string, unknown>)['tax.active']).toBeUndefined();
+    // Symmetric: G2 sees rhea's, not mei's.
+    const g2Rhea = g2.sessionView!.filteredShared.pcEdits['rhea'] ?? {};
+    const g2Mei = g2.sessionView!.filteredShared.pcEdits['mei'] ?? {};
+    expect((g2Rhea as Record<string, unknown>).knowsTheyCanCast).toBe(true);
+    expect((g2Mei as Record<string, unknown>).knowsTheyCanCast).toBeUndefined();
   });
 
   it('host (coord) viewer keeps full DM-only state', async () => {

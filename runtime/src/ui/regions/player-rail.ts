@@ -355,6 +355,7 @@ export class PlayerRail extends LitElement {
         ${this.renderRetireRequest()}
       </header>
       ${character.kind === 'pc' ? this.renderAdvancementSignal(r) : nothing}
+      ${character.kind === 'pc' ? this.renderCastingSignal(r) : nothing}
       <section class="card">
         <h2>Details</h2>
         <dl>
@@ -928,6 +929,48 @@ export class PlayerRail extends LitElement {
    * directive (growth in the background, not a meter to grind).
    * At 0: nothing.
    */
+  /**
+   * #398 (2026-05-28): post-Realization casting legibility.  Before
+   * the DM delivers the Realization beat, `knowsTheyCanCast` is
+   * stripped by the firewall and this renders nothing (pre-Realization
+   * the player must not even know casting exists — silent-player-
+   * firewall).  After it (the firewall un-strips knowsTheyCanCast +
+   * tax.active for the player's OWN PC), a compact in-fiction
+   * acknowledgement appears, plus an amber "trying too hard" line
+   * while the -2 tax is active.
+   *
+   * Deliberately minimal per the prime directive + TTRPG-craft review:
+   *   - NO tier crib (Free/Cheap/Costly/Hard) — that's DM-adjudicated
+   *     via the AI dock, not an identity-sheet meter.
+   *   - NO thread-debt cue — the DM narrates that in fiction, never on
+   *     the sheet (rules.md:125).
+   *   - The tax line does NOT name the release condition; spelling it
+   *     out turns a fiction beat into a quest objective to hunt — the
+   *     exact "trying breaks intent" failure the tax models
+   *     (rules.md:182,184).  It just hints restraint and vanishes when
+   *     the DM releases the tax in fiction.
+   *   - Foci already render via <foci-card>; not duplicated here.
+   */
+  private renderCastingSignal(
+    r: import('../../character-loader').CharacterRecord
+  ): TemplateResult {
+    if (r.knowsTheyCanCast !== true) return html``;
+    const taxActive = (r.tax as { active?: boolean } | undefined)?.active === true;
+    return html`<section class="card player-rail-casting">
+      <h2>The Quiet</h2>
+      <p class="player-rail-casting-known">
+        You can shape the Quiet — describe what you reach for; the table
+        sees how the world answers.
+      </p>
+      ${taxActive
+        ? html`<p class="player-rail-casting-tax" role="note">
+            <strong>Trying too hard</strong> — −2 to casts you reach
+            for.  Ease off and it passes.
+          </p>`
+        : nothing}
+    </section>`;
+  }
+
   private renderAdvancementSignal(
     r: import('../../character-loader').CharacterRecord
   ): TemplateResult {

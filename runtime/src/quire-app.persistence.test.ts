@@ -476,6 +476,11 @@ describe('QuireApp persistence — localStorage autosave', () => {
     host.submitPcEdit('mei', 'threadDebt.rung', 'hunted');
     host.submitPcEdit('mei', 'alignmentDrift.marks', 4);
     host.submitPcEdit('mei', 'knowsTheyCanCast', true);
+    // #398: knowsTheyCanCast + tax.active are un-stripped in the LIVE
+    // projection (filterForViewer) so a realized player perceives
+    // their own cast state — but the SAVE log must stay fail-closed
+    // (a portable artifact could be shared), so both still strip here.
+    host.submitPcEdit('mei', 'tax.active', true);
     // Plus a player-visible pc-edit that MUST land in the player's save.
     host.submitPcEdit('mei', 'harm', 2);
     await flush();
@@ -496,6 +501,7 @@ describe('QuireApp persistence — localStorage autosave', () => {
     expect(fieldsLanded).not.toContain('threadDebt.rung');
     expect(fieldsLanded).not.toContain('alignmentDrift.marks');
     expect(fieldsLanded).not.toContain('knowsTheyCanCast');
+    expect(fieldsLanded).not.toContain('tax.active');
     // Belt-and-suspenders: scan all event payloads for the secret text.
     const allTexts = doc!.events.map((e) => JSON.stringify(e)).join(' ');
     expect(allTexts).not.toContain('the Quiet is speaking through Mei');
