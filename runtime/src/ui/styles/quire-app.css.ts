@@ -5666,6 +5666,19 @@ export const quireAppStyles = css`
     .character-creation-pack-feedback-err {
       color: light-dark(#dc2626, #ef4444);
     }
+    /* D5.5 first-session polish: subtle autosave indicator under the
+       step content.  Muted "Saving…", green "✓ Saved" matching the
+       pack-feedback-ok tone.  Right-aligned so it reads as ambient
+       status, not a primary message. */
+    .character-creation-savestate {
+      font-size: 0.82em;
+      text-align: right;
+      margin: 0.25rem 0 0;
+      color: light-dark(#64748b, #94a3b8);
+    }
+    .character-creation-savestate-ok {
+      color: light-dark(#16803d, #4ade80);
+    }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×
        button at row end. */

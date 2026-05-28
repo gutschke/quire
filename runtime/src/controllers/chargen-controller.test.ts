@@ -693,6 +693,50 @@ describe('ChargenController — persistDebounced (Engine B3, Test-cov BIG #2)', 
     expect(raw).not.toBeNull();
     expect(JSON.parse(raw!).answers.archetype).toBe('hacker');
   });
+
+  // ---- D5.5 first-session polish: autosave "Saved" indicator ----
+
+  it('saveState flips to "saving" when a persist is scheduled', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    expect(ctrl.saveState).toBe('idle');
+    ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    expect(ctrl.saveState).toBe('saving');
+  });
+
+  it('saveState flips to "saved" once the debounced write flushes', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    ctrl.flushPending();
+    expect(ctrl.saveState).toBe('saved');
+  });
+
+  it('saveState fades back to "idle" after CHARGEN_SAVED_CLEAR_MS', async () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    ctrl.flushPending();
+    expect(ctrl.saveState).toBe('saved');
+    // Real timers (fake timers + happy-dom hang on teardown here); the
+    // fade timer is 2000 ms, so poll a touch past it.
+    await new Promise((r) => setTimeout(r, 2100));
+    expect(ctrl.saveState).toBe('idle');
+  });
+
+  it('hostDisconnected clears the saveState fade timer + resets to idle', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    // hostDisconnected flushes (→ markSaved sets a timer) then must
+    // clear it + reset, so a torn-down host gets no stray requestUpdate.
+    ctrl.hostDisconnected();
+    expect(ctrl.saveState).toBe('idle');
+  });
 });
 
 // ---- Test-cov BLOCKER #3 + BIG #4: synthesis lifecycle + P3D-1 passthrough ----

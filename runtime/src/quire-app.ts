@@ -4617,6 +4617,7 @@ export class QuireApp extends LitElement {
         .answers=${this.chargen.answers}
         .bondDrafts=${this.chargen.bondDrafts}
         .packFeedback=${this.chargen.packFeedback}
+        .saveState=${this.chargen.saveState}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
           this.chargen.setChosenPath(p);
           this.chargen.persistDebounced(campaign, slot);
@@ -5331,8 +5332,8 @@ export class QuireApp extends LitElement {
     const headline = p.voluntary
       ? p.pcId
         ? html`<p>
-            Yielding DM role.  What should happen to
-            <strong>${p.pcName}</strong>?
+            Yield DM role?  First — what should happen to
+            <strong>${p.pcName}</strong>?  (You can cancel.)
           </p>`
         : html`<p>Yield DM role?  The next player to click Reclaim picks it up.</p>`
       : html`<p>

@@ -239,6 +239,13 @@ export interface ChargenHost {
  */
 const CHARGEN_PERSIST_DEBOUNCE_MS = 300;
 const PACK_FEEDBACK_CLEAR_MS = 3000;
+/**
+ * D5.5 first-session polish: how long the "✓ Saved" autosave
+ * confirmation lingers before fading back to idle.  Long enough to
+ * register ("my answers persisted") without nagging the player on
+ * every keystroke.
+ */
+const CHARGEN_SAVED_CLEAR_MS = 2000;
 
 export class ChargenController implements ReactiveController {
   /** Player's path selection from chargen step 3.  '' means "not chosen yet". */
@@ -281,6 +288,18 @@ export class ChargenController implements ReactiveController {
    * download path.
    */
   sendToDmFeedback: '' | 'sent' | 'send-failed' | 'send-too-large' = '';
+
+  /**
+   * D5.5 first-session polish: transient autosave indicator for the
+   * chargen intake.  Per-keystroke edits debounce-persist silently;
+   * without a signal the player re-types / re-clicks wondering "did
+   * it save?" during the tense first-session intake.  `persistDebounced`
+   * flips this to 'saving'; the queue writer flips it to 'saved' on
+   * flush; a CHARGEN_SAVED_CLEAR_MS timer fades it back to 'idle'.
+   * Not firewall-sensitive — it reflects only the player's own draft
+   * (no DM-only data).
+   */
+  saveState: 'idle' | 'saving' | 'saved' = 'idle';
 
   /**
    * D5.5-A step 3 (2026-05-27 E-LARGE-2): async + result lifecycle
@@ -341,10 +360,12 @@ export class ChargenController implements ReactiveController {
         answers: value.answers,
         bondDrafts: value.bondDrafts
       });
+      this.markSaved();
     },
     CHARGEN_PERSIST_DEBOUNCE_MS
   );
   private packFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private saveStateTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly host: ReactiveControllerHost,
@@ -366,6 +387,14 @@ export class ChargenController implements ReactiveController {
       clearTimeout(this.packFeedbackTimer);
       this.packFeedbackTimer = null;
     }
+    // flushPending above may have fired markSaved (→ a fresh
+    // saveStateTimer); clear it AFTER so a route-exit flush doesn't
+    // leave a timer that requestUpdate()s a torn-down host.
+    if (this.saveStateTimer) {
+      clearTimeout(this.saveStateTimer);
+      this.saveStateTimer = null;
+    }
+    this.saveState = 'idle';
     // Engine M3 (defer-followup): in-flight synthesis aborts when
     // a real AbortSignal is plumbed through; until then, just clear
     // the inflight flag so an HMR reconnect doesn't see a wedged
@@ -1123,6 +1152,10 @@ export class ChargenController implements ReactiveController {
   persistDebounced(campaign: ChargenCampaign, slot: number): void {
     const slug = this.env.getCampaignSlug(campaign);
     const key = `${slug}:${slot}`;
+    if (this.saveState !== 'saving') {
+      this.saveState = 'saving';
+      this.host.requestUpdate();
+    }
     this.persistQueue.schedule(key, {
       slug,
       slot,
@@ -1140,6 +1173,24 @@ export class ChargenController implements ReactiveController {
    */
   flushPending(): void {
     this.persistQueue.flushAll();
+  }
+
+  /**
+   * D5.5 first-session polish: queue-writer callback — fires on every
+   * flush.  Surfaces the "✓ Saved" confirmation + schedules its fade
+   * back to idle so the indicator doesn't linger forever.
+   */
+  private markSaved(): void {
+    this.saveState = 'saved';
+    this.host.requestUpdate();
+    if (this.saveStateTimer) clearTimeout(this.saveStateTimer);
+    this.saveStateTimer = setTimeout(() => {
+      this.saveStateTimer = null;
+      if (this.saveState === 'saved') {
+        this.saveState = 'idle';
+        this.host.requestUpdate();
+      }
+    }, CHARGEN_SAVED_CLEAR_MS);
   }
 
   // ---- pack + download (CC-10) ----

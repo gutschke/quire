@@ -180,6 +180,15 @@ export class CharacterCreation extends LitElement {
    */
   @property() packFeedback: '' | 'packed' | 'pack-failed' = '';
 
+  /**
+   * D5.5 first-session polish: autosave indicator from the host's
+   * chargen-persistence queue.  'saving' while a debounced write is
+   * in flight, 'saved' briefly after it flushes, 'idle' otherwise.
+   * Gives the player a "did it save?" signal during the silent
+   * autosave so they don't re-type / re-click mid-intake.
+   */
+  @property() saveState: 'idle' | 'saving' | 'saved' = 'idle';
+
   @state() private currentStep: number = 1;
 
   override render(): TemplateResult {
@@ -192,9 +201,31 @@ export class CharacterCreation extends LitElement {
         <div class="character-creation-step">
           ${this.renderCurrentStep()}
         </div>
+        ${this.renderSaveState()}
         ${this.renderStepNav()}
       </section>
     `;
+  }
+
+  /**
+   * D5.5 first-session polish: subtle autosave indicator so the
+   * silent debounced save isn't a black box.  Plain visual span (no
+   * aria-live) to match the pack/send feedback convention + avoid
+   * screen-reader spam on every keystroke.
+   */
+  private renderSaveState(): TemplateResult | typeof nothing {
+    switch (this.saveState) {
+      case 'saving':
+        return html`<p class="character-creation-savestate">Saving…</p>`;
+      case 'saved':
+        return html`<p
+          class="character-creation-savestate character-creation-savestate-ok"
+        >
+          ✓ Saved on this device
+        </p>`;
+      default:
+        return nothing;
+    }
   }
 
   private renderTokenError(): TemplateResult {
