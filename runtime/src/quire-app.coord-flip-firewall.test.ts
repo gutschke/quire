@@ -158,4 +158,45 @@ describe('coord-flip firewall invariant', () => {
     // with the now-player strip decision).
     expect(appAny.boundCharacter).not.toBe(before);
   });
+
+  /**
+   * Defense-in-depth (Adversarial review 2026-05-28): the in-memory
+   * AI response (aiResponse / aiResponseStructured, which carries a
+   * dmOnly slice) is deliberately NOT cleared on a coord→player flip.
+   * That is safe ONLY because the render gate `showAiPanel()` checks
+   * LIVE isCoordinator() — so a now-player viewer's panel renders
+   * empty even though the DM's AI output still sits in memory.  This
+   * pins that render gate as the firewall; if a refactor ever makes
+   * the panel render on stale state, this fails.
+   */
+  it('coord→player flip gates the AI panel off even with lingering aiResponseStructured', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    injectCampaign(app);
+    const appAny = app as unknown as {
+      aiResponse: string | null;
+      aiResponseStructured: unknown;
+      showAiPanel: () => boolean;
+    };
+    // Coord holds an AI response in memory (dmOnly populated).
+    appAny.aiResponse = 'safe summary';
+    appAny.aiResponseStructured = {
+      safe: 'safe summary',
+      dmOnly: 'the cult planted the relic'
+    };
+    expect(app.isCoordinator()).toBe(true);
+    expect(appAny.showAiPanel()).toBe(true);
+
+    const session = (app as unknown as { session: { append: Function } })
+      .session;
+    session.append('coordinator-yield', {});
+    await flush();
+
+    expect(app.isCoordinator()).toBe(false);
+    // The data lingers (documented) …
+    expect(appAny.aiResponseStructured).not.toBeNull();
+    // … but the render gate is the firewall: panel is off for a player.
+    expect(appAny.showAiPanel()).toBe(false);
+  });
 });
