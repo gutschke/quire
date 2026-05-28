@@ -20,6 +20,43 @@ experts and supersede this doc with `holistic-review-YYYY-MM-DD.md`.
 
 ---
 
+## Review round 2026-05-28 (4-expert re-run, build `46198fd`)
+
+Ran the parallel 4-expert review again after the first-session stack
+(D5.5-B bonds, Gap A/B, autosave polish) shipped.  Findings + status:
+
+- **[Eng P1] Autosave told the player "✓ Saved" even when the write
+  failed** (saveChargenState swallowed errors).  SHIPPED `1347848` —
+  success-gated boolean + sticky "⚠ Couldn't save" + dropped the
+  Saving↔Saved flicker + qualified the copy (also closes UX P0-1/P0-2).
+- **[TTRPG P0-1 / discovery] Gap-A advancement chip was INERT** — it
+  read `record.marks`, but the DM's wrap ticking only writes
+  `markBullets`, and nothing synced them.  SHIPPED `abafdab` — marks
+  now DERIVE from markBullets everywhere (single source of truth) +
+  a coord-only "Advancement taken — reset marks" action at session-open
+  (revises the D2-9 "passive badge" note, which left the cycle
+  unclosable).  e2e cycle test `46198fd`.
+- **[UX P1-1] Chargen Done had no blank-required signal.** SHIPPED
+  `d602d0a` — soft non-blocking nudge (player's own data; firewall-safe).
+- **[Adversarial] Firewall CONFIRMED CLEAN** across all new surfaces;
+  the 3 coord-flip fixes hold; no 4th instance.  Added a defense-in-
+  depth assertion (`b87142e`) pinning showAiPanel() as the render-gate
+  firewall when aiResponseStructured lingers post-flip.
+
+Agent claims that did NOT survive trust-but-verify: TTRPG "Growth: 6/5
+renders" (false — early return at marks>=5); Eng "4th coord-flip
+suspect synthResults" (not a leak — dm-aside render gates on live
+isCoordinator() at quire-app.ts:1688); UX "yield default unconfirmed"
+(fate:'keep' IS seeded, reclaim-controller.ts:174).
+
+**Still deferred after this round:** task #398 (post-Realization magic
+legibility — firewall-sensitive feature, own session); the full
+6-option advancement PICKER (D2-5); minor copy watch-items (yield
+"Keep" label, 140-char bond soft-cap nudge); TTRPG P1-3 (stale
+unresolved bond proposals need a more prominent DM-queue surface).
+
+---
+
 ## Wave plan (synthesized priority order)
 
 ### Wave A — firewall hardening + Aside re-order ✓ SHIPPED `80e2a78`
