@@ -13,9 +13,23 @@
  * (network errors, syntax errors in the loaded module) still
  * re-throw + surface to the caller.
  *
- * When a new vitest error name shows up post-teardown (e.g.
- * `AbortError` from a transitively-aborted fetch), add it to
- * KNOWN_TEARDOWN_ERROR_NAMES — a one-line fix in one place.
+ * SCOPE (verified 2026-05-28): this set + helper ONLY catch
+ * rejections that flow through the lazy-chunk `.then` handlers
+ * (ensureWrapModeChunk / ensureMarkdownPipeline) — i.e. dynamic-
+ * import rejections.  Adding a name here is a one-line fix for
+ * THAT path only.
+ *
+ * It does NOT catch the separate, intermittent happy-dom
+ * `AbortError` / "AsyncTaskManager destroyed" noise: those come
+ * from bare `fetch()` calls (campaign / character / context loads
+ * hitting raw.githubusercontent) that happy-dom aborts when it
+ * tears the window down — they never reach this helper.  That
+ * flake can bump the local full-run EXIT CODE on an otherwise-
+ * green run, but it's CI-tolerated (all tests still pass).  The
+ * only real fix is a global unhandled-rejection filter in a
+ * vitest setupFile, which risks masking genuine rejections — not
+ * worth it until the flake actually breaks CI.  Do NOT try to
+ * "fix" it by adding AbortError to the set below; that won't work.
  */
 
 const KNOWN_TEARDOWN_ERROR_NAMES = new Set<string>([
