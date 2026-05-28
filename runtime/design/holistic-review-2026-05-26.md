@@ -550,11 +550,13 @@ before-coding items.
   change surfaces those fields.
 
 **Deferred to a polish pass (not blockers):** UX Regenerate
-confirm/relabel, unsaved-draft exit guard, Saved toast,
-char-count, Adversarial A-3 hallucination soft-warn (cheap
-post-gen name/foci cross-check), Engineering `_pendingDigest…`
-return-tuple refactor, JSON.stringify truncation in summarizer,
-input-token cap, per-event free-text untrusted-wrap.
+confirm/relabel, unsaved-draft exit guard, ~~Saved toast~~ (SHIPPED
+`224ac4f` — chargen autosave "Saving…/✓ Saved" indicator; voluntary
+yield-headline tense fixed in the same commit), char-count,
+Adversarial A-3 hallucination soft-warn (cheap post-gen name/foci
+cross-check), Engineering `_pendingDigest…` return-tuple refactor,
+JSON.stringify truncation in summarizer, input-token cap, per-event
+free-text untrusted-wrap.
 
 ### Wave D1 — living-doc diff review (NPC memory MVP) 🆕 PLANNED
 
