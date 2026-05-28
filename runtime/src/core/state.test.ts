@@ -4828,6 +4828,244 @@ describe('materialize — pc-retire-request / pc-retire-reject (P-R11)', () => {
       // Non-coord view: proposals wiped entirely.
       expect(playerView.pcBondProposals).toEqual({});
     });
+
+    // --- D5.5-B (2026-05-27): placeholder-target bonds ---
+
+    it('accepts a bond-propose with targetPlaceholder + empty targetPcId', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the medic on our team',
+        text: 'I trust her with my life.'
+      });
+      alice.apply(e);
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+      expect(state.pcBondProposals.mei[0].targetPcId).toBe('');
+      expect(state.pcBondProposals.mei[0].targetPlaceholder).toBe(
+        'the medic on our team'
+      );
+    });
+
+    it('rejects a bond-propose with BOTH targetPcId AND targetPlaceholder', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        targetPlaceholder: 'the medic',
+        text: 'classmates'
+      });
+      alice.apply(e);
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei ?? []).toHaveLength(0);
+    });
+
+    it('rejects a bond-propose with NEITHER target', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        text: 'a bond to no one'
+      });
+      alice.apply(e);
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei ?? []).toHaveLength(0);
+    });
+
+    it('rejects a targetPlaceholder over 80 chars', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'x'.repeat(81),
+        text: 'too long a placeholder'
+      });
+      alice.apply(e);
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei ?? []).toHaveLength(0);
+    });
+
+    it('coord ratify RESOLVES a placeholder to a real targetPcId', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the medic',
+        text: 'I trust her.'
+      });
+      alice.apply(e);
+      // DM resolves "the medic" → iris at ratify time.
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris'
+      });
+      const state = materialize(alice.events());
+      expect(state.pcBondProposals.mei).toEqual([]);
+      expect(state.pcBonds.mei).toHaveLength(1);
+      expect(state.pcBonds.mei[0].targetPcId).toBe('iris');
+      expect(state.pcBonds.mei[0].text).toBe('I trust her.');
+    });
+
+    it('rejects ratify of a placeholder bond with NO targetPcId resolution', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the medic',
+        text: 'I trust her.'
+      });
+      alice.apply(e);
+      // DM ratifies WITHOUT resolving the placeholder — must drop.
+      alice.append('bond-ratify', { v: 1, id: 'b1', pcId: 'mei' });
+      const state = materialize(alice.events());
+      // Proposal consumed? NO — the materializer rejects before
+      // mutating, so the unresolved proposal survives + nothing
+      // enters pcBonds.
+      expect(state.pcBonds.mei ?? []).toHaveLength(0);
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+    });
+
+    it('ratify can REDIRECT a real-target bond to a different pcId', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'iris',
+        text: 'classmates'
+      });
+      alice.apply(e);
+      // Coord redirects the bond from iris → a hypothetical other PC.
+      // (Using iris again would be a no-op redirect; use a fresh
+      // valid id to prove the override path.)
+      alice.append('seat-add', { v: 1, slot: 3 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'casey',
+        name: 'Casey',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'casey'
+      });
+      const state = materialize(alice.events());
+      expect(state.pcBonds.mei[0].targetPcId).toBe('casey');
+    });
+
+    it('rejects ratify whose resolved target equals the source PC (self-bond)', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'myself somehow',
+        text: 'reflexive'
+      });
+      alice.apply(e);
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'mei' // self-bond after resolve → reject
+      });
+      const state = materialize(alice.events());
+      expect(state.pcBonds.mei ?? []).toHaveLength(0);
+      expect(state.pcBondProposals.mei).toHaveLength(1);
+    });
+
+    it('placeholder proposals stay DM-only (non-coord proposals wiped)', () => {
+      const [alice, bob] = setupSessionWithBob();
+      const e = bob.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the medic',
+        text: 'I trust her.'
+      });
+      alice.apply(e);
+      const state = materialize(alice.events());
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcBondProposals).toEqual({});
+    });
+
+    it('placeholder resolved to a HIDDEN-SEAT target is firewalled from players', () => {
+      // Firewall insurance (QA finding #2): a placeholder bond
+      // resolved at ratify to a hidden-seat pcId must be stripped
+      // from the non-coord projection — the resolve path must NOT
+      // bypass the hidden-seat strip (which keys on the FINAL
+      // targetPcId, regardless of how it was produced).
+      const alice = new EventLog('alice');
+      alice.append('coordinator-claim', {});
+      // Hidden target PC.
+      alice.append('seat-add', { v: 1, slot: 9, revealed: false });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mystery',
+        name: 'Mystery',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 9, pcId: 'mystery' });
+      // Visible source PC.
+      alice.append('seat-add', { v: 1, slot: 1 });
+      alice.append('pc-create', {
+        v: 1,
+        pcId: 'mei',
+        name: 'Mei',
+        stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+        harm: 0,
+        stress: 0
+      });
+      alice.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+      // Placeholder proposal, then resolve to the hidden PC at ratify.
+      alice.append('bond-propose', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the one I keep seeing in dreams',
+        text: 'I think we have met before.'
+      });
+      alice.append('bond-ratify', {
+        v: 1,
+        id: 'b1',
+        pcId: 'mei',
+        targetPcId: 'mystery'
+      });
+      const state = materialize(alice.events());
+      // Coord sees the resolved bond.
+      const coordView = filterForViewer(state, 'alice');
+      expect(coordView.pcBonds.mei).toHaveLength(1);
+      expect(coordView.pcBonds.mei[0].targetPcId).toBe('mystery');
+      // Player (bob) sees NOTHING — bond targeting a hidden seat
+      // is stripped even though the target arrived via placeholder
+      // resolution.
+      const playerView = filterForViewer(state, 'bob');
+      expect(playerView.pcBonds.mei ?? []).toHaveLength(0);
+    });
   });
 
   // --- D3 (2026-05-26): DM-only progress clocks ---

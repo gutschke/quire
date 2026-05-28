@@ -750,10 +750,22 @@ export interface BondEntry {
  * D5 (2026-05-27): a pre-ratification bond draft.  DM-only in
  * shared state.  Same shape as BondEntry minus the ratify audit
  * fields.
+ *
+ * D5.5-B (2026-05-27): chargen-time bonds may target a PC that
+ * doesn't exist yet — the proposal carries `targetPlaceholder`
+ * instead of a real `targetPcId`, with `targetPcId === ''`.  The
+ * DM resolves the placeholder to a real pcId at ratify time
+ * (via the `targetPcId` field on `BondRatifyPayload`).  Either
+ * `targetPcId` is a valid CharacterId OR `targetPlaceholder` is
+ * a 1-80 char string; the propose materializer rejects both
+ * empty + both set.
  */
 export interface BondProposal {
   id: string;
+  /** Empty when `targetPlaceholder` is the live target. */
   targetPcId: string;
+  /** D5.5-B placeholder; mutually exclusive with targetPcId. */
+  targetPlaceholder?: string;
   text: string;
   proposedByPeerId: PeerId;
   ts: number;
@@ -3463,6 +3475,14 @@ const BOND_ID_MAX = 64;
 const BOND_TEXT_MAX = 500;
 const BOND_DM_NOTES_MAX = 2000;
 const BOND_MAX_PER_PC = 8;
+/**
+ * D5.5-B (2026-05-27): cap on the free-text placeholder used when a
+ * chargen-time bond targets a PC that doesn't exist yet (parallel
+ * chargen) or lives only in the player's mental model.  DM resolves
+ * to a real `targetPcId` at ratify.  80 chars matches the
+ * ChargenPack-side cap (`MAX_BOND_TARGET_LEN`).
+ */
+const BOND_TARGET_PLACEHOLDER_MAX = 80;
 const BOND_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 function isValidBondId(id: unknown): id is string {
@@ -3563,7 +3583,17 @@ interface BondProposePayload {
   v: 1;
   id: string;
   pcId: string;
+  /**
+   * Real target PC's id.  Empty (or absent) when the proposal is
+   * a D5.5-B chargen placeholder — `targetPlaceholder` carries the
+   * free-text target instead.
+   */
   targetPcId: string;
+  /**
+   * D5.5-B: free-text placeholder for a target PC that doesn't
+   * exist yet.  Mutually exclusive with a real targetPcId.
+   */
+  targetPlaceholder?: string;
   text: string;
 }
 
@@ -3575,9 +3605,20 @@ function applyBondProposeEvent(
   const p = event.payload as Partial<BondProposePayload>;
   if (!isValidBondId(p.id)) return;
   if (!isCharacterId(p.pcId)) return;
-  if (!isCharacterId(p.targetPcId)) return;
-  // D5: self-bonds are nonsense; reject.
-  if (p.pcId === p.targetPcId) return;
+  // D5.5-B: target is EITHER a real pcId OR a free-text
+  // placeholder, never both, never neither.  Determine the mode
+  // up front so the downstream validation branches cleanly.
+  const hasRealTarget = isCharacterId(p.targetPcId);
+  const placeholderRaw =
+    typeof p.targetPlaceholder === 'string' ? p.targetPlaceholder.trim() : '';
+  const hasPlaceholder = placeholderRaw.length > 0;
+  if (hasRealTarget === hasPlaceholder) return; // both or neither → reject
+  if (hasPlaceholder && placeholderRaw.length > BOND_TARGET_PLACEHOLDER_MAX) {
+    return;
+  }
+  // D5: self-bonds are nonsense; reject (only meaningful for the
+  // real-target path — a placeholder can't collide with pcId).
+  if (hasRealTarget && p.pcId === p.targetPcId) return;
   if (typeof p.text !== 'string') return;
   const trimmedText = p.text.trim();
   if (trimmedText.length === 0 || trimmedText.length > BOND_TEXT_MAX) return;
@@ -3604,18 +3645,20 @@ function applyBondProposeEvent(
   // dots; while neither is used as an object key TODAY, practice
   // memo 6c says "every layer."
   if (hasPoisonousDottedSegment(p.pcId)) return;
-  if (hasPoisonousDottedSegment(p.targetPcId)) return;
+  if (hasRealTarget && hasPoisonousDottedSegment(p.targetPcId)) return;
+  const newProposal: BondProposal = {
+    id: p.id,
+    targetPcId: hasRealTarget ? (p.targetPcId as string) : '',
+    text: trimmedText,
+    proposedByPeerId: event.peerId,
+    ts: event.ts
+  };
+  if (hasPlaceholder) newProposal.targetPlaceholder = placeholderRaw;
   state.pcBondProposals = {
     ...state.pcBondProposals,
     [p.pcId]: [
       ...proposals,
-      {
-        id: p.id,
-        targetPcId: p.targetPcId,
-        text: trimmedText,
-        proposedByPeerId: event.peerId,
-        ts: event.ts
-      }
+      newProposal
     ]
   };
 }
@@ -3628,6 +3671,16 @@ interface BondRatifyPayload {
   text?: string;
   /** Optional DM-only spoiler-anchor. */
   dmNotes?: string;
+  /**
+   * D5.5-B: DM-supplied real target pcId.  REQUIRED when the
+   * proposal is a placeholder (proposal.targetPcId === '') — the
+   * DM resolves "the medic" → an actual pcId at ratify.  Optional
+   * override when the proposal already had a real target (lets the
+   * DM redirect a bond).  A ratify that leaves a placeholder
+   * unresolved is rejected (the bond can't enter pcBonds without
+   * a valid target).
+   */
+  targetPcId?: string;
 }
 
 function applyBondRatifyEvent(
@@ -3647,6 +3700,21 @@ function applyBondRatifyEvent(
     if (typeof p.dmNotes !== 'string') return;
     if (p.dmNotes.length > BOND_DM_NOTES_MAX) return;
   }
+  // D5.5-B: resolve the effective target.  Ratify's targetPcId
+  // override wins when present; otherwise fall back to the
+  // proposal's (which is empty for an unresolved placeholder).
+  // The ratified bond MUST carry a real pcId — a placeholder that
+  // the DM never resolved is rejected here rather than entering
+  // pcBonds with an empty target (which would render as a
+  // dangling "(unknown PC)" in the bonds card).
+  let effectiveTargetPcId = proposal.targetPcId;
+  if (p.targetPcId !== undefined) {
+    if (!isCharacterId(p.targetPcId)) return;
+    if (hasPoisonousDottedSegment(p.targetPcId)) return;
+    effectiveTargetPcId = p.targetPcId;
+  }
+  if (!isCharacterId(effectiveTargetPcId)) return; // unresolved placeholder
+  if (effectiveTargetPcId === p.pcId) return; // self-bond after resolve
   const ratifiedText =
     p.text !== undefined ? p.text.trim() : proposal.text;
   if (ratifiedText.length === 0 || ratifiedText.length > BOND_TEXT_MAX) return;
@@ -3658,7 +3726,7 @@ function applyBondRatifyEvent(
   };
   const entry: BondEntry = {
     id: proposal.id,
-    targetPcId: proposal.targetPcId,
+    targetPcId: effectiveTargetPcId,
     text: ratifiedText,
     proposedByPeerId: proposal.proposedByPeerId,
     ratifiedByPeerId: event.peerId,

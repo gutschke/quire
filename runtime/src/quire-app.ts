@@ -2255,7 +2255,10 @@ export class QuireApp extends LitElement {
    */
   proposeBond(opts: {
     pcId: string;
+    /** Real target pcId, OR '' when using targetPlaceholder. */
     targetPcId: string;
+    /** D5.5-B: free-text placeholder when the target PC is unknown. */
+    targetPlaceholder?: string;
     text: string;
   }): boolean {
     if (!this.session) return false;
@@ -2263,7 +2266,13 @@ export class QuireApp extends LitElement {
     if (!v || v.status !== 'active') return false;
     const trimmed = opts.text.trim();
     if (trimmed.length === 0 || trimmed.length > 500) return false;
-    if (opts.pcId === opts.targetPcId) return false;
+    // D5.5-B: target is EITHER a real pcId OR a placeholder.
+    const placeholder = opts.targetPlaceholder?.trim() ?? '';
+    const hasRealTarget = opts.targetPcId.length > 0;
+    const hasPlaceholder = placeholder.length > 0;
+    if (hasRealTarget === hasPlaceholder) return false; // both/neither
+    if (hasPlaceholder && placeholder.length > 80) return false;
+    if (hasRealTarget && opts.pcId === opts.targetPcId) return false;
     if (!v.peerId) return false;
     // D5-3 gate pre-check.
     const isCoord = this.isCoordinator();
@@ -2292,13 +2301,15 @@ export class QuireApp extends LitElement {
     const id = `bond-${rand}`;
     const existingProposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
     if (existingProposals.some((q) => q.id === id)) return false;
-    this.session.append('bond-propose', {
+    const payload: Record<string, unknown> = {
       v: 1,
       id,
       pcId: opts.pcId,
-      targetPcId: opts.targetPcId,
+      targetPcId: hasRealTarget ? opts.targetPcId : '',
       text: trimmed
-    });
+    };
+    if (hasPlaceholder) payload.targetPlaceholder = placeholder;
+    this.session.append('bond-propose', payload);
     return true;
   }
 
@@ -2312,12 +2323,30 @@ export class QuireApp extends LitElement {
     id: string;
     text?: string;
     dmNotes?: string;
+    /**
+     * D5.5-B: resolve a placeholder proposal to a real target.
+     * Required when the proposal carries a targetPlaceholder (no
+     * real targetPcId); optional redirect otherwise.  The
+     * materializer rejects a ratify that leaves a placeholder
+     * unresolved, so the UI pre-checks this before enabling the
+     * ratify button on a placeholder bond.
+     */
+    targetPcId?: string;
   }): boolean {
     if (!this.session) return false;
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
     const proposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
-    if (!proposals.some((p) => p.id === opts.id)) return false;
+    const proposal = proposals.find((p) => p.id === opts.id);
+    if (!proposal) return false;
+    // D5.5-B: a placeholder proposal can't be ratified without a
+    // resolved target.  Pre-check here so the host returns false
+    // (UI disables the ratify button) rather than emitting an
+    // event the materializer will silently drop.
+    const isPlaceholder =
+      proposal.targetPcId.length === 0 &&
+      (proposal.targetPlaceholder?.length ?? 0) > 0;
+    if (isPlaceholder && (opts.targetPcId?.length ?? 0) === 0) return false;
     const payload: Record<string, unknown> = {
       v: 1,
       id: opts.id,
@@ -2326,6 +2355,9 @@ export class QuireApp extends LitElement {
     if (opts.text !== undefined) payload.text = opts.text;
     if (opts.dmNotes !== undefined && opts.dmNotes.length > 0) {
       payload.dmNotes = opts.dmNotes;
+    }
+    if (opts.targetPcId !== undefined && opts.targetPcId.length > 0) {
+      payload.targetPcId = opts.targetPcId;
     }
     this.session.append('bond-ratify', payload);
     return true;
