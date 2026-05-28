@@ -3472,7 +3472,13 @@ function applyDmClockDeleteEvent(
 // -----------------------------------------------------------------
 
 const BOND_ID_MAX = 64;
-const BOND_TEXT_MAX = 500;
+/**
+ * Exported so the chargen-pack draft validator + a cross-module
+ * guard test can assert their caps match (the two modules can't
+ * share one definition without coupling the player-device pack
+ * module to the engine core).  See `bond-cap-parity.test.ts`.
+ */
+export const BOND_TEXT_MAX = 500;
 const BOND_DM_NOTES_MAX = 2000;
 export const BOND_MAX_PER_PC = 8;
 /**
@@ -3482,7 +3488,7 @@ export const BOND_MAX_PER_PC = 8;
  * to a real `targetPcId` at ratify.  80 chars matches the
  * ChargenPack-side cap (`MAX_BOND_TARGET_LEN`).
  */
-const BOND_TARGET_PLACEHOLDER_MAX = 80;
+export const BOND_TARGET_PLACEHOLDER_MAX = 80;
 const BOND_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 function isValidBondId(id: unknown): id is string {
