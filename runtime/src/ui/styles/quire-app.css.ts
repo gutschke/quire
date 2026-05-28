@@ -3072,6 +3072,14 @@ export const quireAppStyles = css`
       margin: 0.2rem 0 0;
       font-size: 0.88rem;
     }
+    /* D5.5-B: cross-PC consent hint on an inbound bond — signals
+       that the tie another player authored about this PC is a
+       table conversation, not a system-enforced gate. */
+    .bonds-card-inbound-consent {
+      margin: 0.25rem 0 0;
+      font-size: 0.78rem;
+      font-style: italic;
+    }
     .bonds-card-dm-notes {
       margin-top: 0.3rem;
       padding: 0.3rem 0.5rem;
@@ -3188,6 +3196,25 @@ export const quireAppStyles = css`
     }
     .dm-pc-detail-bond-proposal-text {
       font-style: italic;
+    }
+    /* D5.5-B: amber "possible spoiler" chip on a bond proposal —
+       DM-only signal that the player-authored text mentions a
+       campaign secret.  Never shown to the authoring player. */
+    .dm-pc-detail-bond-spoiler,
+    .dm-aside-bond-queue-spoiler {
+      margin: 0.25rem 0 0;
+      padding: 0.2rem 0.45rem;
+      border-radius: 0.25rem;
+      font-size: 0.8rem;
+      font-style: normal;
+      color: light-dark(#7c2d12, #fbbf24);
+      background: light-dark(#fef3c7, #422006);
+      border: 1px solid light-dark(#f59e0b, #92660e);
+    }
+    .dm-pc-detail-bond-unresolved,
+    .dm-aside-bond-queue-unresolved {
+      font-size: 0.78rem;
+      color: light-dark(#92660e, #d6a559);
     }
     .dm-pc-detail-bond-proposal-actions {
       display: flex;

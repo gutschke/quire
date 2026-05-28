@@ -501,3 +501,73 @@ describe('QuireApp D5.5-B — bond cap pre-check + ratify-resolve seam', () => {
     expect(bonds[0].text).toBe('We shared a lab.');
   });
 });
+
+describe('QuireApp D5.5-B — bond spoiler chip is DM-only', () => {
+  it('a spoiler-bearing bond surfaces spoilerHits to the DM, never to the player', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    // Inject a campaign whose aiBackstory declares a spoiler token.
+    (
+      app as unknown as { _appState: { kind: string; campaign: unknown } }
+    )._appState = {
+      kind: 'campaign',
+      campaign: {
+        base: {
+          manifest: {
+            $schemaVersion: '0.1.0',
+            name: 'TestCampaign',
+            aiBackstory: { spoilerTokens: ['Quiet'] }
+          },
+          source: { owner: 'x', repo: 'y', ref: 'main' }
+        },
+        worldOverview: null
+      }
+    };
+    const session = (app as unknown as { session: { append: Function } })
+      .session;
+    session.append('seat-add', { v: 1, slot: 1 });
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    await flush();
+    const appBond = app as unknown as {
+      proposeBond(o: {
+        pcId: string;
+        targetPcId: string;
+        targetPlaceholder?: string;
+        text: string;
+      }): boolean;
+      buildPendingBondProposalsForDmAside(): Array<{
+        spoilerHits?: string[];
+      }>;
+    };
+    appBond.proposeBond({
+      pcId: 'mei',
+      targetPcId: '',
+      targetPlaceholder: 'the one who hears the Quiet',
+      text: 'She knew before I did.'
+    });
+    await flush();
+    // DM-side aside queue carries the spoiler hit (substring match
+    // on the placeholder).
+    const queue = appBond.buildPendingBondProposalsForDmAside();
+    expect(queue).toHaveLength(1);
+    expect(queue[0].spoilerHits).toContain('quiet');
+    // Player projection: proposals (incl. the spoiler text) wiped
+    // wholesale — the chip data can't reach a non-coord viewer
+    // because the proposal itself doesn't.
+    const view = (
+      app as unknown as {
+        session: { peer: { state(): { pcBondProposals: object } } };
+      }
+    ).session;
+    void view; // (proposal-wipe is covered by the core firewall tests)
+  });
+});

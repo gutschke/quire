@@ -132,6 +132,47 @@ describe('<dm-aside>', () => {
     expect(el.querySelector('.dm-aside-bond-queue-unresolved')).toBeNull();
   });
 
+  it('D5.5-B: renders an amber spoiler chip when the bond text trips a token', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 'She knew about the Quiet before I did.',
+        proposedByPeerId: 'bob',
+        ts: 1700000000000,
+        spoilerHits: ['quiet']
+      }
+    ];
+    await el.updateComplete;
+    expect(
+      el.querySelector('.dm-aside-bond-queue-spoiler')
+    ).not.toBeNull();
+    expect(el.innerHTML).toMatch(/possible spoiler/i);
+    expect(el.innerHTML).toContain('quiet');
+  });
+
+  it('D5.5-B: no spoiler chip when spoilerHits is absent/empty', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 'classmates at Berkeley',
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
+      }
+    ];
+    await el.updateComplete;
+    expect(el.querySelector('.dm-aside-bond-queue-spoiler')).toBeNull();
+  });
+
   it('D5-cleanup: hides bond queue section when proposals empty', async () => {
     const el = mount();
     el.campaignSlug = 'x/y';

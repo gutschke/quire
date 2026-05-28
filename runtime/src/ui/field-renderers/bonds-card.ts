@@ -136,6 +136,13 @@ export class BondsCard extends LitElement {
           : html`<strong>${b.targetLabel}</strong>`}
       </div>
       <p class="bonds-card-text">${b.text}</p>
+      ${isInbound
+        ? html`<p class="bonds-card-inbound-consent muted">
+            Another player's character claims this tie.  If it doesn't
+            fit yours, that's a conversation for the table — your DM
+            can adjust or drop it.
+          </p>`
+        : nothing}
       ${isCoord && b.dmNotes
         ? html`<aside class="bonds-card-dm-notes" aria-label="DM note">
             <strong>DM:</strong> ${b.dmNotes}

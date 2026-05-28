@@ -68,6 +68,14 @@ export interface DmAsideBondProposal {
    * + knows ratify requires resolving it to a real PC.
    */
   unresolved?: boolean;
+  /**
+   * D5.5-B (2026-05-28): campaign spoiler tokens the host's
+   * substring scan found in the player-authored bond text /
+   * placeholder.  Non-empty → the DM sees an amber "possible
+   * spoiler" chip before ratify.  DM-only (silent-player-firewall:
+   * the player who typed it is never told).
+   */
+  spoilerHits?: string[];
   /** The proposed bond text. */
   text: string;
   /** Player peer who proposed it. */
@@ -165,6 +173,15 @@ export class DmAside extends LitElement {
         <span class="muted"> · ${p.proposedByPeerId}</span>
       </p>
       <p class="dm-aside-bond-queue-text">${p.text}</p>
+      ${p.spoilerHits && p.spoilerHits.length > 0
+        ? html`<p
+            class="dm-aside-bond-queue-spoiler"
+            role="note"
+            title="The player's text mentions campaign secrets.  Ratifying broadcasts it to all players.  Edit or reject if it would spoil."
+          >
+            ⚠ possible spoiler: ${p.spoilerHits.join(', ')}
+          </p>`
+        : nothing}
       <a
         class="dm-aside-bond-queue-link"
         href=${routeToSearch(route)}

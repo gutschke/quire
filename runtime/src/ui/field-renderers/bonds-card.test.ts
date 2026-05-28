@@ -131,6 +131,29 @@ describe('<bonds-card>', () => {
     expect(target).toMatch(/→ me/);
   });
 
+  it('D5.5-B: inbound bond shows the cross-PC consent hint', async () => {
+    const el = mount();
+    el.bonds = [
+      bond({
+        id: 'b-in',
+        direction: 'in',
+        sourceLabel: 'Mei',
+        text: 'she owes me'
+      })
+    ];
+    await el.updateComplete;
+    const hint = el.querySelector('.bonds-card-inbound-consent');
+    expect(hint).not.toBeNull();
+    expect(hint?.textContent).toMatch(/conversation for the table/i);
+  });
+
+  it('D5.5-B: outbound bond does NOT show the consent hint', async () => {
+    const el = mount();
+    el.bonds = [bond({ id: 'b-out', direction: 'out' })];
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-inbound-consent')).toBeNull();
+  });
+
   it('D5-cleanup: inbound bond hides remove button (owned by source PC)', async () => {
     const el = mount();
     el.bonds = [

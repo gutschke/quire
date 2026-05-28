@@ -133,6 +133,13 @@ export interface DmDetailView extends MagicArcControlsView {
      * bond can be ratified.
      */
     unresolved?: boolean;
+    /**
+     * D5.5-B (2026-05-28): campaign spoiler tokens found in the
+     * player-authored bond text / placeholder.  Non-empty → the
+     * DM sees an amber "possible spoiler" warning before ratify.
+     * DM-only (silent-player-firewall).
+     */
+    spoilerHits?: string[];
   }>;
 }
 
@@ -407,6 +414,15 @@ export class DmPcDetail extends LitElement {
         <span class="muted"> · ${p.proposedByPeerId}</span>
       </p>
       <p class="dm-pc-detail-bond-proposal-text">${p.text}</p>
+      ${p.spoilerHits && p.spoilerHits.length > 0
+        ? html`<p
+            class="dm-pc-detail-bond-spoiler"
+            role="note"
+            title="The player's text mentions campaign secrets.  Ratifying broadcasts it to all players.  Edit or reject if it would spoil."
+          >
+            ⚠ possible spoiler: ${p.spoilerHits.join(', ')}
+          </p>`
+        : nothing}
       ${isOpen
         ? this.renderBondRatifyForm(view.pcId, p)
         : this.bondRejectConfirmId === p.id

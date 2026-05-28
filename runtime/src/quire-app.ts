@@ -66,6 +66,7 @@ import { HELP_OPEN_EVENT } from './ui/components/quire-help-overlay';
 import {
   type ChatLintAiStatus
 } from './ai/chat-spoiler-lint';
+import { containsSpoilerTokens } from './ai/spoiler-check';
 import {
   ChatSpoilerLintController,
   type ChatSpoilerLintUiState
@@ -2461,6 +2462,33 @@ export class QuireApp extends LitElement {
    * "(unknown PC)" placeholder when the target is firewalled-out.
    * Used by both outbound + inbound bond rendering.
    */
+  /**
+   * D5.5-B deferred-enhancement (2026-05-28): substring-scan a
+   * bond's player-authored text + free-text placeholder for
+   * campaign spoiler tokens.  Returns the matched tokens (lowercased,
+   * deduped) so the DM review surfaces can render an amber "possible
+   * spoiler" chip BEFORE ratify.
+   *
+   * Per [[feedback_silent_player_firewall]]: this is a DM-ONLY
+   * signal — the chip surfaces only on coord-gated surfaces
+   * (dm-aside queue, dm-pc-detail ratify form).  The player who
+   * typed the spoiler is NEVER told (telling them IS the spoiler).
+   *
+   * Uses the campaign's declared `aiBackstory.spoilerTokens` when
+   * present (the curated Underleaf secret list), else the default
+   * token set — same source the chargen synthesis firewall uses.
+   * No AI call: a substring pass is the right weight for a passive
+   * review chip; the DM makes the final call.
+   */
+  private bondTextSpoilerHits(text: string, placeholder?: string): string[] {
+    const campaign = this.getCurrentCampaign();
+    const declared = campaign?.base.manifest.aiBackstory?.spoilerTokens;
+    const tokens = declared && declared.length > 0 ? declared : undefined;
+    const combined =
+      placeholder && placeholder.length > 0 ? `${placeholder} ${text}` : text;
+    return containsSpoilerTokens(combined, tokens);
+  }
+
   private resolvePcDisplayLabel(pcId: string): string {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return '(unknown PC)';
@@ -2513,6 +2541,10 @@ export class QuireApp extends LitElement {
         const isPlaceholder =
           p.targetPcId.length === 0 &&
           (p.targetPlaceholder?.length ?? 0) > 0;
+        const spoilerHits = this.bondTextSpoilerHits(
+          p.text,
+          p.targetPlaceholder
+        );
         out.push({
           id: p.id,
           pcId,
@@ -2523,7 +2555,8 @@ export class QuireApp extends LitElement {
           unresolved: isPlaceholder,
           text: p.text,
           proposedByPeerId: p.proposedByPeerId,
-          ts: p.ts
+          ts: p.ts,
+          ...(spoilerHits.length > 0 ? { spoilerHits } : {})
         });
       }
     }
@@ -7107,6 +7140,10 @@ export class QuireApp extends LitElement {
           p.targetPcId.length === 0 &&
           (p.targetPlaceholder?.length ?? 0) > 0;
         const target = v.shared.synthesizedPcs?.[p.targetPcId];
+        const spoilerHits = this.bondTextSpoilerHits(
+          p.text,
+          p.targetPlaceholder
+        );
         return {
           id: p.id,
           targetPcId: p.targetPcId,
@@ -7116,7 +7153,8 @@ export class QuireApp extends LitElement {
             ? (p.targetPlaceholder as string)
             : ((target?.name as string | undefined) ??
               `(unknown: ${p.targetPcId})`),
-          unresolved: isPlaceholder
+          unresolved: isPlaceholder,
+          ...(spoilerHits.length > 0 ? { spoilerHits } : {})
         };
       });
     }

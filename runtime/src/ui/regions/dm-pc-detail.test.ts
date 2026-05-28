@@ -480,6 +480,29 @@ describe('<dm-pc-detail> — D5.5-B placeholder bond resolve picker', () => {
     expect(el.querySelector('.dm-pc-detail-bond-resolve-empty')).not.toBeNull();
   });
 
+  it('D5.5-B: renders an amber spoiler chip when the bond text trips a token', async () => {
+    const el = document.createElement('dm-pc-detail') as DmPcDetail;
+    el.view = {
+      pcId: 'mei',
+      pcName: 'Mei',
+      bondProposals: [
+        {
+          id: 'b1',
+          targetPcId: 'iris',
+          targetLabel: 'Iris',
+          text: 'She knew about the Quiet before I did.',
+          proposedByPeerId: 'bob',
+          spoilerHits: ['quiet']
+        }
+      ]
+    };
+    el.onRatifyBond = () => {};
+    document.body.appendChild(el);
+    await el.updateComplete;
+    expect(el.querySelector('.dm-pc-detail-bond-spoiler')).not.toBeNull();
+    expect(el.innerHTML).toMatch(/possible spoiler/i);
+  });
+
   it('a RESOLVED proposal (real target) shows no picker + Ratify enabled', async () => {
     const el = document.createElement('dm-pc-detail') as DmPcDetail;
     el.view = {
