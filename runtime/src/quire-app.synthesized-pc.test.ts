@@ -378,3 +378,126 @@ describe('QuireApp Phase 3b-1 — synthesized PC end-to-end', () => {
     expect(appLoader.pcCharacterCache.has('not-synthesized')).toBe(false);
   });
 });
+
+// ---- D5.5-B review round 2: proposeBond cap + ratify-resolve seam ----
+
+describe('QuireApp D5.5-B — bond cap pre-check + ratify-resolve seam', () => {
+  it('proposeBond returns false once BOND_MAX_PER_PC (8) is reached', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    const session = (app as unknown as { session: { append: Function } })
+      .session;
+    session.append('seat-add', { v: 1, slot: 1 });
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    await flush();
+    const appBond = app as unknown as {
+      proposeBond(o: {
+        pcId: string;
+        targetPcId: string;
+        targetPlaceholder?: string;
+        text: string;
+      }): boolean;
+    };
+    // Fill the cap with 8 placeholder bonds.
+    for (let i = 0; i < 8; i++) {
+      const ok = appBond.proposeBond({
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: `target ${i}`,
+        text: `bond ${i}`
+      });
+      expect(ok).toBe(true);
+    }
+    await flush();
+    // The 9th must be refused at the host pre-check (matches the
+    // materializer's silent cap drop — so chargen acceptSlot's
+    // dropped-bond audit counts correctly).
+    const ninth = appBond.proposeBond({
+      pcId: 'mei',
+      targetPcId: '',
+      targetPlaceholder: 'over the cap',
+      text: 'should be refused'
+    });
+    expect(ninth).toBe(false);
+  });
+
+  it('placeholder bond resolves to a real target at ratify (host seam)', async () => {
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+    app.startHosting();
+    await flush();
+    const session = (app as unknown as { session: { append: Function } })
+      .session;
+    // Two PCs: mei (bond source) + iris (resolve target).
+    session.append('seat-add', { v: 1, slot: 1 });
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    session.append('seat-add', { v: 1, slot: 2 });
+    session.append('pc-create', {
+      v: 1,
+      pcId: 'iris',
+      name: 'Iris',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0
+    });
+    session.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'iris' });
+    await flush();
+    const appBond = app as unknown as {
+      proposeBond(o: {
+        pcId: string;
+        targetPcId: string;
+        targetPlaceholder?: string;
+        text: string;
+      }): boolean;
+      ratifyBond(o: {
+        pcId: string;
+        id: string;
+        targetPcId?: string;
+      }): boolean;
+      sessionView?: {
+        shared: {
+          pcBondProposals: Record<string, Array<{ id: string }>>;
+          pcBonds: Record<string, Array<{ targetPcId: string; text: string }>>;
+        };
+      };
+    };
+    // Placeholder bond on mei → "the engineer".
+    expect(
+      appBond.proposeBond({
+        pcId: 'mei',
+        targetPcId: '',
+        targetPlaceholder: 'the engineer',
+        text: 'We shared a lab.'
+      })
+    ).toBe(true);
+    await flush();
+    const proposalId = appBond.sessionView!.shared.pcBondProposals.mei[0].id;
+    // A ratify WITHOUT resolving the placeholder must be refused.
+    expect(appBond.ratifyBond({ pcId: 'mei', id: proposalId })).toBe(false);
+    // Resolving to a real pcId succeeds.
+    expect(
+      appBond.ratifyBond({ pcId: 'mei', id: proposalId, targetPcId: 'iris' })
+    ).toBe(true);
+    await flush();
+    const bonds = appBond.sessionView!.shared.pcBonds.mei;
+    expect(bonds).toHaveLength(1);
+    expect(bonds[0].targetPcId).toBe('iris');
+    expect(bonds[0].text).toBe('We shared a lab.');
+  });
+});

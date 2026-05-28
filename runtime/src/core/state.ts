@@ -3474,7 +3474,7 @@ function applyDmClockDeleteEvent(
 const BOND_ID_MAX = 64;
 const BOND_TEXT_MAX = 500;
 const BOND_DM_NOTES_MAX = 2000;
-const BOND_MAX_PER_PC = 8;
+export const BOND_MAX_PER_PC = 8;
 /**
  * D5.5-B (2026-05-27): cap on the free-text placeholder used when a
  * chargen-time bond targets a PC that doesn't exist yet (parallel

@@ -174,6 +174,7 @@ import { AutosaveController } from './controllers/autosave-controller';
 import { decideRoute } from './controllers/route-policy';
 import {
   KNOWN_EVENT_KINDS,
+  BOND_MAX_PER_PC,
   type Seat,
   type ThreadDebtLevel
 } from './core/state';
@@ -2308,6 +2309,17 @@ export class QuireApp extends LitElement {
     const id = `bond-${rand}`;
     const existingProposals = v.shared.pcBondProposals?.[opts.pcId] ?? [];
     if (existingProposals.some((q) => q.id === id)) return false;
+    // D5.5-B review round 2 fix: mirror the materializer's cap so
+    // the return value is honest.  Pre-fix, proposeBond returned
+    // true even when the engine would silently drop the event at
+    // `proposals + ratified >= BOND_MAX_PER_PC` — which made the
+    // chargen acceptSlot's dropped-bond audit under-report (it
+    // keys off this boolean).  The materializer remains the
+    // authoritative gate; this is a faithful pre-check.
+    const existingRatified = v.shared.pcBonds?.[opts.pcId] ?? [];
+    if (existingProposals.length + existingRatified.length >= BOND_MAX_PER_PC) {
+      return false;
+    }
     const payload: Record<string, unknown> = {
       v: 1,
       id,

@@ -2736,8 +2736,16 @@ describe('ChargenController — D5.5-B chargen bond emission', () => {
   });
 
   /**
-   * Post-review fix #3: dropped bonds (engine cap / gate) leave an
-   * audit scratch-note rather than silently vanishing.
+   * Post-review fix #3 (corrected in round 2): dropped bonds leave
+   * an audit scratch-note rather than silently vanishing.  The
+   * `dropped` counter keys off `appendBondPropose`'s return — so
+   * the wiring is only correct if the host returns false when the
+   * engine would drop the bond.  Round-2 fix made `proposeBond`
+   * cap-aware; this test models a partial drop (some accepted,
+   * some rejected) to exercise the count math + note text.  The
+   * full real-cap path is covered end-to-end in
+   * quire-app.synthesized-pc.test.ts (proposeBond returns false at
+   * BOND_MAX_PER_PC).
    */
   it('audits dropped bonds via a scratch-note', async () => {
     saveChargenState('o-r-main', 1, {
@@ -2745,21 +2753,34 @@ describe('ChargenController — D5.5-B chargen bond emission', () => {
       answers: {},
       bondDrafts: [
         { targetPlaceholder: 'a', text: 'first' },
-        { targetPlaceholder: 'b', text: 'second' }
+        { targetPlaceholder: 'b', text: 'second' },
+        { targetPlaceholder: 'c', text: 'third' }
       ]
     });
     const synthSpy = mockOkSynth();
     const { host } = makeHost();
     const env = makeEnv(makeCampaign());
-    // Reject ALL bond emissions (simulate cap reached).
-    env.appendBondPropose = () => false;
+    // Model the cap: first 2 land, the rest are refused — matches
+    // the round-2 cap-aware proposeBond behavior.
+    const orig = env.appendBondPropose;
+    let accepted = 0;
+    env.appendBondPropose = (p: {
+      pcId: string;
+      targetPlaceholder: string;
+      text: string;
+    }) => {
+      if (accepted >= 2) return false;
+      accepted++;
+      return orig(p);
+    };
     const ctrl = new ChargenController(host, env);
     await ctrl.synthesizeForSlot(1);
     ctrl.acceptSlot(1);
     expect(ctrl.isAccepted(1)).toBe(true);
+    expect(env.bondProposes).toHaveLength(2);
     const auditNote = env.scratchNotes.find((n) => /not accepted/i.test(n));
     expect(auditNote).toBeDefined();
-    expect(auditNote).toMatch(/2 of 2/);
+    expect(auditNote).toMatch(/1 of 3/);
     synthSpy.mockRestore();
   });
 
