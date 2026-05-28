@@ -8,7 +8,10 @@ import {
   InMemoryNetwork,
   InMemoryTransport
 } from './core/transports/in-memory';
-import type { LoadedCharacter } from './character-loader';
+import {
+  countAdvancementMarks,
+  type LoadedCharacter
+} from './character-loader';
 
 function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
   return {
@@ -200,6 +203,50 @@ describe('QuireApp pc-edit', () => {
       );
       await flush();
       expect(app.effectiveCharacter(fakePc('ghost')).advancements).toBeUndefined();
+    });
+
+    // End-to-end simulated session (TTRPG scenario 1): the loop must
+    // CLOSE across a full cycle through the real event log — tick to
+    // 5, take the advancement, the derived count resets to 0, then a
+    // new cycle accrues without the count ever exceeding 5.  This is
+    // the integration the player Rail chip + session-open badge both
+    // read (both derive via countAdvancementMarks).
+    it('full advancement cycle: 5 marks → take → reset → re-accrue, never exceeds 5', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      seedPc(app, 'p1');
+      const take = (app as unknown as {
+        takeAdvancement: (id: string) => void;
+      }).takeAdvancement.bind(app);
+      const marksNow = (): number =>
+        countAdvancementMarks(app.effectiveCharacter(fakePc('p1')).markBullets);
+
+      // Cycle 1: the DM ticks all 5 bullets over a few sessions.
+      for (const k of [
+        'hardMoment',
+        'learned',
+        'risk',
+        'against',
+        'complication'
+      ]) {
+        app.submitPcEdit('p1', `markBullets.${k}`, true);
+      }
+      await flush();
+      expect(marksNow()).toBe(5); // chip → "Advancement ready"
+
+      // DM confirms the advancement at session-open.
+      take('p1');
+      await flush();
+      expect(marksNow()).toBe(0); // chip clears (no more nagging)
+      expect(app.effectiveCharacter(fakePc('p1')).advancements).toBe(1);
+
+      // Cycle 2: two more bullets — the count reflects reality and
+      // never shows N>5 (the old record.marks bug could have).
+      app.submitPcEdit('p1', 'markBullets.hardMoment', true);
+      app.submitPcEdit('p1', 'markBullets.learned', true);
+      await flush();
+      expect(marksNow()).toBe(2); // chip → faint "Growth: 2 / 5"
     });
   });
 
