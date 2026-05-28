@@ -706,25 +706,26 @@ describe('D5.5 first-session polish: autosave indicator', () => {
     expect(el.querySelector('.character-creation-savestate')).toBeNull();
   });
 
-  it('renders a muted "Saving…" line while saving', async () => {
-    const el = mount();
-    el.saveState = 'saving';
-    await el.updateComplete;
-    const line = el.querySelector('.character-creation-savestate');
-    expect(line).not.toBeNull();
-    expect(line?.textContent).toContain('Saving');
-    // The muted (non-ok) variant — no success-tint class.
-    expect(
-      el.querySelector('.character-creation-savestate-ok')
-    ).toBeNull();
-  });
-
-  it('renders the green "✓ Saved" confirmation when saved', async () => {
+  it('renders the green "✓ Saved" confirmation, qualified so it does not imply done-ness', async () => {
     const el = mount();
     el.saveState = 'saved';
     await el.updateComplete;
     const ok = el.querySelector('.character-creation-savestate-ok');
     expect(ok).not.toBeNull();
     expect(ok?.textContent).toContain('Saved');
+    // The qualifier prevents the "I'm done" misread (UX P0-2).
+    expect(ok?.textContent?.toLowerCase()).toContain('send it to your dm');
+  });
+
+  it('renders a sticky amber warning when the save failed, pointing to Pack as fallback', async () => {
+    const el = mount();
+    el.saveState = 'save-failed';
+    await el.updateComplete;
+    const warn = el.querySelector('.character-creation-savestate-warn');
+    expect(warn).not.toBeNull();
+    expect(warn?.textContent?.toLowerCase()).toContain("couldn't save");
+    expect(warn?.textContent?.toLowerCase()).toContain('pack my character');
+    // Not the success tint.
+    expect(el.querySelector('.character-creation-savestate-ok')).toBeNull();
   });
 });

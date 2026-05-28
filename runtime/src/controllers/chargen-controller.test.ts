@@ -694,21 +694,62 @@ describe('ChargenController — persistDebounced (Engine B3, Test-cov BIG #2)', 
     expect(JSON.parse(raw!).answers.archetype).toBe('hacker');
   });
 
-  // ---- D5.5 first-session polish: autosave "Saved" indicator ----
+  // ---- D5.5 first-session polish: autosave indicator ----
 
-  it('saveState flips to "saving" when a persist is scheduled', () => {
+  it('saveState stays idle until flush — no "saving" strobe on each keystroke', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     expect(ctrl.saveState).toBe('idle');
     ctrl.setAnswer('archetype', 'hacker');
     ctrl.persistDebounced(makeCampaign(), 1);
-    expect(ctrl.saveState).toBe('saving');
+    // No transient 'saving' — the indicator only appears once a write
+    // actually lands, so a type→pause→type rhythm doesn't flicker.
+    expect(ctrl.saveState).toBe('idle');
   });
 
   it('saveState flips to "saved" once the debounced write flushes', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    ctrl.flushPending();
+    expect(ctrl.saveState).toBe('saved');
+  });
+
+  it('saveState becomes "save-failed" when the localStorage write fails', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const spy = vi
+      .spyOn(window.localStorage, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+    try {
+      ctrl.setAnswer('archetype', 'hacker');
+      ctrl.persistDebounced(makeCampaign(), 1);
+      ctrl.flushPending();
+      // The write threw → the player must NOT be told "Saved".
+      expect(ctrl.saveState).toBe('save-failed');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('a later successful save clears a prior "save-failed"', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    const spy = vi
+      .spyOn(window.localStorage, 'setItem')
+      .mockImplementationOnce(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+    ctrl.setAnswer('archetype', 'hacker');
+    ctrl.persistDebounced(makeCampaign(), 1);
+    ctrl.flushPending();
+    expect(ctrl.saveState).toBe('save-failed');
+    spy.mockRestore();
+    // Next edit + flush succeeds → warning clears to 'saved'.
+    ctrl.setAnswer('archetype', 'engineer');
     ctrl.persistDebounced(makeCampaign(), 1);
     ctrl.flushPending();
     expect(ctrl.saveState).toBe('saved');
@@ -732,8 +773,8 @@ describe('ChargenController — persistDebounced (Engine B3, Test-cov BIG #2)', 
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
     ctrl.setAnswer('archetype', 'hacker');
     ctrl.persistDebounced(makeCampaign(), 1);
-    // hostDisconnected flushes (→ markSaved sets a timer) then must
-    // clear it + reset, so a torn-down host gets no stray requestUpdate.
+    // hostDisconnected flushes (→ reflectSave sets a fade timer) then
+    // must clear it + reset, so a torn-down host gets no stray update.
     ctrl.hostDisconnected();
     expect(ctrl.saveState).toBe('idle');
   });

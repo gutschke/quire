@@ -4,7 +4,7 @@
  * chargen-persistence tests (CC-11).
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   saveChargenState,
   loadChargenState,
@@ -42,6 +42,33 @@ describe('saveChargenState + loadChargenState round-trip', () => {
 
   it('returns null when nothing is saved', () => {
     expect(loadChargenState('g/u', 1)).toBeNull();
+  });
+
+  it('returns true when the write lands', () => {
+    expect(
+      saveChargenState('g/u', 1, { chosenPath: 'qa', answers: { q: 'v' } })
+    ).toBe(true);
+  });
+
+  it('returns false (does not throw) when localStorage.setItem fails', () => {
+    const spy = vi
+      .spyOn(window.localStorage, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+    try {
+      expect(
+        saveChargenState('g/u', 1, { chosenPath: 'qa', answers: { q: 'v' } })
+      ).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('returns false for an out-of-range slot (bad key)', () => {
+    expect(
+      saveChargenState('g/u', 0, { chosenPath: 'qa', answers: {} })
+    ).toBe(false);
   });
 
   it('round-trips a typical state', () => {

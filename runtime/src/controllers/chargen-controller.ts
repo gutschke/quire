@@ -290,16 +290,24 @@ export class ChargenController implements ReactiveController {
   sendToDmFeedback: '' | 'sent' | 'send-failed' | 'send-too-large' = '';
 
   /**
-   * D5.5 first-session polish: transient autosave indicator for the
-   * chargen intake.  Per-keystroke edits debounce-persist silently;
-   * without a signal the player re-types / re-clicks wondering "did
-   * it save?" during the tense first-session intake.  `persistDebounced`
-   * flips this to 'saving'; the queue writer flips it to 'saved' on
-   * flush; a CHARGEN_SAVED_CLEAR_MS timer fades it back to 'idle'.
-   * Not firewall-sensitive — it reflects only the player's own draft
-   * (no DM-only data).
+   * D5.5 first-session polish: autosave indicator for the chargen
+   * intake.  Per-keystroke edits debounce-persist silently; without
+   * a signal the player re-types / re-clicks wondering "did it save?"
+   * during the tense first-session intake.
+   *
+   * Lifecycle: there is deliberately NO transient 'saving' state —
+   * the 300 ms debounce is short, and a Saving↔Saved strobe on every
+   * keystroke burst reads as noise (UX review).  The queue writer
+   * calls `reflectSave(ok)` on flush: success → 'saved' (fades to
+   * 'idle' after CHARGEN_SAVED_CLEAR_MS); failure → 'save-failed',
+   * which does NOT fade (the warning stays until the next success so
+   * the player isn't told their work is safe when localStorage threw).
+   * Single scalar is correct for the single-slot chargen route; if a
+   * caller ever drives two slots concurrently, revisit (the last
+   * flush wins).  Not firewall-sensitive — reflects only the player's
+   * own draft (no DM-only data).
    */
-  saveState: 'idle' | 'saving' | 'saved' = 'idle';
+  saveState: 'idle' | 'saved' | 'save-failed' = 'idle';
 
   /**
    * D5.5-A step 3 (2026-05-27 E-LARGE-2): async + result lifecycle
@@ -355,12 +363,12 @@ export class ChargenController implements ReactiveController {
     bondDrafts: BondDraft[];
   }>(
     (_key, value) => {
-      saveChargenState(value.slug, value.slot, {
+      const ok = saveChargenState(value.slug, value.slot, {
         chosenPath: value.chosenPath,
         answers: value.answers,
         bondDrafts: value.bondDrafts
       });
-      this.markSaved();
+      this.reflectSave(ok);
     },
     CHARGEN_PERSIST_DEBOUNCE_MS
   );
@@ -387,7 +395,7 @@ export class ChargenController implements ReactiveController {
       clearTimeout(this.packFeedbackTimer);
       this.packFeedbackTimer = null;
     }
-    // flushPending above may have fired markSaved (→ a fresh
+    // flushPending above may have fired reflectSave (→ a fresh
     // saveStateTimer); clear it AFTER so a route-exit flush doesn't
     // leave a timer that requestUpdate()s a torn-down host.
     if (this.saveStateTimer) {
@@ -1152,10 +1160,6 @@ export class ChargenController implements ReactiveController {
   persistDebounced(campaign: ChargenCampaign, slot: number): void {
     const slug = this.env.getCampaignSlug(campaign);
     const key = `${slug}:${slot}`;
-    if (this.saveState !== 'saving') {
-      this.saveState = 'saving';
-      this.host.requestUpdate();
-    }
     this.persistQueue.schedule(key, {
       slug,
       slot,
@@ -1177,13 +1181,25 @@ export class ChargenController implements ReactiveController {
 
   /**
    * D5.5 first-session polish: queue-writer callback — fires on every
-   * flush.  Surfaces the "✓ Saved" confirmation + schedules its fade
-   * back to idle so the indicator doesn't linger forever.
+   * flush with whether the localStorage write actually landed.
+   *   - success → "✓ Saved", fades back to idle after a short delay.
+   *   - failure → "⚠ Couldn't save", which does NOT fade — the player
+   *     must keep seeing it so they fall back to Pack/Send rather than
+   *     trusting a write that silently failed (quota / sandbox).
+   * A later successful flush clears the warning.
    */
-  private markSaved(): void {
+  private reflectSave(ok: boolean): void {
+    if (this.saveStateTimer) {
+      clearTimeout(this.saveStateTimer);
+      this.saveStateTimer = null;
+    }
+    if (!ok) {
+      this.saveState = 'save-failed';
+      this.host.requestUpdate();
+      return;
+    }
     this.saveState = 'saved';
     this.host.requestUpdate();
-    if (this.saveStateTimer) clearTimeout(this.saveStateTimer);
     this.saveStateTimer = setTimeout(() => {
       this.saveStateTimer = null;
       if (this.saveState === 'saved') {

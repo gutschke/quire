@@ -5667,9 +5667,9 @@ export const quireAppStyles = css`
       color: light-dark(#dc2626, #ef4444);
     }
     /* D5.5 first-session polish: subtle autosave indicator under the
-       step content.  Muted "Saving…", green "✓ Saved" matching the
-       pack-feedback-ok tone.  Right-aligned so it reads as ambient
-       status, not a primary message. */
+       step content.  Green "✓ Saved" (matching pack-feedback-ok),
+       right-aligned so it reads as ambient status, not a primary
+       message.  The -warn variant overrides alignment/color below. */
     .character-creation-savestate {
       font-size: 0.82em;
       text-align: right;
@@ -5678,6 +5678,15 @@ export const quireAppStyles = css`
     }
     .character-creation-savestate-ok {
       color: light-dark(#16803d, #4ade80);
+    }
+    /* Sticky autosave-failure caution — amber, not red: the player's
+       work isn't gone (they can still Pack/Send), but they shouldn't
+       trust device-local persistence.  Left-aligned + slightly larger
+       than the ok line since it carries an action. */
+    .character-creation-savestate-warn {
+      text-align: left;
+      font-size: 0.88em;
+      color: light-dark(#b45309, #fbbf24);
     }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×

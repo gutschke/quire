@@ -182,12 +182,13 @@ export class CharacterCreation extends LitElement {
 
   /**
    * D5.5 first-session polish: autosave indicator from the host's
-   * chargen-persistence queue.  'saving' while a debounced write is
-   * in flight, 'saved' briefly after it flushes, 'idle' otherwise.
-   * Gives the player a "did it save?" signal during the silent
-   * autosave so they don't re-type / re-click mid-intake.
+   * chargen-persistence queue.  'saved' briefly after a write lands,
+   * 'save-failed' (sticky) when localStorage rejected the write,
+   * 'idle' otherwise.  No 'saving' transient by design — see the
+   * controller's saveState doc.  Gives the player a truthful "did it
+   * save?" signal during the silent autosave.
    */
-  @property() saveState: 'idle' | 'saving' | 'saved' = 'idle';
+  @property() saveState: 'idle' | 'saved' | 'save-failed' = 'idle';
 
   @state() private currentStep: number = 1;
 
@@ -211,17 +212,26 @@ export class CharacterCreation extends LitElement {
    * D5.5 first-session polish: subtle autosave indicator so the
    * silent debounced save isn't a black box.  Plain visual span (no
    * aria-live) to match the pack/send feedback convention + avoid
-   * screen-reader spam on every keystroke.
+   * screen-reader spam on every keystroke.  The "saved" copy is
+   * qualified so the device-local confirmation doesn't read as
+   * "you're done" — the player must still Pack/Send to the DM.
    */
   private renderSaveState(): TemplateResult | typeof nothing {
     switch (this.saveState) {
-      case 'saving':
-        return html`<p class="character-creation-savestate">Saving…</p>`;
       case 'saved':
         return html`<p
           class="character-creation-savestate character-creation-savestate-ok"
         >
-          ✓ Saved on this device
+          ✓ Saved on this device — you'll still send it to your DM at
+          the last step.
+        </p>`;
+      case 'save-failed':
+        return html`<p
+          class="character-creation-savestate character-creation-savestate-warn"
+        >
+          ⚠ Couldn't save to this device — your answers may not
+          persist.  Use "Pack my character" at the last step so your
+          work isn't lost.
         </p>`;
       default:
         return nothing;

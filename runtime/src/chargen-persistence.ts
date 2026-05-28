@@ -75,10 +75,15 @@ export function chargenStorageKey(
 }
 
 /**
- * Save the chargen state.  Silent on localStorage failure
+ * Save the chargen state.  Does NOT throw on localStorage failure
  * (quota exceeded, sandboxed context, etc.) — the player should
  * still be able to use the "Pack my character" download as a
  * backup; we don't want a quota error to block the chargen flow.
+ *
+ * Returns `true` when the write reached localStorage, `false` when
+ * it didn't (bad key, no localStorage, quota/serialize error).  The
+ * autosave indicator relies on this so it never tells the player
+ * "✓ Saved" for a write that silently failed.
  */
 export function saveChargenState(
   campaignSlug: string,
@@ -90,12 +95,12 @@ export function saveChargenState(
     bondDrafts?: BondDraft[];
   },
   nowMs?: number
-): void {
+): boolean {
   let key: string;
   try {
     key = chargenStorageKey(campaignSlug, slot);
   } catch {
-    return;
+    return false;
   }
   const doc: ChargenPersistedState = {
     chosenPath: state.chosenPath,
@@ -105,9 +110,13 @@ export function saveChargenState(
   };
   try {
     const json = JSON.stringify(doc);
-    window.localStorage?.setItem(key, json);
+    const ls = window.localStorage;
+    if (!ls) return false;
+    ls.setItem(key, json);
+    return true;
   } catch {
-    /* quota / sandbox / SSR — silent no-op */
+    /* quota / sandbox / SSR — report failure, don't throw */
+    return false;
   }
 }
 
