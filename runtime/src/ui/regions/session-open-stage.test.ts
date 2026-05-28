@@ -24,6 +24,7 @@ function card(over: Partial<CarryoverPcCard> = {}): CarryoverPcCard {
     harm: 0,
     stress: 0,
     marks: 0,
+    advancements: 0,
     advancementReady: false,
     ...over
   };
@@ -97,6 +98,45 @@ describe('<session-open-stage>', () => {
     expect(
       el.querySelector('.session-open-stage-badge-adv')?.textContent
     ).toMatch(/Advancement ready/);
+  });
+
+  it('shows the take-advancement button only when onTakeAdvancement is wired (coord)', async () => {
+    const el = mount();
+    el.carryover = [card({ marks: 5, advancementReady: true })];
+    // No onTakeAdvancement → passive badge, no button.
+    await el.updateComplete;
+    expect(el.querySelector('.session-open-stage-adv-take')).toBeNull();
+    // Wire it (coord) → button appears.
+    el.onTakeAdvancement = () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.session-open-stage-adv-take')).not.toBeNull();
+  });
+
+  it('clicking take-advancement fires the callback with the pcId', async () => {
+    const el = mount();
+    el.carryover = [card({ pcId: 'rhea', marks: 5, advancementReady: true })];
+    let captured: string | null = null;
+    el.onTakeAdvancement = (pcId) => {
+      captured = pcId;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.session-open-stage-adv-take'
+    )!.click();
+    expect(captured).toBe('rhea');
+  });
+
+  it('shows the cap note instead of the button at 8 advancements', async () => {
+    const el = mount();
+    el.carryover = [
+      card({ marks: 5, advancements: 8, advancementReady: true })
+    ];
+    el.onTakeAdvancement = () => {};
+    await el.updateComplete;
+    expect(el.querySelector('.session-open-stage-adv-take')).toBeNull();
+    expect(
+      el.querySelector('.session-open-stage-adv-cap')?.textContent
+    ).toMatch(/cap reached/i);
   });
 
   it('renders DM-only tax + thread-debt rows when supplied', async () => {

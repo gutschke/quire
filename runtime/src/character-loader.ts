@@ -68,6 +68,37 @@ export interface AdvancementMarkBullets {
   complication?: boolean;
 }
 
+/** The 5 advancement-mark bullet keys, in stable rules order. */
+export const ADVANCEMENT_MARK_BULLET_KEYS = [
+  'hardMoment',
+  'learned',
+  'risk',
+  'against',
+  'complication'
+] as const satisfies ReadonlyArray<keyof AdvancementMarkBullets>;
+
+/**
+ * rules.md:166 — a PC may take at most 8 advancements over the whole
+ * campaign.  Used to cap the running `advancements` counter.
+ */
+export const ADVANCEMENT_CAP = 8;
+
+/**
+ * The current-cycle mark count is DERIVED from the ticked bullets,
+ * NOT a separately-stored number.  `markBullets` is the single source
+ * of truth (the DM ticks them at wrap); the old `marks` count field
+ * was never synced from them, so anything reading `record.marks`
+ * directly was inert.  Always go through this helper.
+ */
+export function countAdvancementMarks(
+  bullets: AdvancementMarkBullets | undefined
+): number {
+  if (!bullets) return 0;
+  let n = 0;
+  for (const k of ADVANCEMENT_MARK_BULLET_KEYS) if (bullets[k] === true) n++;
+  return n;
+}
+
 /**
  * Phase B P1a: a condition is a temporary or persistent modifier
  * applied to the PC from fiction (DM grants), a cast (Hard-cast

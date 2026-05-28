@@ -68,8 +68,12 @@ export interface CarryoverPcCard {
   harm: number;
   /** Persistent stress boxes ≥ 2 (recovery rule rules.md:85-94). */
   stress: number;
-  /** Mark count toward next advancement (rules.md:157). */
+  /** Mark count toward next advancement (rules.md:157), derived
+   *  from the ticked markBullets. */
   marks: number;
+  /** Running total of advancements taken (rules.md:166, caps at 8).
+   *  Used to show the cap state instead of a take button. */
+  advancements: number;
   /** True if marks ≥ 5 — advancement-due (rules.md:157). */
   advancementReady: boolean;
   /**
@@ -96,6 +100,15 @@ export type BeginSessionCallback = () => Promise<
   | { ok: false; code: string; message: string }
 >;
 export type AcknowledgeDriftCallback = (pcId: string) => void;
+/**
+ * Advancement-taken callback.  Unlike drift-ack (a local ephemeral
+ * receipt), this MUTATES state: the host resets the PC's 5 mark
+ * bullets and bumps the advancements count.  It does NOT model WHICH
+ * advancement was picked — that stays a between-sessions table beat +
+ * manual sheet edit (rules.md:157-166); this just closes the mark
+ * cycle so the advancement-ready signal clears.  Coord-only.
+ */
+export type TakeAdvancementCallback = (pcId: string) => void;
 
 @customElement('session-open-stage')
 export class SessionOpenStage extends LitElement {
@@ -112,6 +125,14 @@ export class SessionOpenStage extends LitElement {
 
   /** Wired only on the coord viewer. */
   @property({ attribute: false }) onBegin: BeginSessionCallback | null = null;
+
+  /**
+   * Coord-only: "advancement taken" reset for a PC whose marks are
+   * full.  When null the take button doesn't render (the badge stays
+   * a passive signal).
+   */
+  @property({ attribute: false })
+  onTakeAdvancement: TakeAdvancementCallback | null = null;
 
   /**
    * Local-only acknowledgment receipts for drift-conversation
@@ -199,8 +220,9 @@ export class SessionOpenStage extends LitElement {
           marks ${c.marks}/5
           ${c.advancementReady
             ? html`<span class="session-open-stage-badge session-open-stage-badge-adv"
-                >Advancement ready</span
-              >`
+                  >Advancement ready</span
+                >
+                ${this.renderTakeAdvancement(c)}`
             : nothing}
         </li>
         ${typeof c.taxSessionsRemaining === 'number' &&
@@ -230,6 +252,29 @@ export class SessionOpenStage extends LitElement {
           </div>`
         : nothing}
     </li>`;
+  }
+
+  /**
+   * The advancement-taken control beside a full marks badge.  Only
+   * the coord (onTakeAdvancement wired) sees it.  At the rules.md:166
+   * cap of 8 advancements there's nothing left to take, so show a
+   * terminal note instead of a button.  One click; the state mutation
+   * clears the bullets → the badge + control disappear on re-render.
+   */
+  private renderTakeAdvancement(c: CarryoverPcCard): TemplateResult | typeof nothing {
+    if (this.onTakeAdvancement === null) return nothing;
+    if (c.advancements >= 8) {
+      return html`<span class="session-open-stage-adv-cap muted"
+        >advancement cap reached (8)</span
+      >`;
+    }
+    return html`<button
+      type="button"
+      class="session-open-stage-adv-take"
+      @click=${() => this.onTakeAdvancement?.(c.pcId)}
+    >
+      Advancement taken — reset marks
+    </button>`;
   }
 
   private renderFooterSummary(): TemplateResult | typeof nothing {

@@ -30,7 +30,11 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { LoadedCharacter, CharacterRecord } from '../../character-loader';
+import {
+  countAdvancementMarks,
+  type LoadedCharacter,
+  type CharacterRecord
+} from '../../character-loader';
 import {
   HARM_MAX,
   STRESS_MAX
@@ -905,15 +909,21 @@ export class PlayerRail extends LitElement {
 
   /**
    * First-session Gap A (2026-05-28): surface advancement progress
-   * on the player's OWN Rail.  Per rules.md:149-166, a PC ticks up
+   * on the player's OWN Rail.  Per rules.md:149-166, the DM ticks up
    * to one mark per session; every 5 marks → one advancement the
-   * player picks at the next session's start.  marks are NOT a
-   * DM-only field (they survive filterForViewer to the player's own
-   * record), but the Rail never read them — the game's first player
-   * payoff went unsignaled.
+   * player picks at the next session's start.
    *
-   * At 5/5: a warm "ready" chip (the actual pick is a between-
-   * sessions beat, so we don't enumerate the 6 options here).
+   * The count is DERIVED from the ticked `markBullets` (the single
+   * source of truth the DM edits at wrap) — NOT from `record.marks`,
+   * which was never synced from the bullets and so left this chip
+   * inert in normal play (review 2026-05-28).  markBullets is not a
+   * DM-only field, so it survives filterForViewer to the player's
+   * own record.
+   *
+   * At 5/5: a warm "ready" chip (role="note" — persistent state, not
+   * a live update, so it isn't re-announced on every render).  The
+   * actual pick is a between-sessions table beat, so the copy points
+   * there rather than promising an in-app picker.
    * At 1-4: a faint progress line, kept low-key per the prime
    * directive (growth in the background, not a meter to grind).
    * At 0: nothing.
@@ -921,14 +931,11 @@ export class PlayerRail extends LitElement {
   private renderAdvancementSignal(
     r: import('../../character-loader').CharacterRecord
   ): TemplateResult {
-    const marks = typeof r.marks === 'number' ? r.marks : 0;
+    const marks = countAdvancementMarks(r.markBullets);
     if (marks <= 0) return html``;
     if (marks >= 5) {
-      return html`<p
-        class="player-rail-advancement-ready"
-        role="status"
-      >
-        ✦ You've grown.  Next session, choose an advancement.
+      return html`<p class="player-rail-advancement-ready" role="note">
+        ✦ Advancement ready — pick one with your DM between sessions.
       </p>`;
     }
     return html`<p class="player-rail-advancement-progress">

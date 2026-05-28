@@ -128,6 +128,81 @@ describe('QuireApp pc-edit', () => {
     expect(host.effectiveCharacter(fakePc('p1')).stress).toBe(2);
   });
 
+  // Review 2026-05-28 — takeAdvancement closes the advancement loop:
+  // reset the 5 mark bullets + bump the advancements count (cap 8).
+  describe('takeAdvancement (advancement-loop closure)', () => {
+    function seedPc(app: QuireApp, pcId: string): void {
+      const session = (app as unknown as { session: { append: Function } })
+        .session;
+      session.append('pc-create', {
+        v: 1,
+        pcId,
+        name: 'Mei',
+        pronouns: 'she/her',
+        tags: ['a', 'b', 'c'],
+        stats: { str: 0, dex: 1, con: 1, int: 2, wis: 1, cha: 0 },
+        skills: ['Tech', 'Knowledge'],
+        backstory: 'x',
+        causedByResponseId: 'syn-1'
+      });
+    }
+
+    it('resets all 5 mark bullets and bumps advancements by one', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      seedPc(app, 'p1');
+      // Tick all 5 bullets + set advancements to 2 via edits.
+      for (const k of [
+        'hardMoment',
+        'learned',
+        'risk',
+        'against',
+        'complication'
+      ]) {
+        app.submitPcEdit('p1', `markBullets.${k}`, true);
+      }
+      app.submitPcEdit('p1', 'advancements', 2);
+      await flush();
+      (app as unknown as { takeAdvancement: (id: string) => void }).takeAdvancement(
+        'p1'
+      );
+      await flush();
+      const eff = app.effectiveCharacter(fakePc('p1'));
+      expect(eff.advancements).toBe(3);
+      const b = (eff.markBullets ?? {}) as Record<string, boolean>;
+      expect(
+        Object.values(b).filter((v) => v === true).length
+      ).toBe(0);
+    });
+
+    it('does not exceed the rules.md:166 cap of 8 advancements', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      seedPc(app, 'p1');
+      app.submitPcEdit('p1', 'advancements', 8);
+      await flush();
+      (app as unknown as { takeAdvancement: (id: string) => void }).takeAdvancement(
+        'p1'
+      );
+      await flush();
+      expect(app.effectiveCharacter(fakePc('p1')).advancements).toBe(8);
+    });
+
+    it('is a no-op for an unknown pcId (not in synthesizedPcs)', async () => {
+      const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'));
+      app.startHosting();
+      await flush();
+      // No pc-create for 'ghost' → handler bails before emitting edits.
+      (app as unknown as { takeAdvancement: (id: string) => void }).takeAdvancement(
+        'ghost'
+      );
+      await flush();
+      expect(app.effectiveCharacter(fakePc('ghost')).advancements).toBeUndefined();
+    });
+  });
+
   // Task #295 — appendDmNotesEdit dispatches a pc-edit('dmNotes', …).
   describe('Task #295 — appendDmNotesEdit', () => {
     it('rejects calls outside an active session', () => {

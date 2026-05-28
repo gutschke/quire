@@ -333,23 +333,39 @@ describe('<player-rail> Gap A — advancement signal', () => {
     document.body.innerHTML = '';
   });
 
+  // The chip derives the count from ticked markBullets — the single
+  // source of truth the DM edits at wrap — NOT record.marks.
+  const BULLET_KEYS = [
+    'hardMoment',
+    'learned',
+    'risk',
+    'against',
+    'complication'
+  ] as const;
   function pcWithMarks(marks: number): LoadedCharacter {
     const c = pc('mei', 'Mei');
-    (c.record as { marks?: number }).marks = marks;
+    const bullets: Record<string, boolean> = {};
+    for (let i = 0; i < marks && i < BULLET_KEYS.length; i++) {
+      bullets[BULLET_KEYS[i]] = true;
+    }
+    (c.record as { markBullets?: Record<string, boolean> }).markBullets =
+      bullets;
     return c;
   }
 
-  it('shows the advancement-ready chip at 5 marks', async () => {
+  it('shows the advancement-ready chip at 5 ticked bullets', async () => {
     const el = mount();
     el.character = pcWithMarks(5);
     el.effective = el.character.record;
     await el.updateComplete;
     const chip = el.querySelector('.player-rail-advancement-ready');
     expect(chip).not.toBeNull();
-    expect(chip?.textContent).toMatch(/choose an advancement/i);
+    expect(chip?.textContent).toMatch(/advancement ready/i);
+    // role=note: persistent state, not a live announcement on re-render.
+    expect(chip?.getAttribute('role')).toBe('note');
   });
 
-  it('shows a faint progress line at 1-4 marks', async () => {
+  it('shows a faint progress line at 1-4 ticked bullets', async () => {
     const el = mount();
     el.character = pcWithMarks(3);
     el.effective = el.character.record;
@@ -361,10 +377,23 @@ describe('<player-rail> Gap A — advancement signal', () => {
     expect(prog?.textContent).toMatch(/3 \/ 5/);
   });
 
-  it('shows nothing at 0 marks', async () => {
+  it('shows nothing with no ticked bullets', async () => {
     const el = mount();
     el.character = pcWithMarks(0);
     el.effective = el.character.record;
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
+    expect(el.querySelector('.player-rail-advancement-progress')).toBeNull();
+  });
+
+  it('regression: a stale record.marks count alone does NOT fire the chip', async () => {
+    // The pre-fix bug: the chip read record.marks, which the DM's
+    // wrap-time bullet-ticking never updates — so it was inert.
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    (c.record as { marks?: number }).marks = 5; // count set, no bullets ticked
+    el.character = c;
+    el.effective = c.record;
     await el.updateComplete;
     expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
     expect(el.querySelector('.player-rail-advancement-progress')).toBeNull();

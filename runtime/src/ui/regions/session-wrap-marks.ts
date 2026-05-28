@@ -27,18 +27,14 @@
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
-import type {
-  CharacterRecord,
-  AdvancementMarkBullets
+import {
+  ADVANCEMENT_MARK_BULLET_KEYS,
+  countAdvancementMarks,
+  type CharacterRecord,
+  type AdvancementMarkBullets
 } from '../../character-loader';
 
-const BULLET_KEYS: ReadonlyArray<keyof AdvancementMarkBullets> = [
-  'hardMoment',
-  'learned',
-  'risk',
-  'against',
-  'complication'
-] as const;
+const BULLET_KEYS = ADVANCEMENT_MARK_BULLET_KEYS;
 
 const BULLET_LABEL: Record<keyof AdvancementMarkBullets, string> = {
   hardMoment: 'Resolved a hard moment in alignment',
@@ -67,11 +63,7 @@ export type SetMarkBulletCallback = (
  */
 export type ExitWrapMarksCallback = () => void;
 
-function countTicked(b: AdvancementMarkBullets): number {
-  let n = 0;
-  for (const k of BULLET_KEYS) if (b[k] === true) n++;
-  return n;
-}
+const countTicked = countAdvancementMarks;
 
 @customElement('session-wrap-marks')
 export class SessionWrapMarks extends LitElement {

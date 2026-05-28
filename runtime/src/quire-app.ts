@@ -101,9 +101,13 @@ import {
   stripDmOnlyFromCharacter,
   CharacterLoadError,
   isDmOnlyCharacterFieldPath,
+  ADVANCEMENT_MARK_BULLET_KEYS,
+  ADVANCEMENT_CAP,
+  countAdvancementMarks,
   type LoadedCharacter,
   type CharacterKind,
-  type CharacterRecord
+  type CharacterRecord,
+  type AdvancementMarkBullets
 } from './character-loader';
 import {
   applyCharacterEdits,
@@ -1850,7 +1854,15 @@ export class QuireApp extends LitElement {
       const edits = v.shared.pcEdits[pcId] ?? {};
       const harm = this.numberOverlay(edits, 'harm', record.harm ?? 0);
       const stress = this.numberOverlay(edits, 'stress', record.stress ?? 0);
-      const marks = this.numberOverlay(edits, 'marks', record.marks ?? 0);
+      // Derive from the ticked bullets, not the stale `marks` count.
+      const marks = countAdvancementMarks(
+        this.effectiveMarkBullets(record, edits)
+      );
+      const advancements = this.numberOverlay(
+        edits,
+        'advancements',
+        (record.advancements as number | undefined) ?? 0
+      );
       const taxActive =
         this.booleanOverlay(edits, 'tax.active',
           (record.tax as { active?: boolean } | undefined)?.active ?? false);
@@ -1876,6 +1888,7 @@ export class QuireApp extends LitElement {
         harm,
         stress,
         marks,
+        advancements,
         advancementReady: marks >= 5
       };
       if (taxActive && taxRemainingRaw > 0) {
@@ -1893,7 +1906,41 @@ export class QuireApp extends LitElement {
       .lastDigestMarkdown=${lastDigest?.markdown ?? ''}
       .carryover=${carryover}
       .onBegin=${async () => this.beginSession()}
+      .onTakeAdvancement=${(pcId: string) => this.takeAdvancement(pcId)}
     ></session-open-stage>`;
+  }
+
+  /**
+   * Review 2026-05-28: close the advancement loop.  When the DM
+   * confirms a PC took an advancement at session-open, reset the 5
+   * mark bullets (so the derived count → 0 and the advancement-ready
+   * signal clears) and bump the running `advancements` count (capped
+   * at rules.md:166's 8).  This does NOT model WHICH advancement was
+   * chosen — that stays a table beat + manual sheet edit; this just
+   * closes the mark cycle (a deliberate revision of the D2-9 "passive
+   * badge, no spend affordance" note, which left the cycle unclosable
+   * and the Gap-A chip lit forever once 5 bullets were ticked).
+   * Coord-only.
+   */
+  private takeAdvancement(pcId: string): void {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return;
+    const record = v.shared.synthesizedPcs[pcId];
+    if (!record) return;
+    const edits = v.shared.pcEdits[pcId] ?? {};
+    const current = this.numberOverlay(
+      edits,
+      'advancements',
+      (record.advancements as number | undefined) ?? 0
+    );
+    this.submitPcEdit(
+      pcId,
+      'advancements',
+      Math.min(current + 1, ADVANCEMENT_CAP)
+    );
+    for (const key of ADVANCEMENT_MARK_BULLET_KEYS) {
+      this.submitPcEdit(pcId, `markBullets.${key}`, false);
+    }
   }
 
   /**
@@ -1919,6 +1966,27 @@ export class QuireApp extends LitElement {
     const v = edits[field];
     if (typeof v === 'boolean') return v;
     return fallback;
+  }
+
+  /**
+   * Build the effective markBullets for a PC: base record bullets
+   * with any `markBullets.*` pc-edit overlays applied.  The ticked
+   * count of this (via countAdvancementMarks) is the single source
+   * of truth for advancement progress — `record.marks` is never
+   * synced from the bullets, so reading it directly is inert.
+   */
+  private effectiveMarkBullets(
+    record: CharacterRecord,
+    edits: Record<string, unknown>
+  ): AdvancementMarkBullets {
+    const overlay: AdvancementMarkBullets = {
+      ...((record.markBullets as AdvancementMarkBullets | undefined) ?? {})
+    };
+    for (const key of ADVANCEMENT_MARK_BULLET_KEYS) {
+      const dotted = edits[`markBullets.${key}`];
+      if (typeof dotted === 'boolean') overlay[key] = dotted;
+    }
+    return overlay;
   }
 
   /**
@@ -2009,28 +2077,8 @@ export class QuireApp extends LitElement {
       pcIds.push(pcId);
       recordMap[pcId] = record;
       // Bullets live on the record + can be overridden by pc-edits.
-      // Build from both.
-      const baseBullets =
-        (record.markBullets as
-          | import('./character-loader').AdvancementMarkBullets
-          | undefined) ?? {};
       const edits = v.filteredShared.pcEdits[pcId] ?? {};
-      const overlay: import('./character-loader').AdvancementMarkBullets = {
-        ...baseBullets
-      };
-      for (const key of [
-        'hardMoment',
-        'learned',
-        'risk',
-        'against',
-        'complication'
-      ] as const) {
-        const dotted = (edits as Record<string, unknown>)[
-          `markBullets.${key}`
-        ];
-        if (typeof dotted === 'boolean') overlay[key] = dotted;
-      }
-      bulletsByPcId[pcId] = overlay;
+      bulletsByPcId[pcId] = this.effectiveMarkBullets(record, edits);
     }
     // Use the exported helper so it stays load-bearing (verification
     // ac7a1cdcc81285f0c flagged the prior inline build as dead-code

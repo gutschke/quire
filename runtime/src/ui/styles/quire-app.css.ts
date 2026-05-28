@@ -2823,6 +2823,26 @@ export const quireAppStyles = css`
       font: inherit;
       font-size: 0.85rem;
     }
+    /* Review 2026-05-28: the "advancement taken — reset marks" control
+       beside a full marks badge.  Small inline button so it reads as a
+       follow-on to the badge, not a primary action. */
+    .session-open-stage-adv-take {
+      margin-left: 0.4rem;
+      padding: 0.1rem 0.45rem;
+      border: 1px solid light-dark(#93c5fd, #1e40af);
+      background: light-dark(#ffffff, #1c1917);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.72rem;
+      vertical-align: middle;
+    }
+    .session-open-stage-adv-cap {
+      margin-left: 0.4rem;
+      font-size: 0.72rem;
+      vertical-align: middle;
+    }
     .session-open-stage-summary {
       margin: 0;
       font-size: 0.88rem;
