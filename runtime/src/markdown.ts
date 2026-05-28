@@ -221,14 +221,6 @@ export function onMarkdownPipelineReady(cb: () => void): void {
   _onReadyCallbacks.push(cb);
 }
 
-/** Test-only reset for the pipeline state.  Production code should
- *  never call this. */
-export function resetMarkdownPipelineForTests(): void {
-  _pipeline = null;
-  _pipelinePromise = null;
-  _onReadyCallbacks.length = 0;
-}
-
 /** Whether the heavy pipeline has finished loading. */
 export function isMarkdownPipelineLoaded(): boolean {
   return _pipeline !== null;

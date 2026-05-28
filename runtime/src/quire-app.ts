@@ -292,13 +292,6 @@ function isWrapModeChunkLoaded(): boolean {
   return _wrapModeChunk !== null;
 }
 
-/** Test-only reset for the wrap-mode chunk cache. */
-export function resetWrapModeChunkForTests(): void {
-  _wrapModeChunk = null;
-  _wrapModeChunkPromise = null;
-  _wrapModeReadyCallbacks.length = 0;
-}
-
 interface LoadedCampaign {
   base: LoadedCampaignBase;
   worldOverview: string | null;

@@ -12,27 +12,25 @@
  *   5. Done         — "Pack my character" + see-you-at-session-1.
  *   6. Resume       — re-entry on later visits.
  *
- * Today's scope (Phase 2 skeleton):
- *   - Step state machine + forward/back nav.
- *   - Steps 1 and 2 render real copy (the load-bearing
- *     expectation-setting moments per the UX expert).
- *   - Step 3 path picker renders the three options as buttons
- *     (selection is captured but doesn't yet route to a real form).
- *   - Steps 4-6 render placeholder copy explaining that the Q&A
- *     form (CC-6), free-write editor (CC-7), pre-gen browser
- *     (CC-8), and resume/done UX land in subsequent commits.
+ * Shipped scope:
+ *   - Step state machine + forward/back nav (6 steps).
+ *   - Steps 1-2: expectation-setting copy.
+ *   - Step 3: path picker (Q&A live; free-write CC-7 + pre-gen
+ *     CC-8 still render placeholder copy — disabled buttons with
+ *     hover-text reasons).
+ *   - Step 4 (Build): the real Q&A form (CC-6) for the qa path;
+ *     answers persist via the host's debounced chargen-persistence.
+ *   - Step 5 (Connections): D5.5-B bond authoring — up to 3
+ *     optional free-text bonds; folded into the pack.
+ *   - Step 6 (Done): "Pack my character" download + "Send to DM"
+ *     (CC-10) with feedback.
  *
- * Deferred from this commit:
- *   - Q&A form content (CC-6).
- *   - Free-write markdown editor (CC-7).
- *   - Pre-gen browser (CC-8).
- *   - Per-PC IndexedDB persistence (CC-4 + CC-11).
- *   - "Pack my character" export (CC-10).
- *   - Resume-on-revisit + wrong-device empty state (CC-11).
- *   - AI synthesis kickoff at session 1 (CC-14 / CC-17 / CC-19 /
- *     CC-20 / CC-22 / CC-23 / CC-24 — most primitives landed).
+ * Still placeholder / deferred:
+ *   - Free-write markdown editor (CC-7) + pre-gen browser (CC-8).
+ *   - Resume-on-revisit banner + wrong-device empty state (CC-11).
  *
- * Light-DOM rendering.  Player-facing — no coord gate.
+ * AI synthesis runs DM-side at session 1 (chargen-dm-review), not
+ * here.  Light-DOM rendering.  Player-facing — no coord gate.
  */
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
@@ -69,11 +67,11 @@ export type PickPathCallback = (path: CreationPath) => void;
 export type CharCreationAnswers = Record<string, string>;
 export type AnswerChangeCallback = (id: string, value: string) => void;
 
-// P3-sanity UX B1 / backlog P3U-1: dropped step 6 "Resume" — it
-// was a placeholder card that landed players in a dead state right
-// after the Required-pack moment.  Resume-on-revisit (CC-11) will
-// surface as a banner on step 1 when it lands, not as its own
-// step in the strip.
+// 6 steps: Welcome / Read this / Pick path / Build / Connections /
+// Done.  (The original "Resume" step idea — P3-sanity UX B1 /
+// P3U-1 — was dropped; resume-on-revisit will surface as a step-1
+// banner when CC-11 lands.  Step 5 "Connections" is D5.5-B bond
+// authoring.)
 const TOTAL_STEPS = 6;
 
 @customElement('character-creation')

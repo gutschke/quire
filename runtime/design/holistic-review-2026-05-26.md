@@ -992,11 +992,15 @@ make the Wave A-D ranking.  Captured so they don't rot.
   Extract `ChargenAcceptanceMachine` (pre-accept/accepted/resync
   Maps) + `ChargenPersistenceQueue` (persist timer Maps).  XS-S
   each.  Do before the next chargen wave lands.
-- [ ] **E-LARGE-3** — `core/state.ts` (2,912 LOC, 25 materializers in
-  one switch) — split into
-  `src/core/handlers/{peer,coord,scene,chat,pc,note,npc,scratch,broadcast}.ts`.
-  Each gets a doc block stating its LWW/tie-break/coord-gate
-  posture as a stable contract.  M scope.
+- [x] **E-LARGE-3** — ✅ CLOSED-AS-STALE (2026-05-28).  The premise
+  ("25 materializers in one switch") is no longer true: `core/state.ts`
+  already routes through a `MATERIALIZERS` registry (~54 per-kind
+  `applyXxxEvent` functions, state.ts:~4124) — the structural split
+  shipped retroactively as E-LARGE-3.5.  What remains is file
+  colocation (all handlers in one ~4.1k-LOC file), which delivers
+  low marginal value at high regression risk on the most-tested
+  file in the codebase.  Do NOT pursue unless state.ts grows past
+  ~5k LOC or scope-finding becomes painful.
 
 ### Engineering — tests we don't have but should
 
@@ -1019,13 +1023,10 @@ make the Wave A-D ranking.  Captured so they don't rot.
 
 ### Engineering — anti-patterns approaching the wall
 
-- [ ] **E-PERF-1** — `SessionController.notify()` (line 466)
-  recomputes `filterForViewer` per listener invocation by calling
-  `view()` inside the listener loop.  With one subscriber
-  (QuireApp) this is invisible; once controllers extracted in
-  E-LARGE-1, each subscribe = O(listeners × |shared|).
-  **Pre-compute the view once outside the loop** BEFORE landing
-  E-LARGE-1.  S.
+- [x] **E-PERF-1** — ✅ DONE (verified 2026-05-28).
+  `SessionController.notify()` computes `this.view()` ONCE before
+  the listener loop (not per-listener), so the O(listeners ×
+  |shared|) recompute never materialized.  No further work.
 - [ ] **E-PERF-2** — `requestUpdate()` triggered indirectly by 19
   `notify()` call sites + reactive controllers — no debouncing.
   Render storms haven't bitten yet because the file is monolithic;
