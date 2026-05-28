@@ -5698,10 +5698,6 @@ export const quireAppStyles = css`
       background: light-dark(#fee2e2, #3a1010);
       border-color: light-dark(#dc2626, #ef4444);
     }
-    .dm-aside-subhead {
-      margin: 0.6rem 0 0.3rem;
-      font-size: 0.95em;
-    }
     /* D5-cleanup (2026-05-27): dm-aside pending bond queue. */
     .dm-aside-bond-queue {
       border-left: 3px solid light-dark(#60a5fa, #3b82f6);
@@ -6134,15 +6130,6 @@ export const quireAppStyles = css`
       border-radius: 3px;
       cursor: pointer;
     }
-    .dm-thread-debt {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-    }
-    .dm-thread-debt select {
-      padding: 0.2rem 0.4rem;
-    }
-
     /* M3a.8 P2-11: broadcast button (DM-only, in scene header). */
     .scene-broadcast-btn {
       display: inline-block;
