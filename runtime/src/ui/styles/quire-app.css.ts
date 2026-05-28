@@ -5480,6 +5480,86 @@ export const quireAppStyles = css`
     .character-creation-qa-hint-warn {
       color: light-dark(#925a17, #d6a559);
     }
+    /* D5.5-B: the "Connections" step (optional bond authoring). */
+    .character-creation-connections-note {
+      font-size: 0.88em;
+    }
+    .character-creation-connections-empty {
+      font-style: italic;
+    }
+    .character-creation-connections-list {
+      list-style: none;
+      margin: 0.6rem 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+    }
+    .character-creation-connections-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      padding: 0.6rem 0.7rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      border-radius: 0.4rem;
+      background: light-dark(#f8fafc, #0f172a);
+    }
+    .character-creation-connections-target-label,
+    .character-creation-connections-text-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-size: 0.85em;
+      color: light-dark(#475569, #94a3b8);
+    }
+    .character-creation-connections-target,
+    .character-creation-connections-text {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.45rem 0.6rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: light-dark(#ffffff, #1e293b);
+      font-family: inherit;
+      font-size: 1rem;
+      color: inherit;
+    }
+    .character-creation-connections-text {
+      resize: vertical;
+      min-height: 2.6rem;
+    }
+    .character-creation-connections-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .character-creation-connections-remove {
+      padding: 0.25rem 0.6rem;
+      border-radius: 0.3rem;
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      background: transparent;
+      color: light-dark(#64748b, #94a3b8);
+      cursor: pointer;
+      font-size: 0.85em;
+    }
+    .character-creation-connections-remove:hover {
+      border-color: light-dark(#b91c1c, #f87171);
+      color: light-dark(#b91c1c, #f87171);
+    }
+    .character-creation-connections-add {
+      padding: 0.45rem 0.9rem;
+      border-radius: 0.3rem;
+      border: 1px dashed light-dark(#94a3b8, #475569);
+      background: transparent;
+      color: light-dark(#334155, #cbd5e1);
+      cursor: pointer;
+      font-size: 0.95em;
+    }
+    .character-creation-connections-add:hover {
+      border-color: light-dark(#334155, #cbd5e1);
+    }
     /* P3U-3: "Required: pack your character" callout on step 5.
        Stronger visual weight than .muted because the action is
        load-bearing — without the pack, the DM has no way to receive

@@ -54,6 +54,8 @@ import {
   suggestedPackFilename,
   ChargenPackError,
   type ChargenPackDocument,
+  type BondDraft,
+  MAX_BOND_DRAFTS,
   CHARGEN_PACK_MAX_SIZE_BYTES
 } from '../chargen-pack';
 import {
@@ -245,6 +247,13 @@ export class ChargenController implements ReactiveController {
   /** Player's answers keyed by question id. */
   answers: CharCreationAnswers = {};
 
+  /**
+   * D5.5-B: player's chargen bond drafts (the "Connections" step).
+   * 0-3 entries; persisted alongside answers + folded into the
+   * pack so the DM's acceptSlot emits placeholder bond-proposes.
+   */
+  bondDrafts: BondDraft[] = [];
+
   /** Transient feedback on the "Pack my character" download. */
   packFeedback: '' | 'packed' | 'pack-failed' = '';
   /**
@@ -324,11 +333,13 @@ export class ChargenController implements ReactiveController {
     slot: number;
     chosenPath: CreationPath | '';
     answers: CharCreationAnswers;
+    bondDrafts: BondDraft[];
   }>(
     (_key, value) => {
       saveChargenState(value.slug, value.slot, {
         chosenPath: value.chosenPath,
-        answers: value.answers
+        answers: value.answers,
+        bondDrafts: value.bondDrafts
       });
     },
     CHARGEN_PERSIST_DEBOUNCE_MS
@@ -382,6 +393,17 @@ export class ChargenController implements ReactiveController {
    */
   setAnswers(answers: CharCreationAnswers): void {
     this.answers = answers;
+    this.host.requestUpdate();
+  }
+
+  /**
+   * D5.5-B: replace the bond drafts (the Connections step sends the
+   * whole array on each edit).  Clamps to MAX_BOND_DRAFTS as a
+   * belt-and-suspenders against a buggy caller; the UI hides "add"
+   * at the cap.
+   */
+  setBondDrafts(drafts: BondDraft[]): void {
+    this.bondDrafts = drafts.slice(0, MAX_BOND_DRAFTS);
     this.host.requestUpdate();
   }
 
@@ -1084,9 +1106,11 @@ export class ChargenController implements ReactiveController {
     if (resumed) {
       this.chosenPath = resumed.chosenPath;
       this.answers = resumed.answers;
+      this.bondDrafts = resumed.bondDrafts;
     } else {
       this.chosenPath = '';
       this.answers = {};
+      this.bondDrafts = [];
     }
     this.host.requestUpdate();
   }
@@ -1103,7 +1127,8 @@ export class ChargenController implements ReactiveController {
       slug,
       slot,
       chosenPath: this.chosenPath,
-      answers: { ...this.answers }
+      answers: { ...this.answers },
+      bondDrafts: this.bondDrafts.map((d) => ({ ...d }))
     });
   }
 
@@ -1126,7 +1151,8 @@ export class ChargenController implements ReactiveController {
         campaignFingerprint: fingerprint,
         slot,
         chosenPath: this.chosenPath,
-        answers: this.answers
+        answers: this.answers,
+        bondDrafts: this.bondDrafts
       });
       const json = stringifyChargenPack(doc);
       const filename = suggestedPackFilename(
@@ -1270,7 +1296,8 @@ export class ChargenController implements ReactiveController {
         campaignFingerprint: fingerprint,
         slot,
         chosenPath: this.chosenPath,
-        answers: this.answers
+        answers: this.answers,
+        bondDrafts: this.bondDrafts
       });
     } catch {
       this.sendToDmFeedback = 'send-failed';

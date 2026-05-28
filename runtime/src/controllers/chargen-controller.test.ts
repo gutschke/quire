@@ -624,6 +624,38 @@ describe('ChargenController — persistDebounced (Engine B3, Test-cov BIG #2)', 
     expect(JSON.parse(raw!).chosenPath).toBe('qa');
   });
 
+  it('D5.5-B: setBondDrafts persists + survives a seedFromStorage round-trip', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setBondDrafts([
+      { targetPlaceholder: 'the medic', text: 'I trust her.' }
+    ]);
+    ctrl.persistDebounced(makeCampaign(), 1);
+    ctrl.flushPending();
+    const raw = localStorage.getItem('quire.chargen.o-r-main:slot1');
+    expect(JSON.parse(raw!).bondDrafts).toEqual([
+      { targetPlaceholder: 'the medic', text: 'I trust her.' }
+    ]);
+    // A fresh controller resuming the slot picks up the drafts.
+    const fresh = new ChargenController(makeHost().host, makeEnv(makeCampaign()));
+    fresh.seedFromStorage('o-r-main', 1);
+    expect(fresh.bondDrafts).toEqual([
+      { targetPlaceholder: 'the medic', text: 'I trust her.' }
+    ]);
+  });
+
+  it('D5.5-B: setBondDrafts clamps to MAX_BOND_DRAFTS (3)', () => {
+    const { host } = makeHost();
+    const ctrl = new ChargenController(host, makeEnv(makeCampaign()));
+    ctrl.setBondDrafts([
+      { targetPlaceholder: 'a', text: '1' },
+      { targetPlaceholder: 'b', text: '2' },
+      { targetPlaceholder: 'c', text: '3' },
+      { targetPlaceholder: 'd', text: '4' }
+    ]);
+    expect(ctrl.bondDrafts).toHaveLength(3);
+  });
+
   it('per-(slug, slot) keying — different slots persist independently', () => {
     const { host } = makeHost();
     const ctrl = new ChargenController(host, makeEnv(makeCampaign()));

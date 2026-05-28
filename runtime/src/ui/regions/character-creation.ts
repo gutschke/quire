@@ -38,6 +38,24 @@
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { CampaignCharCreationQuestion } from '../../campaign-loader';
+import {
+  type BondDraft,
+  MAX_BOND_DRAFTS,
+  MAX_BOND_TARGET_LEN
+} from '../../chargen-pack';
+
+/**
+ * D5.5-B: soft cap on chargen bond text in the authoring UI.  The
+ * engine + pack accept up to 500 chars (MAX_BOND_TEXT_LEN), but per
+ * the TTRPG-craft review an Underleaf bond is one evocative
+ * sentence, not a paragraph — a ~140-char nudge keeps it from
+ * competing with the backstory.  Not a hard gate: the textarea
+ * shows an over-soft-cap hint but still lets the player submit
+ * (the pack validator enforces the real 500 ceiling).
+ */
+export const BOND_TEXT_SOFT_CAP = 140;
+
+export type BondDraftsChangeCallback = (drafts: BondDraft[]) => void;
 
 export type CreationPath = 'qa' | 'free-write' | 'pre-gen';
 export type PickPathCallback = (path: CreationPath) => void;
@@ -56,7 +74,7 @@ export type AnswerChangeCallback = (id: string, value: string) => void;
 // after the Required-pack moment.  Resume-on-revisit (CC-11) will
 // surface as a banner on step 1 when it lands, not as its own
 // step in the strip.
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 
 @customElement('character-creation')
 export class CharacterCreation extends LitElement {
@@ -122,6 +140,16 @@ export class CharacterCreation extends LitElement {
 
   @property({ attribute: false }) onAnswerChange: AnswerChangeCallback | null =
     null;
+
+  /**
+   * D5.5-B: player-authored bond drafts (the "Connections" step).
+   * Controlled value — the host holds the authoritative copy + is
+   * notified on every edit via `onBondDraftsChange`.  Always
+   * 0-3 entries (the step enforces the cap by hiding "add" at 3).
+   */
+  @property({ attribute: false }) bondDrafts: BondDraft[] = [];
+  @property({ attribute: false })
+  onBondDraftsChange: BondDraftsChangeCallback | null = null;
 
   /**
    * CC-10: callback fired when the player clicks the "Pack my
@@ -200,7 +228,8 @@ export class CharacterCreation extends LitElement {
       { n: 2, label: 'Read this' },
       { n: 3, label: 'Pick path' },
       { n: 4, label: 'Build' },
-      { n: 5, label: 'Done' }
+      { n: 5, label: 'Connections' },
+      { n: 6, label: 'Done' }
     ];
     return html`
       <ol
@@ -239,6 +268,8 @@ export class CharacterCreation extends LitElement {
       case 4:
         return this.renderWork();
       case 5:
+        return this.renderConnections();
+      case 6:
         return this.renderDone();
       default:
         return html`<p>Unknown step.</p>`;
@@ -549,6 +580,121 @@ export class CharacterCreation extends LitElement {
             >`}
       </div>
     `;
+  }
+
+  /**
+   * D5.5-B: the "Connections" step.  Optional, skippable bond
+   * authoring — the player names up to 3 people who matter to
+   * their character.  The target is FREE TEXT (a name, a role,
+   * "the medic on our team") because at chargen time the other
+   * PCs may not exist yet; the DM resolves each to a real PC at
+   * ratify.  Never a gate — the player can leave it empty + click
+   * Next.  Bonds emerge fine in fiction; this is just a head start.
+   */
+  private renderConnections(): TemplateResult {
+    const drafts = this.bondDrafts ?? [];
+    const canAdd = drafts.length < MAX_BOND_DRAFTS;
+    return html`
+      <h2>Connections <span class="muted">(optional)</span></h2>
+      <p class="muted">
+        Who matters to your character?  Name up to ${MAX_BOND_DRAFTS}
+        people — a fellow player's character, someone from your past,
+        anyone.  One sentence each.  You can skip this and let the
+        ties show up in play.
+      </p>
+      <p class="muted character-creation-connections-note">
+        Don't worry if you don't know the other characters' names yet
+        — describe them ("the quiet one", "my sister") and your DM
+        sorts it out at the table.
+      </p>
+      ${drafts.length === 0
+        ? html`<p class="character-creation-connections-empty muted">
+            No connections yet.
+          </p>`
+        : html`<ol class="character-creation-connections-list">
+            ${drafts.map((d, i) => this.renderBondDraftRow(d, i))}
+          </ol>`}
+      ${canAdd
+        ? html`<button
+            type="button"
+            class="character-creation-connections-add"
+            @click=${() => this.addBondDraft()}
+          >
+            + Add a connection
+          </button>`
+        : html`<p class="muted">That's the max (${MAX_BOND_DRAFTS}).</p>`}
+    `;
+  }
+
+  private renderBondDraftRow(d: BondDraft, index: number): TemplateResult {
+    const overSoft = d.text.length > BOND_TEXT_SOFT_CAP;
+    return html`
+      <li class="character-creation-connections-row">
+        <label class="character-creation-connections-target-label">
+          Who
+          <input
+            type="text"
+            class="character-creation-connections-target"
+            maxlength=${MAX_BOND_TARGET_LEN}
+            placeholder="e.g., the medic on our team"
+            .value=${d.targetPlaceholder}
+            @input=${(e: Event) =>
+              this.updateBondDraft(index, {
+                targetPlaceholder: (e.target as HTMLInputElement).value
+              })}
+          />
+        </label>
+        <label class="character-creation-connections-text-label">
+          What's between you
+          <textarea
+            class="character-creation-connections-text"
+            rows="2"
+            placeholder="e.g., She pulled me out of the fire. I owe her."
+            .value=${d.text}
+            @input=${(e: Event) =>
+              this.updateBondDraft(index, {
+                text: (e.target as HTMLTextAreaElement).value
+              })}
+          ></textarea>
+        </label>
+        <div class="character-creation-connections-meta">
+          ${overSoft
+            ? html`<span class="character-creation-qa-hint-warn"
+                >A connection reads best as one line — consider
+                trimming.</span
+              >`
+            : nothing}
+          <button
+            type="button"
+            class="character-creation-connections-remove"
+            aria-label="Remove this connection"
+            @click=${() => this.removeBondDraft(index)}
+          >
+            Remove
+          </button>
+        </div>
+      </li>
+    `;
+  }
+
+  private addBondDraft(): void {
+    const next = [
+      ...(this.bondDrafts ?? []),
+      { targetPlaceholder: '', text: '' }
+    ].slice(0, MAX_BOND_DRAFTS);
+    this.onBondDraftsChange?.(next);
+  }
+
+  private updateBondDraft(index: number, patch: Partial<BondDraft>): void {
+    const next = (this.bondDrafts ?? []).map((d, i) =>
+      i === index ? { ...d, ...patch } : d
+    );
+    this.onBondDraftsChange?.(next);
+  }
+
+  private removeBondDraft(index: number): void {
+    const next = (this.bondDrafts ?? []).filter((_, i) => i !== index);
+    this.onBondDraftsChange?.(next);
   }
 
   private renderDone(): TemplateResult {

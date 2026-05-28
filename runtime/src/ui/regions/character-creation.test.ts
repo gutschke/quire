@@ -46,15 +46,14 @@ describe('<character-creation>', () => {
     expect(el.innerHTML).toContain('this campaign');
   });
 
-  it('renders a 5-step progress strip with the current step marked', async () => {
-    // P3-sanity UX B1 / P3U-1: step 6 "Resume" dropped — was a
-    // placeholder that landed players in a dead state right after
-    // the Required-pack moment.  Resume-on-revisit (CC-11) will
-    // surface as a banner on step 1 when it lands.
+  it('renders a 6-step progress strip with the current step marked', async () => {
+    // D5.5-B: added the "Connections" step (bond authoring) between
+    // Build and Done, taking the strip from 5 → 6.
     const el = mount();
     await el.updateComplete;
     const steps = el.querySelectorAll('.character-creation-progress-step');
-    expect(steps.length).toBe(5);
+    expect(steps.length).toBe(6);
+    expect(el.textContent).toContain('Connections');
     expect(
       el.querySelector('.character-creation-progress-step-current')
     ).not.toBeNull();
@@ -197,13 +196,13 @@ describe('<character-creation>', () => {
     next.click();
     await el.updateComplete;
     // Currently on step 3.
-    expect(el.textContent).toContain('Step 3 of 5');
+    expect(el.textContent).toContain('Step 3 of 6');
     const paths = el.querySelectorAll<HTMLButtonElement>(
       '.character-creation-path'
     );
     paths[0].click();
     await el.updateComplete;
-    expect(el.textContent).toContain('Step 4 of 5');
+    expect(el.textContent).toContain('Step 4 of 6');
   });
 
   it('step 4 renders the free-write placeholder when chosenPath=free-write', async () => {
@@ -468,15 +467,15 @@ describe('<character-creation>', () => {
       expect(nums).toEqual(['1.', '2.', '3.']);
     });
 
-    it('CC-10: step 5 renders Pack button when onPack is wired', async () => {
+    it('CC-10: step 6 (Done) renders Pack button when onPack is wired', async () => {
       const el = mount();
       el.onPack = () => {};
       await el.updateComplete;
       const next = el.querySelectorAll<HTMLButtonElement>(
         '.character-creation-stepnav button'
       )[1];
-      // Advance to step 5 (Next × 4).
-      for (let i = 0; i < 4; i++) {
+      // Advance to step 6 (Next × 5).
+      for (let i = 0; i < 5; i++) {
         next.click();
         await el.updateComplete;
       }
@@ -493,7 +492,7 @@ describe('<character-creation>', () => {
       const next = el.querySelectorAll<HTMLButtonElement>(
         '.character-creation-stepnav button'
       )[1];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         next.click();
         await el.updateComplete;
       }
@@ -510,7 +509,7 @@ describe('<character-creation>', () => {
       const next = el.querySelectorAll<HTMLButtonElement>(
         '.character-creation-stepnav button'
       )[1];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         next.click();
         await el.updateComplete;
       }
@@ -525,7 +524,7 @@ describe('<character-creation>', () => {
       const next = el.querySelectorAll<HTMLButtonElement>(
         '.character-creation-stepnav button'
       )[1];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         next.click();
         await el.updateComplete;
       }
@@ -543,7 +542,7 @@ describe('<character-creation>', () => {
       const next = el.querySelectorAll<HTMLButtonElement>(
         '.character-creation-stepnav button'
       )[1];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         next.click();
         await el.updateComplete;
       }
@@ -574,5 +573,123 @@ describe('<character-creation>', () => {
       expect(chosen).not.toBeNull();
       expect(chosen?.textContent).toContain('B');
     });
+  });
+});
+
+describe('D5.5-B: Connections step (bond authoring)', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  /** Navigate to step 5 (Connections) via the Next button. */
+  async function gotoConnections(el: CharacterCreation): Promise<void> {
+    await el.updateComplete;
+    for (let i = 0; i < 4; i++) {
+      const next = el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1];
+      next.click();
+      await el.updateComplete;
+    }
+  }
+
+  it('renders the Connections step with an empty state + add button', async () => {
+    const el = mount();
+    await gotoConnections(el);
+    expect(el.textContent).toContain('Connections');
+    expect(el.textContent).toMatch(/optional/i);
+    expect(
+      el.querySelector('.character-creation-connections-empty')
+    ).not.toBeNull();
+    expect(
+      el.querySelector('.character-creation-connections-add')
+    ).not.toBeNull();
+  });
+
+  it('Add a connection fires onBondDraftsChange with a blank row', async () => {
+    const el = mount();
+    let captured: Array<{ targetPlaceholder: string; text: string }> | null =
+      null;
+    el.onBondDraftsChange = (drafts) => {
+      captured = drafts;
+    };
+    await gotoConnections(el);
+    el.querySelector<HTMLButtonElement>(
+      '.character-creation-connections-add'
+    )!.click();
+    expect(captured).toEqual([{ targetPlaceholder: '', text: '' }]);
+  });
+
+  it('editing target + text patches the right draft', async () => {
+    const el = mount();
+    const drafts = [{ targetPlaceholder: '', text: '' }];
+    el.bondDrafts = drafts;
+    let captured: Array<{ targetPlaceholder: string; text: string }> | null =
+      null;
+    el.onBondDraftsChange = (d) => {
+      captured = d;
+    };
+    await gotoConnections(el);
+    const target = el.querySelector<HTMLInputElement>(
+      '.character-creation-connections-target'
+    )!;
+    target.value = 'the medic';
+    target.dispatchEvent(new Event('input'));
+    expect(captured).toEqual([{ targetPlaceholder: 'the medic', text: '' }]);
+  });
+
+  it('hides Add once at the 3-draft cap', async () => {
+    const el = mount();
+    el.bondDrafts = [
+      { targetPlaceholder: 'a', text: 'one' },
+      { targetPlaceholder: 'b', text: 'two' },
+      { targetPlaceholder: 'c', text: 'three' }
+    ];
+    await gotoConnections(el);
+    expect(
+      el.querySelector('.character-creation-connections-add')
+    ).toBeNull();
+    expect(el.querySelectorAll('.character-creation-connections-row').length).toBe(
+      3
+    );
+  });
+
+  it('Remove drops the row', async () => {
+    const el = mount();
+    el.bondDrafts = [
+      { targetPlaceholder: 'a', text: 'one' },
+      { targetPlaceholder: 'b', text: 'two' }
+    ];
+    let captured: Array<{ targetPlaceholder: string; text: string }> | null =
+      null;
+    el.onBondDraftsChange = (d) => {
+      captured = d;
+    };
+    await gotoConnections(el);
+    el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-connections-remove'
+    )[0]!.click();
+    expect(captured).toEqual([{ targetPlaceholder: 'b', text: 'two' }]);
+  });
+
+  it('shows a soft-cap nudge for over-length bond text (not a gate)', async () => {
+    const el = mount();
+    el.bondDrafts = [{ targetPlaceholder: 'x', text: 'y'.repeat(141) }];
+    await gotoConnections(el);
+    expect(
+      el.querySelector('.character-creation-qa-hint-warn')
+    ).not.toBeNull();
+  });
+
+  it('Connections is skippable — Next reaches Done with zero bonds', async () => {
+    const el = mount();
+    await gotoConnections(el);
+    // No bonds authored; advance once more to Done.
+    el.querySelectorAll<HTMLButtonElement>(
+      '.character-creation-stepnav button'
+    )[1]!.click();
+    await el.updateComplete;
+    // Step 6 (Done) renders.
+    expect(el.textContent?.toLowerCase()).toMatch(/pack|send|done|session/);
   });
 });

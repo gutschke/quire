@@ -4586,6 +4586,7 @@ export class QuireApp extends LitElement {
         .chosenPath=${this.chargen.chosenPath}
         .questions=${campaign.base.manifest.characterCreation?.questions ?? []}
         .answers=${this.chargen.answers}
+        .bondDrafts=${this.chargen.bondDrafts}
         .packFeedback=${this.chargen.packFeedback}
         .onPickPath=${(p: 'qa' | 'free-write' | 'pre-gen') => {
           this.chargen.setChosenPath(p);
@@ -4593,6 +4594,10 @@ export class QuireApp extends LitElement {
         }}
         .onAnswerChange=${(id: string, value: string) => {
           this.chargen.setAnswer(id, value);
+          this.chargen.persistDebounced(campaign, slot);
+        }}
+        .onBondDraftsChange=${(drafts: import('./chargen-pack').BondDraft[]) => {
+          this.chargen.setBondDrafts(drafts);
           this.chargen.persistDebounced(campaign, slot);
         }}
         .onPack=${() => this.chargen.packAndDownload(campaign, slot)}
