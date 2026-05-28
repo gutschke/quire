@@ -2734,4 +2734,64 @@ describe('ChargenController — D5.5-B chargen bond emission', () => {
     expect(env.bondProposes.map((b) => b.text)).toEqual(['first', 'third']);
     synthSpy.mockRestore();
   });
+
+  /**
+   * Post-review fix #3: dropped bonds (engine cap / gate) leave an
+   * audit scratch-note rather than silently vanishing.
+   */
+  it('audits dropped bonds via a scratch-note', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: {},
+      bondDrafts: [
+        { targetPlaceholder: 'a', text: 'first' },
+        { targetPlaceholder: 'b', text: 'second' }
+      ]
+    });
+    const synthSpy = mockOkSynth();
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    // Reject ALL bond emissions (simulate cap reached).
+    env.appendBondPropose = () => false;
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    expect(ctrl.isAccepted(1)).toBe(true);
+    const auditNote = env.scratchNotes.find((n) => /not accepted/i.test(n));
+    expect(auditNote).toBeDefined();
+    expect(auditNote).toMatch(/2 of 2/);
+    synthSpy.mockRestore();
+  });
+
+  /**
+   * Post-review fix #1 (HIGH): clearSynth → re-synth → re-accept
+   * must NOT re-emit the bonds.  Pre-fix, the drafts stayed in
+   * localStorage + each re-accept re-emitted them with fresh
+   * random ids the engine couldn't dedup → duplicate proposals.
+   * The fix consumes the drafts after the first emission.
+   */
+  it('does NOT re-emit bonds on clearSynth → re-accept (drafts consumed)', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: {},
+      bondDrafts: [
+        { targetPlaceholder: 'the medic', text: 'I trust her.' },
+        { targetPlaceholder: 'my brother', text: 'I owe him.' }
+      ]
+    });
+    const synthSpy = mockOkSynth();
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    expect(env.bondProposes).toHaveLength(2);
+    // DM "starts over": clear synth, re-synth, re-accept.
+    ctrl.clearSynth(1);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    // No NEW bonds — the drafts were consumed on first accept.
+    expect(env.bondProposes).toHaveLength(2);
+    synthSpy.mockRestore();
+  });
 });

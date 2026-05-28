@@ -32,7 +32,12 @@
  * wraps with debouncing + lifecycle hooks.
  */
 
-import type { BondDraft } from './chargen-pack';
+import {
+  type BondDraft,
+  MAX_BOND_DRAFTS,
+  MAX_BOND_TARGET_LEN,
+  MAX_BOND_TEXT_LEN
+} from './chargen-pack';
 
 export const CHARGEN_STORAGE_PREFIX = 'quire.chargen.';
 
@@ -163,17 +168,24 @@ export function loadChargenState(
   // D5.5-B: tolerate missing/garbage bondDrafts (older entries,
   // corruption) by dropping malformed entries rather than throwing
   // out the whole record.  Each kept entry has non-empty string
-  // targetPlaceholder + text.
+  // targetPlaceholder + text.  Post-review fix #4: re-enforce the
+  // same caps `validateBondDrafts` applies on the write path so a
+  // hand-edited / migrated localStorage record can't smuggle
+  // over-length or over-count drafts past the load boundary (the
+  // engine materializer is the final backstop, but defense-in-
+  // depth keeps the layers consistent).
   const bondDrafts: BondDraft[] = [];
   if (Array.isArray(p.bondDrafts)) {
     for (const raw of p.bondDrafts) {
+      if (bondDrafts.length >= MAX_BOND_DRAFTS) break;
       if (!raw || typeof raw !== 'object') continue;
       const d = raw as Record<string, unknown>;
       if (typeof d.targetPlaceholder !== 'string') continue;
       if (typeof d.text !== 'string') continue;
       const target = d.targetPlaceholder.trim();
       const text = d.text.trim();
-      if (target.length === 0 || text.length === 0) continue;
+      if (target.length === 0 || target.length > MAX_BOND_TARGET_LEN) continue;
+      if (text.length === 0 || text.length > MAX_BOND_TEXT_LEN) continue;
       bondDrafts.push({ targetPlaceholder: target, text });
     }
   }

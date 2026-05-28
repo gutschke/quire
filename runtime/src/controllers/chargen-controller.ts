@@ -897,12 +897,39 @@ export class ChargenController implements ReactiveController {
     if (acceptCampaign) {
       const acceptSlug = this.env.getCampaignSlug(acceptCampaign);
       const persisted = loadChargenState(acceptSlug, slot);
-      for (const draft of persisted?.bondDrafts ?? []) {
-        this.env.appendBondPropose({
-          pcId,
-          targetPlaceholder: draft.targetPlaceholder,
-          text: draft.text
+      const drafts = persisted?.bondDrafts ?? [];
+      if (drafts.length > 0) {
+        let dropped = 0;
+        for (const draft of drafts) {
+          const ok = this.env.appendBondPropose({
+            pcId,
+            targetPlaceholder: draft.targetPlaceholder,
+            text: draft.text
+          });
+          if (!ok) dropped++;
+        }
+        // Post-review fix #1: CONSUME the drafts after emission so a
+        // later clearSynth → re-synth → re-accept doesn't re-emit
+        // them as fresh proposals (the engine dedups by id, but
+        // proposeBond mints a new random id each call, so re-emits
+        // would NOT be caught — they'd pile up as duplicates).
+        // Persist the rest of the chargen state unchanged.
+        saveChargenState(acceptSlug, slot, {
+          chosenPath: persisted?.chosenPath ?? '',
+          answers: persisted?.answers ?? {},
+          bondDrafts: []
         });
+        // Post-review fix #3: surface dropped bonds (engine cap
+        // reached / gate) in the audit trail rather than silently
+        // losing them — every other acceptSlot side effect writes
+        // a scratch-note, so this matches the audit posture.
+        if (dropped > 0) {
+          this.env.appendScratchNote(
+            `${dropped} of ${drafts.length} chargen bond(s) for slot ${slot} ` +
+              `were not accepted (bond cap reached or authoring gate).  ` +
+              `Re-add via the bond queue if the PC should keep them.`
+          );
+        }
       }
     }
 

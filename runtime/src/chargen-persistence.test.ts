@@ -120,6 +120,36 @@ describe('saveChargenState + loadChargenState round-trip', () => {
     ]);
   });
 
+  it('re-enforces bond caps on load (defense-in-depth)', () => {
+    // A hand-edited / migrated record that smuggles past the write
+    // path: 5 drafts (cap 3), one over-length target, one over-
+    // length text.  Load must clamp the count + drop the over-cap
+    // entries.
+    window.localStorage.setItem(
+      chargenStorageKey('g/u', 1),
+      JSON.stringify({
+        chosenPath: 'qa',
+        answers: {},
+        bondDrafts: [
+          { targetPlaceholder: 'one', text: 'a' },
+          { targetPlaceholder: 'x'.repeat(81), text: 'over-target' }, // dropped
+          { targetPlaceholder: 'two', text: 'x'.repeat(501) }, // dropped
+          { targetPlaceholder: 'three', text: 'b' },
+          { targetPlaceholder: 'four', text: 'c' },
+          { targetPlaceholder: 'five', text: 'd' } // past the 3-cap
+        ],
+        updatedAt: 0
+      })
+    );
+    const loaded = loadChargenState('g/u', 1);
+    // Over-length entries dropped; count clamped to 3.
+    expect(loaded?.bondDrafts).toEqual([
+      { targetPlaceholder: 'one', text: 'a' },
+      { targetPlaceholder: 'three', text: 'b' },
+      { targetPlaceholder: 'four', text: 'c' }
+    ]);
+  });
+
   it('keys are slot-scoped (different slots, same slug)', () => {
     saveChargenState('g/u', 1, { chosenPath: 'qa', answers: { q: 'one' } });
     saveChargenState(

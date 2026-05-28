@@ -87,6 +87,51 @@ describe('<dm-aside>', () => {
     expect(el.innerHTML).toContain('Reggie');
   });
 
+  it('D5.5-B: renders the free-text placeholder + unresolved flag for a chargen bond', async () => {
+    // A chargen placeholder bond has no real target pcId; the host
+    // passes the player's typed placeholder as targetLabel +
+    // unresolved:true.  The DM must SEE the placeholder text (it
+    // was previously invisible) + the unresolved marker.
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'the medic on our team',
+        unresolved: true,
+        text: 'I trust her with my life.',
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
+      }
+    ];
+    await el.updateComplete;
+    expect(el.innerHTML).toContain('the medic on our team');
+    expect(el.innerHTML).toMatch(/unresolved target/i);
+    expect(
+      el.querySelector('.dm-aside-bond-queue-unresolved')
+    ).not.toBeNull();
+  });
+
+  it('D5.5-B: resolved bonds do NOT show the unresolved marker', async () => {
+    const el = mount();
+    el.campaignSlug = 'x/y';
+    el.pendingBondProposals = [
+      {
+        id: 'b1',
+        pcId: 'mei',
+        pcLabel: 'Mei',
+        targetLabel: 'Iris',
+        text: 'classmates',
+        proposedByPeerId: 'bob',
+        ts: 1700000000000
+      }
+    ];
+    await el.updateComplete;
+    expect(el.querySelector('.dm-aside-bond-queue-unresolved')).toBeNull();
+  });
+
   it('D5-cleanup: hides bond queue section when proposals empty', async () => {
     const el = mount();
     el.campaignSlug = 'x/y';

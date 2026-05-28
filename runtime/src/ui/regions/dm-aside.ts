@@ -52,8 +52,22 @@ export interface DmAsideBondProposal {
   pcId: string;
   /** Display name of the source PC. */
   pcLabel: string;
-  /** Display name of the target PC. */
+  /**
+   * Display label for the bond target.  For a resolved bond this
+   * is the target PC's name; for a D5.5-B chargen PLACEHOLDER
+   * (targetPcId === '') this is the player's free-text placeholder
+   * (e.g. "the medic on our team") + `unresolved: true` so the
+   * DM knows they must pick a real target at ratify.
+   */
   targetLabel: string;
+  /**
+   * D5.5-B (2026-05-27): true when the target is an unresolved
+   * free-text placeholder.  The renderer flags it so the DM sees
+   * the player's intended target (which would otherwise be
+   * invisible — a placeholder has no pcId to resolve a name from)
+   * + knows ratify requires resolving it to a real PC.
+   */
+  unresolved?: boolean;
   /** The proposed bond text. */
   text: string;
   /** Player peer who proposed it. */
@@ -141,6 +155,13 @@ export class DmAside extends LitElement {
         <strong>${p.pcLabel}</strong>
         <span class="muted"> → </span>
         <strong>${p.targetLabel}</strong>
+        ${p.unresolved
+          ? html`<span
+              class="dm-aside-bond-queue-unresolved"
+              title="Player-typed target — pick a real PC when you ratify"
+              >· unresolved target</span
+            >`
+          : nothing}
         <span class="muted"> · ${p.proposedByPeerId}</span>
       </p>
       <p class="dm-aside-bond-queue-text">${p.text}</p>

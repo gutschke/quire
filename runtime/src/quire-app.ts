@@ -2483,11 +2483,21 @@ export class QuireApp extends LitElement {
     )) {
       const pcLabel = this.resolvePcDisplayLabel(pcId);
       for (const p of proposals) {
+        // D5.5-B: a chargen placeholder bond has targetPcId === ''
+        // + a free-text targetPlaceholder.  Surface the player's
+        // typed target (otherwise invisible) + flag it unresolved
+        // so the DM resolves it to a real PC at ratify.
+        const isPlaceholder =
+          p.targetPcId.length === 0 &&
+          (p.targetPlaceholder?.length ?? 0) > 0;
         out.push({
           id: p.id,
           pcId,
           pcLabel,
-          targetLabel: this.resolvePcDisplayLabel(p.targetPcId),
+          targetLabel: isPlaceholder
+            ? (p.targetPlaceholder as string)
+            : this.resolvePcDisplayLabel(p.targetPcId),
+          unresolved: isPlaceholder,
           text: p.text,
           proposedByPeerId: p.proposedByPeerId,
           ts: p.ts
