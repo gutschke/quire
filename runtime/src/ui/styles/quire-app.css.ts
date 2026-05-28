@@ -5708,6 +5708,25 @@ export const quireAppStyles = css`
       font-size: 0.88em;
       color: light-dark(#b45309, #fbbf24);
     }
+    /* First-session polish: soft non-blocking nudge on the Done step
+       when required Q&A answers are blank.  Amber caution + an inline
+       jump-back button. */
+    .character-creation-done-incomplete {
+      padding: 0.4rem 0.6rem;
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      background: light-dark(#fffbeb, #292524);
+      font-size: 0.92em;
+    }
+    .character-creation-done-back {
+      padding: 0.1rem 0.5rem;
+      border: 1px solid light-dark(#fcd34d, #d97706);
+      background: light-dark(#ffffff, #1c1917);
+      color: inherit;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.92em;
+    }
     /* M3D-6: seat-strip list of bound PC slots.  One row per slot;
        slot label as a small pill, pc id beside, optional unbind ×
        button at row end. */

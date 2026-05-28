@@ -736,6 +736,52 @@ export class CharacterCreation extends LitElement {
     this.onBondDraftsChange?.(next);
   }
 
+  /**
+   * Count the player's OWN required Q&A questions that are still
+   * blank.  Only meaningful on the qa path (free-write / pre-gen
+   * don't use the questionnaire).  This reads only the player's own
+   * answers — no DM-only data — so surfacing it is firewall-safe.
+   */
+  private blankRequiredCount(): number {
+    if (this.chosenPath !== 'qa') return 0;
+    let n = 0;
+    for (const q of this.questions) {
+      if (q.required === false) continue;
+      const a = this.answers[q.id];
+      if (typeof a !== 'string' || a.trim().length === 0) n++;
+    }
+    return n;
+  }
+
+  /**
+   * First-session polish (UX review 2026-05-28): the player could
+   * Next→Next straight to "Done" with required answers blank and get
+   * no in-flow signal.  Surface a soft, non-blocking nudge on the
+   * Done step with a jump back to Build.  NOT a hard gate — the
+   * chargen flow is intentionally tolerant (the DM-side coherence
+   * check is the real net); this just prevents the silent-incomplete
+   * pack.
+   */
+  private renderBlankRequiredSummary(): TemplateResult | typeof nothing {
+    const blanks = this.blankRequiredCount();
+    if (blanks === 0) return nothing;
+    return html`<p class="character-creation-done-incomplete">
+      ${blanks} required question${blanks === 1 ? ' is' : 's are'} still
+      blank.
+      <button
+        type="button"
+        class="character-creation-done-back"
+        @click=${() => {
+          this.currentStep = 4;
+        }}
+      >
+        Go back to Build
+      </button>
+      to fill them in — your DM can still synthesize without them, but
+      a fuller answer set makes a richer character.
+    </p>`;
+  }
+
   private renderDone(): TemplateResult {
     const packFeedback = (() => {
       switch (this.packFeedback) {
@@ -775,6 +821,7 @@ export class CharacterCreation extends LitElement {
     })();
     return html`
       <h2>You're done — see you at session 1</h2>
+      ${this.renderBlankRequiredSummary()}
       <p>
         Your answers are saved on this device.  When session 1
         starts, sit down with the DM and they'll run the synthesis.

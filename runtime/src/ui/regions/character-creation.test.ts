@@ -729,3 +729,85 @@ describe('D5.5 first-session polish: autosave indicator', () => {
     expect(el.querySelector('.character-creation-savestate-ok')).toBeNull();
   });
 });
+
+describe('first-session polish: blank-required summary on Done', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  async function mountAtDone(
+    questions: Array<{
+      id: string;
+      kind: 'short-answer';
+      prompt: string;
+      required?: boolean;
+    }>,
+    answers: Record<string, string>
+  ): Promise<CharacterCreation> {
+    const el = mount();
+    el.chosenPath = 'qa';
+    el.questions = questions as never;
+    el.answers = answers;
+    await el.updateComplete;
+    // 5× Next: Welcome → … → Done (step 6).
+    for (let i = 0; i < 5; i++) {
+      el.querySelectorAll<HTMLButtonElement>(
+        '.character-creation-stepnav button'
+      )[1].click();
+      await el.updateComplete;
+    }
+    return el;
+  }
+
+  it('nudges when a required question is blank', async () => {
+    const el = await mountAtDone(
+      [
+        { id: 'a', kind: 'short-answer', prompt: 'A', required: true },
+        { id: 'b', kind: 'short-answer', prompt: 'B', required: true }
+      ],
+      { a: 'filled' } // b blank
+    );
+    const nudge = el.querySelector('.character-creation-done-incomplete');
+    expect(nudge).not.toBeNull();
+    expect(nudge?.textContent).toMatch(/1 required question is still/i);
+    // Non-blocking: a jump-back control, not a disabled gate.
+    expect(
+      el.querySelector('.character-creation-done-back')
+    ).not.toBeNull();
+  });
+
+  it('clicking "Go back to Build" returns to step 4', async () => {
+    const el = await mountAtDone(
+      [{ id: 'a', kind: 'short-answer', prompt: 'A', required: true }],
+      {}
+    );
+    el.querySelector<HTMLButtonElement>(
+      '.character-creation-done-back'
+    )!.click();
+    await el.updateComplete;
+    expect(el.textContent).toContain('Step 4 of 6');
+  });
+
+  it('stays silent when every required question is answered', async () => {
+    const el = await mountAtDone(
+      [
+        { id: 'a', kind: 'short-answer', prompt: 'A', required: true },
+        { id: 'b', kind: 'short-answer', prompt: 'B', required: false }
+      ],
+      { a: 'filled' } // b is optional → no nudge
+    );
+    expect(
+      el.querySelector('.character-creation-done-incomplete')
+    ).toBeNull();
+  });
+
+  it('treats whitespace-only answers as blank', async () => {
+    const el = await mountAtDone(
+      [{ id: 'a', kind: 'short-answer', prompt: 'A', required: true }],
+      { a: '   ' }
+    );
+    expect(
+      el.querySelector('.character-creation-done-incomplete')
+    ).not.toBeNull();
+  });
+});
