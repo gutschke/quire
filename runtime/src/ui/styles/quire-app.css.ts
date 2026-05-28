@@ -3506,6 +3506,24 @@ export const quireAppStyles = css`
       margin: 0.5rem 0 1.5rem;
       color: light-dark(#444, #aaa);
     }
+    /* First-session Gap A: advancement signal on the player's own
+       Rail.  The "ready" chip is warm + visible (the game's first
+       payoff); the progress line stays faint per the prime
+       directive (growth in the background). */
+    .player-rail-advancement-ready {
+      margin: 0.4rem 0 0.8rem;
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.4rem;
+      font-size: 0.9rem;
+      color: light-dark(#3a2606, #f0c477);
+      background: light-dark(#fef9e9, #2a2104);
+      border: 1px solid light-dark(#d6a559, #92660e);
+    }
+    .player-rail-advancement-progress {
+      margin: 0.3rem 0 0.8rem;
+      font-size: 0.78rem;
+      color: light-dark(#64748b, #94a3b8);
+    }
 
     nav.breadcrumb {
       font-size: 0.9rem;

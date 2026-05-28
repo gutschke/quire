@@ -327,3 +327,56 @@ describe('<player-rail> P-R7 switcher', () => {
     expect(el.querySelector('.player-rail-name-menu')).toBeNull();
   });
 });
+
+describe('<player-rail> Gap A — advancement signal', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function pcWithMarks(marks: number): LoadedCharacter {
+    const c = pc('mei', 'Mei');
+    (c.record as { marks?: number }).marks = marks;
+    return c;
+  }
+
+  it('shows the advancement-ready chip at 5 marks', async () => {
+    const el = mount();
+    el.character = pcWithMarks(5);
+    el.effective = el.character.record;
+    await el.updateComplete;
+    const chip = el.querySelector('.player-rail-advancement-ready');
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toMatch(/choose an advancement/i);
+  });
+
+  it('shows a faint progress line at 1-4 marks', async () => {
+    const el = mount();
+    el.character = pcWithMarks(3);
+    el.effective = el.character.record;
+    await el.updateComplete;
+    expect(
+      el.querySelector('.player-rail-advancement-ready')
+    ).toBeNull();
+    const prog = el.querySelector('.player-rail-advancement-progress');
+    expect(prog?.textContent).toMatch(/3 \/ 5/);
+  });
+
+  it('shows nothing at 0 marks', async () => {
+    const el = mount();
+    el.character = pcWithMarks(0);
+    el.effective = el.character.record;
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
+    expect(el.querySelector('.player-rail-advancement-progress')).toBeNull();
+  });
+
+  it('does NOT show the signal for an NPC', async () => {
+    const el = mount();
+    const npc = pcWithMarks(5);
+    (npc as { kind: string }).kind = 'npc';
+    el.character = npc;
+    el.effective = npc.record;
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
+  });
+});

@@ -350,6 +350,7 @@ export class PlayerRail extends LitElement {
         ${this.renderClaimAffordance()}
         ${this.renderRetireRequest()}
       </header>
+      ${character.kind === 'pc' ? this.renderAdvancementSignal(r) : nothing}
       <section class="card">
         <h2>Details</h2>
         <dl>
@@ -900,6 +901,39 @@ export class PlayerRail extends LitElement {
           </p>
         `;
     }
+  }
+
+  /**
+   * First-session Gap A (2026-05-28): surface advancement progress
+   * on the player's OWN Rail.  Per rules.md:149-166, a PC ticks up
+   * to one mark per session; every 5 marks → one advancement the
+   * player picks at the next session's start.  marks are NOT a
+   * DM-only field (they survive filterForViewer to the player's own
+   * record), but the Rail never read them — the game's first player
+   * payoff went unsignaled.
+   *
+   * At 5/5: a warm "ready" chip (the actual pick is a between-
+   * sessions beat, so we don't enumerate the 6 options here).
+   * At 1-4: a faint progress line, kept low-key per the prime
+   * directive (growth in the background, not a meter to grind).
+   * At 0: nothing.
+   */
+  private renderAdvancementSignal(
+    r: import('../../character-loader').CharacterRecord
+  ): TemplateResult {
+    const marks = typeof r.marks === 'number' ? r.marks : 0;
+    if (marks <= 0) return html``;
+    if (marks >= 5) {
+      return html`<p
+        class="player-rail-advancement-ready"
+        role="status"
+      >
+        ✦ You've grown.  Next session, choose an advancement.
+      </p>`;
+    }
+    return html`<p class="player-rail-advancement-progress">
+      Growth: ${marks} / 5
+    </p>`;
   }
 
   // Phase B P1d (2026-05-26): renderStatBlock removed; replaced
