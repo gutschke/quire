@@ -134,6 +134,11 @@ function makeEnv(
   const pcSlotBinds: Array<{ slot: number; pcId: string }> = [];
   const seatAdds: number[] = [];
   const seatRemoves: number[] = [];
+  const bondProposes: Array<{
+    pcId: string;
+    targetPlaceholder: string;
+    text: string;
+  }> = [];
   const mockSlots: Record<number, { state: string; pcId?: string }> = {};
   return {
     getCurrentCampaign: () => campaign,
@@ -181,6 +186,14 @@ function makeEnv(
       pcSlotBinds.push({ slot, pcId });
       return true;
     },
+    appendBondPropose: (payload: {
+      pcId: string;
+      targetPlaceholder: string;
+      text: string;
+    }) => {
+      bondProposes.push(payload);
+      return true;
+    },
     // Phase B-prime (2026-05-25): seat-add + pcSlots-read for the
     // chargen-controller's addSeat() flow.  `seatAdds` records the
     // appended slots; `mockSlots` is the simulated current slot map
@@ -203,6 +216,7 @@ function makeEnv(
     pcSlotBinds,
     seatAdds,
     seatRemoves,
+    bondProposes,
     mockSlots
   };
 }
@@ -2602,5 +2616,122 @@ describe('ChargenController — hasPendingSynth (Wave C2)', () => {
     ).acceptance.markAccepted(1);
     // Slot 2 still pending → gate stays open.
     expect(ctrl.hasPendingSynth()).toBe(true);
+  });
+});
+
+// ---- D5.5-B (2026-05-27): chargen bond emission on accept ----
+
+describe('ChargenController — D5.5-B chargen bond emission', () => {
+  beforeEach(() => {
+    if (typeof localStorage !== 'undefined') localStorage.clear();
+  });
+
+  function mockOkSynth() {
+    return vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Mei',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'x',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'r1'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+  }
+
+  it('emits a placeholder bond-propose per chargen bond draft after accept', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker' },
+      bondDrafts: [
+        { targetPlaceholder: 'the medic', text: 'I trust her.' },
+        { targetPlaceholder: 'my brother', text: 'I owe him.' }
+      ]
+    });
+    const synthSpy = mockOkSynth();
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    expect(env.bondProposes).toHaveLength(2);
+    expect(env.bondProposes[0]).toMatchObject({
+      targetPlaceholder: 'the medic',
+      text: 'I trust her.'
+    });
+    expect(env.bondProposes[1]).toMatchObject({
+      targetPlaceholder: 'my brother',
+      text: 'I owe him.'
+    });
+    // Both bonds target the same just-created PC.
+    expect(env.bondProposes[0].pcId).toBe(env.bondProposes[1].pcId);
+    expect(env.bondProposes[0].pcId).toBe(env.pcCreates[0].pcId);
+    synthSpy.mockRestore();
+  });
+
+  it('emits no bonds when the player authored none', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker' }
+    });
+    const synthSpy = mockOkSynth();
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    expect(env.bondProposes).toEqual([]);
+    synthSpy.mockRestore();
+  });
+
+  /**
+   * TTRPG-expert review requirement: bond-propose events are
+   * independent + DM-private; a rejected bond (engine validator
+   * drift, mid-emission glitch) must NOT roll back the committed
+   * PC or strand the other bonds.  The PC is fully created; bonds
+   * 1 + 3 land; bond 2's rejection is benign.
+   */
+  it('partial bond failure does not roll back the PC or other bonds', async () => {
+    saveChargenState('o-r-main', 1, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker' },
+      bondDrafts: [
+        { targetPlaceholder: 'a', text: 'first' },
+        { targetPlaceholder: 'b', text: 'second' },
+        { targetPlaceholder: 'c', text: 'third' }
+      ]
+    });
+    const synthSpy = mockOkSynth();
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    // Make the SECOND bond-propose fail (simulated engine reject).
+    const orig = env.appendBondPropose;
+    let call = 0;
+    env.appendBondPropose = (p: {
+      pcId: string;
+      targetPlaceholder: string;
+      text: string;
+    }) => {
+      call++;
+      return call === 2 ? false : orig(p);
+    };
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(1);
+    ctrl.acceptSlot(1);
+    // PC committed + accepted despite the bond failure.
+    expect(ctrl.isAccepted(1)).toBe(true);
+    expect(env.pcCreates).toHaveLength(1);
+    // Bonds 1 + 3 recorded; bond 2 returned false without push.
+    expect(env.bondProposes.map((b) => b.text)).toEqual(['first', 'third']);
+    synthSpy.mockRestore();
   });
 });

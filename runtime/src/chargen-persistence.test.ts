@@ -58,6 +58,7 @@ describe('saveChargenState + loadChargenState round-trip', () => {
     expect(loaded).toEqual({
       chosenPath: 'qa',
       answers: { archetype: 'hacker', item: 'a brass key' },
+      bondDrafts: [],
       updatedAt: 1700000000000
     });
   });
@@ -73,6 +74,50 @@ describe('saveChargenState + loadChargenState round-trip', () => {
     const loaded = loadChargenState('g/u', 1);
     expect(loaded?.chosenPath).toBe('free-write');
     expect(loaded?.answers).toEqual({ q: 'second' });
+  });
+
+  // --- D5.5-B (2026-05-27): bondDrafts persistence ---
+
+  it('round-trips bondDrafts', () => {
+    saveChargenState('g/u', 1, {
+      chosenPath: 'qa',
+      answers: {},
+      bondDrafts: [
+        { targetPlaceholder: 'the medic', text: 'I trust her.' }
+      ]
+    });
+    const loaded = loadChargenState('g/u', 1);
+    expect(loaded?.bondDrafts).toEqual([
+      { targetPlaceholder: 'the medic', text: 'I trust her.' }
+    ]);
+  });
+
+  it('defaults bondDrafts to [] when the save omits them', () => {
+    saveChargenState('g/u', 1, { chosenPath: 'qa', answers: {} });
+    const loaded = loadChargenState('g/u', 1);
+    expect(loaded?.bondDrafts).toEqual([]);
+  });
+
+  it('drops malformed bondDraft entries on load (corruption tolerance)', () => {
+    window.localStorage.setItem(
+      chargenStorageKey('g/u', 1),
+      JSON.stringify({
+        chosenPath: 'qa',
+        answers: {},
+        bondDrafts: [
+          { targetPlaceholder: 'ok', text: 'kept' },
+          { targetPlaceholder: 'missing text' }, // dropped
+          { text: 'missing target' }, // dropped
+          { targetPlaceholder: '   ', text: 'blank target' }, // dropped
+          'not an object' // dropped
+        ],
+        updatedAt: 0
+      })
+    );
+    const loaded = loadChargenState('g/u', 1);
+    expect(loaded?.bondDrafts).toEqual([
+      { targetPlaceholder: 'ok', text: 'kept' }
+    ]);
   });
 
   it('keys are slot-scoped (different slots, same slug)', () => {
@@ -129,6 +174,7 @@ describe('loadChargenState — corruption tolerance', () => {
     expect(loaded).toEqual({
       chosenPath: '',
       answers: {},
+      bondDrafts: [],
       updatedAt: 0
     });
   });

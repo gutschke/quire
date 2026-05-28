@@ -175,6 +175,22 @@ export interface ChargenHost {
    */
   bindPcSlot(slot: number, pcId: string): boolean;
   /**
+   * D5.5-B (2026-05-27): emit a placeholder `bond-propose` for a
+   * chargen-authored bond draft.  Called by acceptSlot after
+   * pc-create + pc-slot-bind, once per bond the player wrote.
+   * The target is a free-text placeholder (the target PC may not
+   * exist yet); the DM resolves it to a real pcId at ratify.
+   * Returns true on emit; false when the host gated or the
+   * payload was rejected.  Each call is independent — a rejected
+   * bond does NOT roll back the PC or the other bonds (proposals
+   * are DM-private; a missing bond is benign).
+   */
+  appendBondPropose(payload: {
+    pcId: string;
+    targetPlaceholder: string;
+    text: string;
+  }): boolean;
+  /**
    * Phase B-prime (2026-05-25): emit a `seat-add` event allocating
    * a new unbound seat at `slot`.  Returns true on success (and
    * the event lands in shared state), false when the seat is
@@ -869,6 +885,27 @@ export class ChargenController implements ReactiveController {
     // Bind the slot now that the PC exists.
     this.env.bindPcSlot(slot, pcId);
 
+    // D5.5-B (2026-05-27): emit the player's chargen bond drafts as
+    // placeholder bond-propose events, AFTER pc-create + pc-slot-
+    // bind so the D5-3 authoring gate sees the bound seat.  Each
+    // draft is independent — the loop continues past a rejected
+    // bond so one bad entry doesn't strand the rest; proposals are
+    // DM-private so a partial emission is benign (vs. rolling back
+    // the already-committed PC).  The DM resolves each placeholder
+    // target to a real pcId at ratify time.
+    const acceptCampaign = this.env.getCurrentCampaign();
+    if (acceptCampaign) {
+      const acceptSlug = this.env.getCampaignSlug(acceptCampaign);
+      const persisted = loadChargenState(acceptSlug, slot);
+      for (const draft of persisted?.bondDrafts ?? []) {
+        this.env.appendBondPropose({
+          pcId,
+          targetPlaceholder: draft.targetPlaceholder,
+          text: draft.text
+        });
+      }
+    }
+
     // Audit-trail scratch-note retains the existing v1 shape — a
     // future audit tool can parse "DM accepted synthesized PC for
     // slot N: name=X, responseId=Y" without needing to know about
@@ -1300,7 +1337,11 @@ export class ChargenController implements ReactiveController {
     const slug = this.env.getCampaignSlug(campaign);
     saveChargenState(slug, pack.slot, {
       chosenPath: pack.chosenPath,
-      answers: pack.answers
+      answers: pack.answers,
+      // D5.5-B: carry the player's bond drafts so acceptSlot can
+      // emit them post-create.  Older 0.1.0 packs parse with
+      // bondDrafts undefined → persisted as [].
+      bondDrafts: pack.bondDrafts ?? []
     });
     // Wipe any cached synth result for this slot — the DM will
     // re-synth from the freshly-loaded answers.

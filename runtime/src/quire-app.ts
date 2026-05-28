@@ -481,6 +481,13 @@ export class QuireApp extends LitElement {
     appendScratchNote: (text) => this.appendScratchNote(text),
     appendPcCreate: (payload) => this.appendPcCreate(payload),
     bindPcSlot: (slot, pcId) => this.bindPcSlot(slot, pcId),
+    appendBondPropose: (payload) =>
+      this.proposeBond({
+        pcId: payload.pcId,
+        targetPcId: '',
+        targetPlaceholder: payload.targetPlaceholder,
+        text: payload.text
+      }),
     appendSeatAdd: (slot: number) => this.appendSeatAdd(slot),
     appendSeatRemove: (slot: number) => this.appendSeatRemove(slot),
     getPcSlots: () => this.sessionView?.shared.pcSlots ?? {},

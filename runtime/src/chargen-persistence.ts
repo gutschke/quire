@@ -21,6 +21,7 @@
  * **What's persisted:**
  *   - chosenPath (qa / free-write / pre-gen / empty)
  *   - answers (the player's Q&A responses)
+ *   - bondDrafts (D5.5-B: player-authored chargen bonds)
  *
  * **What's NOT persisted:**
  *   - currentStep (the player can advance steps on resume; the
@@ -31,11 +32,20 @@
  * wraps with debouncing + lifecycle hooks.
  */
 
+import type { BondDraft } from './chargen-pack';
+
 export const CHARGEN_STORAGE_PREFIX = 'quire.chargen.';
 
 export interface ChargenPersistedState {
   chosenPath: 'qa' | 'free-write' | 'pre-gen' | '';
   answers: Record<string, string>;
+  /**
+   * D5.5-B (2026-05-27): player-authored bond drafts.  Persisted
+   * alongside answers so the DM-side acceptSlot can read them at
+   * commit time + emit placeholder bond-propose events.  Missing
+   * field (older entries) loads as [].
+   */
+  bondDrafts: BondDraft[];
   /**
    * Epoch ms of last write — useful for "resumed N minutes ago"
    * UX and for stale-data detection (e.g., the campaign changed
@@ -68,7 +78,12 @@ export function chargenStorageKey(
 export function saveChargenState(
   campaignSlug: string,
   slot: number,
-  state: Omit<ChargenPersistedState, 'updatedAt'>,
+  // bondDrafts optional in the input so pre-D5.5-B call sites
+  // (which only pass chosenPath + answers) keep compiling; load
+  // always returns an array.
+  state: Omit<ChargenPersistedState, 'updatedAt' | 'bondDrafts'> & {
+    bondDrafts?: BondDraft[];
+  },
   nowMs?: number
 ): void {
   let key: string;
@@ -80,6 +95,7 @@ export function saveChargenState(
   const doc: ChargenPersistedState = {
     chosenPath: state.chosenPath,
     answers: { ...state.answers },
+    bondDrafts: (state.bondDrafts ?? []).map((d) => ({ ...d })),
     updatedAt: nowMs ?? Date.now()
   };
   try {
@@ -144,11 +160,28 @@ export function loadChargenState(
   for (const [k, v] of Object.entries(answersIn)) {
     if (typeof v === 'string') answers[k] = v;
   }
+  // D5.5-B: tolerate missing/garbage bondDrafts (older entries,
+  // corruption) by dropping malformed entries rather than throwing
+  // out the whole record.  Each kept entry has non-empty string
+  // targetPlaceholder + text.
+  const bondDrafts: BondDraft[] = [];
+  if (Array.isArray(p.bondDrafts)) {
+    for (const raw of p.bondDrafts) {
+      if (!raw || typeof raw !== 'object') continue;
+      const d = raw as Record<string, unknown>;
+      if (typeof d.targetPlaceholder !== 'string') continue;
+      if (typeof d.text !== 'string') continue;
+      const target = d.targetPlaceholder.trim();
+      const text = d.text.trim();
+      if (target.length === 0 || text.length === 0) continue;
+      bondDrafts.push({ targetPlaceholder: target, text });
+    }
+  }
   const updatedAt =
     typeof p.updatedAt === 'number' && Number.isFinite(p.updatedAt)
       ? p.updatedAt
       : 0;
-  return { chosenPath, answers, updatedAt };
+  return { chosenPath, answers, bondDrafts, updatedAt };
 }
 
 /**
