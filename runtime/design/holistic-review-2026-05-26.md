@@ -41,10 +41,26 @@ Realization act-break ships as a silent card).
 New prioritized work (tasks #405-#410):
 - **#405 [P1]** LWW concurrent-write matrix + replay-convergence property test (E-TEST-1).
 - **#406 [P1]** Firewall fuzz target + self-completing classification SSOTs (filterForViewer↔persistence strip lists; FIREWALL_PATTERNS coverage).
-- **#407 [P0 experience]** Realization act-break reveal ritual (not a silent card).
-- **#408 [P1 XS]** Demote the player "Growth: N/5" meter line (prime-directive fix to Gap A #396).
+- **#407 [P0 experience]** ✅ SHIPPED `abc90bf` — Realization act-break ceremony. The
+  playbook-trained tactical critique talked the design out of a stored DM-authored reveal
+  line (real firewall surface + re-narrates the DM's spoken reveal, rules.md:179) into a
+  LOCAL false→true transition detector that lights a one-shot threshold treatment on the
+  existing "The Quiet" card ("The world tilts." + settle-in). Zero new
+  field/event/firewall surface; reload-safe; quiet not celebratory. A DM-authored stored
+  reveal line is explicitly DEFERRED — revisit only if playtests find the moment too
+  subtle (then it rides the #398 curated-slice + the 4 firewall tests the adversarial pass
+  specified).
+- **#408 [P1 XS]** ✅ SHIPPED `26f8f5f` — demoted the player "Growth: N/5" meter line
+  (prime-directive fix to Gap A #396); the Rail now signals only at 5 marks.
 - **#409 [Arch]** Define quire-app.ts target architecture + promote memoized materialization / requestUpdate debounce.
 - **#410 [Arch/Test]** Per-line firewall-lint pragma, hostile pc-edit test (E-TEST-2), AI-wrap lint (Q-LT5), explicit flake policy, multi-peer race test.
+
+**Coaching landed (2026-05-28):** #407/#408 were the first tactical-expert
+round briefed from `reviewer-playbook.md`.  Both experts visibly applied
+it — file:line citations, rules.md grounding, the three design tests,
+regression-assertion-with-finding, firewall classification — and their
+convergence produced a strictly simpler, safer #407 design than the
+original spec.  The playbook works; keep briefing from it.
 
 Trust-but-verify note: the consultants confirmed several existing
 defenses are exemplary (persistence.coverage.test.ts is schema-driven;
