@@ -208,11 +208,14 @@ import {
 import { parseRoute, routeToSearch, type AppRoute } from './routing';
 import {
   parseDiceCommand,
-  rollDice,
   formatRoll,
   formatCommand,
   type DiceRoll
 } from './dice';
+import {
+  DiceController,
+  ROLL_HISTORY_MAX
+} from './controllers/dice-controller';
 import {
   SessionController,
   type SessionView,
@@ -223,8 +226,6 @@ import {
   brokerConfigFromUrl
 } from './session-peerjs';
 import { isVitestTeardownError } from './test-env';
-
-const ROLL_HISTORY_MAX = 5;
 
 /**
  * Hard cap on chat-event text length, in characters.  Matches the
@@ -684,9 +685,29 @@ export class QuireApp extends LitElement {
    * 'marks' whenever the launcher enters wrap mode.
    */
   @state() wrapStep: WrapStep = 'marks';
-  @state() rolls: DiceRoll[] = [];
-  @state() rollDraft: string = '';
-  @state() rollError: string | null = null;
+
+  /**
+   * #414 (E-LARGE-1): the dice surface (rolls / rollDraft / rollError +
+   * the roll logic) lives on DiceController.  rng is late-bound so test
+   * stubs of `rngForRoll` take effect; publishing to peers stays on the
+   * host (it owns the session + the in-session gate).  Getters below
+   * preserve every read call site; `submitRoll` delegates.
+   */
+  private readonly dice = new DiceController(this, {
+    rng: () => this.rngForRoll(),
+    publishRoll: (roll) => {
+      if (this.session && this.sessionView?.status === 'active') {
+        this.session.append('dice-roll', {
+          expression: formatCommand(roll.command),
+          result: roll.total,
+          dice: roll.rolls
+        });
+      }
+    }
+  });
+  get rolls(): DiceRoll[] { return this.dice.rolls; }
+  get rollDraft(): string { return this.dice.rollDraft; }
+  get rollError(): string | null { return this.dice.rollError; }
   @state() sessionView: SessionView | null = null;
   @state() joinCodeDraft: string = '';
   @state() displayNameDraft: string = '';
@@ -5772,9 +5793,7 @@ export class QuireApp extends LitElement {
         .handAvailable=${handAvailable}
         .handRaised=${handRaised}
         .stats=${stats}
-        .onRollDraftChange=${(v: string) => {
-          this.rollDraft = v;
-        }}
+        .onRollDraftChange=${(v: string) => this.dice.setRollDraft(v)}
         .onSubmitRoll=${(v: string) => this.submitRoll(v)}
         .onToggleHand=${() => this.toggleRaisedHand()}
       ></dice-dock>
@@ -6003,24 +6022,7 @@ export class QuireApp extends LitElement {
   }
 
   submitRoll(input: string): DiceRoll | null {
-    const cmd = parseDiceCommand(input);
-    if (!cmd) {
-      this.rollError = `Couldn't parse "${input}". Try 2d6, 2d6+1, 1d20, etc.`;
-      return null;
-    }
-    this.rollError = null;
-    const roll = rollDice(cmd, this.rngForRoll);
-    this.rolls = [roll, ...this.rolls].slice(0, ROLL_HISTORY_MAX);
-    this.rollDraft = '';
-    // If we're in an active session, publish so other peers see the roll.
-    if (this.session && this.sessionView?.status === 'active') {
-      this.session.append('dice-roll', {
-        expression: formatCommand(roll.command),
-        result: roll.total,
-        dice: roll.rolls
-      });
-    }
-    return roll;
+    return this.dice.submitRoll(input);
   }
 
   // Session lifecycle methods delegate to session-bootstrap helpers
