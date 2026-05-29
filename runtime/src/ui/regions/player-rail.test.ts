@@ -3,7 +3,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import './player-rail';
 import type { PlayerRail, SwitcherEntry } from './player-rail';
-import type { LoadedCharacter } from '../../character-loader';
+import type {
+  LoadedCharacter,
+  CharacterRecord
+} from '../../character-loader';
 
 function mount(): PlayerRail {
   const el = document.createElement('player-rail') as PlayerRail;
@@ -473,5 +476,79 @@ describe('<player-rail> #398 — post-Realization casting signal', () => {
     el.effective = npc.record;
     await el.updateComplete;
     expect(el.querySelector('.player-rail-casting')).toBeNull();
+  });
+});
+
+describe('<player-rail> #407 — Realization act-break moment', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  function record(id: string, knows: boolean): CharacterRecord {
+    return {
+      $schemaVersion: '0.1.0',
+      name: id,
+      knowsTheyCanCast: knows
+    } as unknown as CharacterRecord;
+  }
+
+  it('does NOT fire on first observation of an already-realized PC (late-join / reload)', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    el.character = c;
+    el.effective = record('mei', true); // first sight is already realized
+    await el.updateComplete;
+    // Steady-state card shows, but no one-shot threshold moment.
+    expect(el.querySelector('.player-rail-casting')).not.toBeNull();
+    expect(el.querySelector('.player-rail-casting-moment')).toBeNull();
+    expect(el.querySelector('.player-rail-casting-threshold')).toBeNull();
+  });
+
+  it('fires the threshold moment on a live false→true transition for the same PC', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    el.character = c;
+    el.effective = record('mei', false); // observed not-yet-realized
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-casting')).toBeNull(); // no card pre-Realization
+    // The DM marks Realization → knows flips true for the same PC.
+    el.effective = record('mei', true);
+    await el.updateComplete;
+    const moment = el.querySelector('.player-rail-casting-moment');
+    expect(moment).not.toBeNull();
+    expect(moment?.textContent?.toLowerCase()).toContain('the world tilts');
+    expect(el.querySelector('.player-rail-casting-threshold')).not.toBeNull();
+  });
+
+  it('does NOT fire when switching to a different already-realized PC', async () => {
+    const el = mount();
+    const a = pc('mei', 'Mei');
+    el.character = a;
+    el.effective = record('mei', false); // observe A, not realized
+    await el.updateComplete;
+    // Switch to a different PC that is already realized.
+    const b = pc('rhea', 'Rhea');
+    el.character = b;
+    el.effective = record('rhea', true);
+    await el.updateComplete;
+    expect(el.querySelector('.player-rail-casting-moment')).toBeNull();
+    // The steady-state card still shows for the realized PC.
+    expect(el.querySelector('.player-rail-casting')).not.toBeNull();
+  });
+
+  it('clears its auto-fade timer on disconnect (no stray update)', async () => {
+    const el = mount();
+    const c = pc('mei', 'Mei');
+    el.character = c;
+    el.effective = record('mei', false);
+    await el.updateComplete;
+    el.effective = record('mei', true);
+    await el.updateComplete;
+    const peek = el as unknown as {
+      realizationMomentTimer: ReturnType<typeof setTimeout> | null;
+    };
+    expect(peek.realizationMomentTimer).not.toBeNull();
+    el.remove(); // triggers disconnectedCallback
+    expect(peek.realizationMomentTimer).toBeNull();
   });
 });

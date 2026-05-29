@@ -57,6 +57,14 @@ import '../field-renderers/money-band-selector';
 import type { BumpStatCallback } from '../callback-types';
 export type { BumpStatCallback };
 
+/**
+ * #407: how long the one-shot Realization threshold treatment lingers
+ * before settling into the steady-state casting card.  Long enough to
+ * land as a beat alongside the DM's spoken reveal, short enough to be a
+ * moment, not a badge.
+ */
+const REALIZATION_MOMENT_MS = 6000;
+
 export type ToggleTrackBoxCallback = (
   pcId: string,
   field: 'harm' | 'stress',
@@ -306,6 +314,26 @@ export class PlayerRail extends LitElement {
   @state() private takeOverConfirmPcId: string | null = null;
 
   /**
+   * #407 (2026-05-28): the Realization act-break ceremony.  When the
+   * bound PC's `knowsTheyCanCast` transitions false→true WHILE this
+   * client is watching, the "The Quiet" casting card gets a one-shot
+   * threshold treatment instead of silently appearing (Creative-
+   * director P0: the act-break was a state flip, not a felt moment).
+   *
+   * Local-only by design (per the playbook-trained TTRPG/UX + adversarial
+   * critique 2026-05-28): NO new shared state, NO event/field, NO
+   * firewall surface.  It fires on a transition we OBSERVED — not on
+   * first sight of an already-realized PC (a late-joiner), not on a
+   * switch to a different realized PC — so it can't re-narrate the DM's
+   * spoken reveal and can't show on reload (knows is already true).
+   * The DM's words carry the content; this is the felt beat alongside.
+   */
+  @state() private realizationMoment = false;
+  private realizationBaselinePcId: string | null = null;
+  private realizationBaselineKnows = false;
+  private realizationMomentTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
    * D5-C-fix (2026-05-27 scenario-playthrough UX-7): draft-leak
    * guard for the bond compose form @state when the rendered
    * `character` prop changes (PC switch via name-row switcher).
@@ -327,6 +355,47 @@ export class PlayerRail extends LitElement {
         this.bondFormTarget = '';
         this.bondFormText = '';
       }
+    }
+    // #407: detect the live false→true Realization transition for the
+    // bound PC.  Fire ONLY when we've already observed this same PC as
+    // not-yet-realized (a baseline) and it flips true — never on first
+    // observation (late-join) or a PC switch.
+    const pcId = this.character?.id ?? null;
+    if (pcId !== null && this.effective) {
+      const knows = this.effective.knowsTheyCanCast === true;
+      if (
+        this.realizationBaselinePcId === pcId &&
+        !this.realizationBaselineKnows &&
+        knows
+      ) {
+        this.fireRealizationMoment();
+      }
+      this.realizationBaselinePcId = pcId;
+      this.realizationBaselineKnows = knows;
+    }
+  }
+
+  /**
+   * #407: light up the one-shot threshold moment + auto-clear it after
+   * a short window so it reads as atmosphere, not a persistent badge.
+   * No dismiss button (per craft review — a dismissable banner reads as
+   * a notification and lingers for over-the-shoulder eyes).
+   */
+  private fireRealizationMoment(): void {
+    this.realizationMoment = true;
+    if (this.realizationMomentTimer) clearTimeout(this.realizationMomentTimer);
+    this.realizationMomentTimer = setTimeout(() => {
+      this.realizationMomentTimer = null;
+      this.realizationMoment = false;
+      this.requestUpdate();
+    }, REALIZATION_MOMENT_MS);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this.realizationMomentTimer) {
+      clearTimeout(this.realizationMomentTimer);
+      this.realizationMomentTimer = null;
     }
   }
 
@@ -956,7 +1025,23 @@ export class PlayerRail extends LitElement {
   ): TemplateResult {
     if (r.knowsTheyCanCast !== true) return html``;
     const taxActive = (r.tax as { active?: boolean } | undefined)?.active === true;
-    return html`<section class="card player-rail-casting">
+    // #407: the one-shot act-break treatment.  Only at the live moment
+    // of Realization (see fireRealizationMoment) does the card carry the
+    // threshold class + a brief atmospheric line.  The line marks the
+    // FELT shift ("the world tilts") — it deliberately does NOT
+    // re-narrate the DM's spoken reveal (rules.md:179 — the DM's words
+    // carry the content); it just gives the card's arrival weight.
+    const moment = this.realizationMoment;
+    return html`<section
+      class="card player-rail-casting ${moment
+        ? 'player-rail-casting-threshold'
+        : ''}"
+    >
+      ${moment
+        ? html`<p class="player-rail-casting-moment" role="status">
+            The world tilts.
+          </p>`
+        : nothing}
       <h2>The Quiet</h2>
       <p class="player-rail-casting-known">
         You can shape the Quiet — describe what you reach for; the table

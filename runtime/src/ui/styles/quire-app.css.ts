@@ -3566,6 +3566,37 @@ export const quireAppStyles = css`
       font-size: 0.88rem;
       color: light-dark(#7a4400, #fbbf24);
     }
+    /* #407: the one-shot Realization act-break treatment.  Deliberately
+       quiet + ominous, NOT celebratory (the world has been LISTENING;
+       the tax — a punishment for grasping — follows).  A slow settle-in
+       gives the card's first arrival the weight of crossing a threshold;
+       the moment line fades after a few seconds (auto-cleared in JS). */
+    .player-rail-casting-threshold {
+      animation: player-rail-casting-settle 1400ms ease-out;
+      border-color: light-dark(#6366f1, #818cf8);
+    }
+    @keyframes player-rail-casting-settle {
+      from {
+        opacity: 0.2;
+        transform: translateY(-4px) scale(0.985);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+    .player-rail-casting-moment {
+      margin: 0 0 0.5rem;
+      font-size: 1.05rem;
+      font-style: italic;
+      letter-spacing: 0.02em;
+      color: light-dark(#4338ca, #a5b4fc);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .player-rail-casting-threshold {
+        animation: none;
+      }
+    }
 
     nav.breadcrumb {
       font-size: 0.9rem;
