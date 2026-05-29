@@ -121,6 +121,7 @@ import {
   wrapCampaignContext
 } from './ai/campaign-context';
 import { AiWriteController } from './controllers/ai-write-controller';
+import { AiPanelController } from './controllers/ai-panel-controller';
 import { ChargenController } from './controllers/chargen-controller';
 import type { AiWriteBatchView } from './ui/regions/ai-panel';
 import { anthropicProvider } from './ai/providers/anthropic';
@@ -154,7 +155,7 @@ import {
   responseHashFor,
   chainHead
 } from './ai/audit';
-import { DEFAULT_BUDGET_CEILING, computeUsage } from './ai/budget';
+import { computeUsage } from './ai/budget';
 import type { DualCardResponse } from './ui/regions/ai-panel';
 import {
   serializeSession,
@@ -876,29 +877,93 @@ export class QuireApp extends LitElement {
    * proposed update faces an explicit-accept click, not just the
    * spec'd hard-gated transitions.  Persisted via AiKeyStore.
    */
-  @state() aiReviewEveryUpdate: boolean = false;
-  @state() aiPromptDraft: string = '';
-  @state() aiResponse: string | null = null;
   /**
-   * M3b.5: dual-card response from the broker.  When set, the
-   * panel renders two cards (safe + DM-only) instead of the
-   * legacy single block.  Sources land here too, plus the
-   * responseId used for ai-accept / ai-reject events.
+   * #413 (E-LARGE-1): the ~10 AI-panel `@state` fields now live on
+   * `AiPanelController`.  These delegating accessors preserve every
+   * existing read/write call site (and tests) verbatim — the setters
+   * forward to the controller + `requestUpdate()` so Lit reactivity is
+   * unchanged.  `transientError` stays a host `@state` below: it's a
+   * SHARED transient-error field (import / NPC-load paths write it too),
+   * not AI-panel state.  See design/quire-app-target-architecture.md.
    */
-  @state() aiResponseStructured: AiResponse | null = null;
-  /** M3b.5: scope for the NEXT prompt.  Resets to 'public' on submit. */
-  @state() aiScope: ContextScope = 'public';
-  /**
-   * M3b gate fix: track the most recent verdict the DM cast so the
-   * ai-panel can render visible feedback ("✓ Accepted" / "✗ Rejected")
-   * instead of leaving the buttons hot after click (silent-success
-   * was reading as broken-button at the table).
-   */
-  @state() aiVerdictResponseId: string = '';
-  @state() aiVerdictKind: '' | 'accept' | 'reject' = '';
-  @state() aiLoading: boolean = false;
+  private readonly aiPanel = new AiPanelController(this);
+
+  get aiReviewEveryUpdate(): boolean { return this.aiPanel.aiReviewEveryUpdate; }
+  set aiReviewEveryUpdate(v: boolean) {
+    if (this.aiPanel.aiReviewEveryUpdate !== v) {
+      this.aiPanel.aiReviewEveryUpdate = v;
+      this.requestUpdate();
+    }
+  }
+  get aiPromptDraft(): string { return this.aiPanel.aiPromptDraft; }
+  set aiPromptDraft(v: string) {
+    if (this.aiPanel.aiPromptDraft !== v) {
+      this.aiPanel.aiPromptDraft = v;
+      this.requestUpdate();
+    }
+  }
+  get aiResponse(): string | null { return this.aiPanel.aiResponse; }
+  set aiResponse(v: string | null) {
+    if (this.aiPanel.aiResponse !== v) {
+      this.aiPanel.aiResponse = v;
+      this.requestUpdate();
+    }
+  }
+  get aiResponseStructured(): AiResponse | null {
+    return this.aiPanel.aiResponseStructured;
+  }
+  set aiResponseStructured(v: AiResponse | null) {
+    if (this.aiPanel.aiResponseStructured !== v) {
+      this.aiPanel.aiResponseStructured = v;
+      this.requestUpdate();
+    }
+  }
+  get aiScope(): ContextScope { return this.aiPanel.aiScope; }
+  set aiScope(v: ContextScope) {
+    if (this.aiPanel.aiScope !== v) {
+      this.aiPanel.aiScope = v;
+      this.requestUpdate();
+    }
+  }
+  get aiVerdictResponseId(): string { return this.aiPanel.aiVerdictResponseId; }
+  set aiVerdictResponseId(v: string) {
+    if (this.aiPanel.aiVerdictResponseId !== v) {
+      this.aiPanel.aiVerdictResponseId = v;
+      this.requestUpdate();
+    }
+  }
+  get aiVerdictKind(): '' | 'accept' | 'reject' {
+    return this.aiPanel.aiVerdictKind;
+  }
+  set aiVerdictKind(v: '' | 'accept' | 'reject') {
+    if (this.aiPanel.aiVerdictKind !== v) {
+      this.aiPanel.aiVerdictKind = v;
+      this.requestUpdate();
+    }
+  }
+  get aiLoading(): boolean { return this.aiPanel.aiLoading; }
+  set aiLoading(v: boolean) {
+    if (this.aiPanel.aiLoading !== v) {
+      this.aiPanel.aiLoading = v;
+      this.requestUpdate();
+    }
+  }
+  get aiShowSettings(): boolean { return this.aiPanel.aiShowSettings; }
+  set aiShowSettings(v: boolean) {
+    if (this.aiPanel.aiShowSettings !== v) {
+      this.aiPanel.aiShowSettings = v;
+      this.requestUpdate();
+    }
+  }
+  get aiBudgetCeiling(): number { return this.aiPanel.aiBudgetCeiling; }
+  set aiBudgetCeiling(v: number) {
+    if (this.aiPanel.aiBudgetCeiling !== v) {
+      this.aiPanel.aiBudgetCeiling = v;
+      this.requestUpdate();
+    }
+  }
+
   @state() transientError: string | null = null;
-  @state() aiShowSettings: boolean = false;
 
   /**
    * M3b.2: provider impls registered with the broker.  Production
@@ -909,8 +974,6 @@ export class QuireApp extends LitElement {
     claude: anthropicProvider,
     gemini: geminiProvider
   };
-  /** M3b.4: per-DM session-wide token budget. */
-  @state() aiBudgetCeiling: number = DEFAULT_BUDGET_CEILING;
   private aiAbort: AbortController | null = null;
 
   // Tests can replace this before connectedCallback runs to swap in

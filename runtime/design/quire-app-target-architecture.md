@@ -20,12 +20,23 @@ lagging proxy — measure the real property.)
 | Metric | Value | Notes |
 |---|---|---|
 | LOC | 7465 | the *lagging proxy* |
-| `@state` fields | 41 | **the real metric** — domain state on the host |
+| reactive `@state()` decorators | 32 | **the real metric** — domain state on the host (corrected: the earlier "41" came from `grep -c "@state"`, which also caught ~9 JSDoc *mentions*; the accurate decorator count is `grep -cE "@state\(\)"` = 32) |
 | `@property` | 2 | (it's the root; few inbound props) |
 | `render*` methods | ~42 | the orchestrator's legitimate job |
 | total methods | ~199 | so ~157 non-render logic/handler methods |
 | `session.append(...)` sites | 49 | the event-authoring surface |
-| controllers already extracted | 12 | ai-key-store, ai-write, autosave, broadcast-following, chargen (×4), chat-spoiler-lint, reclaim, route-policy, session-bootstrap |
+| controllers already extracted | 12 → 13 | + `ai-panel-controller` (#413) |
+
+**#413 progress (2026-05-29):** `AiPanelController` extracted — the 10
+AI-panel fields moved off the host (reactive `@state()` **32 → 22**).
+Delegating get/set accessors on the host preserve every call site
+verbatim (firewall-adjacent surface → zero behavior change → green).
+`transientError` stayed on the host (a SHARED error field, not
+AI-panel-specific — a trust-but-verify catch). The cross-controller
+*orchestration* (`submitAiPrompt`, `shareAiResponseToChat`) stays on the
+host by design; its panel-state writes flow through the delegating
+setters. Handler-behavior migration into the controller is the natural
+follow-on increment.
 
 ## The END STATE
 
@@ -52,7 +63,7 @@ compose regions → delegate."
 
 | Metric | Now | Target | Why |
 |---|---|---|---|
-| domain `@state` on host | ~30 of 41 | **≤ ~8** (view-orchestration only) | the host shouldn't *own* domain facts |
+| domain `@state` on host | 22 (was 32; #413 moved 10) | **≤ ~8** (view-orchestration only) | the host shouldn't *own* domain facts |
 | event-authoring methods on host | most of 49 sites | **near 0** (delegated to controllers) | authoring belongs with the state it mutates |
 | LOC | 7465 | trends down (~2–3k) as a *result* | a lagging indicator, not a goal |
 
@@ -60,21 +71,23 @@ Track the first two. LOC follows; don't chase it directly.
 
 ## Decomposition roadmap (next targets, prioritized)
 
-The 41 `@state` fields cluster into clear extraction candidates. In
+The remaining `@state` fields cluster into clear extraction candidates. In
 priority order (biggest-cohesion-first, after the perf prereq below):
 
-1. **`AiPanelController`** — the largest cohesive cluster (~11 `@state`:
-   `aiPromptDraft`, `aiResponse`, `aiResponseStructured`, `aiScope`,
-   `aiVerdictResponseId`, `aiVerdictKind`, `aiLoading`, `aiShowSettings`,
-   `aiReviewEveryUpdate`, `aiBudgetCeiling`, `transientError`) plus the
-   submit / share-to-chat / accept-verdict / settings handlers. Sits
-   alongside the existing `AiWriteController` (write-batch) and
-   `AiKeyStore` (keys) — this one owns the *panel* interaction state.
-   **Firewall note:** `aiResponseStructured` carries a `dmOnly` slice;
-   the render-gate (`showAiPanel()` on live `isCoordinator()`) is the
-   firewall and is pinned by `coord-flip-firewall.test.ts` — preserve it.
+1. **`AiPanelController`** — ✅ STATE EXTRACTED (#413, 2026-05-29). The
+   10 AI fields (`aiPromptDraft`, `aiResponse`, `aiResponseStructured`,
+   `aiScope`, `aiVerdictResponseId`, `aiVerdictKind`, `aiLoading`,
+   `aiShowSettings`, `aiReviewEveryUpdate`, `aiBudgetCeiling`) now live on
+   the controller (NOT `transientError` — that's a shared host error
+   field). Sits alongside `AiWriteController` (write-batch) + `AiKeyStore`
+   (keys). **Firewall:** `aiResponseStructured` carries a `dmOnly` slice;
+   the firewall is the `showAiPanel()` render-gate (live `isCoordinator()`),
+   which stayed on the host and is pinned by `coord-flip-firewall.test.ts`
+   — verified intact. FOLLOW-ON: migrate the panel-state mutations
+   (currently inline in `submitAiPrompt` / the render handlers) into
+   controller methods so behavior — not just state — lives there.
 2. **`DiceController`** — small, clean (`rolls`, `rollDraft`,
-   `rollError` + the roll handlers). Good warm-up extraction.
+   `rollError` + the roll handlers). Good next extraction.
 3. **`ChatController`** — `chatDraft`, `chatError` + send, composed with
    the existing `ChatSpoilerLintController` (which already owns the
    spoiler gate). Together they fully own the chat surface.
