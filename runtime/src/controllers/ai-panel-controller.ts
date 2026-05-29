@@ -56,14 +56,88 @@ export class AiPanelController implements ReactiveController {
   /** M3b.4: per-DM session-wide token budget ceiling. */
   aiBudgetCeiling: number = DEFAULT_BUDGET_CEILING;
 
-  constructor(host: ReactiveControllerHost) {
-    // Registered so future increments can add lifecycle hooks; today
-    // it holds no host ref — mutations flow through the host's
-    // delegating setters, which call host.requestUpdate().
+  constructor(private readonly host: ReactiveControllerHost) {
     host.addController(this);
   }
 
   hostConnected(): void {
-    /* no-op — see constructor note. */
+    /* no-op — state seeds inline. */
+  }
+
+  // ---- mutation methods (#415: behavior, not just state, lives here) ----
+  // The host's cross-controller ORCHESTRATION (submitAiPrompt, which
+  // coordinates the broker / budget / AiKeyStore / AiWriteController, and
+  // the verdict handlers) stays on QuireApp and calls these to mutate the
+  // panel's own state.  Each requests a host re-render.  (The delegating
+  // get/set accessors on QuireApp remain for test/compat writes.)
+
+  toggleSettings(): void {
+    this.aiShowSettings = !this.aiShowSettings;
+    this.host.requestUpdate();
+  }
+
+  setPromptDraft(text: string): void {
+    if (this.aiPromptDraft === text) return;
+    this.aiPromptDraft = text;
+    this.host.requestUpdate();
+  }
+
+  setScope(scope: ContextScope): void {
+    if (this.aiScope === scope) return;
+    this.aiScope = scope;
+    this.host.requestUpdate();
+  }
+
+  setReviewEveryUpdate(value: boolean): void {
+    if (this.aiReviewEveryUpdate === value) return;
+    this.aiReviewEveryUpdate = value;
+    this.host.requestUpdate();
+  }
+
+  /** Start a request: show loading + clear the prior response. */
+  beginRequest(): void {
+    this.aiLoading = true;
+    this.aiResponse = null;
+    this.aiResponseStructured = null;
+    this.host.requestUpdate();
+  }
+
+  /**
+   * Return the scope for THIS request and reset the toggle to 'public'
+   * (the toggle should snap back the moment the DM hits Ask).
+   */
+  consumeScope(): ContextScope {
+    const scope = this.aiScope;
+    this.aiScope = 'public';
+    this.host.requestUpdate();
+    return scope;
+  }
+
+  /** Record the structured dual-card result + reset the verdict buttons. */
+  setResult(structured: AiResponse): void {
+    this.aiResponseStructured = structured;
+    this.aiVerdictResponseId = '';
+    this.aiVerdictKind = '';
+    this.host.requestUpdate();
+  }
+
+  /** Record the safe single-string response + clear the prompt draft. */
+  setSafeResponse(safe: string): void {
+    this.aiResponse = safe;
+    this.aiPromptDraft = '';
+    this.host.requestUpdate();
+  }
+
+  /** Record the DM's accept/reject verdict for visible feedback. */
+  setVerdict(responseId: string, kind: 'accept' | 'reject'): void {
+    this.aiVerdictResponseId = responseId;
+    this.aiVerdictKind = kind;
+    this.host.requestUpdate();
+  }
+
+  /** Request finished (success or error) — clear loading. */
+  endRequest(): void {
+    this.aiLoading = false;
+    this.host.requestUpdate();
   }
 }

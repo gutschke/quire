@@ -4579,18 +4579,12 @@ export class QuireApp extends LitElement {
         .onSetApiKey=${(k: string) => this.setAiApiKey(k)}
         .onSetModel=${(m: string) => this.setAiModel(m)}
         .onSetSystemPrompt=${(t: string) => this.setAiSystemPrompt(t)}
-        .onToggleSettings=${() => {
-          this.aiShowSettings = !this.aiShowSettings;
-        }}
-        .onPromptDraftChange=${(t: string) => {
-          this.aiPromptDraft = t;
-        }}
+        .onToggleSettings=${() => this.aiPanel.toggleSettings()}
+        .onPromptDraftChange=${(t: string) => this.aiPanel.setPromptDraft(t)}
         .onSubmit=${(p: string) => void this.submitAiPrompt(p)}
         .onCancel=${() => this.cancelAiPrompt()}
         .onShareToChat=${() => this.shareAiResponseToChat()}
-        .onSetScope=${(s: ContextScope) => {
-          this.aiScope = s;
-        }}
+        .onSetScope=${(s: ContextScope) => this.aiPanel.setScope(s)}
         .onAcceptResponse=${(id: string) => this.acceptAiResponse(id)}
         .onRejectResponse=${(id: string) => this.rejectAiResponse(id)}
         .verdictResponseId=${this.aiVerdictResponseId}
@@ -4599,9 +4593,7 @@ export class QuireApp extends LitElement {
         .writeBatch=${this.aiWriteBatchView()}
         .recentRejections=${this.aiRecentRejections()}
         .reviewEveryUpdate=${this.aiReviewEveryUpdate}
-        .onSetReviewEveryUpdate=${(v: boolean) => {
-          this.aiReviewEveryUpdate = v;
-        }}
+        .onSetReviewEveryUpdate=${(v: boolean) => this.aiPanel.setReviewEveryUpdate(v)}
         .onApplyAllWrites=${() => this.aiWrites.applyAll()}
         .onApplyWrite=${(id: string) => this.aiWrites.applyOne(id)}
         .onRevertWrite=${(id: string) => this.aiWrites.revertOne(id)}
@@ -6394,14 +6386,11 @@ export class QuireApp extends LitElement {
     this.aiAbort?.abort();
     const ac = new AbortController();
     this.aiAbort = ac;
-    this.aiLoading = true;
+    this.aiPanel.beginRequest();
     this.transientError = null;
-    this.aiResponse = null;
-    this.aiResponseStructured = null;
-    const scope = this.aiScope;
-    // Reset scope BEFORE the awaited call — the toggle should be
-    // visually back to public the moment the DM hits Ask.
-    this.aiScope = 'public';
+    // consumeScope returns the scope for THIS request + resets the
+    // toggle to public (visually back the moment the DM hits Ask).
+    const scope = this.aiPanel.consumeScope();
     const broker = this.brokerForProvider(this.aiProvider);
     try {
       // M3b followup — campaign context.  Fetch the WHOLE
@@ -6471,10 +6460,8 @@ export class QuireApp extends LitElement {
           prevHash: prev
         });
       }
-      this.aiResponseStructured = result;
-      // Clear any prior verdict so the new response's buttons are hot.
-      this.aiVerdictResponseId = '';
-      this.aiVerdictKind = '';
+      // Record the dual-card result + reset the verdict buttons.
+      this.aiPanel.setResult(result);
       // M3c.4: stage the AI's proposed state updates for DM accept.
       // Empty stateUpdates → clear() empties any prior batch so the
       // strip doesn't linger across prompts.
@@ -6489,9 +6476,8 @@ export class QuireApp extends LitElement {
       // Maintain legacy `aiResponse` (string) for the "Share to
       // chat" affordance and any test still referencing it.  Use
       // the safe half — never dmOnly — since shareToChat sends
-      // text into the player-visible chat.
-      this.aiResponse = result.safe;
-      this.aiPromptDraft = '';
+      // text into the player-visible chat.  (Clears the prompt draft.)
+      this.aiPanel.setSafeResponse(result.safe);
       return result.safe;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return null;
@@ -6507,7 +6493,7 @@ export class QuireApp extends LitElement {
       return null;
     } finally {
       if (this.aiAbort === ac) this.aiAbort = null;
-      this.aiLoading = false;
+      this.aiPanel.endRequest();
     }
   }
 
@@ -6651,8 +6637,7 @@ export class QuireApp extends LitElement {
     // also wants to see their button click registered.  In session
     // the event also lands in the audit log for post-session
     // analysis.
-    this.aiVerdictResponseId = responseId;
-    this.aiVerdictKind = kind === 'ai-accept' ? 'accept' : 'reject';
+    this.aiPanel.setVerdict(responseId, kind === 'ai-accept' ? 'accept' : 'reject');
     if (!this.session) return false;
     const v = this.sessionView;
     if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
@@ -6663,7 +6648,7 @@ export class QuireApp extends LitElement {
   cancelAiPrompt(): void {
     this.aiAbort?.abort();
     this.aiAbort = null;
-    this.aiLoading = false;
+    this.aiPanel.endRequest();
   }
 
   shareAiResponseToChat(): boolean {
