@@ -62,7 +62,17 @@ New prioritized work (tasks #405-#410):
   specified).
 - **#408 [P1 XS]** ✅ SHIPPED `26f8f5f` — demoted the player "Growth: N/5" meter line
   (prime-directive fix to Gap A #396); the Rail now signals only at 5 marks.
-- **#409 [Arch]** Define quire-app.ts target architecture + promote memoized materialization / requestUpdate debounce.
+- **#409 [Arch]** ✅ SHIPPED (doc) — wrote **`quire-app-target-architecture.md`**: defines
+  the END STATE (render-orchestrator + thin event-authoring facade owning ZERO domain
+  `@state`), the metrics that matter (domain `@state` on host: ~30→≤8; authoring methods:
+  →0; LOC is a lagging proxy), a prioritized decomposition roadmap (next:
+  AiPanelController → DiceController → ChatController), the firewall/determinism/boundary
+  invariants every extraction must preserve, and the E-PERF prerequisite. Promoted to
+  tracked tasks: **#412** (memoize materialization + debounce requestUpdate — do BEFORE
+  further extraction, since peer.state() re-materializes the full log every call) and
+  **#413** (extract AiPanelController, the largest remaining cluster, after #412). Verified
+  metrics 2026-05-29: 7465 LOC / 41 @state / ~199 methods / 49 session.append sites / 12
+  controllers extracted.
 - **#410 [Arch/Test]** ✅ SHIPPED `7613f91` (3 of 5; 2 deferred → #411). Done: the Q-LT4
   firewall lint is now a COUNT-RATCHET for quire-app.ts (was a wholesale allowlist = zero
   in-file protection; a new v.shared.<DM-only> read now trips it) + removed the stale

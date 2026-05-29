@@ -1,0 +1,131 @@
+# quire-app.ts — target architecture + decomposition finish line
+
+**Status:** definition (2026-05-29, #409, Architect consultancy B4/B5).
+This gives the E-LARGE-1 controller-extraction wave a *finish line* and
+the right *metrics*, and sequences the perf prerequisite that must land
+before further extraction.
+
+## The problem
+
+`quire-app.ts` is the god-object root component. A large extraction
+wave (E-LARGE-1/2) pulled state *clusters* into Lit ReactiveControllers,
+but **LOC barely moved** because the extractions took *state* while the
+*behavior* (handlers, event-authoring) stayed on the host. Without a
+defined END STATE, every extraction feels arbitrary and LOC plateaus
+around 7k indefinitely. (See [[feedback_loc_is_a_proxy]]: LOC is a
+lagging proxy — measure the real property.)
+
+## Current state (verified 2026-05-29)
+
+| Metric | Value | Notes |
+|---|---|---|
+| LOC | 7465 | the *lagging proxy* |
+| `@state` fields | 41 | **the real metric** — domain state on the host |
+| `@property` | 2 | (it's the root; few inbound props) |
+| `render*` methods | ~42 | the orchestrator's legitimate job |
+| total methods | ~199 | so ~157 non-render logic/handler methods |
+| `session.append(...)` sites | 49 | the event-authoring surface |
+| controllers already extracted | 12 | ai-key-store, ai-write, autosave, broadcast-following, chargen (×4), chat-spoiler-lint, reclaim, route-policy, session-bootstrap |
+
+## The END STATE
+
+`quire-app.ts` becomes a **render-orchestrator + thin event-authoring
+facade**:
+
+- It owns ONLY *view-orchestration* `@state` — what's on screen, not
+  domain facts: `appMode`, `wrapStep`, `showRoster`, `stageTab`,
+  `_appState` (routing), `sessionView` (the projected view it renders),
+  plus the firewall-derived render caches `boundCharacter` /
+  `boundCampaign` (which stay here because they're the coord-flip
+  invalidation targets — see [[feedback_engineering_practices_from_reviews]]).
+- It composes the region components (the ~42 `render*` methods stay —
+  composing the UI tree IS the orchestrator's job) and delegates
+  domain state + event authoring to controllers.
+- Domain `@state` and the handlers that author events live on
+  controllers, reached through the controller's public API.
+
+**This is not "zero LOC" — it's zero *domain ownership*.** The target is
+a host that, read top-to-bottom, is "wire controllers → project view →
+compose regions → delegate."
+
+## Metrics that matter (and targets)
+
+| Metric | Now | Target | Why |
+|---|---|---|---|
+| domain `@state` on host | ~30 of 41 | **≤ ~8** (view-orchestration only) | the host shouldn't *own* domain facts |
+| event-authoring methods on host | most of 49 sites | **near 0** (delegated to controllers) | authoring belongs with the state it mutates |
+| LOC | 7465 | trends down (~2–3k) as a *result* | a lagging indicator, not a goal |
+
+Track the first two. LOC follows; don't chase it directly.
+
+## Decomposition roadmap (next targets, prioritized)
+
+The 41 `@state` fields cluster into clear extraction candidates. In
+priority order (biggest-cohesion-first, after the perf prereq below):
+
+1. **`AiPanelController`** — the largest cohesive cluster (~11 `@state`:
+   `aiPromptDraft`, `aiResponse`, `aiResponseStructured`, `aiScope`,
+   `aiVerdictResponseId`, `aiVerdictKind`, `aiLoading`, `aiShowSettings`,
+   `aiReviewEveryUpdate`, `aiBudgetCeiling`, `transientError`) plus the
+   submit / share-to-chat / accept-verdict / settings handlers. Sits
+   alongside the existing `AiWriteController` (write-batch) and
+   `AiKeyStore` (keys) — this one owns the *panel* interaction state.
+   **Firewall note:** `aiResponseStructured` carries a `dmOnly` slice;
+   the render-gate (`showAiPanel()` on live `isCoordinator()`) is the
+   firewall and is pinned by `coord-flip-firewall.test.ts` — preserve it.
+2. **`DiceController`** — small, clean (`rolls`, `rollDraft`,
+   `rollError` + the roll handlers). Good warm-up extraction.
+3. **`ChatController`** — `chatDraft`, `chatError` + send, composed with
+   the existing `ChatSpoilerLintController` (which already owns the
+   spoiler gate). Together they fully own the chat surface.
+
+Stays on the host (view-orchestration / firewall-derived): `appMode`,
+`wrapStep`, `showRoster`, `stageTab`, `_appState`, `sessionView`,
+`boundCharacter`, `boundCampaign`, `saveStatus`/`loadStatus`/`resumePromptDoc`
+(thin status mirrors of `AutosaveController`).
+
+Each extraction follows the validated facade-migration order
+([[feedback_facade_migration_pattern]]) and must keep the suite green
+step-by-step.
+
+## Prerequisite (do BEFORE further extraction) — E-PERF
+
+`peer.state()` re-materializes the ENTIRE event log on every call
+(`core/peer.ts:122-123`: `materialize(this.log.events())`), and the
+session subscriber calls `requestUpdate()` with **no debounce**
+(`quire-app.ts:619,630`). Today the monolith batches renders, so it
+hasn't bitten — but **more controllers = more `requestUpdate` churn =
+more full-log re-materializations per interaction.** Extracting first
+would multiply the render surface on top of an O(n log n)-per-render
+materialize. So sequence the perf work FIRST:
+
+- **Memoize materialization**: cache the materialized `SessionState`
+  keyed on the log's size/clock snapshot; only re-fold when the log
+  actually grew. (`materialize` is already a pure fold — safe to memoize.)
+- **Debounce `requestUpdate`** on the session-update path (microtask or
+  rAF coalesce) so a burst of applied events triggers one render.
+
+Tracked as a task (E-PERF). Target the 4-hour / thousands-of-events /
+≤50-episode session profile from [[project_quire_ai_context_scaling]].
+
+## Invariants every extraction MUST preserve
+
+- **The spoiler firewall** (the crown jewel). Any `@state`/cache that
+  holds character/DM data and moves to a controller must keep its
+  coord-flip invalidation (clear in `invalidateViewerScopedCachesOnCoordChange`
+  + assert in `coord-flip-firewall.test.ts`) OR render-gate on live
+  `isCoordinator()`. This bug class breached 3× — see the reviewer
+  playbook's Adversarial section.
+- **Determinism**: materializer / event-sourcing changes keep
+  `materialize` a pure fold; concurrent-write order stays
+  `causalCompare` (pinned by `state.determinism.test.ts`).
+- **Engine vs campaign boundary**: don't bake new campaign policy into
+  the engine during a move (see `engine-vs-campaign-boundary.md`).
+- **Tests green at every step** (the facade-migration discipline).
+
+## Non-goals
+
+- A from-scratch rewrite. This is incremental extraction toward a
+  defined target, not a big-bang.
+- Chasing a LOC number. The host can be 3k LOC of legitimate render
+  composition; that's fine if domain `@state` ≈ 0.
