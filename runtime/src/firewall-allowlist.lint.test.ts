@@ -36,20 +36,37 @@ import { emptyState, filterForViewer, type SessionState } from './core/state';
  * doesn't leak to the player projection.  Drift = audit the file
  * and add it here, OR refactor to `v.filteredShared.*`.
  */
-const FIREWALL_ALLOWLIST_FILES: ReadonlySet<string> = new Set([
-  // `renderSessionOpenStage` reads DM-only sub-fields (tax,
-  // threadDebt, alignmentDrift) for the carryover-card display;
-  // the function early-returns `!isCoordinator()` before reaching
-  // any v.shared read.  See quire-app.ts:1683.
-  // D5: pendingBondProposalCount reads v.shared.pcBondProposals
-  // but gates on (isCoordinator OR controllerPeerId === peerId).
-  // D5: buildPendingBondProposalsForDmAside is coord-only.
-  'quire-app.ts',
-  // promoteNpcToPc + the chargen-controller pcSlots derivation —
-  // both run in coord-only host methods.  promote-npc emits new
-  // pc-create + seat-add + pc-slot-bind events on coord author.
-  // chargen-controller's read is for slot allocation (coord only).
-  'chargen-controller.ts'
+/**
+ * #410 (2026-05-28 Architect B3): the allowlist used to be a wholesale
+ * file pass — any `v.shared.<DM-only>` read inside quire-app.ts was
+ * permitted, so the ~7400-LOC god-object (the likeliest place to leak)
+ * had ZERO in-file protection.  It's now a COUNT-RATCHET: each
+ * allowlisted file records the number of audited reads; a NEW read
+ * trips the ratchet (see the count test below), forcing an audit of
+ * the new read's coord-gating before the budget is bumped.  This
+ * catches the regression class (a new unaudited read) without
+ * rubber-stamping every existing line.  (chargen-controller.ts was
+ * removed from the allowlist — it has ZERO `v.shared.<DM-only>` reads;
+ * the per-pattern test below now covers it for free.)
+ *
+ * The existing reads (audited when the file was first allowlisted):
+ *   - renderSessionOpenStage reads DM-only sub-fields for the
+ *     carryover card; early-returns `!isCoordinator()` first.
+ *   - pendingBondProposalCount gates on (isCoordinator OR
+ *     controllerPeerId === peerId); buildPendingBondProposalsForDmAside
+ *     + the bond/clock/diff/digest reads are coord-only host methods.
+ */
+const FIREWALL_ALLOWLIST: ReadonlyMap<
+  string,
+  { maxReads: number; note: string }
+> = new Map([
+  [
+    'quire-app.ts',
+    {
+      maxReads: 25,
+      note: 'All reads are in coord-gated render/handler methods (or the own-seat bond-count carve-out).'
+    }
+  ]
 ]);
 
 /**
@@ -144,7 +161,7 @@ describe('Q-LT4 firewall allowlist — direct v.shared.* reads', () => {
         }
         re.lastIndex = 0;
         const basename = filePath.split('/').pop() ?? filePath;
-        if (FIREWALL_ALLOWLIST_FILES.has(basename)) continue;
+        if (FIREWALL_ALLOWLIST.has(basename)) continue;
         const lines = content.split('\n');
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i]!;
@@ -161,7 +178,7 @@ describe('Q-LT4 firewall allowlist — direct v.shared.* reads', () => {
       if (violations.length > 0) {
         const lines = violations.map(
           (v) =>
-            `  ${v.file}:${v.line}\n    ${v.text}\n    → use v.filteredShared.* or add ${v.file} to FIREWALL_ALLOWLIST_FILES after auditing the coord gate`
+            `  ${v.file}:${v.line}\n    ${v.text}\n    → use v.filteredShared.* or add ${v.file} to FIREWALL_ALLOWLIST (with a maxReads budget) after auditing the coord gate`
         );
         throw new Error(
           `Q-LT4 firewall violations (${name} outside allowlist):\n${lines.join('\n')}`
@@ -173,6 +190,36 @@ describe('Q-LT4 firewall allowlist — direct v.shared.* reads', () => {
 
   it('still tripwires on synthesizedPcs (back-compat marker)', () => {
     expect(PATTERN_SYNTHESIZED_PCS.source).toContain('synthesizedPcs');
+  });
+
+  // #410 (Architect B3): the count-ratchet.  An allowlisted file is
+  // permitted to read v.shared.<DM-only> directly, but it may NOT GROW
+  // its read count without a deliberate audit + budget bump.  This
+  // restores in-file protection to the god-object the wholesale
+  // allowlist previously left completely uncovered.
+  it('allowlisted files do not grow their direct v.shared.* read count', () => {
+    const files = listSrcFiles(join(__dirname));
+    for (const [basename, budget] of FIREWALL_ALLOWLIST) {
+      const filePath = files.find(
+        (f) => (f.split('/').pop() ?? f) === basename
+      );
+      expect(filePath, `allowlisted file ${basename} not found`).toBeDefined();
+      const content = readFileSync(filePath!, 'utf-8');
+      let count = 0;
+      for (const { re } of FIREWALL_PATTERNS) {
+        re.lastIndex = 0;
+        const matches = content.match(re);
+        count += matches ? matches.length : 0;
+        re.lastIndex = 0;
+      }
+      expect(
+        count,
+        `${basename} now has ${count} direct v.shared.<DM-only> reads ` +
+          `(budget ${budget.maxReads}).  A NEW read was added: audit its ` +
+          `coord-gating, then bump maxReads (or use v.filteredShared.*).  ` +
+          `${budget.note}`
+      ).toBeLessThanOrEqual(budget.maxReads);
+    }
   });
 });
 

@@ -834,6 +834,53 @@ describe('materialize — pc-edit poison-key defense (N-2)', () => {
   });
 });
 
+describe('pc-edit universal-write trust gap (E-TEST-2, #410)', () => {
+  // STATUS.md + memory project_quire_pc_edit_trust_gap: the pc-edit
+  // materializer accepts a write from ANY peer for ANY pcId — it does
+  // not check authorship against the PC's controller or coordHolders.
+  // This is TOLERATED by the current threat model (civilized players;
+  // we defend against accidental DM disclosure + outsiders, not a
+  // malicious teammate forging events).  This test PINS that as a
+  // DELIBERATE decision: if a future feature adds per-PC write
+  // authority, it will fail here and force an explicit choice rather
+  // than silently changing a property nothing asserted.
+  it('a non-coordinator peer can write a pc-edit for a PC it does not control', () => {
+    const dm = new EventLog('dm');
+    dm.append('coordinator-claim', {}); // dm is the coordinator
+    // 'bob' is NOT a coordinator and does NOT control pc-alice.
+    const bob = new EventLog('bob');
+    bob.append('pc-edit', { v: 1, pcId: 'pc-alice', field: 'harm', value: 3 });
+
+    const obs = new EventLog('obs');
+    obs.apply(dm.events()[0]);
+    obs.apply(bob.events()[0]);
+    const state = materialize(obs.events());
+
+    // The write IS applied — no authority check on plain pc-edit.
+    expect(state.pcEdits['pc-alice'].harm).toBe(3);
+  });
+
+  it('the ONLY pc-edit authority check is the AI hard-gate path (causedByResponseId without a matching ai-accept is rejected)', () => {
+    // Contrast: an AI-attributed pc-edit on a hard-gated transition
+    // (harm → 4) IS rejected without a coord ai-accept in the log.
+    // This is the single place pc-edit enforces authority — proving
+    // the universal-write gap above is specific to PLAIN pc-edits.
+    const dm = new EventLog('dm');
+    dm.append('coordinator-claim', {});
+    dm.append('pc-edit', {
+      v: 1,
+      pcId: 'pc-alice',
+      field: 'harm',
+      value: 4,
+      causedByResponseId: 'resp-with-no-accept'
+    });
+    const state = materialize(dm.events());
+    // Rejected: the AI-caused hard-gate transition has no matching
+    // ai-accept, so the edit does not apply.
+    expect(state.pcEdits['pc-alice']?.harm).toBeUndefined();
+  });
+});
+
 describe('materialize — notes', () => {
   it('appends notes', () => {
     const log = new EventLog('alice');
