@@ -27,6 +27,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { emptyState, filterForViewer, type SessionState } from './core/state';
 
 /**
  * Files allowed to read DM-only `v.shared.*` slots directly.
@@ -62,6 +63,21 @@ const FIREWALL_ALLOWLIST_FILES: ReadonlySet<string> = new Set([
  */
 const FIREWALL_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   { name: 'v.shared.synthesizedPcs', re: /v\.shared\.synthesizedPcs\b/g },
+  // #406 (2026-05-28 senior Test/Architecture consultancy): the lint
+  // was hand-maintained and MISSED five DM-only objects that
+  // filterForViewer wholesale-wipes — threadDebt, pinnedNpcs,
+  // scratchNotes, aiAudit, casterState.  A raw `v.shared.<one>` read
+  // would leak DM-only material exactly like the others.  The
+  // self-completing coverage test below now PINS this list against
+  // filterForViewer's actual wipe set, so a future wiped field can't
+  // silently escape the lint.  (No current production file reads these
+  // via the `v.shared.` destructure form — verified — so adding them
+  // introduces zero violations.)
+  { name: 'v.shared.threadDebt', re: /v\.shared\.threadDebt\b/g },
+  { name: 'v.shared.pinnedNpcs', re: /v\.shared\.pinnedNpcs\b/g },
+  { name: 'v.shared.scratchNotes', re: /v\.shared\.scratchNotes\b/g },
+  { name: 'v.shared.aiAudit', re: /v\.shared\.aiAudit\b/g },
+  { name: 'v.shared.casterState', re: /v\.shared\.casterState\b/g },
   // D5 (2026-05-27): bond proposals are DM-private state.
   // filterForViewer wipes them for non-coord.  Direct reads must
   // be coord-gated upstream.
@@ -157,5 +173,85 @@ describe('Q-LT4 firewall allowlist — direct v.shared.* reads', () => {
 
   it('still tripwires on synthesizedPcs (back-compat marker)', () => {
     expect(PATTERN_SYNTHESIZED_PCS.source).toContain('synthesizedPcs');
+  });
+});
+
+/**
+ * #406 (2026-05-28): make the lint SELF-COMPLETING for the
+ * wholesale-wipe category.  Rather than trust the hand-maintained
+ * FIREWALL_PATTERNS list, derive the set of DM-only state objects that
+ * `filterForViewer` actually wipes-to-empty for a non-coord viewer
+ * (the unambiguous "this whole object is DM-only" signal), and assert
+ * BOTH that the wipe set matches an expected list (so a NEW wipe trips
+ * this test → forces human review) AND that every wiped object has a
+ * `v.shared.<key>` lint pattern (so it can't silently escape Q-LT4).
+ */
+describe('#406 firewall lint is self-completing for wholesale-wiped objects', () => {
+  /** The DM-only state objects filterForViewer wipes to empty.  If you
+   *  add/remove a wholesale wipe in filterForViewer, update this list
+   *  AND add a FIREWALL_PATTERNS entry — the assertions below enforce
+   *  both. */
+  const EXPECTED_WHOLESALE_WIPED = [
+    'threadDebt',
+    'pinnedNpcs',
+    'scratchNotes',
+    'aiAudit',
+    'casterState',
+    'pcAccidentalGrants',
+    'diffProposals',
+    'dmClocks',
+    'pcBondProposals'
+  ].sort();
+
+  function isEmptyContainer(v: unknown): boolean {
+    if (Array.isArray(v)) return v.length === 0;
+    if (v && typeof v === 'object') {
+      return Object.keys(v as Record<string, unknown>).length === 0;
+    }
+    return false;
+  }
+
+  /** Build a saturated state where every known DM-only object is
+   *  NON-empty.  These keys are wiped-not-read by filterForViewer, so
+   *  cast dummies are safe (their contents are never inspected). */
+  function saturatedState(): SessionState {
+    const s = emptyState() as unknown as Record<string, unknown>;
+    s.coordinator = 'dm';
+    s.threadDebt = { pc1: 'noticed' };
+    s.pinnedNpcs = ['npc1'];
+    s.scratchNotes = [{ peerId: 'dm', ts: 1, text: 'x' }];
+    s.aiAudit = [{ peerId: 'dm', ts: 1, kind: 'prompt' }];
+    s.casterState = { pc1: { ladderState: 'noticed', taxActive: false, spamCount: 0 } };
+    s.pcAccidentalGrants = { pc1: [{ ts: 1, note: 'x' }] };
+    s.diffProposals = [{ id: 'd1' }];
+    s.dmClocks = { c1: { name: 'x', filled: 0, segments: 4 } };
+    s.pcBondProposals = { pc1: [{ text: 'x' }] };
+    return s as unknown as SessionState;
+  }
+
+  it('the set filterForViewer wipes matches the expected list (tripwire on wipe-list change)', () => {
+    const state = saturatedState();
+    const coordView = filterForViewer(state, 'dm'); // identity (coordinator)
+    const playerView = filterForViewer(state, 'alice'); // stripped
+    const wiped: string[] = [];
+    for (const key of Object.keys(coordView as unknown as Record<string, unknown>)) {
+      const before = (coordView as unknown as Record<string, unknown>)[key];
+      const after = (playerView as unknown as Record<string, unknown>)[key];
+      if (!isEmptyContainer(before) && isEmptyContainer(after)) {
+        wiped.push(key);
+      }
+    }
+    expect(wiped.sort()).toEqual(EXPECTED_WHOLESALE_WIPED);
+  });
+
+  it('every wholesale-wiped object has a v.shared.<key> lint pattern', () => {
+    const patternNames = new Set(FIREWALL_PATTERNS.map((p) => p.name));
+    const missing = EXPECTED_WHOLESALE_WIPED.filter(
+      (key) => !patternNames.has(`v.shared.${key}`)
+    );
+    expect(
+      missing,
+      `wholesale-wiped DM-only objects with no Q-LT4 lint pattern: ${missing.join(', ')}`
+    ).toEqual([]);
   });
 });
