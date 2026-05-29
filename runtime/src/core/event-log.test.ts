@@ -52,6 +52,42 @@ describe('EventLog — basics', () => {
   });
 });
 
+describe('EventLog — revision (#412 memoization key)', () => {
+  it('starts at 0 and bumps on every append', () => {
+    const log = new EventLog('alice');
+    expect(log.revision()).toBe(0);
+    log.append('chat', { text: 'a' });
+    expect(log.revision()).toBe(1);
+    log.append('chat', { text: 'b' });
+    expect(log.revision()).toBe(2);
+  });
+
+  it('bumps on a newly-applied event but NOT on a duplicate or invalid one', () => {
+    const src = new EventLog('alice');
+    const ev = src.append('chat', { text: 'a' });
+    const dst = new EventLog('bob');
+    expect(dst.revision()).toBe(0);
+    expect(dst.apply(ev)).toBe(true);
+    expect(dst.revision()).toBe(1);
+    // Re-applying the same event is a no-op → revision unchanged.
+    expect(dst.apply(ev)).toBe(false);
+    expect(dst.revision()).toBe(1);
+    // An invalid event is rejected → revision unchanged.
+    expect(
+      dst.apply({
+        id: 'x:0',
+        peerId: 'x',
+        seq: 0,
+        clock: {},
+        kind: 'chat',
+        payload: {},
+        ts: 0
+      } as never)
+    ).toBe(false);
+    expect(dst.revision()).toBe(1);
+  });
+});
+
 describe('EventLog — replication', () => {
   it('integrates an external event into this log', () => {
     const alice = new EventLog('alice');

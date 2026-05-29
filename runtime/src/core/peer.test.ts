@@ -17,6 +17,44 @@ describe('Peer — single peer', () => {
   });
 });
 
+describe('Peer — state() memoization (#412 E-PERF)', () => {
+  it('returns the SAME object for repeated calls at the same log revision', () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    alice.append('chat', { text: 'hi' });
+    const a = alice.state();
+    const b = alice.state();
+    expect(a).toBe(b); // memo hit — no redundant re-materialize
+  });
+
+  it('re-materializes (new object) after a local append', () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    alice.append('chat', { text: 'one' });
+    const before = alice.state();
+    alice.append('chat', { text: 'two' });
+    const after = alice.state();
+    expect(after).not.toBe(before); // revision changed → fresh fold
+    expect(after.chat).toHaveLength(2); // and reflects the new event
+  });
+
+  it('re-materializes after a remotely-applied event (memo keyed on log changes)', () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    const bob = makePeer('bob', net);
+    alice.append('chat', { text: 'from alice' });
+    const bobBefore = bob.state();
+    expect(bobBefore.chat).toHaveLength(1); // already converged via gossip
+    // A fresh read at the same revision is the same object …
+    expect(bob.state()).toBe(bobBefore);
+    // … but a new remote event invalidates the memo.
+    alice.append('chat', { text: 'again' });
+    const bobAfter = bob.state();
+    expect(bobAfter).not.toBe(bobBefore);
+    expect(bobAfter.chat).toHaveLength(2);
+  });
+});
+
 describe('Peer — two peers convergence', () => {
   it('two peers converge after exchanging events', () => {
     const net = new InMemoryNetwork();

@@ -41,8 +41,21 @@ export interface QuireEvent {
 export class EventLog {
   private readonly _events = new Map<string, QuireEvent>();
   private _clock: Record<string, number> = {};
+  /**
+   * Monotonic counter bumped on every successful mutation (append, or
+   * a newly-applied apply).  Lets consumers memoize derived values
+   * (e.g. `Peer.state()`'s materialize fold) and re-derive ONLY when
+   * the log actually changed.  A duplicate / invalid `apply` does NOT
+   * bump it — the log is unchanged, so a memo keyed on this stays valid.
+   */
+  private _revision = 0;
 
   constructor(public readonly peerId: PeerId) {}
+
+  /** Current log revision; changes iff the event set changed. */
+  revision(): number {
+    return this._revision;
+  }
 
   append(kind: EventKind, payload: unknown): QuireEvent {
     const seq = (this._clock[this.peerId] ?? 0) + 1;
@@ -57,6 +70,7 @@ export class EventLog {
       ts: Date.now()
     };
     this._events.set(event.id, event);
+    this._revision++;
     return event;
   }
 
@@ -69,6 +83,7 @@ export class EventLog {
       next[pid] = Math.max(next[pid] ?? 0, n);
     }
     this._clock = next;
+    this._revision++;
     return true;
   }
 

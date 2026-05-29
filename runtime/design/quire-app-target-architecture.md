@@ -108,6 +108,24 @@ materialize. So sequence the perf work FIRST:
 Tracked as a task (E-PERF). Target the 4-hour / thousands-of-events /
 ≤50-episode session profile from [[project_quire_ai_context_scaling]].
 
+**UPDATE (2026-05-29, #412 SHIPPED):** the **memoization is done** —
+`EventLog` now exposes a `revision()` counter (bumps on append + a
+newly-applied apply) and `Peer.state()` memoizes the materialize fold
+keyed on it. This collapses the redundant same-revision materializes (a
+local append previously materialized the whole log TWICE — once via
+`peer.append → notifyStateChange → onStateChange → notify`, once via the
+controller method's explicit `notify()` — plus the coordinator-check
+reads). Firewall-NEUTRAL: it caches the UNFILTERED state;
+`filterForViewer` still runs fresh per `view()`. The **`requestUpdate`
+debounce was found unnecessary** (trust-but-verify): the session
+subscriber sets the `@state sessionView`, and Lit already batches all
+`@state` writes into ONE render per microtask — renders are already
+coalesced regardless of how many controllers fire. The only residual
+micro-cost is a second `filterForViewer` on the double-notify;
+eliminating it needs a viewer-keyed view memo, which carries firewall
+risk (a stale projection) and isn't worth it without profiling
+evidence — deferred.
+
 ## Invariants every extraction MUST preserve
 
 - **The spoiler firewall** (the crown jewel). Any `@state`/cache that

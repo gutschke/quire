@@ -61,6 +61,17 @@ export class Peer {
   private readonly log: EventLog;
   private readonly stateListeners = new Set<StateChangeHandler>();
   private readonly unsubscribes: Unsubscribe[] = [];
+  /**
+   * #412 (E-PERF): memoize the materialize fold, keyed on the log
+   * revision.  `state()` is called redundantly within a single logical
+   * update — `view()` reads it, coordinator-checks read it, and a local
+   * `append` fires `notifyStateChange` (→ a notify) AND the controller
+   * method then notifies again, so a single append materialized the
+   * whole log twice.  The memo collapses all same-revision reads to one
+   * fold.  Firewall-NEUTRAL: this caches the UNFILTERED state; the
+   * per-viewer `filterForViewer` projection runs fresh on every `view()`.
+   */
+  private _stateMemo: { revision: number; state: SessionState } | null = null;
 
   constructor(
     public readonly peerId: PeerId,
@@ -118,9 +129,14 @@ export class Peer {
     return this.append('coordinator-reclaim', { fromPeerId });
   }
 
-  /** Current materialized state. */
+  /** Current materialized state (memoized per log revision). */
   state(): SessionState {
-    return materialize(this.log.events());
+    const revision = this.log.revision();
+    const memo = this._stateMemo;
+    if (memo !== null && memo.revision === revision) return memo.state;
+    const state = materialize(this.log.events());
+    this._stateMemo = { revision, state };
+    return state;
   }
 
   /** Snapshot of the current vector clock. */
