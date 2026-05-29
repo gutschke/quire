@@ -39,8 +39,18 @@ has no defined target; ~7465 LOC / 41 @state / ~137 methods), and
 Realization act-break ships as a silent card).
 
 New prioritized work (tasks #405-#410):
-- **#405 [P1]** LWW concurrent-write matrix + replay-convergence property test (E-TEST-1).
-- **#406 [P1]** Firewall fuzz target + self-completing classification SSOTs (filterForViewer↔persistence strip lists; FIREWALL_PATTERNS coverage).
+- **#405 [P1]** ✅ SHIPPED `6a51d4f` — LWW peerId-tiebreak regression (proves ordering
+  ignores wall-clock ts) + 50-scenario replay-convergence property test (routes through the
+  real EventLog.apply+events() sort path). E-TEST-1 closed.
+- **#406 [P1]** ✅ SHIPPED `6a51d4f` — (1) firewall taint-fuzz of the live projection
+  (40 seeded scenarios, unique sentinels in every DM-only free-text sink, deep-scan asserts
+  none survive filterForViewer incl. the curated own-PC slice); (2) self-completing
+  wholesale-wipe lint — caught + closed a real gap the consultant predicted
+  (threadDebt/pinnedNpcs/scratchNotes/aiAudit/casterState were wiped but had no Q-LT4
+  pattern; added all five). DEFERRED part: the filterForViewer-wipe↔PLAYER_SCOPE_STRIP_KINDS
+  event-kind cross-check — the save-path property is already pinned by the schema-driven
+  persistence.coverage.test.ts (classify-or-fail) + persistence.hostile.test.ts, and a full
+  kind→field map would reintroduce the hand-maintenance the consultant warned against.
 - **#407 [P0 experience]** ✅ SHIPPED `abc90bf` — Realization act-break ceremony. The
   playbook-trained tactical critique talked the design out of a stored DM-authored reveal
   line (real firewall surface + re-narrates the DM's spoken reveal, rules.md:179) into a
