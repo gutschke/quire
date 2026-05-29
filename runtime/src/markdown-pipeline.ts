@@ -39,11 +39,17 @@ marked.setOptions({
   pedantic: false
 });
 
-// Forked DOMPurify instance bound to the page window.  Hooks installed on
-// this instance do not pollute the global DOMPurify singleton, so HMR module
-// re-loads cannot accumulate duplicate hooks and unrelated future modules
-// cannot interfere with our sanitization pipeline.
-const purify = DOMPurify(window);
+// Forked DOMPurify instance bound to the page window, created LAZILY on
+// first render (see `getPurify`) — NOT at module-eval time.  This module
+// is a lazy-loaded chunk (`ensureMarkdownPipeline`); a fire-and-forget
+// import that resolves in a non-DOM context — e.g. after a test env tears
+// its `window` down, or in a node-environment worker — must NOT throw
+// `ReferenceError: window is not defined` at evaluation.  Deferring keeps
+// module eval free of any `window` access; `renderMarkdownImpl` only runs
+// in a real DOM context (browser / happy-dom) where `window` exists.
+// Hooks installed on this forked instance don't pollute the global
+// DOMPurify singleton (so HMR re-loads can't accumulate duplicate hooks).
+let _purify: ReturnType<typeof DOMPurify> | null = null;
 
 // Block dangerous URL schemes explicitly on href/src.  DOMPurify's defaults
 // already cover javascript: and vbscript: in most contexts; this hook makes
@@ -58,14 +64,6 @@ const BAD_URL_SCHEMES = [
   'filesystem:',
   'about:'
 ];
-purify.addHook('uponSanitizeAttribute', (_node, data) => {
-  if ((data.attrName === 'href' || data.attrName === 'src') && data.attrValue) {
-    const v = data.attrValue.trim().toLowerCase();
-    if (BAD_URL_SCHEMES.some((s) => v.startsWith(s))) {
-      data.keepAttr = false;
-    }
-  }
-});
 
 // Defense-in-depth element removal.  Per the campaign-content trust
 // model, we strip phishing surfaces (form / input / button / select /
@@ -108,26 +106,6 @@ const FORBID_TAG_NAMES = new Set([
   'BGSOUND',
   'MENU'
 ]);
-purify.addHook('uponSanitizeElement', (node, data) => {
-  if (FORBID_TAG_NAMES.has(data.tagName.toUpperCase())) {
-    (node as Element).remove();
-  }
-});
-
-// External http(s) links get target=_blank + rel=noopener noreferrer so they
-// open in a new tab without leaking the runtime origin via the Referer header
-// or window.opener.  Protocol-relative `//host/path` URLs are deliberately
-// NOT promoted — they resolve to the runtime origin's protocol and the
-// new-tab affordance would mislead users about destination.
-purify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
-    const href = node.getAttribute('href');
-    if (href && /^https?:\/\//i.test(href)) {
-      node.setAttribute('target', '_blank');
-      node.setAttribute('rel', 'noopener noreferrer');
-    }
-  }
-});
 
 const FORBID_ATTR = [
   // Layout / phishing.
@@ -154,9 +132,51 @@ const FORBID_ATTR = [
   'onkeypress'
 ] as const;
 
+/**
+ * Lazily create the forked DOMPurify instance + install its hooks on
+ * first render.  Called only from `renderMarkdownImpl`, which runs in a
+ * real DOM context — so `window` is always defined here, and module
+ * evaluation (which may happen in a non-DOM context for a lazy chunk)
+ * never touches `window`.
+ */
+function getPurify(): ReturnType<typeof DOMPurify> {
+  if (_purify) return _purify;
+  const purify = DOMPurify(window);
+  // Order matters: hooks run in registration order per phase.
+  purify.addHook('uponSanitizeAttribute', (_node, data) => {
+    if ((data.attrName === 'href' || data.attrName === 'src') && data.attrValue) {
+      const v = data.attrValue.trim().toLowerCase();
+      if (BAD_URL_SCHEMES.some((s) => v.startsWith(s))) {
+        data.keepAttr = false;
+      }
+    }
+  });
+  purify.addHook('uponSanitizeElement', (node, data) => {
+    if (FORBID_TAG_NAMES.has(data.tagName.toUpperCase())) {
+      (node as Element).remove();
+    }
+  });
+  // External http(s) links get target=_blank + rel=noopener noreferrer so
+  // they open in a new tab without leaking the runtime origin via the
+  // Referer header or window.opener.  Protocol-relative `//host/path` URLs
+  // are deliberately NOT promoted — they resolve to the runtime origin's
+  // protocol and the new-tab affordance would mislead about destination.
+  purify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A') {
+      const href = node.getAttribute('href');
+      if (href && /^https?:\/\//i.test(href)) {
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer');
+      }
+    }
+  });
+  _purify = purify;
+  return _purify;
+}
+
 export function renderMarkdownImpl(text: string): SanitizedHtml {
   const html = marked.parse(text, { async: false }) as string;
-  return purify.sanitize(html, {
+  return getPurify().sanitize(html, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ['target', 'rel'],
     FORBID_ATTR: [...FORBID_ATTR]
