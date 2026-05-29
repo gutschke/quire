@@ -3551,11 +3551,6 @@ export const quireAppStyles = css`
       background: light-dark(#fef9e9, #2a2104);
       border: 1px solid light-dark(#d6a559, #92660e);
     }
-    .player-rail-advancement-progress {
-      margin: 0.3rem 0 0.8rem;
-      font-size: 0.78rem;
-      color: light-dark(#64748b, #94a3b8);
-    }
     /* #398: post-Realization casting section.  Quiet, in-fiction; the
        tax line is amber (a live cost) and disappears when the DM
        releases the tax in fiction. */

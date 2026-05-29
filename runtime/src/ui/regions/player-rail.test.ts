@@ -365,16 +365,15 @@ describe('<player-rail> Gap A — advancement signal', () => {
     expect(chip?.getAttribute('role')).toBe('note');
   });
 
-  it('shows a faint progress line at 1-4 ticked bullets', async () => {
+  it('shows NOTHING at 1-4 ticked bullets — no meter to grind (prime directive)', async () => {
     const el = mount();
     el.character = pcWithMarks(3);
     el.effective = el.character.record;
     await el.updateComplete;
-    expect(
-      el.querySelector('.player-rail-advancement-ready')
-    ).toBeNull();
-    const prog = el.querySelector('.player-rail-advancement-progress');
-    expect(prog?.textContent).toMatch(/3 \/ 5/);
+    expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
+    // The "Growth: N/5" fraction was demoted (creative-director review).
+    expect(el.querySelector('.player-rail-advancement-progress')).toBeNull();
+    expect(el.textContent ?? '').not.toMatch(/Growth:/);
   });
 
   it('shows nothing with no ticked bullets', async () => {
@@ -383,7 +382,6 @@ describe('<player-rail> Gap A — advancement signal', () => {
     el.effective = el.character.record;
     await el.updateComplete;
     expect(el.querySelector('.player-rail-advancement-ready')).toBeNull();
-    expect(el.querySelector('.player-rail-advancement-progress')).toBeNull();
   });
 
   it('regression: a stale record.marks count alone does NOT fire the chip', async () => {

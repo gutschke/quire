@@ -246,7 +246,7 @@ describe('QuireApp pc-edit', () => {
       app.submitPcEdit('p1', 'markBullets.hardMoment', true);
       app.submitPcEdit('p1', 'markBullets.learned', true);
       await flush();
-      expect(marksNow()).toBe(2); // chip → faint "Growth: 2 / 5"
+      expect(marksNow()).toBe(2); // count is 2 internally; player Rail shows nothing until 5 (#408)
     });
   });
 

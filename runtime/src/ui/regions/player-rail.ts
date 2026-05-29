@@ -974,15 +974,16 @@ export class PlayerRail extends LitElement {
   private renderAdvancementSignal(
     r: import('../../character-loader').CharacterRecord
   ): TemplateResult {
-    const marks = countAdvancementMarks(r.markBullets);
-    if (marks <= 0) return html``;
-    if (marks >= 5) {
-      return html`<p class="player-rail-advancement-ready" role="note">
-        ✦ Advancement ready — pick one with your DM between sessions.
-      </p>`;
-    }
-    return html`<p class="player-rail-advancement-progress">
-      Growth: ${marks} / 5
+    // Below 5 marks: render NOTHING.  A running "Growth: N/5" fraction
+    // on the player sheet is a meter to grind — exactly what the prime
+    // directive forbids (rules.md:11 "no farming"; growth is felt in
+    // fiction, not counted).  The DM keeps the precise tally on the
+    // wrap sheet; the player gets the signal only when an advancement
+    // is actually available to act on.  (Creative-director review
+    // 2026-05-28 — demoted from the original faint 1-4 progress line.)
+    if (countAdvancementMarks(r.markBullets) < 5) return html``;
+    return html`<p class="player-rail-advancement-ready" role="note">
+      ✦ Advancement ready — pick one with your DM between sessions.
     </p>`;
   }
 
