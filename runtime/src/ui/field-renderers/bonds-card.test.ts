@@ -74,7 +74,7 @@ describe('<bonds-card>', () => {
     );
   });
 
-  it('remove button invokes onRemove with the bond id', async () => {
+  it('#387: removing a ratified bond is a TWO-step confirm, not a one-click delete', async () => {
     const el = mount();
     el.bonds = [bond({ id: 'b-removed' })];
     el.editablePcId = 'mei';
@@ -83,8 +83,56 @@ describe('<bonds-card>', () => {
       removed = { pcId, bondId };
     };
     await el.updateComplete;
+    // First click ARMS the confirm — does NOT remove.
     (el.querySelector('.bonds-card-remove') as HTMLButtonElement).click();
+    await el.updateComplete;
+    expect(removed).toBeNull();
+    const confirm = el.querySelector('.bonds-card-remove-confirm');
+    expect(confirm).not.toBeNull();
+    // Story-signal framing (folds in the "bond-remove story signal" item).
+    expect(confirm?.textContent?.toLowerCase()).toContain('sever this tie');
+    // Confirming removes with the right id.
+    (
+      el.querySelector('.bonds-card-remove-confirm-yes') as HTMLButtonElement
+    ).click();
     expect(removed).toEqual({ pcId: 'mei', bondId: 'b-removed' });
+  });
+
+  it('#387: "Keep" cancels the removal confirm without calling onRemove', async () => {
+    const el = mount();
+    el.bonds = [bond({ id: 'b1' })];
+    el.editablePcId = 'mei';
+    let called = false;
+    el.onRemove = () => {
+      called = true;
+    };
+    await el.updateComplete;
+    (el.querySelector('.bonds-card-remove') as HTMLButtonElement).click();
+    await el.updateComplete;
+    (
+      el.querySelector('.bonds-card-remove-confirm-no') as HTMLButtonElement
+    ).click();
+    await el.updateComplete;
+    expect(called).toBe(false);
+    // Back to the armed-able ✕, confirm gone.
+    expect(el.querySelector('.bonds-card-remove-confirm')).toBeNull();
+    expect(el.querySelector('.bonds-card-remove')).not.toBeNull();
+  });
+
+  it('#387: a pending confirm clears if the bond disappears (e.g. removed by another DM)', async () => {
+    const el = mount();
+    el.bonds = [bond({ id: 'b1' }), bond({ id: 'b2' })];
+    el.editablePcId = 'mei';
+    el.onRemove = () => {};
+    await el.updateComplete;
+    // Arm the confirm on b1.
+    (el.querySelectorAll('.bonds-card-remove')[0] as HTMLButtonElement).click();
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-remove-confirm')).not.toBeNull();
+    // b1 vanishes from the synced list → the stale confirm clears.
+    el.bonds = [bond({ id: 'b2' })];
+    await el.updateComplete;
+    expect(el.querySelector('.bonds-card-remove-confirm')).toBeNull();
   });
 
   it('shows a count in the head when bonds present', async () => {

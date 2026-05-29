@@ -3137,6 +3137,40 @@ export const quireAppStyles = css`
       border-color: light-dark(#fca5a5, #991b1b);
       border-radius: 3px;
     }
+    /* #387: two-step removal confirm for a ratified (established) bond.
+       Framed as a story beat ("sever this tie"), not a silent delete. */
+    .bonds-card-remove-confirm {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem;
+      margin-top: 0.3rem;
+      padding: 0.3rem 0.4rem;
+      border-left: 3px solid light-dark(#f59e0b, #d97706);
+      background: light-dark(#fffbeb, #292524);
+      font-size: 0.82rem;
+    }
+    .bonds-card-remove-confirm-msg {
+      flex: 1 1 12rem;
+    }
+    .bonds-card-remove-confirm-yes,
+    .bonds-card-remove-confirm-no {
+      padding: 0.1rem 0.5rem;
+      border-radius: 3px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .bonds-card-remove-confirm-yes {
+      border: 1px solid light-dark(#fca5a5, #991b1b);
+      background: light-dark(#ffffff, #1c1917);
+      color: light-dark(#dc2626, #ef4444);
+    }
+    .bonds-card-remove-confirm-no {
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #1c1917);
+      color: inherit;
+    }
     .bonds-card-add {
       margin-top: 0.4rem;
       padding: 0.3rem 0.7rem;

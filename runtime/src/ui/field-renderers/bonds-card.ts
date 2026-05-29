@@ -27,7 +27,7 @@
  */
 
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import type { Bond } from '../../character-loader';
 
 export interface BondsCardEntry extends Bond {
@@ -98,6 +98,26 @@ export class BondsCard extends LitElement {
   /** Host callback for the coord-only delete affordance. */
   @property({ attribute: false }) onRemove: RemoveBondCallback | null = null;
 
+  /**
+   * #387: which bond is in the "confirm removal" state.  A ratified
+   * bond is an established in-fiction tie; removing it is a story beat,
+   * not an undo, so the ✕ arms a confirm rather than deleting on the
+   * first click.  Local @state, ephemeral.
+   */
+  @state() private removeConfirmId: string | null = null;
+
+  /** Clear a stale confirm if the bond list or PC changes underfoot
+   *  (e.g. a switcher PC change, or the bond got removed/ratified). */
+  override willUpdate(changed: Map<string, unknown>): void {
+    if (
+      (changed.has('bonds') || changed.has('editablePcId')) &&
+      this.removeConfirmId !== null &&
+      !this.bonds.some((b) => b.id === this.removeConfirmId)
+    ) {
+      this.removeConfirmId = null;
+    }
+  }
+
   override render(): TemplateResult {
     const isCoord = this.editablePcId !== null;
     return html`<section class="bonds-card">
@@ -149,14 +169,42 @@ export class BondsCard extends LitElement {
           </aside>`
         : nothing}
       ${isCoord && this.onRemove !== null && !isInbound
-        ? html`<button
-            type="button"
-            class="bonds-card-remove"
-            title="Remove this bond"
-            @click=${() => this.onRemove?.(this.editablePcId!, b.id)}
-          >
-            ✕
-          </button>`
+        ? this.removeConfirmId === b.id
+          ? html`<span class="bonds-card-remove-confirm" role="alert">
+              <span class="bonds-card-remove-confirm-msg"
+                >Sever this tie?  It's an established connection — a
+                table-fiction call, not an undo.</span
+              >
+              <button
+                type="button"
+                class="bonds-card-remove-confirm-yes"
+                @click=${() => {
+                  this.removeConfirmId = null;
+                  this.onRemove?.(this.editablePcId!, b.id);
+                }}
+              >
+                Remove
+              </button>
+              <button
+                type="button"
+                class="bonds-card-remove-confirm-no"
+                @click=${() => {
+                  this.removeConfirmId = null;
+                }}
+              >
+                Keep
+              </button>
+            </span>`
+          : html`<button
+              type="button"
+              class="bonds-card-remove"
+              title="Remove this bond"
+              @click=${() => {
+                this.removeConfirmId = b.id;
+              }}
+            >
+              ✕
+            </button>`
         : nothing}
     </li>`;
   }
