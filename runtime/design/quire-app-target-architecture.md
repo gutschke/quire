@@ -86,16 +86,33 @@ priority order (biggest-cohesion-first, after the perf prereq below):
    — verified intact. FOLLOW-ON: migrate the panel-state mutations
    (currently inline in `submitAiPrompt` / the render handlers) into
    controller methods so behavior — not just state — lives there.
-2. **`DiceController`** — small, clean (`rolls`, `rollDraft`,
-   `rollError` + the roll handlers). Good next extraction.
-3. **`ChatController`** — `chatDraft`, `chatError` + send, composed with
-   the existing `ChatSpoilerLintController` (which already owns the
-   spoiler gate). Together they fully own the chat surface.
+2. **`DiceController`** — ✅ SHIPPED (#414, 2026-05-29). Unlike the AI
+   panel this is STATE + BEHAVIOR: `rolls`/`rollDraft`/`rollError` + the
+   parse→roll→history→draft-clear logic moved to the controller; the
+   host keeps a delegating `submitRoll` (called from the `/roll` slash
+   path + tests) + getters, and publishes the roll to peers via an env
+   callback (host owns the session gate). `@state()` 22 → 19.
+3. **`ChatController`** — ❌ RECLASSIFIED, not extracting (#414 review,
+   2026-05-29). On inspection it doesn't pencil out: `chatDraft` /
+   `chatError` are transient INPUT-DRAFT state — the same category as
+   `joinCodeDraft` / `displayNameDraft` / `renameDraft`, which this very
+   doc lists as STAYING on the host. And `submitChat` is cross-controller
+   ORCHESTRATION (it routes `/roll` → dice, `/ai` → the AI panel, caps
+   length, and gates through `ChatSpoilerLintController`'s firewall),
+   which legitimately stays on the host exactly like `submitAiPrompt`.
+   So a "ChatController" would be a thin 2-field bag for state that
+   belongs with the host's view-input — net churn, no real cohesion win.
+   The chat DOMAIN state (messages) already lives in the event log /
+   `sessionView`, not on the host. Leaving `chatDraft`/`chatError` as
+   host view-input is the correct classification.
 
-Stays on the host (view-orchestration / firewall-derived): `appMode`,
-`wrapStep`, `showRoster`, `stageTab`, `_appState`, `sessionView`,
-`boundCharacter`, `boundCampaign`, `saveStatus`/`loadStatus`/`resumePromptDoc`
-(thin status mirrors of `AutosaveController`).
+Stays on the host (view-orchestration / input-drafts / firewall-derived):
+`appMode`, `wrapStep`, `showRoster`, `stageTab`, `_appState`,
+`sessionView`, `boundCharacter`, `boundCampaign`,
+`saveStatus`/`loadStatus`/`resumePromptDoc` (thin status mirrors of
+`AutosaveController`), and the input-drafts `joinCodeDraft`,
+`displayNameDraft`, `renameDraft`, `chatDraft`, `chatError`,
+`aiPromptDraft`-style fields that are tied to a render template.
 
 Each extraction follows the validated facade-migration order
 ([[feedback_facade_migration_pattern]]) and must keep the suite green
