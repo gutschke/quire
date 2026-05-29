@@ -63,7 +63,16 @@ New prioritized work (tasks #405-#410):
 - **#408 [P1 XS]** ✅ SHIPPED `26f8f5f` — demoted the player "Growth: N/5" meter line
   (prime-directive fix to Gap A #396); the Rail now signals only at 5 marks.
 - **#409 [Arch]** Define quire-app.ts target architecture + promote memoized materialization / requestUpdate debounce.
-- **#410 [Arch/Test]** Per-line firewall-lint pragma, hostile pc-edit test (E-TEST-2), AI-wrap lint (Q-LT5), explicit flake policy, multi-peer race test.
+- **#410 [Arch/Test]** ✅ SHIPPED `7613f91` (3 of 5; 2 deferred → #411). Done: the Q-LT4
+  firewall lint is now a COUNT-RATCHET for quire-app.ts (was a wholesale allowlist = zero
+  in-file protection; a new v.shared.<DM-only> read now trips it) + removed the stale
+  chargen-controller allowlist entry; E-TEST-2 pins the pc-edit universal-write trust gap
+  as a deliberate decision (only the AI hard-gate path checks authority); the flake policy
+  is resolved in test-env.ts (CI-verified across 100 runs the flake never reddened a build
+  → keep strict CI, with a documented trigger to revisit). Deferred → **#411** (low-pri,
+  with rationale): the Q-LT5 AI-wrap lint (a grep-lint can't distinguish untrusted/trusted
+  concatenation; wrapUntrusted is already pervasive + tested) and the AI-write delta
+  stale-read test (STATUS-documented tolerated; #405 pins LWW determinism).
 
 **Coaching landed (2026-05-28):** #407/#408 were the first tactical-expert
 round briefed from `reviewer-playbook.md`.  Both experts visibly applied
