@@ -204,6 +204,51 @@ never used `<dialog>` at all.
   test layer keeps missing the visibility/path/clearing
   problems because it's the wrong altitude for them.
 
+### LL-3 amendment (the c20702f fix didn't fix it)
+
+Shipping c20702f (CSS rules for the three backdrops) did NOT
+make the dialogs visible.  The deeper root cause: `<quire-shell>`
+declares ONLY named slots (topbar / rail / stage / aside / dock).
+The three confirm-dialogs were authored as CHILDREN of
+`<quire-shell>` with no `slot=` attribute, so they sat in light
+DOM but the browser never distributed them to any slot.  Even
+with `position: fixed; inset: 0; z-index: 1000` applied, the
+backdrop's bounding rect was 0×0 because the element was never
+laid out at all.  Fix in d5d1a9c: move all four overlay elements
+out as siblings of `<quire-shell>`.
+
+The d5d1a9c fix was found by running an actual Playwright probe
+against the live deploy.  The static `dialog-visibility.test.ts`
+shipped in c20702f couldn't detect this — source inspection
+sees the CSS but not the runtime slot distribution.  The
+unit-test layer for the confirm-dialog component itself can't
+detect it either, because the component renders fine in
+isolation; it's the HOST'S mount point that broke layout.
+
+**Closed by:** `e2e/dialog-visibility.spec.ts` — a real-Chromium
+Playwright spec that opens each dialog programmatically and
+asserts the backdrop fills the viewport.  Register new
+custom-element confirm-dialogs in its `DIALOGS_TO_PROBE`
+array; the test fails at PR time if a new dialog can't be
+made visible from its mount point.
+
+**Discipline upgrade (in response to user's "do you need
+better and more realistic test coverage using actual
+browsers?"):** YES.  The pattern is now:
+1. Static text test (`src/ui/styles/dialog-visibility.test.ts`)
+   for the CSS-rule-missing flavor.  Fast.  Catches authoring
+   errors at PR time.
+2. **Real-browser e2e test (`e2e/dialog-visibility.spec.ts`)
+   for the layout flavor.**  Slow (5s).  Catches the slot-
+   distribution / containing-block / ancestor-CSS flavors.
+3. Manual probe via `dialog-visibility-probe.mjs` style script
+   when investigating a user-reported "dialog has no effect"
+   to triage which layer (CSS / mount / handler).
+
+Three layers; no single layer would have caught both c20702f
+and d5d1a9c bugs.  The bug class is "rendered DOM looks right
+but the user sees nothing" — only a real browser knows.
+
 ---
 
 ## Lessons that did NOT need a new entry
