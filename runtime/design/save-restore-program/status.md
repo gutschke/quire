@@ -6,7 +6,7 @@ blocks playable release)
 **Active milestone:** M6a-FS-3 SHIPPED / playable-release-plan.md
 milestone 3 complete.  Next: M6a-FS-4 (game-mechanic edges +
 simulation 06).
-**Latest deploy hash:** (filled after push)
+**Latest deploy hash:** 3de5696 (run #10 ship — M6a-FS-3)
 **Branch:** main
 
 ## Session log (most recent first)
