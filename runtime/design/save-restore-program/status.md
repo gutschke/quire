@@ -7,7 +7,7 @@ new tests; host integration deferred to run #8)
 **Active milestone:** M6a-FS — File System Access API path
 (engine layer + UI region complete; host wiring into
 `quire-app.ts` deferred to run #8 per OP-036 / OP-038)
-**Latest deploy hash:** see end-of-turn (will be the run #7 push)
+**Latest deploy hash:** 292258e (run #7 docs); engine + UI at 3fc0659
 **Branch:** main
 
 ## Session log (most recent first)
