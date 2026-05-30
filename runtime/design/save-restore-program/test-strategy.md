@@ -22,11 +22,11 @@ Map every invariant to its assertion + the gate that enforces it.
 
 | Invariant | Assertion | Gate |
 |---|---|---|
-| Restored events propagate to other peers | TBD (M3) | CI unit + e2e |
-| Save→restore byte-identical (modulo savedAt) | TBD (M4) | CI unit |
-| LWW under same-ms coordinator-reclaim | TBD (M4) | CI unit |
+| Restored events propagate to other peers | `peer.restore-rebroadcast.test.ts` (M3) | CI unit + e2e |
+| Save→restore byte-identical (modulo savedAt) | `persistence.restore-drill.test.ts` (M4) | CI unit |
+| LWW under concurrent coordinator-claim | `persistence.restore-drill.test.ts` (M4) | CI unit |
 | Schema-version mismatch rejects cleanly | `persistence.ts:530` + tests | CI unit |
-| 100-event soak roundtrip | `e2e/soak.spec.ts:155` | nightly |
+| 100-event soak roundtrip | `persistence.restore-drill.test.ts` (M4) + `e2e/soak.spec.ts` | CI unit + e2e |
 
 ## Durability invariants
 
@@ -45,13 +45,24 @@ Map every invariant to its assertion + the gate that enforces it.
 | In-fiction copy reviewed | TBD (M8) | manual + TTRPG-expert sign-off |
 | **Silent-player firewall:** no player-facing "your save was evicted" | Negative test (M5) | CI unit |
 
-## Promotion targets
+## Promotion targets — STATUS
 
-Three currently-e2e-only assertions to promote to CI-unit (M4):
-1. Cross-week save→load→continue (`multi-session.spec.ts:117`).
-2. Branch-divergence merge (`git-snapshot.spec.ts:243`).
-3. 100-event soak (`soak.spec.ts:155`).
+Three currently-e2e-only assertions promoted to CI-unit in M4
+(`persistence.restore-drill.test.ts`):
+1. ✅ Cross-week save→load→continue.
+2. ✅ Branch-divergence merge (both A-then-B and B-then-A orderings).
+3. ✅ 100-event soak (byte-identical roundtrip + 0 unknownKinds + convergence).
+
+Plus OP-004 (LWW determinism under concurrent coord-claim) was queued
+for M4 and lands in the same drill file.
 
 The pattern: replace the real WebRTC transport with the in-memory transport,
 swap the e2e harness for vitest, keep the assertions verbatim. This was the
-M3 / M3a / M3c pattern.
+M3 / M3a / M3c pattern. `npm run drill` runs the focused subset locally.
+
+Note on the "nightly" framing in the roadmap: the drill tests run on
+EVERY `npm test` (every push + PR), not just nightly. The original
+roadmap conservatively budgeted them as nightly because of e2e
+overhead; the unit-test promotion makes them effectively-free, so they
+run on every CI invocation. Nightly e2e is still useful for the
+WebRTC-in-real-browser version of these same scenarios.
