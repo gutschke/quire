@@ -15,7 +15,7 @@
  * lands on the materialized state at all).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import './quire-app';
 import { QuireApp } from './quire-app';
 import type { TransportFactory } from './session-controller';
@@ -23,6 +23,15 @@ import {
   InMemoryNetwork,
   InMemoryTransport
 } from './core/transports/in-memory';
+import { ensureMarkdownPipeline } from './markdown';
+
+beforeAll(async () => {
+  // Run #15: the player digest recap now renders via the markdown
+  // pipeline (marked + DOMPurify), not a raw `<pre>`.  Warm the
+  // pipeline before the suite so renderMarkdown returns real HTML
+  // synchronously inside each assertion.
+  await ensureMarkdownPipeline();
+});
 
 function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
   return {

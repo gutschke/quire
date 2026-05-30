@@ -97,6 +97,24 @@ export const quireAppStyles = css`
       background: color-mix(in oklch, var(--accent-teal) 88%, white);
     }
 
+    /*
+     * Brittle-class radar — coordinate renames.
+     * Run #15 (visual-design expert v2 Q10): the following classes
+     * are pinned by persistence.simulation-09-ui-findability.test.ts,
+     * mock-campaign-10-routing-and-drafts.md (run #15), and the
+     * surface tests in quire-app.player-digest-surface.test.ts.  A
+     * future re-style that renames these classes MUST also update
+     * the tests:
+     *   .landing-hero, a.landing-cta (mock-09 Scenario 1)
+     *   .session-open-player-recap, .session-open-player-digest
+     *     (mock-09 Scenario 4)
+     *   .session-open-player-recap-dismiss (run #15 dismiss
+     *     handler — mock-09 Scenario 4 + mock-10)
+     *   .dm-pc-rename-* family (OP-045 PC rename surface;
+     *     pc-edit interaction tests + chargen-roundtrip tests)
+     *   .session-digest-draft (digest editor textarea;
+     *     persistence tests in session-digest.test.ts).
+     */
     /* Visual #5 — no-campaign landing hero.  Promotes the
      * "Open Underleaf" CTA from a plain-blue text link to an
      * intentional first-impression card with a primary button.
@@ -3801,12 +3819,23 @@ export const quireAppStyles = css`
       color: light-dark(#0050a0, #6bb6ff);
     }
 
+    /*
+     * Run #15 (visual-design expert v2 #1 — highest-leverage
+     * next step): migrate the global .card surface to tokens.
+     * Single-rule edit; propagates the foundation through every
+     * region that inherits .card today (AI panel + DM operational
+     * view + session-digest + backups-card + recents + chargen
+     * wrapper).  The pre-fix light-dark legacy palette + 6 px
+     * radius read as "foreign" next to the run #14 landing hero;
+     * tokens unify the surface palette.
+     */
     .card {
       padding: 1rem 1.25rem;
-      border: 1px solid light-dark(#ddd, #333);
-      border-radius: 6px;
+      border: var(--border-hairline);
+      border-radius: var(--r-card);
       margin: 1rem 0;
-      background: light-dark(#fcfcfc, #1f1f1f);
+      background: var(--surface-card);
+      box-shadow: var(--shadow-card);
     }
 
     .card h2 {
@@ -4434,7 +4463,12 @@ export const quireAppStyles = css`
       color: light-dark(#0f172a, #f1f5f9);
     }
     .quire-topbar-help-chip:focus-visible {
-      outline: 2px solid light-dark(#0050a0, #6bb6ff);
+      /* Run #15 (visual-design expert v2 #3): topbar help-chip
+         focus ring now consumes the global token for cohesion
+         with the rest of the foundation pass.  The topbar is
+         persistent chrome — its focus language must match the
+         rest of the app. */
+      outline: var(--ring-focus);
       outline-offset: 1px;
     }
 

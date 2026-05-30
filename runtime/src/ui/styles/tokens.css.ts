@@ -39,6 +39,20 @@ export const tokens = css`
     --s-6: 24px;
     --s-8: 32px;
 
+    /**
+     * Public token contract — coordinate renames.
+     * Run #15 (visual-design expert v2 Q10): once a region rule
+     * consumes a token (e.g. var(--r-card)), the token name
+     * becomes a load-bearing public contract.  The brittle-class
+     * radar in quire-app.css.ts (line 105) tracks which token
+     * names are now consumed by region rules; if you rename a
+     * token there, update the consumers in lockstep.  Tokens
+     * known to be consumed by region rules as of run #15:
+     *   --r-pill, --r-card, --shadow-card, --shadow-elev-1,
+     *   --ring-focus, --button-bg, --button-bg-hover,
+     *   --button-bg-primary, --button-ink-primary,
+     *   --surface-card, --border-hairline.
+     */
     /* ---- Radii (run #14 — collapsed 12-value sprawl to 3-step scale) ---- */
     --r-chip: 4px;
     --r-card: 8px;

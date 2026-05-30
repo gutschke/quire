@@ -259,6 +259,40 @@ function scrubMapBlobIfUnrevealed(
   };
 }
 
+/**
+ * Run #15 (FC-2 narrowing per adversarial v2 H-3): keys whose
+ * SEMANTIC value is "this sub-field of the payload NAMES the
+ * character field being targeted."  v:1 uses `field`.  A future
+ * v:2 author who RENAMES that semantic key would pick from this
+ * vocabulary: `field` / `path` / `target` / `key` / `attr` /
+ * `prop`.  The rename-firewall scan walks these keys' values
+ * (NOT all string values) so a benign rename of the PC's NAME
+ * to the literal "tax" (or any other DM-only field name) is
+ * NOT dropped from the player projection — only payloads whose
+ * field-name-key carries a DM-only string are dropped.
+ *
+ * This is narrower than the run-#14 broad scan: pre-fix the
+ * scan rejected `pc-edit { field:'name', value:'tax' }` because
+ * `value:'tax'` triggered a match → cross-device divergence with
+ * a player whose name is "Tax".  The narrowing trades the
+ * never-triggered "v:2 author writes the DM-only string as a
+ * RAW non-field-name VALUE" defense (already covered by the
+ * contract-level prohibition in DEC-031) for the live
+ * "player names themselves something that happens to match a
+ * DM-only field name" case.
+ */
+const FIELD_NAME_KEYS = ['field', 'path', 'target', 'key', 'attr', 'prop'] as const;
+
+function payloadFieldNameKeyNamesDmField(
+  p: Record<string, unknown> | null | undefined
+): boolean {
+  if (!p || typeof p !== 'object') return false;
+  for (const k of FIELD_NAME_KEYS) {
+    if (k in p && isDmOnlyCharacterFieldPath(p[k])) return true;
+  }
+  return false;
+}
+
 const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // pc-edit: drop entirely when `field` is a DM-only top-level
   // (per the dotted-field-path check from D-prep-2-A).  M1
@@ -270,28 +304,24 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // (e.g. → `path`) would bypass the `p.field` lookup — `p.field`
   // would be undefined, the DM-only check would return false, and
   // the event would survive the player projection carrying
-  // `path: "dmNotes"` (DM-private text).  Today's runtime ALSO has
-  // the v:2 silent-no-op at materialize (INV-7), but the firewall's
-  // FIRST line of defense is the per-kind scrubber; we strengthen
-  // it.  Strategy: scan EVERY string-valued top-level field in the
-  // payload — if ANY string matches a known DM-only field path,
-  // drop the event.  This catches `path: "dmNotes"`, `target:
-  // "tax.releaseMoment"`, or any future sub-field-key the v:2
-  // author may pick.  Defends in depth alongside DEC-031's
-  // contract-level prohibition.
+  // `path: "dmNotes"` (DM-private text).
+  //
+  // Run #15 (FC-2 narrowing per adversarial v2 H-3): the run-#14
+  // defense scanned ALL string values, including the legitimate
+  // RENAME value.  A player named "Tax" lost every pc-edit from
+  // the player projection → cross-device divergence with OP-045
+  // rename shipping.  Narrowed to scan only known field-name keys
+  // (FIELD_NAME_KEYS) so the contract-level vocabulary is what
+  // load-bears; the rename's VALUE is allowed through.  Defends
+  // in depth alongside DEC-031's contract-level prohibition
+  // (rev'd in run #15).
   'pc-edit': (event) => {
     const p = event.payload as { field?: unknown } | null | undefined;
     if (isDmOnlyCharacterFieldPath(p?.field)) return null;
-    // Run #14 INV-RENAME-FIREWALL: defense-in-depth scan for any
-    // string value in the payload's top-level fields that names a
-    // DM-only character field.  This catches the field-rename
-    // bypass without locking the contract to a specific sub-field
-    // key name.
-    if (p && typeof p === 'object') {
-      for (const v of Object.values(p)) {
-        if (isDmOnlyCharacterFieldPath(v)) return null;
-      }
-    }
+    if (
+      payloadFieldNameKeyNamesDmField(p as Record<string, unknown> | undefined)
+    )
+      return null;
     if (!p || typeof p !== 'object') return event;
     const { safe, touched } = dropPcEventMetadata(
       p as unknown as Record<string, unknown>
@@ -331,10 +361,20 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // bond-ratify (D5-9): strip the optional DM-only `dmNotes`
   // sub-field from the payload.  Player save keeps the bond text
   // (the player-visible part) but never the dmNotes.
+  //
+  // Run #15 (FC-2 parity per adversarial v2 H-1): the field-rename
+  // defense from pc-edit applies here.  A future v:2 `bond-ratify`
+  // that renames `dmNotes` → `private` (or any other key) would
+  // bypass the `'dmNotes' in obj` check.  Same rename-firewall
+  // shape: scan known field-name keys (FIELD_NAME_KEYS) for a
+  // DM-only string value, drop the event on match.  DEC-031 §1's
+  // contract-level prohibition still load-bears as the primary
+  // defense; this is in-depth.
   'bond-ratify': (event) => {
     const p = event.payload;
     if (!p || typeof p !== 'object') return event;
     const obj = p as Record<string, unknown>;
+    if (payloadFieldNameKeyNamesDmField(obj)) return null;
     if (!('dmNotes' in obj)) return event;
     const { dmNotes: _omit, ...safe } = obj;
     void _omit;
@@ -352,10 +392,19 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // constant from character-loader so the lint stays load-bearing).
   // M1 (2026-05-29 Adversarial #2): also drop the wrapper-level
   // `causedByResponseId` AI-provenance tracer.
+  // Run #15 (FC-2 parity per adversarial v2 H-1): the field-rename
+  // defense applies here too.  A future v:2 `pc-create` that
+  // renames `dmNotes` → `private` (or moves the DM-only fields
+  // under a `meta:` sub-key with a new name) would bypass the
+  // by-name strip.  Same rename-firewall shape: scan known
+  // field-name keys (FIELD_NAME_KEYS) for a DM-only string value,
+  // drop the event on match.  DEC-031 §1's contract-level
+  // prohibition still load-bears as the primary defense.
   'pc-create': (event) => {
     const p = event.payload;
     if (!p || typeof p !== 'object') return event;
     const obj = p as Record<string, unknown>;
+    if (payloadFieldNameKeyNamesDmField(obj)) return null;
     let touched = false;
     const safe: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {

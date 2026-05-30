@@ -14,7 +14,7 @@
  * weren't accidentally hidden, and respond to user input.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import './quire-app';
 import { QuireApp } from './quire-app';
 import type { TransportFactory } from './session-controller';
@@ -22,6 +22,13 @@ import {
   InMemoryNetwork,
   InMemoryTransport
 } from './core/transports/in-memory';
+import { ensureMarkdownPipeline } from './markdown';
+
+beforeAll(async () => {
+  // Run #15: warm the markdown pipeline once so the player
+  // digest recap card renders real HTML in Scenario 4.
+  await ensureMarkdownPipeline();
+});
 
 function inMemoryFactory(network: InMemoryNetwork, id: string): TransportFactory {
   return {
@@ -139,9 +146,16 @@ describe('Mock Campaign 09 — UI findability (run #14)', () => {
     await flush();
     await flush();
     await flush();
-    (player as unknown as { appMode: string }).appMode = 'session-open';
-    player.requestUpdate();
-    await flush();
+    // Run #15 (UX-3 routing fix per ttrpg-ux-expert v2): instead of
+    // forcing appMode from outside the production routing path (the
+    // run #14 false-positive shape), assert the production auto-
+    // trigger flipped the player into session-open mode on its own.
+    // The trigger fires inside the session-controller subscriber
+    // when filteredShared.sessionDigests grows AND the local-seen
+    // marker is older than the digest's ts.
+    expect((player as unknown as { appMode: string }).appMode).toBe(
+      'session-open'
+    );
 
     const text = getAllText(player);
     expect(text).toContain('Previously, at the table');
@@ -151,6 +165,11 @@ describe('Mock Campaign 09 — UI findability (run #14)', () => {
       '.session-open-player-digest'
     );
     expect(body).toBeTruthy();
+    // The Dismiss → continue button is reachable.
+    const dismiss = player.shadowRoot!.querySelector(
+      '.session-open-player-recap-dismiss'
+    ) as HTMLButtonElement | null;
+    expect(dismiss).toBeTruthy();
   });
 
   it('Scenario 6 (fallback): player in session-open mode without a digest sees the re-orienting placeholder', async () => {

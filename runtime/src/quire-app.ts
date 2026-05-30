@@ -1298,9 +1298,7 @@ export class QuireApp extends LitElement {
       // session becomes active and the materialized state shows
       // there's a pending open ritual (sessionDigests.length >
       // sessionOpens.length), shift to session-open mode so the
-      // DM walks the carryover before resuming play.  Coord-only:
-      // player viewers stay in 'in-session' (the player-side
-      // welcome-back surface is D2.5 / out of scope for MVP).
+      // DM walks the carryover before resuming play.
       // Reload during the ritual re-enters via this same trigger;
       // Begin clears the trigger by emitting a session-open event.
       if (
@@ -1310,6 +1308,27 @@ export class QuireApp extends LitElement {
         v.shared.coordHolders.has(v.peerId) &&
         (v.shared.sessionDigests?.length ?? 0) >
           (v.shared.sessionOpens?.length ?? 0)
+      ) {
+        this.appMode = 'session-open';
+      }
+      // Run #15 (UX-3 routing fix per ttrpg-ux-expert v2): player
+      // auto-open trigger.  Without this, the "Previously, at the
+      // table…" recap card from run #14 mounts on a surface NO
+      // player ever reaches — the coord-only block above never
+      // flips a player viewer into session-open mode.  Per the
+      // expert's top-3 #1: drop the coordHolders clause for a
+      // player-side flip ONLY when a new sessionDigest exists
+      // that the player hasn't yet acknowledged via dismiss.
+      // The "last-seen" marker lives in localStorage keyed by
+      // campaign-slug; per-player dismissal silences subsequent
+      // page loads until a NEWER digest lands.
+      if (
+        v.status === 'active' &&
+        this.appMode === 'in-session' &&
+        v.peerId !== null &&
+        !v.shared.coordHolders.has(v.peerId) &&
+        (v.filteredShared.sessionDigests?.length ?? 0) > 0 &&
+        this.playerHasUnseenDigest(v)
       ) {
         this.appMode = 'session-open';
       }
@@ -1502,6 +1521,15 @@ export class QuireApp extends LitElement {
           this._crossDeviceProbe.reset();
           this.crossDeviceProbeMatch = null;
         }
+        // Run #15 (adversarial v2 H-2): clear loadedExtraFields on
+        // cross-campaign navigation.  The carrier's doc comment
+        // promises "Cleared on campaign mismatch / session reset"
+        // but no code path honored the campaign-mismatch half — only
+        // leaveSession (home-route only).  If a DM opens campaign
+        // A's save, then navigates directly to campaign B's URL,
+        // the first campaign-B autosave would otherwise emit
+        // campaign A's extraFields.  One-line additive defense.
+        this.loadedExtraFields = undefined;
         this._appState ={
           kind: 'loading',
           slug: route.slug,
@@ -1732,6 +1760,20 @@ export class QuireApp extends LitElement {
     // whole manifest + world overview on every click.
     return normalizeSlug(`${src.owner}/${src.repo}@${src.ref}`) ===
       normalizeSlug(slug);
+  }
+
+  /**
+   * Run #15 (UX-5): canonical campaign slug used as the
+   * localStorage-persistence key by `<session-digest>` and any
+   * future per-campaign DM-side draft surface.  Returns ''
+   * when no campaign is loaded (the persistence layer treats
+   * '' as a no-op).
+   */
+  private currentCampaignSlugForPersistence(): string {
+    const c = this.getCurrentCampaign();
+    if (!c) return '';
+    const src = c.base.source;
+    return `${src.owner}-${src.repo}`;
   }
 
   /** Click handler: pushState the new route, then re-render via navigate. */
@@ -2174,6 +2216,99 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * Run #15 (UX-3 routing fix): localStorage key for tracking the
+   * latest session-digest signature a player has acknowledged
+   * (via dismissing the "Previously" recap).  The signature is
+   * `${ts}` (epoch ms of the most-recent digest the player saw).
+   * Subsequent digests with a STRICTLY GREATER `ts` flip the
+   * player back into session-open mode on next subscribe.
+   *
+   * Per-campaign + per-origin; player-visible state only.  The
+   * signature carries no DM-only material — `ts` lands in the
+   * SessionDigest's player-visible classification.
+   */
+  private readonly PLAYER_DIGEST_SEEN_PREFIX = 'quire.player-digest-seen.';
+
+  /**
+   * Run #15 (UX-3): in-memory mirror of the persisted seen-marker.
+   * Belt-and-suspenders for the "player joined before
+   * getCurrentCampaign() resolves" race (campaign discovery via
+   * the host's peer-join can lag the first session-view fire).
+   * The instance field is read AND the localStorage value is
+   * read; the maximum of the two is the effective marker.  On
+   * dismiss, we update BOTH.
+   */
+  private playerLastSeenDigestTsInMemory: number = 0;
+
+  private playerDigestSeenStorageKey(): string | null {
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return null;
+    const src = campaign.base.source;
+    return `${this.PLAYER_DIGEST_SEEN_PREFIX}${src.owner}-${src.repo}`;
+  }
+
+  private getPlayerLastSeenDigestTs(): number {
+    const key = this.playerDigestSeenStorageKey();
+    let persisted = 0;
+    if (key) {
+      try {
+        const raw = window.localStorage?.getItem(key) ?? null;
+        if (raw) {
+          const n = Number.parseInt(raw, 10);
+          if (Number.isFinite(n)) persisted = n;
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    return Math.max(persisted, this.playerLastSeenDigestTsInMemory);
+  }
+
+  private setPlayerLastSeenDigestTs(ts: number): void {
+    this.playerLastSeenDigestTsInMemory = Math.max(
+      this.playerLastSeenDigestTsInMemory,
+      ts
+    );
+    const key = this.playerDigestSeenStorageKey();
+    if (!key) return;
+    try {
+      window.localStorage?.setItem(key, String(ts));
+    } catch {
+      /* silent: quota / sandbox */
+    }
+  }
+
+  /**
+   * Run #15 (UX-3 routing fix): true when the player has a
+   * filteredShared digest with a `ts` strictly greater than the
+   * persisted "last-seen" marker.  Used to gate the player-side
+   * session-open auto-flip.
+   */
+  private playerHasUnseenDigest(v: SessionView): boolean {
+    if (v.status !== 'active') return false;
+    const digests = v.filteredShared.sessionDigests ?? [];
+    if (digests.length === 0) return false;
+    const last = digests[digests.length - 1];
+    if (!last || last.markdown.length === 0) return false;
+    return last.ts > this.getPlayerLastSeenDigestTs();
+  }
+
+  /**
+   * Run #15 (UX-3 routing fix): player-side dismiss handler for
+   * the "Previously, at the table…" recap.  Records the seen-ts
+   * so the same digest doesn't re-flip the player into session-
+   * open mode on next subscribe, then exits back to in-session.
+   */
+  private dismissPlayerDigestRecap(): void {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return;
+    const digests = v.filteredShared.sessionDigests ?? [];
+    const last = digests[digests.length - 1];
+    if (last) this.setPlayerLastSeenDigestTs(last.ts);
+    this.appMode = 'in-session';
+  }
+
+  /**
    * D2 (2026-05-26): "Open session…" launcher.  Twin of wrap.
    * Coord-only; visible only when there's at least one prior
    * session-digest to pick up from.  Mostly redundant — the
@@ -2228,13 +2363,30 @@ export class QuireApp extends LitElement {
       const playerDigests = v.filteredShared.sessionDigests ?? [];
       const lastPlayerDigest = playerDigests[playerDigests.length - 1];
       if (lastPlayerDigest && lastPlayerDigest.markdown.length > 0) {
+        // Run #15 (UX-3 expert top-3 #2): render markdown, not
+        // `<pre>`.  The digest is markdown by contract; raw `<pre>`
+        // showed headings as literal `## Title` text.  The markdown
+        // pipeline (marked + DOMPurify + js-yaml) is the same one
+        // chat / the DM session-digest editor uses; safe by
+        // construction.
+        const digestHtml = renderMarkdown(lastPlayerDigest.markdown);
         return html`<section class="card session-open-player-recap">
           <h2>Previously, at the table…</h2>
           <p class="muted">
             The DM is re-orienting; play resumes shortly.  Here's
             the recap from last session.
           </p>
-          <pre class="session-open-player-digest">${lastPlayerDigest.markdown}</pre>
+          <div class="session-open-player-digest">${unsafeHTML(digestHtml)}</div>
+          <div class="session-open-player-recap-actions">
+            <button
+              type="button"
+              class="session-open-player-recap-dismiss"
+              @click=${() => this.dismissPlayerDigestRecap()}
+              title="Acknowledge the recap and return to the table view"
+            >
+              Got it — continue
+            </button>
+          </div>
         </section>`;
       }
       return html`<section class="card">
@@ -2546,6 +2698,7 @@ export class QuireApp extends LitElement {
       ${this.wrapStep === 'digest'
         ? html`<session-digest
             .priorDigests=${priorDigests}
+            .campaignSlug=${this.currentCampaignSlugForPersistence()}
             .onGenerate=${
               isCoord
                 ? async () => this.generateSessionDigest()

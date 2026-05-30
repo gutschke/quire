@@ -1,243 +1,270 @@
 # Playtest-Readiness Program — Status
 
-**Last updated:** 2026-05-30 run #14 (consultant ingestion +
-P0/P1 fixes + visual CSS foundation + mock-09 + v2 briefs)
+**Last updated:** 2026-05-30 run #15 (v2 consultant ingestion +
+critical fixes + foundation continuation + mock-10 + run-#16 briefs)
 **Active workstreams:**
-- WS-A (data-format forward-compat): EXTENDED this run
-  (INV-EXTRA-LOOP + INV-RENAME-FIREWALL + DEC-031)
-- WS-B (DM write-up phase): FINDING-E closed (digest reaches
-  DM AI context); v2 brief queued
-- WS-C (chargen polish): OP-045 closed; v2 brief queued
-- WS-D (full backup E2E): maintained green; cloud-backup-e2e
-  unaffected by run-#14 changes
-- WS-E (AI integration): FINDING-E shipped; AI-2 (cache) +
-  AI-3 (live PC state) deferred to next run
-- WS-F (visual polish): FOUNDATION shipped (items 1-5 as
-  single CSS diff); v2 brief queued for items 6-10
-- WS-G (UI-iteration discipline): MOCK-09 shipped (WS-G
-  validation walk for the visual pass)
+- WS-A (data-format forward-compat): EXTENDED this run (DEC-032
+  FC-2 narrowing + parity for bond-ratify + pc-create)
+- WS-B (DM write-up phase): UX-5 SHIPPED (digest draft
+  persistence)
+- WS-C (chargen polish): UX-3 routing fix SHIPPED (player auto-
+  trigger)
+- WS-D (full backup E2E): unchanged (maintained green)
+- WS-E (AI integration): no changes this run (AI-2, AI-3 still
+  queued)
+- WS-F (visual polish): foundation CONTINUED (`.card` migration
+  + topbar focus + brittle-class doc); items 6-10 partial
+- WS-G (UI-iteration discipline): MOCK-10 shipped + mock-09
+  Scenario 4 updated to exercise production routing
 
-**Latest deploy hash:** 6ac731b (run #14 ship)
+**Latest deploy hash:** see end of run #15 entry
 **Branch:** main
 
 ---
 
-## Run #14 — what shipped
+## Run #15 — what shipped
 
-### Phase 1 — Triage (Appendix A in playtest-readiness-plan.md)
+### Phase 1 — Triage (Appendix B in playtest-readiness-plan.md)
 
-All 4 consultant reports walked; every finding triaged with
-priority + ship-target + owner. P0/P1 shipped this run; P2
-+ next-run-lead items captured in the table.
+All 3 v2 consultant reports walked; every finding triaged with
+priority + ship-target + owner.  Critical fixes shipped this
+run; foundation continuation items 6-10 partially shipped
+(`.card` migration as the highest-ROI #1); remaining items
+queued for run #16.
 
-### Phase 2 — P0 fixes (Forward-Compat architect findings)
+### Phase 1 — Critical fixes (v2 P1s)
 
-**P0a — `extraFields` autosave loop fix (INV-EXTRA-LOOP).**
+**UX-3 routing fix (TTRPG/UX v2 top-3 #1 + #2).**
+The run #14 player "Previously, at the table…" recap card
+mounted on a surface NO PLAYER ever reached.  Mock-09 Scenario
+4 passed only because it forced `appMode = 'session-open'`
+from outside the production routing path.
 
-- `src/persistence.ts:serializeSession` + `serializeSessionForViewer`
-  now accept an optional `extraFields` argument and re-emit it
-  if non-empty.
-- `applySaveToLog` surfaces the loaded doc's extraFields on
-  `LoadResult` so the host can thread them back.
-- `src/quire-app.ts:loadedExtraFields` stores the loaded value
-  after `loadFromString` and threads it to every serialize
-  call (`buildSaveDocument`, `buildShareableSaveDocument`, the
-  backups-push-request handler). Cleared on `leaveSession`.
-- 4 new tests in `src/persistence.format-stability.test.ts`
-  under `INV-EXTRA-LOOP` pin the full loop (parse → apply →
-  serialize → stringify) for DM coord save, DM projection,
-  player projection, and greenfield-no-extraFields.
-- `format-stability.md` updated with INV-EXTRA-LOOP block.
+- `src/quire-app.ts` — added a second auto-trigger branch in
+  the `applySessionViewChange` subscriber that fires for
+  player viewers (`!coordHolders.has(peerId)`) when
+  `playerHasUnseenDigest` returns true.
+- New helpers `playerHasUnseenDigest`,
+  `getPlayerLastSeenDigestTs`,
+  `setPlayerLastSeenDigestTs`,
+  `dismissPlayerDigestRecap`, +
+  `playerLastSeenDigestTsInMemory` field (belt-and-suspenders
+  for the campaign-discovery-lags-session-view race).
+- Persistent seen-marker at
+  `quire.player-digest-seen.<owner>-<repo>` keeps the player
+  from re-flipping after dismiss; in-memory mirror handles
+  the race.
+- `renderSessionOpenStage` non-coord branch — now renders the
+  digest body via `renderMarkdown` + `unsafeHTML` (not the
+  raw `<pre>` of run #14); added a Dismiss button
+  ("Got it — continue") wired to
+  `dismissPlayerDigestRecap`.
+- DEC-033 codifies the design.
 
-**P0b — Scrubber field-rename guard (INV-RENAME-FIREWALL).**
+**FC-2 scrubber parity for bond-ratify + pc-create
+(Adversarial v2 H-1).**
+The forward-compat architect explicitly named bond-ratify +
+pc-create in the run #14 report; DEC-031 §Alternatives mis-
+classified them as immune.  Both scrubbers DO read by sub-
+field key.
 
-- `src/persistence.ts:PER_KIND_SCRUBBERS['pc-edit']` now also
-  scans EVERY top-level string value for DM-only field-path
-  names; any match drops the event. Defense-in-depth alongside
-  the contract-level prohibition in DEC-031.
-- DEC-031 logged in `decisions.md` — contract: renaming a
-  sub-field key on an existing kind is FORBIDDEN.
-- 5 new tests in `src/persistence.format-stability.test.ts`
-  under `INV-RENAME-FIREWALL` pin: v:1 baseline drop, v:1
-  pc-create scrub, v:2 path rename drop, v:2 dotted path
-  drop, benign harm=2 survives, materialize no-op.
-- `format-stability.md` updated with INV-RENAME-FIREWALL block
-  + maintainer self-check addition.
+- `src/persistence.ts` — new helper
+  `payloadFieldNameKeyNamesDmField` + fixed vocabulary
+  `FIELD_NAME_KEYS = ['field', 'path', 'target', 'key', 'attr',
+  'prop']`.  Both `bond-ratify` and `pc-create` scrubbers
+  apply the helper.
+- DEC-032 supersedes DEC-031 §Alternatives.
 
-### Phase 2 — P1 fixes
+**FC-2 narrowing (Adversarial v2 H-3).**
+The run #14 broad value-scan dropped `pc-edit { field:'name',
+value:'tax' }` because `'tax'` matches a DM-only field name.
+With OP-045 shipping rename, a player named "Tax" would
+silently lose all pc-edit events on the player projection.
 
-**P1a — OP-045 rename gap (TTRPG/UX Top-3 #1).**
+- Narrowed the scan from "all string values" to the fixed
+  `FIELD_NAME_KEYS` vocabulary.  Same helper as the parity
+  fix.
+- DEC-032 documents the tradeoff (contract-level prohibition
+  from DEC-031 §1 remains the primary defense; INV-7 v:2
+  silent-no-op is the second).
+- 3 new regression tests in
+  `src/persistence.format-stability.test.ts`:
+  - "Tax" rename SURVIVES.
+  - bond-ratify v:2 rename bypass IS DROPPED.
+  - pc-create v:2 rename bypass IS DROPPED.
 
-- `src/character-edits.ts` — three new branches (name,
-  pronouns, backstory) with caps matching `pc-create` (80 /
-  40 / 8000). Empty pronouns clears the field; empty name +
-  empty backstory are rejected.
-- `src/ui/regions/dm-pc-detail.ts` — new `RenamePcCallback`
-  type + `onRenamePc` prop + `identity` prop + `renameOpenField`/
-  `renameDraft` @state + `renderRenameSection()` +
-  `renderRenameRow()` rendering per-field disclosure-on-click
-  editor.
-- `src/quire-app.ts:renderDmPcDetail` wires `identity` (read
-  from `effectiveCharacter`) + `onRenamePc` (`submitPcEdit`).
-- Round-trip tests in `persistence.chargen-roundtrip.test.ts`
-  FLIPPED from LOCKED-BROKEN to FIXED (9 new assertions
-  covering valid edits, caps, type defense, round-trip).
-- `character-edits.test.ts` "ignores unknown keys" updated to
-  use truly-unknown keys; added "applies backstory edit"
-  positive test.
-- OP-045 marked RESOLVED in `open-problems.md` with full
-  closure block.
+**loadedExtraFields cross-campaign clear (Adversarial v2 H-2).**
+- `src/quire-app.ts:navigateToRoute` — one-line clear of
+  `this.loadedExtraFields = undefined` in the slug-mismatch
+  path so a DM jumping directly between campaign URLs doesn't
+  contaminate the new campaign's first autosave.
 
-**P1b — FINDING-E digest-in-AI-context (TTRPG/UX Top-3 #2 + AI auditor Top-3 #1).**
+**UX-5 digest draft persistence (TTRPG/UX v2 Q8).**
+The DM's mid-wrap recap draft used to live in `@state` only;
+tab close mid-edit silently lost the recap.
 
-- `src/ai/campaign-context.ts:CampaignContextRequest` adds
-  `priorDigests?: ReadonlyArray<string>` param.
-  `buildCampaignContext` synthesizes a
-  `session-digests/previously.md` file with a `# Previously`
-  block when priorDigests is non-empty.
-- `src/quire-app.ts:submitAiPrompt` reads
-  `sessionView.filteredShared.sessionDigests` (firewall-safe
-  source) and threads markdowns to `buildCampaignContext`.
-- 5 new tests in `campaign-context.test.ts` under `FINDING-E`
-  pin: emits Previously file, joins multiple digests in
-  order, no-emit on undefined/empty, player-facing OK,
-  firewall (no `dm/*` paths).
-- 1 new test in `persistence.simulation-08-dm-writeup-phase.test.ts`
-  asserts end-to-end FINDING-E with firewall check.
+- NEW module `src/digest-draft-persistence.ts` (mirrors
+  `chargen-persistence.ts` exactly — same load/save/clear
+  contract + same defensive shape).
+- `src/ui/regions/session-digest.ts` — new `campaignSlug`
+  prop + connectedCallback load + 750ms debounced @input
+  save + handleSave/Discard clears + disconnectedCallback
+  flush.
+- `src/quire-app.ts` — new
+  `currentCampaignSlugForPersistence` helper +
+  `<session-digest>` wired.
 
-**P1c — Player "Previously" surface (TTRPG/UX Top-3 #3).**
+**Send button regression (Visual v2 Q4).**
+The run #14 global button reset demoted Send in chat + AI
+panel to muted-secondary (indistinguishable from cancel).
 
-- `src/quire-app.ts:renderSessionOpenStage` non-coord branch
-  now renders a `.session-open-player-recap` card containing
-  the last digest's markdown body when present. Falls back to
-  the original "DM is re-orienting" placeholder when no
-  digest exists.
-- Reads from `filteredShared.sessionDigests` (firewall-safe).
-- New test file `src/quire-app.player-digest-surface.test.ts`
-  with 2 tests: renders with digest, falls back without.
-- CSS for `.session-open-player-recap` + `.session-open-player-digest`
-  shipped as part of the visual pass.
+- `src/ui/regions/chat-panel.ts:108` —
+  `class="btn-primary"`.
+- `src/ui/regions/ai-panel.ts:635` — same.
 
-### Phase 3 — Visual CSS foundation pass (Visual Design items 1-5)
+### Phase 2 — Foundation continuation
 
-Single CSS-only commit shipping the highest-leverage 5:
+**.card migration to tokens (Visual v2 #1, highest-ROI).**
+The single highest-leverage CSS edit available.  Propagates
+the foundation through every region that inherits `.card`
+(AI panel + DM operational + session-digest + backups-card
++ recents + chargen wrapper).
 
-- **Tokens (`src/ui/styles/tokens.css.ts`):** new
-  `--r-pill`, `--shadow-card`, `--shadow-elev-1`,
-  `--ring-focus`, `--button-bg`, `--button-bg-hover`,
-  `--button-bg-primary`, `--button-ink-primary`.
-- **Global `*:focus-visible`:** ring + 2px offset + chip
-  radius. Previously only 7 hand-rolled outlines existed.
-- **Global `button {}` reset:** font:inherit, cursor:pointer,
-  consistent padding, hairline border, button-bg surface,
-  hover transition. Previously every region rolled its own.
-- **`.btn-primary`:** new accent-teal-filled variant for
-  primary CTAs.
-- **`.landing-hero` + `.landing-cta`:** new no-campaign
-  landing — a centered max-560px hero card with primary
-  Underleaf CTA, demoting the dense prose to a one-line muted
-  footer. `quire-app.ts:renderIdle` rewires to use it.
-- **Run-#14-specific surface classes:**
-  `.session-open-player-recap`, `.session-open-player-digest`,
-  `.dm-pc-rename-*` family — supports the new P1 surfaces.
+- `src/ui/styles/quire-app.css.ts:.card` — migrated:
+  `light-dark(#fcfcfc, #1f1f1f)` → `var(--surface-card)`;
+  `6px` → `var(--r-card)`;
+  `light-dark(#ddd, #333)` → `var(--border-hairline)`;
+  + `box-shadow: var(--shadow-card)`.
 
-### Phase 3.5 — Mock campaign 09 (UI findability — WS-G)
+**Topbar help-chip focus-visible token (Visual v2 Q3).**
+- `.quire-topbar-help-chip:focus-visible` →
+  `outline: var(--ring-focus)`.  Most user-visible focus-ring
+  collision closed.  Chargen-only rings (lines 1493, 2008)
+  left alone per expert "benign" call.
 
-- Doc: `design/save-restore-program/simulations/mock-campaign-09-ui-findability.md`.
-- Test: `src/persistence.simulation-09-ui-findability.test.ts`
-  with 5 assertions: landing hero CTA reachable, DM
-  session-open mode renders, player recap renders with digest
-  body, player fallback without digest, button-hidden smoke
-  check.
+**Brittle-class radar doc comments (Visual v2 Q10).**
+- `src/ui/styles/quire-app.css.ts:100-117` — named the
+  test-pinned classes.
+- `src/ui/styles/tokens.css.ts:42` — named the consumed token
+  vocabulary.  Future visual passes coordinate renames in
+  lockstep.
 
-### Phase 5 — Consultant briefs v2 for run #15
+### Phase 3 — Mock campaign 10 (UI iteration discipline)
 
-- `consultant-briefs/visual-design-expert-v2.md` — re-audit
-  the foundation pass + tell run #15 which of items 6-10 to
-  ship next.
-- `consultant-briefs/ttrpg-ux-expert-v2.md` — verify UX-1
-  (OP-045), UX-2 (FINDING-E), UX-3 (player surface) closures
-  + flag remaining gaps before playtest.
-- `consultant-briefs/adversarial-run14-fixes.md` — new
-  adversarial brief specifically targeting the 5 fixes
-  shipped this run (the "trust-but-verify" cadence — run #13
-  missed FC-1 + FC-2; the second pass must do better).
+NEW simulation `src/persistence.simulation-10-routing-and-
+drafts.test.ts` (7 scenarios).  Per the run #14 lesson — "ALL
+UX tests must respect production code paths; don't shortcut
+state in fixtures":
+
+- Scenario 1: player auto-flips to session-open via
+  PRODUCTION trigger (NO test-side appMode mutation).
+- Scenario 2: Dismiss persists the seen-marker; later
+  session-view changes do NOT re-flip.
+- Scenario 3: a STRICTLY NEWER digest re-flips after dismiss.
+- Scenario 4: digest-draft persistence helpers round-trip.
+- Scenario 5: storage keys are campaign-scoped.
+- Scenario 6: `<session-digest>` picks up a persisted draft
+  on connect.
+- Scenario 7: FC-2 narrowing — "Tax" rename survives.
+
+Doc at
+`../save-restore-program/simulations/mock-campaign-10-
+routing-and-drafts.md`.
+
+Mock-09 Scenario 4 ALSO updated to assert the production
+auto-trigger fires (no test-side mutation).
+
+### Phase 4 — Consultant briefs for run #16
+
+- `consultant-briefs/adversarial-run15-fixes.md` —
+  re-verifies the run #15 critical fixes don't introduce new
+  gaps (UX-3 routing + dismiss races, FC-2 vocabulary
+  completeness, UX-5 draft leak/stale cases, extraFields
+  cross-campaign edges).
+- `consultant-briefs/ttrpg-ux-expert-v3.md` — final
+  playtest GREEN gate (GO/NO-GO call per v2 Q9 hard cap).
+
+### Phase 5 — Docs
+
+- `playtest-readiness-plan.md` Appendix B (v2 triage table).
+- `decisions.md` DEC-032 (FC-2 narrowing + parity) + DEC-033
+  (player auto-trigger).
+- `simulations/mock-campaign-10-routing-and-drafts.md`.
+- This status doc.
 
 ---
 
 ## Tests + baselines
 
-- **Test count:** 3033 passed + 2 skipped = 3035 (up from
-  3004 baseline at run #13; **+31 net this run**).
-- **Test files:** 153 (up from 151).
+- **Test count:** 3043 passed + 2 skipped = 3045 (up from
+  3035 baseline at run #14; **+10 net this run**).
+- **Test files:** 154 (up from 153).
 - **Typecheck:** clean.
 - **Build:** unverified (run before push).
 - **No credentials in diff.**
 
 ### New / updated test files this run
 
-- `src/persistence.format-stability.test.ts` (extended; +9
-  tests: INV-EXTRA-LOOP × 4, INV-RENAME-FIREWALL × 5).
-- `src/persistence.chargen-roundtrip.test.ts` (extended;
-  LOCKED-BROKEN flipped to FIXED, +9 new asserts).
-- `src/character-edits.test.ts` (extended; 1 fix + 1 new).
-- `src/ai/campaign-context.test.ts` (extended; +5 FINDING-E
-  tests).
-- `src/persistence.simulation-08-dm-writeup-phase.test.ts`
-  (extended; +1 FINDING-E assertion).
-- `src/quire-app.player-digest-surface.test.ts` (NEW; 2
-  tests).
+- `src/persistence.simulation-10-routing-and-drafts.test.ts`
+  (NEW; 7 scenarios).
+- `src/persistence.format-stability.test.ts` (extended; +3
+  FC-2 narrowing + parity tests).
 - `src/persistence.simulation-09-ui-findability.test.ts`
-  (NEW; 5 tests).
+  (updated; Scenario 4 now asserts production auto-trigger).
+- `src/quire-app.player-digest-surface.test.ts` (updated;
+  beforeAll ensures markdown pipeline).
 
 ### Production-code touches this run
 
-- `src/persistence.ts` (serializeSession + serializeSessionForViewer
-  + applySaveToLog + pc-edit scrubber + LoadResult).
-- `src/quire-app.ts` (loadedExtraFields + threading +
-  renderSessionOpenStage non-coord branch + renderDmPcDetail
-  identity wiring + renderIdle landing hero).
-- `src/character-edits.ts` (name/pronouns/backstory branches
-  + caps).
-- `src/ui/regions/dm-pc-detail.ts` (rename UI).
-- `src/ai/campaign-context.ts` (priorDigests + Previously
-  block).
-- `src/ui/styles/tokens.css.ts` (new tokens).
-- `src/ui/styles/quire-app.css.ts` (foundation CSS block).
+- `src/quire-app.ts` (player auto-trigger + dismiss handler
+  + helpers; loadedExtraFields cross-campaign clear; session-
+  digest campaignSlug wiring; markdown rendering of player
+  recap).
+- `src/persistence.ts` (FIELD_NAME_KEYS +
+  payloadFieldNameKeyNamesDmField + pc-edit / bond-ratify /
+  pc-create scrubber updates).
+- `src/digest-draft-persistence.ts` (NEW module).
+- `src/ui/regions/session-digest.ts` (campaignSlug prop +
+  lifecycle hooks + persistence wiring).
+- `src/ui/regions/chat-panel.ts` (btn-primary).
+- `src/ui/regions/ai-panel.ts` (btn-primary).
+- `src/ui/styles/quire-app.css.ts` (.card migration + topbar
+  focus + brittle-class doc).
+- `src/ui/styles/tokens.css.ts` (public token contract doc).
 
 ---
 
-## What's queued for run #15
+## What's queued for run #16 (PLAYTEST GREEN target)
 
-### Consultant briefs to dispatch (3 in parallel)
+### Consultant briefs to dispatch (2 in parallel)
 
-- Visual Design expert v2 (foundation pass re-audit + items
-  6-10 prioritization).
-- TTRPG/UX expert v2 (closure verification + playtest GREEN
-  estimate).
-- Adversarial review of run-#14 fixes (5 fixes, trust-but-
-  verify cadence).
+- Adversarial review of run-#15 fixes (verify the critical
+  fixes don't introduce new gaps).
+- TTRPG/UX expert v3 (final GO/NO-GO call against the
+  playtest-readiness bar).
 
-### Lead work queue (run #15)
+### Lead work queue (run #16)
 
-- INGEST 3 consultant reports.
-- TRIAGE findings into P0/P1/P2/NO-FIX.
-- SHIP P0/P1 fixes.
-- Items already-known to ship next run:
-  - AI-2: Anthropic `cache_control` on system+tools prefix
-    (P1, M-fix).
-  - AI-3: Live PC state (harm/stress) injected into AI
-    context (P1, M-fix; was already queued v1.1).
-  - UX-5: Spoiler-edit-dialog + digest drafts surviving
-    page-reload (P2).
-  - UX-6: `dmGuidance` UI surface (P2).
-  - VIS-6..10: Picked subset from visual v2 report.
-- AI e2e stale stubs (task #418) — pending if time.
+- INGEST 2 consultant reports.
+- TRIAGE; if GREEN, no new work.
+- If NEEDS-FIX:
+  - Ship the SHORTEST set of fixes that close the GO call.
+- If GREEN-light: ship the deferred visual #2-#5 as a single
+  CSS diff:
+  - Demote legacy `<h1>Quire</h1>` on idle.
+  - Migrate `.session-bar` to tokens.
+  - DM-operational surface variant.
+  - 5 highest-density pill radii migration.
+- Single-line P2 cleanup if time.
+- Pre-playtest final sweep.
 
-### Run #16 + contingency
+### Carry-over (not blocking)
 
-- Round 3 of consultant iteration if needed.
-- Final playtest-GREEN gate.
+- AI-2 (Anthropic cache_control) — queued for post-playtest
+  unless adversarial flags as P1.
+- AI-3 (live PC harm/stress in AI context) — queued.
+- UX-6 (`dmGuidance` UI) — P2 post-playtest.
+- AI e2e stale stubs (task #418).
 - Resume-prompt enrichment (#429).
 
 ---
@@ -246,24 +273,25 @@ Single CSS-only commit shipping the highest-leverage 5:
 
 None this run.
 
-If the run #15 consultant reports surface a decision needing
-human input (e.g. "should the player rail also offer a PC
-rename affordance?"), it lands here in run #16.
+If the run #16 consultant reports surface a NO-GO call OR a
+decision needing human input (e.g. "ship the playtest with
+deferred items", "go to run #17"), it lands here.
 
 ---
 
 ## Health summary
 
-- 🟢 WS-A format-stability + INV-EXTRA-LOOP + INV-RENAME-FIREWALL.
-- 🟢 WS-B DM write-up + FINDING-E closed; player surface shipped.
-- 🟢 WS-C chargen polish + OP-045 RESOLVED.
+- 🟢 WS-A format-stability + FC-2 narrowing + parity (DEC-032).
+- 🟢 WS-B UX-5 digest draft persistence shipped.
+- 🟢 WS-C UX-3 player routing shipped + DEC-033.
 - 🟢 WS-D cloud backup E2E maintained.
-- 🟡 WS-E AI integration — FINDING-E closed; AI-2 + AI-3 queued.
-- 🟡 WS-F visual polish — foundation shipped; items 6-10 queued
-  on v2 review.
-- 🟢 WS-G UI-iteration discipline + mock-09 walked.
+- 🟡 WS-E AI integration — no changes this run.
+- 🟡 WS-F visual polish — `.card` migration shipped; #2-#5
+  deferred to run #16.
+- 🟢 WS-G UI-iteration discipline — mock-10 + mock-09 production-
+  path fix.
 
-Run-budget consumed: 14 of expected 16. **2 runs remain** in
+Run-budget consumed: 15 of expected 16.  **1 run remains** in
 the user's hard cap before playtest GREEN escalation.
 
 ---
@@ -271,20 +299,19 @@ the user's hard cap before playtest GREEN escalation.
 ## Where to find things
 
 - Master plan → `playtest-readiness-plan.md` (Appendix A is
-  the run-#14 triage table)
+  the run-#14 triage; Appendix B is run-#15)
 - Format-stability contract → `format-stability.md`
-  (extended: INV-EXTRA-LOOP, INV-RENAME-FIREWALL)
-- DEC-031 (run-#14 contract) → `../save-restore-program/decisions.md`
+- DEC-031 (run-#14 contract) + DEC-032 (run-#15 revision) +
+  DEC-033 (run-#15 player auto-trigger) →
+  `../save-restore-program/decisions.md`
 - OP-045 RESOLVED → `../save-restore-program/open-problems.md`
-- Consultant briefs (v1) → `consultant-briefs/<role>.md`
-- Consultant briefs (v2 + adversarial) →
-  `consultant-briefs/<role>-v2.md`,
-  `consultant-briefs/adversarial-run14-fixes.md`
-- Consultant reports (v1) →
-  `review-history/<role>-2026-05-30.md`
-- Mock-campaign 09 doc →
-  `../save-restore-program/simulations/mock-campaign-09-ui-findability.md`
-- Mock-campaign 09 test →
-  `../../src/persistence.simulation-09-ui-findability.test.ts`
-- Player-digest-surface test →
-  `../../src/quire-app.player-digest-surface.test.ts`
+- Consultant briefs (v1, v2, run-#15 adversarial) →
+  `consultant-briefs/`
+- Consultant reports → `review-history/`
+- New module → `../../src/digest-draft-persistence.ts`
+- Mock-campaign 10 doc →
+  `../save-restore-program/simulations/mock-campaign-10-
+  routing-and-drafts.md`
+- Mock-campaign 10 test →
+  `../../src/persistence.simulation-10-routing-and-drafts.
+  test.ts`

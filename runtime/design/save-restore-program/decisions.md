@@ -15,6 +15,138 @@ references the prior. Format:
 
 ---
 
+## DEC-032 — Scrubber rename-firewall narrows to FIELD_NAME_KEYS + extends to bond-ratify + pc-create (2026-05-30, run #15)
+
+**Decision:** Revise the run-#14 rename-firewall defense in two
+ways per the adversarial v2 review:
+
+1. **Narrow the scan from "all string values" to a fixed
+   vocabulary of field-name keys.**  The scanned vocabulary is
+   `FIELD_NAME_KEYS = ['field', 'path', 'target', 'key', 'attr',
+   'prop']` — keys whose SEMANTIC value is "this sub-field of
+   the payload NAMES the character field being targeted."  v:1
+   uses `field`; a future v:2 author renaming the semantic key
+   would pick from this vocabulary.  The run-#14 broad scan
+   rejected `pc-edit { field:'name', value:'tax' }` (a player
+   named "Tax") because the VALUE matched a DM-only field name
+   — cross-device divergence when OP-045 ships rename.  The
+   narrowing trades the never-triggered "v:2 author writes the
+   DM-only string as a RAW non-field-name value" defense (already
+   covered by DEC-031 §1's contract-level prohibition) for the
+   live "player names themselves something that happens to match
+   a DM-only field name" case.
+
+2. **Apply the scan to `bond-ratify` and `pc-create`** in
+   addition to `pc-edit`.  The architect's run-#14 report named
+   these two as the same FC-2 bug class; DEC-031 §Alternatives
+   mis-classified them as immune.  Both scrubbers DO read by
+   sub-field key (`'dmNotes' in obj` for bond-ratify;
+   `DM_ONLY_CHARACTER_FIELDS.includes(k)` per key for pc-create).
+   A hypothetical v:2 that renames `dmNotes` → `private`
+   bypasses both in the same way the pc-edit scan now defends
+   against.
+
+**Why:** Adversarial v2 H-1 + H-3 (`review-history/adversarial-
+run14-fixes-2026-05-30.md`).  The forward-compat architect
+explicitly named bond-ratify + pc-create in run #14; the lead
+mis-classified them.  The "Tax" false-positive surfaces a
+real cross-device divergence under the live OP-045 rename
+surface.
+
+**Alternatives considered:**
+- Keep the broad scan + pin "Tax-survives" with a custom branch
+  for `field === 'name'`.  Rejected: narrowing by KNOWN VOCAB
+  is cleaner than special-casing one field.
+- Drop the scan entirely and rely on DEC-031 §1's contract.
+  Rejected: defense-in-depth is the run-#14 design and the
+  contract is just a doc; the scan stops the leak if a future
+  engineer accidentally breaks the contract.
+- Apply the scan to EVERY scrubber (focus-grant, pc-retire,
+  map-blob-add/move).  Deferred: today's audit found these
+  scrubbers strip by FIELD NAME (not by sub-field key), so the
+  rename-bypass shape doesn't apply.  If a future scrubber reads
+  by sub-field key, extend.
+
+**Tradeoffs:** Narrowing leaves a hypothetical "v:2 author
+writes `randomKey: 'dmNotes'` directly (not via a known
+field-name key)" gap.  Per DEC-031 §1 (contract-level
+prohibition), that case is forbidden at the contract level;
+the materializer's INV-7 v:2 silent no-op is the second
+defense.  Acceptable.
+
+**Revisit if:** A new event kind whose scrubber reads sub-fields
+by key (not by name) lands; extend `FIELD_NAME_KEYS` to cover
+its semantic vocabulary OR extend the per-kind scrubber list.
+Or: a future emitter actually picks one of FIELD_NAME_KEYS for
+a benign player-visible value (then re-narrow).
+
+---
+
+## DEC-033 — Player-side session-open auto-trigger with localStorage seen-marker (2026-05-30, run #15)
+
+**Decision:** The session-open auto-flip in
+`applySessionViewChange` (`quire-app.ts`) now has a second
+gated path that flips PLAYER viewers (non-coord) into
+`appMode = 'session-open'` when:
+
+- They have at least one `filteredShared.sessionDigest`, AND
+- That latest digest's `ts` is STRICTLY GREATER than the
+  persisted "last-seen" marker for this campaign on this
+  device.
+
+The "last-seen" marker lives at the localStorage key
+`quire.player-digest-seen.<owner>-<repo>`.  A per-instance
+in-memory mirror also tracks the marker so a player who
+dismissed BEFORE the campaign manifest finished loading still
+gets the dismiss honored (campaign discovery via the host's
+peer-join can lag the first session-view fire).
+
+The dismiss handler is wired to a "Got it — continue" button
+on the player-side recap card.  It updates BOTH the in-memory
+mirror and the localStorage entry, then exits back to
+`appMode = 'in-session'`.
+
+**Why:** TTRPG/UX expert v2 surfaced UX-3 as a false positive
+— the run #14 recap card mounted on a surface NO player ever
+reached, because the coord-only trigger never fired for
+players, and the launcher chip was coord-only.  The expert's
+top-3 #1 recommended an additional player-side trigger gated
+on a per-peer dismissed-digest-id marker; this implements
+that recommendation.  Players otherwise had ZERO bridge to
+last week's session even though the digest was already in
+their `filteredShared.sessionDigests`.
+
+The seen-marker, not a "always show on first navigation" or
+"always show on every load," because the latter two would
+nag the player every session-view-change; the firsthand
+gate "did the player explicitly say they're done with this
+digest" is what dismissals everywhere else use.
+
+**Alternatives considered:**
+- Mount the recap on a player-reachable path (e.g. campaign
+  landing or resume-prompt).  Rejected: the recap fits the
+  session-open ritual; the issue was a routing fix, not a
+  placement fix.
+- No persistence — the recap shows every time the page loads.
+  Rejected: nags the player after they acknowledged.
+- Per-DIGEST-ID seen-marker (one marker per digest).
+  Rejected: complexity not needed; `ts > seen-ts` covers the
+  "newer digest re-fires" case and is simpler.
+
+**Tradeoffs:** Clearing localStorage drops the seen-marker;
+the player would see the same digest again.  Acceptable;
+explicit "fresh state" is what clearing was for.
+
+**Revisit if:** Real DM usage shows the auto-trigger nags
+returning players (then add a "remind me next session" path
+or move to a chip-style discovery surface), OR co-DMs in
+`bound-following` mode see the recap when they shouldn't
+(currently they would because the gate is `!coordHolders.
+has(peerId)`, but bound-following co-DMs are typically
+ALSO in coordHolders; verify).
+
+---
+
 ## DEC-031 — Scrubbers strip DM-only field NAMES regardless of sub-field key (2026-05-30, run #14)
 
 **Decision:** Per-kind scrubbers in

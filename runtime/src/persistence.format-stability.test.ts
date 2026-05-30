@@ -760,6 +760,97 @@ describe('INV-RENAME-FIREWALL: scrubbers strip DM-only field NAMES regardless of
     expect(payload.value).toBe(2);
   });
 
+  it('run #15 FC-2 narrowing: pc-edit field:name value:Tax (player named themselves Tax) SURVIVES player projection', () => {
+    // Adversarial v2 H-3 fix: the run-#14 broad value-scan dropped
+    // this benign rename because `value:'tax'` triggered a DM-only
+    // field-name match.  Narrowing to field-name keys
+    // (field/path/target/key/attr/prop) lets the rename through.
+    // Without this, a player whose PC is named "Tax" would see
+    // their rename dropped from the player projection → cross-
+    // device divergence.
+    const renameEvent = buildEvent(
+      'dm-peer',
+      1,
+      'pc-edit',
+      { v: 1, pcId: 'pc-1', field: 'name', value: 'Tax' },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'dm-peer',
+      events: [renameEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(1);
+    const payload = (projected.events[0] as QuireEvent).payload as Record<
+      string,
+      unknown
+    >;
+    expect(payload.field).toBe('name');
+    expect(payload.value).toBe('Tax');
+  });
+
+  it('run #15 FC-2 parity: bond-ratify v:2 path:dmNotes (rename bypass) IS DROPPED by the strengthened scrubber', () => {
+    // Adversarial v2 H-1 fix: the run-#14 defense was pc-edit-only;
+    // bond-ratify had the same rename-bypass shape (a v:2 author
+    // renames dmNotes → private via a field-name key).  Parity:
+    // bond-ratify now scans the same FIELD_NAME_KEYS vocabulary.
+    const bypassEvent = buildEvent(
+      'future-dm',
+      1,
+      'bond-ratify',
+      {
+        v: 2,
+        pcId: 'pc-1',
+        id: 'b1',
+        target: 'dmNotes',
+        text: 'a malicious leak'
+      },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [bypassEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(0);
+  });
+
+  it('run #15 FC-2 parity: pc-create v:2 path:dmNotes (rename bypass) IS DROPPED by the strengthened scrubber', () => {
+    // Adversarial v2 H-1 fix: same parity for pc-create.  A v:2
+    // pc-create that renames the dmNotes key would otherwise bypass
+    // the by-name strip; the FIELD_NAME_KEYS scan catches it.
+    const bypassEvent = buildEvent(
+      'future-dm',
+      1,
+      'pc-create',
+      {
+        v: 2,
+        pcId: 'pc-1',
+        name: 'Bex',
+        pronouns: 'they/them',
+        backstory: 'short',
+        path: 'dmNotes',
+        value: 'a malicious leak'
+      },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [bypassEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(0);
+  });
+
   it('a hypothetical v:2 pc-edit with path:dmNotes — silent no-op at materialize (INV-7) is the second line of defense', () => {
     // This test documents the CONTRACT, not the today-behavior of the
     // scrubber.  The scrubber would PASS THROUGH the v:2 event because

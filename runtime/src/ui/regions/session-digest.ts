@@ -36,6 +36,11 @@ import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../../markdown';
+import {
+  loadDigestDraft,
+  saveDigestDraft,
+  clearDigestDraft
+} from '../../digest-draft-persistence';
 
 /**
  * Host callback: ask for an AI-drafted digest.  Resolves to a
@@ -103,11 +108,104 @@ export class SessionDigest extends LitElement {
   @property({ attribute: false })
   showBackupChip: boolean = false;
 
+  /**
+   * Run #15 (UX-5 per ttrpg-ux-expert v2 Q8): campaign slug for the
+   * digest-draft localStorage persistence layer.  Set by the host
+   * (quire-app) at render time.  When non-empty, the component
+   * loads any saved draft on connect + autosaves on input + clears
+   * on Save/Discard.  When empty/null, the persistence layer is a
+   * no-op (the component still works in-memory).
+   */
+  @property({ attribute: false })
+  campaignSlug: string = '';
+
   /** Inline draft state — drafts live local until Save. */
   @state() private draft: string = '';
   @state() private generating: boolean = false;
   @state() private errorMessage: string | null = null;
   @state() private generatedByResponseId: string | undefined = undefined;
+
+  /**
+   * Run #15 (UX-5): debounced autosave timer for the draft
+   * persistence layer.  Mirrors the chargen-persistence-queue
+   * debounce shape; lighter — no queue, just a single trailing
+   * write because the draft is one large blob.
+   */
+  private digestDraftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly DIGEST_DRAFT_DEBOUNCE_MS = 750;
+
+  /**
+   * Run #15 (UX-5): on first mount, load any persisted digest
+   * draft.  Cheap — one localStorage read.  No-op when slug is
+   * empty (host hasn't wired it yet) or storage has no entry.
+   */
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.loadPersistedDraft();
+  }
+
+  override disconnectedCallback(): void {
+    // Flush a pending debounced save before tear-down so a fast
+    // tab-close after the last keystroke doesn't drop the trailing
+    // edits.  beforeunload is best-effort; this is the synchronous
+    // path that fires on host re-render too.
+    if (this.digestDraftSaveTimer !== null) {
+      clearTimeout(this.digestDraftSaveTimer);
+      this.digestDraftSaveTimer = null;
+      this.persistDraftNow();
+    }
+    super.disconnectedCallback();
+  }
+
+  /**
+   * Run #15 (UX-5): re-load the persisted draft when the slug
+   * prop changes (host swaps between campaigns) so the right
+   * draft surfaces.  Triggered via updated() — the framework
+   * calls it after a property update has been applied.
+   */
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('campaignSlug')) {
+      this.loadPersistedDraft();
+    }
+  }
+
+  private loadPersistedDraft(): void {
+    if (!this.campaignSlug) return;
+    // Don't overwrite an in-progress draft already in @state (e.g.
+    // a regeneration just landed).  Only load when the local draft
+    // is empty — the persistence path is for "tab closed without
+    // saving."
+    if (this.draft.length > 0) return;
+    const persisted = loadDigestDraft(this.campaignSlug);
+    if (!persisted) return;
+    this.draft = persisted.markdown;
+    this.generatedByResponseId = persisted.generatedByResponseId;
+  }
+
+  private schedulePersistDraft(): void {
+    if (!this.campaignSlug) return;
+    if (this.digestDraftSaveTimer !== null) {
+      clearTimeout(this.digestDraftSaveTimer);
+    }
+    this.digestDraftSaveTimer = setTimeout(() => {
+      this.digestDraftSaveTimer = null;
+      this.persistDraftNow();
+    }, SessionDigest.DIGEST_DRAFT_DEBOUNCE_MS);
+  }
+
+  private persistDraftNow(): void {
+    if (!this.campaignSlug) return;
+    if (this.draft.trim().length === 0) {
+      // Empty/whitespace-only drafts mean "cleared" — wipe the
+      // persisted entry rather than write an empty blob.
+      clearDigestDraft(this.campaignSlug);
+      return;
+    }
+    saveDigestDraft(this.campaignSlug, {
+      markdown: this.draft,
+      generatedByResponseId: this.generatedByResponseId
+    });
+  }
 
   override render(): TemplateResult {
     const canCoord = this.onGenerate !== null && this.onSave !== null;
@@ -228,6 +326,9 @@ export class SessionDigest extends LitElement {
               .value=${this.draft}
               @input=${(e: Event) => {
                 this.draft = (e.target as HTMLTextAreaElement).value;
+                // Run #15 (UX-5): autosave the draft so a tab close
+                // mid-edit doesn't lose the DM's recap.
+                this.schedulePersistDraft();
               }}
             ></textarea>
           </label>`
@@ -278,6 +379,10 @@ export class SessionDigest extends LitElement {
       if (result.ok) {
         this.draft = result.markdown;
         this.generatedByResponseId = result.responseId;
+        // Run #15 (UX-5): a fresh AI generation IS a draft — persist
+        // immediately so a reload right after generation surfaces
+        // the same body.
+        this.schedulePersistDraft();
       } else {
         this.errorMessage = result.message;
       }
@@ -297,6 +402,14 @@ export class SessionDigest extends LitElement {
       this.draft = '';
       this.errorMessage = null;
       this.generatedByResponseId = undefined;
+      // Run #15 (UX-5): also clear the persisted draft so a future
+      // reload doesn't surface the now-saved recap as a "fresh"
+      // draft (which would lure the DM into saving it twice).
+      if (this.campaignSlug) clearDigestDraft(this.campaignSlug);
+      if (this.digestDraftSaveTimer !== null) {
+        clearTimeout(this.digestDraftSaveTimer);
+        this.digestDraftSaveTimer = null;
+      }
     }
   }
 
@@ -304,6 +417,13 @@ export class SessionDigest extends LitElement {
     this.draft = '';
     this.errorMessage = null;
     this.generatedByResponseId = undefined;
+    // Run #15 (UX-5): Discard is an explicit "throw away the
+    // draft" — wipe the persisted entry too.
+    if (this.campaignSlug) clearDigestDraft(this.campaignSlug);
+    if (this.digestDraftSaveTimer !== null) {
+      clearTimeout(this.digestDraftSaveTimer);
+      this.digestDraftSaveTimer = null;
+    }
   }
 }
 

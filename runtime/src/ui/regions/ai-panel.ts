@@ -632,7 +632,11 @@ export class AiPanel extends LitElement {
             ? html`<button type="button" @click=${() => this.onCancel?.()}>
                 Cancel
               </button>`
-            : html`<button type="submit" ?disabled=${budgetExceeded}>
+            : html`<button
+                type="submit"
+                class="btn-primary"
+                ?disabled=${budgetExceeded}
+              >
                 Ask
               </button>`}
         </div>

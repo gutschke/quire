@@ -619,3 +619,97 @@ Best-effort if time: AI-5 e2e migration.
 
 Document deferrals + next-run brief inputs in `status.md`.
 
+---
+
+## Appendix B — Run #15 triage (2026-05-30)
+
+Three v2 consultant reports landed in `review-history/` on
+2026-05-30: visual-design-expert-v2, ttrpg-ux-expert-v2,
+adversarial-run14-fixes.  The lead walked every finding and
+assigned priority + ship-target + owner.  Implementations
+follow.
+
+### Triage table
+
+| # | Source | Finding | P | Ship | Owner |
+|---|---|---|---|---|---|
+| UX-3-v2 | ttrpg-ux v2 | Player auto-trigger NOT REACHED in production (run #14 false positive) | **P1** | this run | lead |
+| UX-3-v2-md | ttrpg-ux v2 #2 | `<pre>` rendering of digest markdown is too raw | **P1** | this run | lead |
+| UX-3-v2-collapse | ttrpg-ux v2 #3 | Backstory editor too heavy on DM card | P2 | next run | next-run-lead |
+| UX-5-v2 | ttrpg-ux v2 Q8 | Digest draft `@state`-only → tab-close loses recap | **P1** | this run | lead |
+| UX-4-v2 | ttrpg-ux v2 Q7 | Free-write + pre-gen chargen paths DEFERRED for playtest 1 | known-issue | doc-only this run | lead |
+| Mock-11-v2 | ttrpg-ux v2 | Player Previously via PRODUCTION routing (no test-side appMode) | **P1** | folded into mock-10 this run | lead |
+| Adv-H1 | adversarial v2 H-1 | FC-2 scrubber parity for bond-ratify + pc-create | **P1** | this run | lead |
+| Adv-H2 | adversarial v2 H-2 | loadedExtraFields cross-campaign survival | P2 | this run (cheap) | lead |
+| Adv-H3 | adversarial v2 H-3 | FC-2 string-scan over-broad: a player named "Tax" loses pc-edit | **P1** | this run | lead |
+| VIS-v2-1 | visual v2 #1 | Migrate `.card` to tokens (highest-ROI next) | **P1** | this run | lead |
+| VIS-v2-2 | visual v2 #2 | Demote legacy `<h1>Quire</h1>` on idle | P2 | next run | next-run-lead |
+| VIS-v2-3 | visual v2 #3 | Migrate `.session-bar` to tokens | P2 | next run | next-run-lead |
+| VIS-v2-4 | visual v2 #4 | DM-operational surface variant | P2 | next run | next-run-lead |
+| VIS-v2-5 | visual v2 #5 | 21 pill-radii to `--r-pill` | P2 | next run | next-run-lead |
+| VIS-v2-Q3 | visual v2 Q3 | 4 focus-ring collisions (chargen-only benign + topbar help) | P1 (topbar only) | this run | lead |
+| VIS-v2-Q4 | visual v2 Q4 | Send button regression (chat + AI) | **P1** | this run | lead |
+| VIS-v2-Q10 | visual v2 Q10 | Brittle-class radar doc comment | P2 | this run (cheap) | lead |
+
+### Rationale notes
+
+- **UX-3-v2 is the load-bearing closure for run #15.** The
+  v2 expert proved the run #14 mock-09 test was a false
+  positive (it forced appMode from outside the production
+  routing path).  Run #15's fix: a second auto-trigger
+  branch in `applySessionViewChange` for player viewers
+  gated on `playerHasUnseenDigest`.  Per-campaign
+  localStorage seen-marker + in-memory mirror.  Mock-10
+  Scenario 1 + 2 + 3 exercise the REAL routing path; no
+  test-side mutation.
+
+- **UX-5 is shipped as a chargen-persistence-shaped helper.**
+  New module `src/digest-draft-persistence.ts` mirrors
+  `chargen-persistence.ts` exactly — same load/save/clear
+  signatures, same defensive shape.  `<session-digest>`
+  wires it via `campaignSlug` prop + connectedCallback +
+  schedulePersistDraft debounced @input handler.
+
+- **FC-2 narrowing + parity** ships as DEC-032 (decisions.
+  md).  The pc-edit + bond-ratify + pc-create scrubbers
+  now share a `payloadFieldNameKeyNamesDmField` helper
+  that scans the fixed `FIELD_NAME_KEYS` vocabulary
+  (field/path/target/key/attr/prop).  Three new
+  regression tests pin: "Tax" survives, v:2 bond-ratify
+  rename bypass drops, v:2 pc-create rename bypass drops.
+
+- **VIS-v2 deferrals** (#2, #3, #4, #5): VIS-v2-1 (`.card`)
+  is the highest-leverage of the five and ships this run
+  per the expert's "#1 priority."  The other four are
+  P2/visual-only follow-ups; reserved for run #16's
+  contingency budget.
+
+- **UX-4 (free-write/pre-gen paths)** stays deferred per
+  v2 Q7 — playtest opts into Q&A-only.  Surface in DM
+  invite copy.
+
+### Brittle-class radar contract
+
+Run #15 adds a doc comment in `quire-app.css.ts` (line 100-117)
+naming the test-pinned classes.  Tokens.css.ts (line 42) gets
+a parallel public-contract comment for the consumed token
+names.  Future visual passes treat these as load-bearing.
+
+### What this turn ships
+
+P1s: UX-3 routing (player auto-trigger + dismiss + markdown
+rendering), UX-5 (digest draft persistence), FC-2 parity
+(bond-ratify + pc-create) + narrowing (FIELD_NAME_KEYS),
+loadedExtraFields cross-campaign clear, Send button
+regression fix, `.card` migration to tokens + topbar focus-
+visible token + brittle-class doc comment.
+
+Plus mock campaign 10 (routing + drafts) — 7 scenarios that
+exercise the PRODUCTION routing paths (no test-side appMode
+mutation per the run #14 lesson).
+
+Three new regression tests in `format-stability.test.ts`
+pin the FC-2 narrowing + parity surfaces.
+
+Document deferrals + next-run brief inputs in `status.md`.
+

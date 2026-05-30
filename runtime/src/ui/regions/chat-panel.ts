@@ -105,7 +105,7 @@ export class ChatPanel extends LitElement {
             @input=${(e: Event) =>
               this.onDraftChange?.((e.target as HTMLInputElement).value)}
           />
-          <button type="submit">Send</button>
+          <button type="submit" class="btn-primary">Send</button>
         </form>
         ${this.chatError
           ? html`<p class="chat-error">${this.chatError}</p>`
