@@ -214,7 +214,7 @@ per the ui.md grid spec.  No drag-to-resize anywhere.
 
 ## Closed items
 
-### UX-MH-1 — Player display name visible AND editable (run #19, commit TBD)
+### UX-MH-1 — Player display name visible AND editable (run #19, commit 51b4a69)
 
 **Engine + firewall:** new event kind `peer-rename-by-coord`
 (DEC-045) lets the DM author renames on Alice's seat with the
@@ -295,7 +295,7 @@ button + the DM-side soft-warn modal — the components + AI
 module are production-ready; the chargen-dm-review host needs
 the integration call to fire `refreshBackstory` (P2-IMPL-2).
 
-### UX-MH-4 — Resizable region dividers (run #19, commit TBD)
+### UX-MH-4 — Resizable region dividers (run #19, commit 51b4a69)
 
 **Shell + grid:** `<quire-shell>` rewritten to a 7-column grid
 with `splitter-rail` + `splitter-aside` named slots holding
