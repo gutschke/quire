@@ -16,7 +16,7 @@ briefs queued + WS-A/B/C/D autonomous work shipped)
 - WS-G (UI-iteration safety discipline): codified in the master
   plan §6
 
-**Latest deploy hash:** (set at end of this run)
+**Latest deploy hash:** 8501e48 (run #13 ship)
 **Branch:** main
 
 ---
