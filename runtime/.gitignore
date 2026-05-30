@@ -11,3 +11,25 @@ playwright/.cache/
 # Simulation persona reports — fresh per run, not version-controlled
 e2e/results/
 results/
+
+# Defense-in-depth against accidental credential commits.  M6 cloud-sync
+# uses OAuth PKCE — no client_secret in the SPA by design — but a future
+# maintainer might create one of these locally for testing, OR a future
+# build step might emit one.  Block the common patterns so neither
+# scenario can `git add` a secret by accident.
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+*credentials*.json
+client_secret*
+client_secret*.json
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_dsa
+id_ed25519
+id_ed25519.*
+*.token
