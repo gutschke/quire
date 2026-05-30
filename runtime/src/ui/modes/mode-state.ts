@@ -1,11 +1,14 @@
 /**
  * App-mode state machine.
  *
- * Six modes per `quire/design/ui.md` + Phase B P5:
+ * Seven modes per `quire/design/ui.md` + Phase B P5 + DEC-029
+ * (run #8, save/restore program):
  *   - 'pre-session'         — DM solo, players joining; campaign loader visible
  *   - 'in-session'          — default; play with shared session active
  *   - 'post-session'        — wrap-session diff review (living-document)
  *   - 'session-wrap-marks'  — Phase B P5: end-of-session advancement-marks roster sheet
+ *   - 'session-open'        — D2 (2026-05-26): start-of-session digest re-read ritual
+ *   - 'dm-operational'      — DEC-029: DM-only operational view (backups, autosave health, …)
  *   - 'authoring'           — markdown editor + frontmatter form (DM)
  *   - 'solo-browse'         — implicit when no live session; binder view
  *
@@ -37,6 +40,7 @@ export type AppMode =
   | 'post-session'
   | 'session-wrap-marks'
   | 'session-open'
+  | 'dm-operational'
   | 'authoring'
   | 'solo-browse';
 
@@ -46,6 +50,7 @@ export const APP_MODES: ReadonlySet<AppMode> = new Set<AppMode>([
   'post-session',
   'session-wrap-marks',
   'session-open',
+  'dm-operational',
   'authoring',
   'solo-browse'
 ]);

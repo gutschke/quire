@@ -76,16 +76,20 @@ describe('setMode', () => {
 });
 
 describe('APP_MODES + DEFAULT_APP_MODE constants', () => {
-  it('APP_MODES contains exactly the seven named modes', () => {
+  it('APP_MODES contains exactly the eight named modes', () => {
     // Phase B P5 (2026-05-26): added `session-wrap-marks` for the
     // end-of-session marks sheet (rules.md:149-154 advancement bullets).
     // D2 (2026-05-26): added `session-open` for the open ritual.
-    expect(APP_MODES.size).toBe(7);
+    // DEC-029 (2026-05-29, save/restore run #8): added
+    // `dm-operational` for the DM operational view (backups card +
+    // future engineering-reality surfaces).
+    expect(APP_MODES.size).toBe(8);
     expect(APP_MODES.has('pre-session')).toBe(true);
     expect(APP_MODES.has('in-session')).toBe(true);
     expect(APP_MODES.has('post-session')).toBe(true);
     expect(APP_MODES.has('session-wrap-marks')).toBe(true);
     expect(APP_MODES.has('session-open')).toBe(true);
+    expect(APP_MODES.has('dm-operational')).toBe(true);
     expect(APP_MODES.has('authoring')).toBe(true);
     expect(APP_MODES.has('solo-browse')).toBe(true);
   });

@@ -166,6 +166,23 @@ import {
   type SaveDocument,
   type LoadResult
 } from './persistence';
+// M6a-FS host integration (DEC-029, run #8): the operational view
+// surface + the FS-API cloud-push primitives.  The view is the
+// discrete DM-only surface that hosts <backups-card>; the consent
+// dialog is the shared consent ceremony component.
+import './ui/regions/dm-operational-view';
+import './ui/regions/cloud-push-consent-dialog';
+import type { CloudPushConsentDialog } from './ui/regions/cloud-push-consent-dialog';
+import type { BackupsCard } from './ui/regions/backups-card';
+import {
+  browserDirectoryPicker,
+  FsApiCloudPush
+} from './auth/fs-api-cloud-push';
+import { browserIndexedDbFsApiHandleStorage } from './auth/fs-api-handle-store';
+import {
+  browserLocalStorageConsentStorage,
+  DEFAULT_CONSENT_COPY_FS_API
+} from './auth/cloud-push-consent';
 
 // Autosave constants live in the AutosaveController (P0-9).
 
@@ -1747,6 +1764,15 @@ export class QuireApp extends LitElement {
              needed.  Topbar "?" chip dispatches a custom event the
              overlay listens for. -->
         <quire-help-overlay></quire-help-overlay>
+        <!-- DEC-029 (run #8): host-owned cloud-push consent dialog.
+             Lazy-rendered: shows nothing until open(spec) is
+             called.  Shared by M6a-FS today; M6a-OAuth + GitHub
+             paths will reuse it with their own copy specs.  Lives
+             OUTSIDE quire-shell slots so the modal backdrop spans
+             the full viewport. -->
+        <cloud-push-consent-dialog
+          data-testid="cloud-push-consent-dialog-root"
+        ></cloud-push-consent-dialog>
       </quire-shell>
     `;
   }
@@ -1879,7 +1905,235 @@ export class QuireApp extends LitElement {
         Wrap session…
       </button>
       ${this.renderSessionOpenLauncher()}
+      ${this.renderDmOperationalViewLauncher()}
     </p>`;
+  }
+
+  /**
+   * DEC-029 (run #8, save/restore): launcher for the discrete DM
+   * operational view (backups today; engineering-reality surfaces
+   * later).  Coord-only, hidden when already in the view.
+   *
+   * Title attribute is honest about the surface's purpose without
+   * leaking specifics — "engineering reality" is the locked
+   * ux-strategy.md framing; the chip label is "Operational view"
+   * for stability across future contents.
+   */
+  private renderDmOperationalViewLauncher(): TemplateResult | typeof nothing {
+    if (!this.isCoordinator()) return nothing;
+    if (this.appMode === 'dm-operational') return nothing;
+    return html`<button
+      type="button"
+      class="dm-wrap-session-button dm-operational-launcher"
+      data-testid="dm-operational-launcher"
+      title="Check backup state and other engineering reality (DM-only)"
+      @click=${() => {
+        this.appMode = 'dm-operational';
+      }}
+    >
+      Operational view…
+    </button>`;
+  }
+
+  /**
+   * DEC-029 (run #8): render the DM operational view as the body
+   * of the play area when appMode === 'dm-operational'.  The view
+   * itself enforces DM-only via its `renderForDm` prop; the host
+   * gates by `isCoordinator()` here for defense-in-depth.
+   *
+   * The Lit element dispatches `dm-operational-close` on Esc / the
+   * Close button; we route that to `closeDmOperationalView` to
+   * pop appMode back to `'in-session'`.
+   *
+   * Push / pull events from the embedded `<backups-card>` are
+   * routed via the event listeners wired in `connectedCallback`
+   * (see `handleBackupsPushRequest` / `handleBackupsPullRequest`).
+   *
+   * Requested-consent callback: the view passes a fn through to
+   * the card; we route to the host-owned consent dialog via
+   * `requestFsApiConsent`.
+   */
+  private renderDmOperationalView(): TemplateResult {
+    const v = this.sessionView;
+    const campaign = this.getCurrentCampaign();
+    const campaignId =
+      campaign && v?.status === 'active'
+        ? this.cloudSyncCampaignIdFor(campaign)
+        : '';
+    const dm = this.isCoordinator();
+    return html`<dm-operational-view
+      data-testid="dm-operational-view-root"
+      ?renderForDm=${dm}
+      .campaignId=${campaignId}
+      .fsApiCloudPush=${dm ? this.getFsApiCloudPush() : null}
+      .requestFsApiConsent=${this.requestFsApiConsent}
+      @dm-operational-close=${() => this.closeDmOperationalView()}
+      @backups-push-request=${(e: Event) =>
+        void this.handleBackupsPushRequest(e)}
+      @backups-pull-request=${(e: Event) =>
+        void this.handleBackupsPullRequest(e)}
+    ></dm-operational-view>`;
+  }
+
+  /**
+   * Stable campaign-id string for the cloud-sync layer.  Reuses
+   * `slugFor` which already produces `owner/repo` or
+   * `owner/repo@ref` shapes — both are valid campaign identifiers
+   * in the FS-API consent ledger + handle store.
+   *
+   * Kept as its own method so future M6a-OAuth + M6c paths can
+   * share the same normalization (DEC-014 per-DM-Drive and the
+   * GitHub repo path both use the same campaign id).
+   */
+  private cloudSyncCampaignIdFor(campaign: LoadedCampaign): string {
+    return this.slugFor(campaign);
+  }
+
+  /**
+   * Pop the operational view back to play.  Trusts the human's
+   * locked DEC-029 ordering: operational view is modal-on-top of
+   * play, not its own page.
+   */
+  private closeDmOperationalView(): void {
+    if (this.appMode === 'dm-operational') {
+      this.appMode = 'in-session';
+    }
+  }
+
+  /**
+   * The consent gate callback passed to `<backups-card>` via the
+   * `<dm-operational-view>` props.  Opens the host-owned
+   * `<cloud-push-consent-dialog>` with M6a-FS copy and resolves
+   * the boolean back to the card.
+   *
+   * Arrow function so the `this` binding is stable when the
+   * card calls it as `requestConsent(campaignId)`.
+   */
+  private readonly requestFsApiConsent = async (
+    _campaignId: string
+  ): Promise<boolean> => {
+    const dlg = this.querySelector(
+      'cloud-push-consent-dialog'
+    ) as CloudPushConsentDialog | null;
+    if (!dlg) {
+      // Defensive: if the dialog hasn't mounted, refuse rather
+      // than silently proceed.  The card will treat this as a
+      // cancel and stay idle.
+      return false;
+    }
+    return dlg.open(DEFAULT_CONSENT_COPY_FS_API);
+  };
+
+  /**
+   * Host event handler for `backups-push-request`.  The card
+   * dispatches when the DM clicks "Push now" — the host builds
+   * a fresh save document, calls
+   * `pushCampaignToFolder({campaignId, body})`, and hands the
+   * result back to the card via `applyPushResult`.
+   *
+   * Save shape: full DM-coord projection (the DM owns their own
+   * backup).  Same path the existing manual `saveToFile` takes
+   * for DM-owned local files, just routed through the FS-API
+   * orchestrator.
+   *
+   * Silent-player firewall: this handler trusts the
+   * `isCoordinator()` short-circuit + the `renderForDm` gate on
+   * the card.  Defense-in-depth: if a non-coord ever reaches
+   * this handler, we refuse and tell the card the push failed.
+   */
+  private async handleBackupsPushRequest(e: Event): Promise<void> {
+    const detail = (e as CustomEvent<{ campaignId: string }>).detail;
+    const card = e.target as BackupsCard | null;
+    if (!card) return;
+    if (!this.isCoordinator()) {
+      card.applyPushResult({ ok: false, reason: 'not-connected' });
+      return;
+    }
+    if (!this.session || this.sessionView?.status !== 'active') {
+      card.applyPushResult({ ok: false, reason: 'not-connected' });
+      return;
+    }
+    // DM-coord projection per DEC-009 / DEC-010 — the DM's own
+    // backup includes the full event log including DM-only events.
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) {
+      card.applyPushResult({ ok: false, reason: 'not-connected' });
+      return;
+    }
+    const src = campaign.base.source;
+    const doc = serializeSession(
+      this.session.getEvents(),
+      { owner: src.owner, repo: src.repo, ref: src.ref },
+      this.sessionView.peerId ?? 'unknown'
+    );
+    const body = stringifySave(doc);
+    const cloudPush = this.getFsApiCloudPush();
+    const result = await cloudPush.pushCampaignToFolder({
+      campaignId: detail.campaignId,
+      body
+    });
+    card.applyPushResult(result);
+  }
+
+  /**
+   * Host event handler for `backups-pull-request`.  The card
+   * dispatches when the DM clicks "Pull" — the host fetches the
+   * save document from the connected folder and applies it to the
+   * active session.
+   *
+   * Pull semantics today: replay the saved events into the active
+   * session.  The existing `loadFromString` path already handles
+   * the projection (DM = full save, guest = stripped) per
+   * NEW-ADV-1 + DEC-010.  The chip surfaces success / failure;
+   * a future iteration may surface event counts.
+   */
+  private async handleBackupsPullRequest(e: Event): Promise<void> {
+    const detail = (e as CustomEvent<{ campaignId: string }>).detail;
+    const card = e.target as BackupsCard | null;
+    if (!card) return;
+    if (!this.isCoordinator()) {
+      card.applyPushResult({ ok: false, reason: 'not-connected' });
+      return;
+    }
+    const cloudPush = this.getFsApiCloudPush();
+    const result = await cloudPush.pullCampaignFromFolder({
+      campaignId: detail.campaignId
+    });
+    if (!result.ok) {
+      // Re-use the push-error chip surface for pull errors so the
+      // DM gets a consistent failure UI.  Map pull-only reasons to
+      // the closest push-shaped equivalent so the chip copy stays
+      // honest.  `not-found` → "Connect a folder first" (the
+      // typical cause; the file's gone or never existed for this
+      // campaign); `read-failure` → "Couldn't write to the folder"
+      // (misleading verbatim but the recovery action — re-pick the
+      // folder — is the same).  A future iteration may give pull
+      // its own error vocabulary.
+      const mapped =
+        result.reason === 'not-found'
+          ? 'not-connected'
+          : result.reason === 'read-failure'
+            ? 'write-failure'
+            : result.reason;
+      card.applyPushResult({ ok: false, reason: mapped });
+      return;
+    }
+    // Apply to the active session.  Reuse the same loader path so
+    // restore-firewall + auto-reclaim invariants are preserved.
+    const loadResult = this.loadFromString(result.body);
+    if (loadResult) {
+      // Surface a successful chip via applyPushResult — fileName
+      // is reused for the "pulled from" label.  The bytesWritten
+      // field is the body length so the chip stays informative.
+      card.applyPushResult({
+        ok: true,
+        fileName: detail.campaignId,
+        bytesWritten: result.body.length,
+        lastModifiedMs: result.lastModifiedMs
+      });
+    } else {
+      card.applyPushResult({ ok: false, reason: 'write-failure' });
+    }
   }
 
   /**
@@ -3500,6 +3754,32 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * M6a-FS host integration (DEC-029, run #8).  Lazy-init to keep
+   * the constructor light; the IndexedDB connection opens on first
+   * use.  Test injection: assign `fsApiCloudPushFactory` before
+   * `connectedCallback` (or before the operational view renders)
+   * to swap in an in-memory clone for unit tests.  Kept as a field
+   * (not a constructor arg) so QuireApp stays a zero-arg
+   * LitElement.
+   */
+  private _fsApiCloudPush: FsApiCloudPush | null = null;
+  /** Test seam — assign to override the default-built cloud push. */
+  fsApiCloudPushFactory: (() => FsApiCloudPush) | null = null;
+  private getFsApiCloudPush(): FsApiCloudPush {
+    if (!this._fsApiCloudPush) {
+      this._fsApiCloudPush = this.fsApiCloudPushFactory
+        ? this.fsApiCloudPushFactory()
+        : new FsApiCloudPush({
+            picker: browserDirectoryPicker(),
+            handleStorage: browserIndexedDbFsApiHandleStorage(),
+            consentStorage: browserLocalStorageConsentStorage(),
+            now: () => Date.now()
+          });
+    }
+    return this._fsApiCloudPush;
+  }
+
+  /**
    * D1-D (2026-05-26): ask the AI broker to propose NPC living-doc
    * updates based on the current session.  Coord-only.  The host
    * gathers the player-visible event bundle (same filter as
@@ -4696,6 +4976,16 @@ export class QuireApp extends LitElement {
     }
     if (this.appMode === 'session-open') {
       return this.renderSessionOpenStage();
+    }
+    // DEC-029 (run #8, save/restore): discrete DM-only operational
+    // view.  Hosts the M6a-FS backups card today; future
+    // engineering-reality surfaces (eviction status, account
+    // mismatch, manual-save downloader) will live here too.  The
+    // view itself enforces DM-only render (renderForDm); player
+    // viewers see a generic "DM is administering" placeholder
+    // similar to the session-open mode's player-side fallback.
+    if (this.appMode === 'dm-operational') {
+      return this.renderDmOperationalView();
     }
     switch (this.appState.kind) {
       case 'idle':
