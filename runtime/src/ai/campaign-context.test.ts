@@ -273,3 +273,128 @@ describe('buildPlayerFacingContext (CC-18) — spoiler firewall', () => {
     expect(typeof buildPlayerFacingContext).toBe('function');
   });
 });
+
+describe('FINDING-E (run #14) — priorDigests inject a "Previously" block', () => {
+  /**
+   * The TTRPG/UX expert + AI integration auditor both flagged the
+   * same bug from different angles: pre-fix, `submitAiPrompt` built
+   * AI context from campaign files only — `state.sessionDigests`
+   * was never injected.  The DM's literal use-case ("help guide
+   * authoring the next chapter" for next week) failed.
+   *
+   * Run-#14 fix: `buildCampaignContext` accepts an optional
+   * `priorDigests` array and appends a synthesized
+   * `session-digests/previously.md` file to the context.  These
+   * tests pin the shape + firewall posture.
+   */
+
+  it('emits a Previously file when priorDigests is non-empty', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#'
+    });
+    const ctx = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'dm',
+      priorDigests: [
+        'Session 1: the party crossed the bridge.\n\nIris had a vision.'
+      ]
+    });
+    const paths = ctx.map((c) => c.path);
+    expect(paths).toContain('session-digests/previously.md');
+    const previously = ctx.find(
+      (c) => c.path === 'session-digests/previously.md'
+    );
+    expect(previously?.content).toContain('# Previously');
+    expect(previously?.content).toContain('crossed the bridge');
+    expect(previously?.content).toContain('Iris had a vision');
+  });
+
+  it('joins multiple digests in chronological order with a separator', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#'
+    });
+    const ctx = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'dm',
+      priorDigests: ['Session 1 happened.', 'Session 2 happened.']
+    });
+    const previously = ctx.find(
+      (c) => c.path === 'session-digests/previously.md'
+    );
+    expect(previously?.content).toBeDefined();
+    const body = previously!.content;
+    const idx1 = body.indexOf('Session 1 happened');
+    const idx2 = body.indexOf('Session 2 happened');
+    expect(idx1).toBeGreaterThan(-1);
+    expect(idx2).toBeGreaterThan(idx1); // ordered
+    expect(body).toContain('---'); // separator
+  });
+
+  it('emits NO Previously file when priorDigests is undefined or empty', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#'
+    });
+    const ctxA = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'dm'
+    });
+    expect(ctxA.map((c) => c.path)).not.toContain(
+      'session-digests/previously.md'
+    );
+    const ctxB = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'dm',
+      priorDigests: []
+    });
+    expect(ctxB.map((c) => c.path)).not.toContain(
+      'session-digests/previously.md'
+    );
+    const ctxC = await buildCampaignContext({
+      source: SOURCE,
+      scope: 'dm',
+      priorDigests: ['', '   ', '']
+    });
+    expect(ctxC.map((c) => c.path)).not.toContain(
+      'session-digests/previously.md'
+    );
+  });
+
+  it('works for player-facing scope too (digest IS player-visible)', async () => {
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#'
+    });
+    // The session digest is firewall-classified as player-visible
+    // already.  Player-facing context may carry it.
+    const ctx = await buildPlayerFacingContext({
+      source: SOURCE,
+      priorDigests: ['The bridge was crossed.']
+    });
+    expect(ctx.map((c) => c.path)).toContain(
+      'session-digests/previously.md'
+    );
+  });
+
+  it('FIREWALL: priorDigests do NOT receive any dm/* or design/DM-ONLY/* paths', async () => {
+    // The Previously block is a synthesized file path under
+    // session-digests/.  It must NEVER coincidentally collide with
+    // DM-only path-shape that the AI might confuse for a DM-only
+    // file.  Pinned.
+    mockFetchByPath({
+      'campaign.json': '{}',
+      'world/overview.md': '#'
+    });
+    const ctx = await buildPlayerFacingContext({
+      source: SOURCE,
+      priorDigests: ['safe content']
+    });
+    const paths = ctx.map((c) => c.path);
+    for (const p of paths) {
+      expect(p).not.toMatch(/(^|\/)dm\//);
+      expect(p).not.toContain('design/DM-ONLY/');
+    }
+  });
+});

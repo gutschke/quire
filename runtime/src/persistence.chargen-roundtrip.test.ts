@@ -177,16 +177,16 @@ describe('Chargen polish — pc-create is first-write-wins (locked)', () => {
   });
 });
 
-describe('Chargen polish — applyCharacterEdits gap for name/pronouns/backstory (GAP-A / OP-045)', () => {
+describe('Chargen polish — applyCharacterEdits supports name/pronouns/backstory (OP-045 FIXED, run #14)', () => {
   // applyCharacterEdits handles harm, stress, marks, advancements,
-  // magicPhase, tax.*, etc. — but NOT name, pronouns, or backstory.
-  // A pc-edit with field='name' lands in pcEdits[pcId] but
-  // effectiveCharacter() merges it via applyCharacterEdits, which
-  // has no name-branch and silently drops it.
+  // magicPhase, tax.*, dmNotes, etc.  Run #14 closes OP-045 by
+  // adding name/pronouns/backstory branches with caps matching the
+  // pc-create materializer.  A pc-edit with field='name' lands in
+  // pcEdits[pcId]; effectiveCharacter() merges via
+  // applyCharacterEdits, which now applies the rename.
   //
-  // This is the locked rename-via-pc-edit gap.  These tests pin the
-  // BROKEN behavior so a future fix surfaces as a test update, not
-  // a silent flip.
+  // These tests pin the FIXED behavior.  The locked-broken versions
+  // were flipped in run #14 alongside the engine change.
 
   const baseRecord = {
     pcId: 'pc-mei',
@@ -198,23 +198,83 @@ describe('Chargen polish — applyCharacterEdits gap for name/pronouns/backstory
     backstory: 'original backstory'
   } as unknown as CharacterRecord;
 
-  it('LOCKED-BROKEN: applyCharacterEdits ignores a name edit (GAP-A)', () => {
+  it('applyCharacterEdits applies a name edit (OP-045 fixed)', () => {
     const after = applyCharacterEdits(baseRecord, { name: 'Mei Tanaka-Tan' });
-    // GAP-A: applyCharacterEdits has no handler for 'name'.
-    // The edit lands in pcEdits but is silently dropped on merge.
+    expect(after.name).toBe('Mei Tanaka-Tan');
+  });
+
+  it('applyCharacterEdits applies a pronouns edit', () => {
+    const after = applyCharacterEdits(baseRecord, { pronouns: 'they/them' });
+    expect(after.pronouns).toBe('they/them');
+  });
+
+  it('applyCharacterEdits applies a backstory edit', () => {
+    const after = applyCharacterEdits(baseRecord, {
+      backstory: 'revised backstory after first session'
+    });
+    expect(after.backstory).toBe('revised backstory after first session');
+  });
+
+  it('applyCharacterEdits rejects an empty-string name (matches pc-create rule)', () => {
+    const after = applyCharacterEdits(baseRecord, { name: '' });
     expect(after.name).toBe('Mei Tanaka');
   });
 
-  it('LOCKED-BROKEN: applyCharacterEdits ignores a pronouns edit (GAP-A)', () => {
-    const after = applyCharacterEdits(baseRecord, { pronouns: 'they/them' });
-    expect(after.pronouns).toBe('she/her');
+  it('applyCharacterEdits accepts an empty-string pronouns (clears the field)', () => {
+    // pronouns is optional in pc-create; empty string clears it.
+    const after = applyCharacterEdits(baseRecord, { pronouns: '' });
+    expect(after.pronouns).toBe('');
   });
 
-  it('LOCKED-BROKEN: applyCharacterEdits ignores a backstory edit (GAP-A)', () => {
-    const after = applyCharacterEdits(baseRecord, {
-      backstory: 'revised backstory'
-    });
+  it('applyCharacterEdits rejects a name longer than 80 chars (matches pc-create cap)', () => {
+    const tooLong = 'a'.repeat(81);
+    const after = applyCharacterEdits(baseRecord, { name: tooLong });
+    expect(after.name).toBe('Mei Tanaka');
+  });
+
+  it('applyCharacterEdits rejects a backstory longer than 8000 chars', () => {
+    const tooLong = 'a'.repeat(8001);
+    const after = applyCharacterEdits(baseRecord, { backstory: tooLong });
     expect(after.backstory).toBe('original backstory');
+  });
+
+  it('applyCharacterEdits ignores a non-string name (defense)', () => {
+    const after = applyCharacterEdits(baseRecord, {
+      name: 42 as unknown as string
+    });
+    expect(after.name).toBe('Mei Tanaka');
+  });
+
+  it('round-trip: pc-edit field=name survives save → restore (OP-045 closes the loop)', async () => {
+    const net = new InMemoryNetwork();
+    const dm = makePeer('dm-markus', net);
+    dm.append('peer-join', { name: 'Markus', knownKindsCount: 200 });
+    dm.append('coordinator-claim', {});
+    emitPcCreate(dm, 'pc-mei', 'Mei', 'she/her', 'original backstory');
+    await flush();
+    dm.append('pc-edit', {
+      pcId: 'pc-mei',
+      field: 'name',
+      value: 'Mei Tanaka-Tan'
+    });
+    await flush();
+
+    const doc = serializeSession(dm.events(), CAMPAIGN, 'dm-markus');
+    const json = stringifySave(doc);
+    const parsed = parseSaveDocument(json);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const fresh = new EventLog('fresh-dm');
+    applySaveToLog(fresh, parsed.doc);
+    const state = materialize(fresh.events());
+    // The pc-edit lands in pcEdits[pcId][name].
+    expect(state.pcEdits['pc-mei']).toMatchObject({ name: 'Mei Tanaka-Tan' });
+    // The effectiveCharacter merge picks it up.
+    const merged = applyCharacterEdits(
+      state.synthesizedPcs['pc-mei'] as CharacterRecord,
+      state.pcEdits['pc-mei']
+    );
+    expect(merged.name).toBe('Mei Tanaka-Tan');
   });
 });
 

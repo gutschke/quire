@@ -264,9 +264,34 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // (per the dotted-field-path check from D-prep-2-A).  M1
   // (2026-05-29 Adversarial #2): also strip the wrapper-level
   // `causedByResponseId` AI-provenance tracer.
+  //
+  // Run #14 INV-RENAME-FIREWALL (forward-compat architect P0 #2):
+  // a future v:2 evolution that RENAMES the `field` sub-field key
+  // (e.g. → `path`) would bypass the `p.field` lookup — `p.field`
+  // would be undefined, the DM-only check would return false, and
+  // the event would survive the player projection carrying
+  // `path: "dmNotes"` (DM-private text).  Today's runtime ALSO has
+  // the v:2 silent-no-op at materialize (INV-7), but the firewall's
+  // FIRST line of defense is the per-kind scrubber; we strengthen
+  // it.  Strategy: scan EVERY string-valued top-level field in the
+  // payload — if ANY string matches a known DM-only field path,
+  // drop the event.  This catches `path: "dmNotes"`, `target:
+  // "tax.releaseMoment"`, or any future sub-field-key the v:2
+  // author may pick.  Defends in depth alongside DEC-031's
+  // contract-level prohibition.
   'pc-edit': (event) => {
     const p = event.payload as { field?: unknown } | null | undefined;
     if (isDmOnlyCharacterFieldPath(p?.field)) return null;
+    // Run #14 INV-RENAME-FIREWALL: defense-in-depth scan for any
+    // string value in the payload's top-level fields that names a
+    // DM-only character field.  This catches the field-rename
+    // bypass without locking the contract to a specific sub-field
+    // key name.
+    if (p && typeof p === 'object') {
+      for (const v of Object.values(p)) {
+        if (isDmOnlyCharacterFieldPath(v)) return null;
+      }
+    }
     if (!p || typeof p !== 'object') return event;
     const { safe, touched } = dropPcEventMetadata(
       p as unknown as Record<string, unknown>
@@ -456,9 +481,21 @@ export type ParseResult =
 export function serializeSession(
   events: readonly QuireEvent[],
   campaign: CampaignRef,
-  savedByPeerId: string
+  savedByPeerId: string,
+  /**
+   * Forward-compat passthrough (INV-1 + INV-EXTRA-LOOP, run #14): the
+   * caller threads back the `extraFields` map originally populated by
+   * `parseSaveDocument` when the LOADED save carried top-level keys
+   * unknown to this runtime.  Without this, a future runtime's
+   * `dmAnnotations` (or whatever) is silently dropped on the realistic
+   * autosave loop: parse → applySaveToLog (only consumes `events`) →
+   * play continues → autosave fires serializeSession(events, ...) and
+   * the extraFields are gone.  Pass undefined when no prior save was
+   * loaded (greenfield session).  See format-stability.md §INV-EXTRA-LOOP.
+   */
+  extraFields?: Record<string, unknown>
 ): SaveDocument {
-  return {
+  const doc: SaveDocument = {
     $schemaVersion: SAVE_SCHEMA_VERSION,
     savedAt: new Date().toISOString(),
     campaign: { ...campaign },
@@ -466,6 +503,11 @@ export function serializeSession(
     // Defensive copy; consumer shouldn't be able to mutate our slice.
     events: events.slice()
   };
+  if (extraFields !== undefined && Object.keys(extraFields).length > 0) {
+    // Defensive copy — caller shouldn't be able to mutate it after.
+    doc.extraFields = { ...extraFields };
+  }
+  return doc;
 }
 
 /**
@@ -743,7 +785,19 @@ export function serializeSessionForViewer(
   events: readonly QuireEvent[],
   campaign: CampaignRef,
   savedByPeerId: string,
-  currentCoordinator: string | undefined
+  currentCoordinator: string | undefined,
+  /**
+   * Forward-compat passthrough (INV-1 + INV-EXTRA-LOOP, run #14): see
+   * `serializeSession`'s extraFields doc.  Threaded for both DM and
+   * player projections — unknown top-level fields are NOT firewall-
+   * classified one way or the other, and the run-#14 forward-compat
+   * architect's INV-11 specifically calls out that DM-only kinds
+   * added by a future runtime would default to player-visible passthrough
+   * (preserved for the cross-version contract; the future maintainer
+   * bumps MINOR + ships a scrubber).  For top-level `extraFields` the
+   * same default applies: pass through unchanged.
+   */
+  extraFields?: Record<string, unknown>
 ): SaveDocument {
   const isCoord =
     currentCoordinator !== undefined && savedByPeerId === currentCoordinator;
@@ -770,13 +824,17 @@ export function serializeSessionForViewer(
       if (scrubbed !== null) filtered.push(scrubbed);
     }
   }
-  return {
+  const doc: SaveDocument = {
     $schemaVersion: SAVE_SCHEMA_VERSION,
     savedAt: new Date().toISOString(),
     campaign: { ...campaign },
     savedByPeerId,
     events: filtered
   };
+  if (extraFields !== undefined && Object.keys(extraFields).length > 0) {
+    doc.extraFields = { ...extraFields };
+  }
+  return doc;
 }
 
 /**
@@ -1101,6 +1159,13 @@ export function parseSaveDocument(input: string): ParseResult {
  *   but the materializer's switch will silently drop them)
  * - errors[]: human-readable error per rejected event, with the
  *   event id when one was present
+ * - extraFields: forward-compat passthrough (INV-EXTRA-LOOP, run
+ *   #14).  When the loaded `SaveDocument` carried top-level keys
+ *   unknown to this runtime, this captures them so the host can
+ *   thread them back into `serializeSession` / `serializeSessionForViewer`
+ *   on the next autosave.  Without this, the autosave loop silently
+ *   sheds the future runtime's fields.  Undefined when the loaded
+ *   doc had no unknown top-level keys.
  */
 export interface LoadResult {
   applied: number;
@@ -1108,6 +1173,7 @@ export interface LoadResult {
   rejected: number;
   unknownKinds: number;
   errors: string[];
+  extraFields?: Record<string, unknown>;
 }
 
 export function applySaveToLog(
@@ -1121,6 +1187,13 @@ export function applySaveToLog(
     unknownKinds: 0,
     errors: []
   };
+  // INV-EXTRA-LOOP (run #14): surface the loaded doc's extraFields so
+  // the caller can thread them back into the next serializeSession()
+  // call.  Without this hop, the autosave loop sheds future-runtime
+  // top-level fields silently.
+  if (doc.extraFields !== undefined) {
+    result.extraFields = doc.extraFields;
+  }
   const existingIds = new Set(log.events().map((e) => e.id));
   for (const event of doc.events) {
     const id =

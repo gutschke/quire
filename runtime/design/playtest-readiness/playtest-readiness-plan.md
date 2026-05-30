@@ -554,3 +554,68 @@ Updated end-of-run in `design/playtest-readiness/status.md`.
 This file (`playtest-readiness-plan.md`) is append-only at
 the section level; major plan-changes land as new
 appendices with the prior section preserved.
+
+---
+
+## Appendix A — Run #14 triage (2026-05-30)
+
+Four consultant reports landed in `review-history/` on
+2026-05-30. The lead walked every finding and assigned
+priority + ship-target + owner. Implementations follow.
+
+### Triage table
+
+| # | Source | Finding | P | Ship | Owner |
+|---|---|---|---|---|---|
+| FC-1 | forward-compat | `extraFields` lost on autosave loop | **P0** | this run | lead |
+| FC-2 | forward-compat | Field-rename via v:2 bypasses scrubbers | **P0** | this run | lead |
+| FC-3 | forward-compat | Strict-eq discriminator on `proposal-create.kind` | P2 | doc only this run | lead |
+| FC-4 | forward-compat | Per-kind versioning unstated | P2 | doc-only contract note this run | lead |
+| FC-5 | forward-compat | format-stability.test.ts covers only 2 of 59 KNOWN kinds | P2 | next run; document INV-8 placeholder | next-run-lead |
+| FC-Q9 | forward-compat | `unknownTopLevelFields` / `unknownPayloadSubFields` counters | P2 | next run | next-run-lead |
+| FC-INV-11 | forward-compat | DM-only NEW kind leaks via player projection default | P2 | doc only this run (no real instance) | lead |
+| UX-1 | ttrpg-ux | OP-045: applyCharacterEdits gap + no post-ratify rename UI | **P1** | this run | lead |
+| UX-2 | ttrpg-ux | FINDING-E: digest not in DM AI context | **P1** | this run | lead |
+| UX-3 | ttrpg-ux | Players have no "what happened last week" surface | **P1** | this run | lead |
+| UX-4 | ttrpg-ux | Free-write + pre-gen chargen paths placeholders | P1 | post-playtest known-issue (M8-track; doc only) | next-run-lead |
+| UX-5 | ttrpg-ux | Spoiler-edit-dialog drafts + digest draft live in `@state` only | P2 | next run | next-run-lead |
+| UX-6 | ttrpg-ux | `dmGuidance` exists but no UI surfaces it | P2 | next run | next-run-lead |
+| UX-7 | ttrpg-ux | Intent-against-pressure visually flat | P2 | next run (visual) | next-run-lead |
+| UX-8 | ttrpg-ux | Recommended mock campaigns 09/10/11 | P1 (09 only); 10/11 P2 | mock-09 this run; 10/11 next | lead → next |
+| VIS-1..5 | visual-design | Tokens, focus-visible, radii, button reset, hero | **P1** | this run (single CSS diff) | lead |
+| VIS-6..10 | visual-design | Chargen path picker, digest chip, operational-view aesthetic, typography, light-DOM doc | P1/P2 | next run after visual re-audit | next-run-lead |
+| AI-1 | ai-integration | FINDING-E (= UX-2; same bug) | **P1** | this run via UX-2 fix | lead |
+| AI-2 | ai-integration | Anthropic cache_control aspirational | P1 | next run | next-run-lead |
+| AI-3 | ai-integration | Live PC harm/stress not in AI context | P1 | next run (was already queued as v1.1) | next-run-lead |
+| AI-4 | ai-integration | AI panel undo window in-memory only | P2 | post-playtest known-issue | doc only |
+| AI-5 | ai-integration | e2e stale stubs (task #418) | P2 | this run if time, else next | lead |
+
+### Rationale notes
+
+- FC-1 + FC-2 are P0 because they are silent-correctness
+  failures the run-#13 pass missed. FC-2 is a firewall hazard
+  (DM-only leak via v:2 rename). Ship both.
+- AI-2 (prompt cache) is real money/latency but does not
+  affect correctness or firewall; defer to next run with a
+  proper cache-shape design (cache_control is a JSON marker
+  on the system+tools prefix; the brief includes scope).
+- AI-3 is queued v1.1 work per the auto-memory; defer.
+- VIS-6..10 are gated on the WS-G re-validation pass after
+  the foundation CSS diff lands. Ship the foundation; let
+  the next consultant pass tell us which of #6-#10 to do
+  next.
+- UX-4 (free-write/pre-gen placeholders) is a real
+  playtest blocker but the FIX scope is M-LARGE (full
+  UI flows). Doc as known-issue; playtest uses Q&A path
+  only. Surface in the digest write-up template.
+
+### What this turn ships
+
+P0s: FC-1, FC-2. P1s: UX-1 (OP-045), UX-2/AI-1 (FINDING-E),
+UX-3 (player digest surface), VIS-1..5 (foundation CSS).
+Plus mock campaign 09 (UI findability per WS-G).
+
+Best-effort if time: AI-5 e2e migration.
+
+Document deferrals + next-run brief inputs in `status.md`.
+

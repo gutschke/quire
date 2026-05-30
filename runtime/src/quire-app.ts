@@ -1044,6 +1044,18 @@ export class QuireApp extends LitElement {
   private session: SessionController | null = null;
   private unsubscribeSession: (() => void) | null = null;
 
+  /**
+   * INV-EXTRA-LOOP (run #14): forward-compat passthrough storage.  When
+   * `loadFromString` parses a save document that carries top-level
+   * fields unknown to this runtime (e.g. a future runtime added
+   * `dmAnnotations`), those keys land here and are re-emitted on every
+   * subsequent autosave / share / push so the autosave loop doesn't
+   * silently shed cross-version data.  Cleared on campaign mismatch /
+   * session reset.  See `design/playtest-readiness/format-stability.md`
+   * §INV-EXTRA-LOOP.
+   */
+  private loadedExtraFields: Record<string, unknown> | undefined = undefined;
+
   private abortController?: AbortController;
   /**
    * DM keyboard map (FU-1 from M3a.10 gate).  Quiet at the table:
@@ -2088,7 +2100,8 @@ export class QuireApp extends LitElement {
     const doc = serializeSession(
       this.session.getEvents(),
       { owner: src.owner, repo: src.repo, ref: src.ref },
-      this.sessionView.peerId ?? 'unknown'
+      this.sessionView.peerId ?? 'unknown',
+      this.loadedExtraFields
     );
     const body = stringifySave(doc);
     const cloudPush = this.getFsApiCloudPush();
@@ -2203,9 +2216,27 @@ export class QuireApp extends LitElement {
       </section>`;
     }
     if (!this.isCoordinator()) {
-      // Player viewers see a placeholder — the surface itself is
-      // DM-only, but we acknowledge the mode so a player checking
-      // their viewport isn't confused by an unexplained empty body.
+      // Player viewers — run #14 fix (TTRPG/UX expert top-3 #3):
+      // surface the player-visible prior-digest markdown when
+      // present.  Pre-fix the player saw "DM is re-orienting" and
+      // had ZERO bridge to last week's session even though the
+      // digest IS in their filteredShared.sessionDigests.  The
+      // digest is firewall-classified as player-visible already;
+      // we read it from `filteredShared` (NOT `shared`) so the
+      // boundary holds.  Per the silent-player-firewall: no
+      // dmGuidance, no DM-private metadata.
+      const playerDigests = v.filteredShared.sessionDigests ?? [];
+      const lastPlayerDigest = playerDigests[playerDigests.length - 1];
+      if (lastPlayerDigest && lastPlayerDigest.markdown.length > 0) {
+        return html`<section class="card session-open-player-recap">
+          <h2>Previously, at the table…</h2>
+          <p class="muted">
+            The DM is re-orienting; play resumes shortly.  Here's
+            the recap from last session.
+          </p>
+          <pre class="session-open-player-digest">${lastPlayerDigest.markdown}</pre>
+        </section>`;
+      }
       return html`<section class="card">
         <h2>Session open — the DM is re-orienting the table</h2>
         <p class="muted">
@@ -5214,17 +5245,15 @@ export class QuireApp extends LitElement {
             </section>
           `
         : nothing}
-      <section class="card">
-        <h2>No campaign loaded</h2>
+      <section class="card landing-hero">
+        <h2>Start with the sample campaign</h2>
         <p>
-          Quire loads a campaign from a GitHub repository.  Append
-          <code>?campaign=&lt;owner&gt;/&lt;repo&gt;</code> to the URL, or
-          <code>?campaign=&lt;owner&gt;/&lt;repo&gt;@&lt;ref&gt;</code> to
-          pin a branch, tag, or commit.
+          Underleaf is a slow-burn collaborative-storytelling world
+          ready to play in your browser.
         </p>
-        <p>The sample campaign:</p>
         <p>
           <a
+            class="landing-cta"
             href="?campaign=gutschke/underleaf"
             @click=${(e: Event) =>
               this.navigate(e, {
@@ -5233,6 +5262,11 @@ export class QuireApp extends LitElement {
               })}
             >Open Underleaf →</a
           >
+        </p>
+        <p class="muted" style="font-size: var(--type-chrome-tight); margin-top: var(--s-4);">
+          Or load your own:
+          <code>?campaign=&lt;owner&gt;/&lt;repo&gt;</code> (optionally
+          <code>@&lt;ref&gt;</code> to pin a branch / tag / commit).
         </p>
       </section>
       ${this.renderRecentlyPlayed()}
@@ -6595,6 +6629,10 @@ export class QuireApp extends LitElement {
     // stale records (with a different viewer's role/permissions).
     this.pcCharacterCache.clear();
     this.pcCharacterInFlight.clear();
+    // INV-EXTRA-LOOP (run #14): clear the loaded-extraFields passthrough
+    // so a fresh session doesn't inherit unknown top-level fields from
+    // the prior session's save.
+    this.loadedExtraFields = undefined;
   }
 
   /**
@@ -6903,6 +6941,20 @@ export class QuireApp extends LitElement {
       // this fits well under the token budget.
       const campaign = this.getCurrentCampaign();
       const episode = this.getCurrentEpisode();
+      // FINDING-E (2026-05-30 run #14): inject prior session-digest
+      // markdown into the AI context.  DM use case: "help guide
+      // authoring the next chapter."  Pre-fix the AI couldn't see
+      // last week's recap.  Reads from `filteredShared.sessionDigests`
+      // (NOT `shared`) so the firewall holds — digests classified as
+      // player-visible pass through.  Scope-agnostic: the digest IS
+      // player-visible content per existing classification; OK to
+      // include in both DM-scope and player-scope context.
+      const digestMarkdowns =
+        this.sessionView?.status === 'active'
+          ? (this.sessionView.filteredShared.sessionDigests ?? [])
+              .map((d) => d.markdown)
+              .filter((md): md is string => typeof md === 'string')
+          : [];
       const contextFiles = campaign
         ? await buildCampaignContext({
             source: campaign.base.source,
@@ -6912,6 +6964,7 @@ export class QuireApp extends LitElement {
               pcs: campaign.base.manifest.characters?.pcs ?? [],
               npcs: campaign.base.manifest.characters?.npcs ?? []
             },
+            priorDigests: digestMarkdowns,
             signal: ac.signal
           })
         : [];
@@ -7190,7 +7243,8 @@ export class QuireApp extends LitElement {
     return serializeSession(
       this.session.getEvents(),
       { owner: src.owner, repo: src.repo, ref: src.ref },
-      this.sessionView.peerId ?? 'unknown'
+      this.sessionView.peerId ?? 'unknown',
+      this.loadedExtraFields
     );
   }
 
@@ -7217,7 +7271,8 @@ export class QuireApp extends LitElement {
       this.session.getEvents(),
       { owner: src.owner, repo: src.repo, ref: src.ref },
       this.sessionView.peerId ?? 'unknown',
-      this.sessionView.shared.coordinator
+      this.sessionView.shared.coordinator,
+      this.loadedExtraFields
     );
   }
 
@@ -7295,6 +7350,17 @@ export class QuireApp extends LitElement {
     // roundtrip property for the DM's own save → load workflow.
     const viewerIsCoord = this.sessionView.mode === 'host';
     const projected = projectSaveForViewer(parsed.doc, viewerIsCoord);
+    // INV-EXTRA-LOOP (run #14): retain unknown top-level fields so the
+    // next autosave doesn't silently shed them.  `projected.extraFields`
+    // is the post-projection passthrough (`projectSaveForViewer` keeps
+    // them by default — they aren't firewall-classified one way or
+    // the other and the contract preserves them).
+    if (
+      projected.extraFields !== undefined &&
+      Object.keys(projected.extraFields).length > 0
+    ) {
+      this.loadedExtraFields = { ...projected.extraFields };
+    }
     const { applied, unknownKinds } = this.applyLoadedEvents(projected.events);
     this.autoReclaimAfterLoad();
     const result: LoadResult = {
@@ -7788,6 +7854,19 @@ export class QuireApp extends LitElement {
           ? record.name
           : character.id
     };
+    // OP-045 (run #14): identity block for the rename editor.  Reads
+    // the EFFECTIVE character (already merges pcEdits) so the editor
+    // pre-populates with the live values.
+    const identity = {
+      name:
+        typeof record.name === 'string' ? record.name : undefined,
+      pronouns:
+        typeof record.pronouns === 'string' ? record.pronouns : undefined,
+      backstory:
+        typeof record.backstory === 'string'
+          ? record.backstory
+          : undefined
+    };
     if (record.magicPhase !== undefined) view.magicPhase = record.magicPhase;
     if (record.knowsTheyCanCast !== undefined)
       view.knowsTheyCanCast = record.knowsTheyCanCast;
@@ -7960,6 +8039,16 @@ export class QuireApp extends LitElement {
         isCoord
           ? (pcId: string, id: string) =>
               this.removeBond({ pcId, id })
+          : null
+      }
+      .identity=${identity}
+      .onRenamePc=${
+        isCoord
+          ? (
+              pcId: string,
+              field: 'name' | 'pronouns' | 'backstory',
+              value: string
+            ) => this.submitPcEdit(pcId, field, value)
           : null
       }
     ></dm-pc-detail>`;

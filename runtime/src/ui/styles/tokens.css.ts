@@ -39,9 +39,10 @@ export const tokens = css`
     --s-6: 24px;
     --s-8: 32px;
 
-    /* ---- Radii ---- */
+    /* ---- Radii (run #14 — collapsed 12-value sprawl to 3-step scale) ---- */
     --r-chip: 4px;
     --r-card: 8px;
+    --r-pill: 999px;
 
     /* ---- Typography (clamp-driven, anchored to viewport width) ---- */
     --type-chrome-tight: clamp(12px, 0.55vw + 6px, 14px);
@@ -53,6 +54,18 @@ export const tokens = css`
     /* ---- Borders + elevation ---- */
     --border-hairline: 1px solid color-mix(in oklch, var(--ink-prose) 12%, transparent);
     --border-dm-rail: 4px solid var(--dm-amber);
+
+    /* ---- Shadows + focus ring (run #14 visual pass) ---- */
+    --shadow-card: 0 1px 2px color-mix(in oklch, black 8%, transparent),
+                   0 4px 12px color-mix(in oklch, black 6%, transparent);
+    --shadow-elev-1: 0 2px 6px color-mix(in oklch, black 12%, transparent);
+    --ring-focus: 0 0 0 2px color-mix(in oklch, var(--accent-teal) 55%, transparent);
+
+    /* ---- Button surfaces (run #14 visual pass) ---- */
+    --button-bg: var(--surface-card);
+    --button-bg-hover: color-mix(in oklch, var(--surface-card) 88%, var(--accent-teal));
+    --button-bg-primary: var(--accent-teal);
+    --button-ink-primary: oklch(15% 0.01 250);
 
     /* ---- Motion ---- */
     --motion-hover: 100ms ease-out;

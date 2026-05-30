@@ -1,195 +1,244 @@
 # Playtest-Readiness Program — Status
 
-**Last updated:** 2026-05-30 run #13 (master plan + 4 consultant
-briefs queued + WS-A/B/C/D autonomous work shipped)
+**Last updated:** 2026-05-30 run #14 (consultant ingestion +
+P0/P1 fixes + visual CSS foundation + mock-09 + v2 briefs)
 **Active workstreams:**
-- WS-A (data-format forward-compat): SHIPPED this run
-- WS-B (DM write-up phase): mock campaign 08 SHIPPED; consultant
-  brief queued
-- WS-C (chargen polish): round-trip tests SHIPPED; OP-045 filed;
-  consultant brief queued
-- WS-D (full backup E2E): cloud-backup-e2e test SHIPPED
-- WS-E (AI integration audit): consultant brief queued (no
-  autonomous work this run; awaits report)
-- WS-F (visual polish): consultant brief queued (zero autonomous
-  changes per the discipline doc)
-- WS-G (UI-iteration safety discipline): codified in the master
-  plan §6
+- WS-A (data-format forward-compat): EXTENDED this run
+  (INV-EXTRA-LOOP + INV-RENAME-FIREWALL + DEC-031)
+- WS-B (DM write-up phase): FINDING-E closed (digest reaches
+  DM AI context); v2 brief queued
+- WS-C (chargen polish): OP-045 closed; v2 brief queued
+- WS-D (full backup E2E): maintained green; cloud-backup-e2e
+  unaffected by run-#14 changes
+- WS-E (AI integration): FINDING-E shipped; AI-2 (cache) +
+  AI-3 (live PC state) deferred to next run
+- WS-F (visual polish): FOUNDATION shipped (items 1-5 as
+  single CSS diff); v2 brief queued for items 6-10
+- WS-G (UI-iteration discipline): MOCK-09 shipped (WS-G
+  validation walk for the visual pass)
 
-**Latest deploy hash:** 8501e48 (run #13 ship)
+**Latest deploy hash:** (pending push)
 **Branch:** main
 
 ---
 
-## Run #13 — what shipped
+## Run #14 — what shipped
 
-### Master plan + 4 consultant briefs (Step 1 + 2)
+### Phase 1 — Triage (Appendix A in playtest-readiness-plan.md)
 
-- `design/playtest-readiness/playtest-readiness-plan.md` (NEW)
-  — master plan. North star, 8-concerns-map, 7-workstreams,
-  sequencing, risks, UI-iteration safety playbook (WS-G),
-  resumption protocol.
+All 4 consultant reports walked; every finding triaged with
+priority + ship-target + owner. P0/P1 shipped this run; P2
++ next-run-lead items captured in the table.
 
-- `design/playtest-readiness/consultant-briefs/visual-design-expert.md`
-  (NEW) — 500 words; visual-design / game-design expert
-  briefed for the WS-F first-impression audit.
+### Phase 2 — P0 fixes (Forward-Compat architect findings)
 
-- `design/playtest-readiness/consultant-briefs/ttrpg-ux-expert.md`
-  (NEW) — 500 words; TTRPG/UX expert briefed for chargen
-  polish (WS-C) + DM write-up phase (WS-B) deep review.
+**P0a — `extraFields` autosave loop fix (INV-EXTRA-LOOP).**
 
-- `design/playtest-readiness/consultant-briefs/forward-compat-architect.md`
-  (NEW) — 600 words; forward-compat / data-format architect
-  briefed to independently audit the format-stability work
-  done in WS-A.
+- `src/persistence.ts:serializeSession` + `serializeSessionForViewer`
+  now accept an optional `extraFields` argument and re-emit it
+  if non-empty.
+- `applySaveToLog` surfaces the loaded doc's extraFields on
+  `LoadResult` so the host can thread them back.
+- `src/quire-app.ts:loadedExtraFields` stores the loaded value
+  after `loadFromString` and threads it to every serialize
+  call (`buildSaveDocument`, `buildShareableSaveDocument`, the
+  backups-push-request handler). Cleared on `leaveSession`.
+- 4 new tests in `src/persistence.format-stability.test.ts`
+  under `INV-EXTRA-LOOP` pin the full loop (parse → apply →
+  serialize → stringify) for DM coord save, DM projection,
+  player projection, and greenfield-no-extraFields.
+- `format-stability.md` updated with INV-EXTRA-LOOP block.
 
-- `design/playtest-readiness/consultant-briefs/ai-integration-auditor.md`
-  (NEW) — 500 words; AI integration auditor briefed for the
-  AI write API + context + player-facing firewall pass.
+**P0b — Scrubber field-rename guard (INV-RENAME-FIREWALL).**
 
-### WS-A — Data format forward-compat lock SHIPPED
+- `src/persistence.ts:PER_KIND_SCRUBBERS['pc-edit']` now also
+  scans EVERY top-level string value for DM-only field-path
+  names; any match drops the event. Defense-in-depth alongside
+  the contract-level prohibition in DEC-031.
+- DEC-031 logged in `decisions.md` — contract: renaming a
+  sub-field key on an existing kind is FORBIDDEN.
+- 5 new tests in `src/persistence.format-stability.test.ts`
+  under `INV-RENAME-FIREWALL` pin: v:1 baseline drop, v:1
+  pc-create scrub, v:2 path rename drop, v:2 dotted path
+  drop, benign harm=2 survives, materialize no-op.
+- `format-stability.md` updated with INV-RENAME-FIREWALL block
+  + maintainer self-check addition.
 
-- `design/playtest-readiness/format-stability.md` (NEW) — the
-  forward-compat contract.  7 invariants (INV-1 through
-  INV-7).  Findings A-E catalog (1 RESOLVED, 2 NO ACTION, 1
-  UNDER REVIEW, 1 DEFERRED for consultant).
+### Phase 2 — P1 fixes
 
-- **`src/persistence.ts` extended** (`SaveDocument.extraFields`
-  passthrough + `parseSaveDocument` preserves unknown top-level
-  fields + `stringifySave` re-flattens them).  Defense: known-
-  key collision is dropped; serialized output never contains
-  the internal `extraFields` key.  Doc comments explicitly
-  warn that the passthrough must NOT be used for known-DM-only
-  data.
+**P1a — OP-045 rename gap (TTRPG/UX Top-3 #1).**
 
-- **`src/persistence.format-stability.test.ts` (NEW)** — 18 tests
-  pinning INV-1 through INV-7 + a defensive collision test.
+- `src/character-edits.ts` — three new branches (name,
+  pronouns, backstory) with caps matching `pc-create` (80 /
+  40 / 8000). Empty pronouns clears the field; empty name +
+  empty backstory are rejected.
+- `src/ui/regions/dm-pc-detail.ts` — new `RenamePcCallback`
+  type + `onRenamePc` prop + `identity` prop + `renameOpenField`/
+  `renameDraft` @state + `renderRenameSection()` +
+  `renderRenameRow()` rendering per-field disclosure-on-click
+  editor.
+- `src/quire-app.ts:renderDmPcDetail` wires `identity` (read
+  from `effectiveCharacter`) + `onRenamePc` (`submitPcEdit`).
+- Round-trip tests in `persistence.chargen-roundtrip.test.ts`
+  FLIPPED from LOCKED-BROKEN to FIXED (9 new assertions
+  covering valid edits, caps, type defense, round-trip).
+- `character-edits.test.ts` "ignores unknown keys" updated to
+  use truly-unknown keys; added "applies backstory edit"
+  positive test.
+- OP-045 marked RESOLVED in `open-problems.md` with full
+  closure block.
 
-### WS-B — DM write-up phase mock campaign SHIPPED
+**P1b — FINDING-E digest-in-AI-context (TTRPG/UX Top-3 #2 + AI auditor Top-3 #1).**
 
-- `design/save-restore-program/simulations/mock-campaign-08-dm-writeup-phase.md`
-  (NEW) — full scenario doc; 6 coverage scenarios.
+- `src/ai/campaign-context.ts:CampaignContextRequest` adds
+  `priorDigests?: ReadonlyArray<string>` param.
+  `buildCampaignContext` synthesizes a
+  `session-digests/previously.md` file with a `# Previously`
+  block when priorDigests is non-empty.
+- `src/quire-app.ts:submitAiPrompt` reads
+  `sessionView.filteredShared.sessionDigests` (firewall-safe
+  source) and threads markdowns to `buildCampaignContext`.
+- 5 new tests in `campaign-context.test.ts` under `FINDING-E`
+  pin: emits Previously file, joins multiple digests in
+  order, no-emit on undefined/empty, player-facing OK,
+  firewall (no `dm/*` paths).
+- 1 new test in `persistence.simulation-08-dm-writeup-phase.test.ts`
+  asserts end-to-end FINDING-E with firewall check.
 
-- **`src/persistence.simulation-08-dm-writeup-phase.test.ts`
-  (NEW)** — 9 tests pinning the digest lifecycle:
-  authorship + save/restore round-trip, player-visible
-  projection (firewall holds), byte-identical roundtrip,
-  co-DM authorship after yield, non-coord rejection, invalid-
-  payload rejection at materialize, forward-compat for future
-  sub-fields (INV-2 cross-check), partition-then-rejoin
-  delivers the digest, multi-session append-only ordering.
+**P1c — Player "Previously" surface (TTRPG/UX Top-3 #3).**
 
-  FINDING-E (deferred): verifying the AI context plumbing
-  actually INCLUDES the digest in prompt assembly is out of
-  scope for this simulation; filed for the AI integration
-  auditor brief.
+- `src/quire-app.ts:renderSessionOpenStage` non-coord branch
+  now renders a `.session-open-player-recap` card containing
+  the last digest's markdown body when present. Falls back to
+  the original "DM is re-orienting" placeholder when no
+  digest exists.
+- Reads from `filteredShared.sessionDigests` (firewall-safe).
+- New test file `src/quire-app.player-digest-surface.test.ts`
+  with 2 tests: renders with digest, falls back without.
+- CSS for `.session-open-player-recap` + `.session-open-player-digest`
+  shipped as part of the visual pass.
 
-### WS-C — Chargen polish round-trip tests SHIPPED
+### Phase 3 — Visual CSS foundation pass (Visual Design items 1-5)
 
-- **`src/persistence.chargen-roundtrip.test.ts` (NEW)** — 12
-  tests covering:
-  - pc-create full payload round-trip (name + pronouns +
-    backstory).
-  - Non-ASCII names + pronouns + backstory.
-  - pc-create first-write-wins (locked).
-  - applyCharacterEdits LOCKED-BROKEN behavior for name +
-    pronouns + backstory (GAP-A / OP-045).
-  - Numeric pc-edits (harm + stress) round-trip.
-  - Player save firewall (DM-only dmNotes stripped).
-  - Coord save preserves DM-only fields.
-  - projectSaveForViewer strips DM-only sub-fields on
-    restore-side.
-  - Mid-chargen draft (chargen-pack-deliver) survives
-    round-trip.
-  - Full chargen flow byte-identical roundtrip.
+Single CSS-only commit shipping the highest-leverage 5:
 
-- **OP-045 (NEW, P1) FILED** — `applyCharacterEdits` has no
-  handlers for `name` / `pronouns` / `backstory`.  A player
-  cannot rename their PC post-ratify with the events the engine
-  currently supports.  Fix path 1: add three branches to
-  `applyCharacterEdits` (~30 LOC).  Real-world playtest impact.
-  Scheduled for run #14 alongside the TTRPG/UX consultant's
-  findings.
+- **Tokens (`src/ui/styles/tokens.css.ts`):** new
+  `--r-pill`, `--shadow-card`, `--shadow-elev-1`,
+  `--ring-focus`, `--button-bg`, `--button-bg-hover`,
+  `--button-bg-primary`, `--button-ink-primary`.
+- **Global `*:focus-visible`:** ring + 2px offset + chip
+  radius. Previously only 7 hand-rolled outlines existed.
+- **Global `button {}` reset:** font:inherit, cursor:pointer,
+  consistent padding, hairline border, button-bg surface,
+  hover transition. Previously every region rolled its own.
+- **`.btn-primary`:** new accent-teal-filled variant for
+  primary CTAs.
+- **`.landing-hero` + `.landing-cta`:** new no-campaign
+  landing — a centered max-560px hero card with primary
+  Underleaf CTA, demoting the dense prose to a one-line muted
+  footer. `quire-app.ts:renderIdle` rewires to use it.
+- **Run-#14-specific surface classes:**
+  `.session-open-player-recap`, `.session-open-player-digest`,
+  `.dm-pc-rename-*` family — supports the new P1 surfaces.
 
-### WS-D — Cloud backup E2E SHIPPED
+### Phase 3.5 — Mock campaign 09 (UI findability — WS-G)
 
-- **`src/persistence.cloud-backup-e2e.test.ts` (NEW)** — 5
-  tests driving a SUBSTANTIAL campaign (~500 events covering
-  chargen, play, scene reveals, advancement, retire, co-DM
-  transition, 2 session digests) through the FULL FsApiCloudPush
-  push/pull pipeline.
+- Doc: `design/save-restore-program/simulations/mock-campaign-09-ui-findability.md`.
+- Test: `src/persistence.simulation-09-ui-findability.test.ts`
+  with 5 assertions: landing hero CTA reachable, DM
+  session-open mode renders, player recap renders with digest
+  body, player fallback without digest, button-hidden smoke
+  check.
 
-  Asserts:
-  - DM coord projection round-trips via cloud folder.
-  - Player projection survives the full loop (firewall intact).
-  - Cross-device probe (`listSavesInFolder`) discovers the
-    file.
-  - 0 unknownKinds on a substantial log.
-  - Byte-identical roundtrip through the cloud folder hop.
+### Phase 5 — Consultant briefs v2 for run #15
 
-### WS-G — UI-iteration safety discipline
-
-- Codified in the master plan §6.  Re-validation gate (full
-  `npm test` after any UI change), discoverability check (for
-  chrome-only changes), post-change mock walk (which mock
-  campaign covers which UI surface), and the consultant-approved
-  bypass rule (still must re-validate).
+- `consultant-briefs/visual-design-expert-v2.md` — re-audit
+  the foundation pass + tell run #15 which of items 6-10 to
+  ship next.
+- `consultant-briefs/ttrpg-ux-expert-v2.md` — verify UX-1
+  (OP-045), UX-2 (FINDING-E), UX-3 (player surface) closures
+  + flag remaining gaps before playtest.
+- `consultant-briefs/adversarial-run14-fixes.md` — new
+  adversarial brief specifically targeting the 5 fixes
+  shipped this run (the "trust-but-verify" cadence — run #13
+  missed FC-1 + FC-2; the second pass must do better).
 
 ---
 
 ## Tests + baselines
 
-- **Test count:** 3002 + 2 skipped = 3004 (up from 2960
-  baseline at run #12; **+44 new this run**).
-- **Test files:** 151 (up from 147).
+- **Test count:** 3033 passed + 2 skipped = 3035 (up from
+  3004 baseline at run #13; **+31 net this run**).
+- **Test files:** 153 (up from 151).
 - **Typecheck:** clean.
-- **Build:** clean (646KB main chunk; on par with prior runs).
+- **Build:** unverified (run before push).
 - **No credentials in diff.**
 
-### New test files this run
+### New / updated test files this run
 
-- `src/persistence.format-stability.test.ts` (18 tests)
-- `src/persistence.simulation-08-dm-writeup-phase.test.ts` (9 tests)
-- `src/persistence.chargen-roundtrip.test.ts` (12 tests)
-- `src/persistence.cloud-backup-e2e.test.ts` (5 tests)
+- `src/persistence.format-stability.test.ts` (extended; +9
+  tests: INV-EXTRA-LOOP × 4, INV-RENAME-FIREWALL × 5).
+- `src/persistence.chargen-roundtrip.test.ts` (extended;
+  LOCKED-BROKEN flipped to FIXED, +9 new asserts).
+- `src/character-edits.test.ts` (extended; 1 fix + 1 new).
+- `src/ai/campaign-context.test.ts` (extended; +5 FINDING-E
+  tests).
+- `src/persistence.simulation-08-dm-writeup-phase.test.ts`
+  (extended; +1 FINDING-E assertion).
+- `src/quire-app.player-digest-surface.test.ts` (NEW; 2
+  tests).
+- `src/persistence.simulation-09-ui-findability.test.ts`
+  (NEW; 5 tests).
+
+### Production-code touches this run
+
+- `src/persistence.ts` (serializeSession + serializeSessionForViewer
+  + applySaveToLog + pc-edit scrubber + LoadResult).
+- `src/quire-app.ts` (loadedExtraFields + threading +
+  renderSessionOpenStage non-coord branch + renderDmPcDetail
+  identity wiring + renderIdle landing hero).
+- `src/character-edits.ts` (name/pronouns/backstory branches
+  + caps).
+- `src/ui/regions/dm-pc-detail.ts` (rename UI).
+- `src/ai/campaign-context.ts` (priorDigests + Previously
+  block).
+- `src/ui/styles/tokens.css.ts` (new tokens).
+- `src/ui/styles/quire-app.css.ts` (foundation CSS block).
 
 ---
 
-## What's queued for run #14
+## What's queued for run #15
 
-### Consultant report ingestion (parallel)
+### Consultant briefs to dispatch (3 in parallel)
 
-All 4 briefs are self-contained and ready to dispatch. The
-parent will dispatch them in parallel. Reports land in
-`design/playtest-readiness/review-history/<role>-YYYY-MM-DD.md`.
+- Visual Design expert v2 (foundation pass re-audit + items
+  6-10 prioritization).
+- TTRPG/UX expert v2 (closure verification + playtest GREEN
+  estimate).
+- Adversarial review of run-#14 fixes (5 fixes, trust-but-
+  verify cadence).
 
-When run #14 starts:
+### Lead work queue (run #15)
 
-1. Read the 4 consultant reports.
-2. Triage findings into P0/P1/P2.
-3. Ship P0/P1 fixes.
-4. Especially: top 3-5 visual changes from the visual-design
-   expert report, then run WS-G re-validation.
-5. OP-045 chargen rename fix lands here.
+- INGEST 3 consultant reports.
+- TRIAGE findings into P0/P1/P2/NO-FIX.
+- SHIP P0/P1 fixes.
+- Items already-known to ship next run:
+  - AI-2: Anthropic `cache_control` on system+tools prefix
+    (P1, M-fix).
+  - AI-3: Live PC state (harm/stress) injected into AI
+    context (P1, M-fix; was already queued v1.1).
+  - UX-5: Spoiler-edit-dialog + digest drafts surviving
+    page-reload (P2).
+  - UX-6: `dmGuidance` UI surface (P2).
+  - VIS-6..10: Picked subset from visual v2 report.
+- AI e2e stale stubs (task #418) — pending if time.
 
-### Already-known follow-ups
+### Run #16 + contingency
 
-- **OP-045 (P1, run #13 filed)** — chargen rename gap. Fix
-  path 1 (add handlers to `applyCharacterEdits`). ~30 LOC.
-
-- **AI write API context plumbing** — the digest's appearance
-  in next-session AI context is FILED for the AI integration
-  auditor; the lead picks up any P0/P1 they surface.
-
-- **Resume-prompt enrichment** (#429, M5 follow-up) — still
-  queued.
-
-### Subsequent runs (15-16)
-
-- Second round of expert iteration (per the multi-expert
-  iteration pattern memory).
-- Any AI write API gaps.
-- Final sweep + PLAYTEST GREEN gate.
+- Round 3 of consultant iteration if needed.
+- Final playtest-GREEN gate.
+- Resume-prompt enrichment (#429).
 
 ---
 
@@ -197,42 +246,45 @@ When run #14 starts:
 
 None this run.
 
-If the visual-design expert or AI integration auditor
-surface findings that need a human call (e.g. "the AI
-spoiler-tact behavior is wrong by design, here are 2
-alternatives"), they'll land here in run #14.
+If the run #15 consultant reports surface a decision needing
+human input (e.g. "should the player rail also offer a PC
+rename affordance?"), it lands here in run #16.
 
 ---
 
 ## Health summary
 
-- All M6a-FS green status from run #12 maintained.
-- 🟢 WS-A format-stability contract locked.
-- 🟢 WS-B DM write-up mock campaign green.
-- 🟢 WS-C chargen round-trip tests green; OP-045 filed.
-- 🟢 WS-D cloud backup E2E green.
-- 🟢 WS-G UI-iteration discipline codified.
-- 🟡 WS-E AI integration audit — consultant brief queued.
-- 🟡 WS-F visual polish — consultant brief queued.
+- 🟢 WS-A format-stability + INV-EXTRA-LOOP + INV-RENAME-FIREWALL.
+- 🟢 WS-B DM write-up + FINDING-E closed; player surface shipped.
+- 🟢 WS-C chargen polish + OP-045 RESOLVED.
+- 🟢 WS-D cloud backup E2E maintained.
+- 🟡 WS-E AI integration — FINDING-E closed; AI-2 + AI-3 queued.
+- 🟡 WS-F visual polish — foundation shipped; items 6-10 queued
+  on v2 review.
+- 🟢 WS-G UI-iteration discipline + mock-09 walked.
+
+Run-budget consumed: 14 of expected 16. **2 runs remain** in
+the user's hard cap before playtest GREEN escalation.
 
 ---
 
 ## Where to find things
 
-- Master plan → `playtest-readiness-plan.md`
+- Master plan → `playtest-readiness-plan.md` (Appendix A is
+  the run-#14 triage table)
 - Format-stability contract → `format-stability.md`
-- Consultant briefs → `consultant-briefs/<role>.md`
-- Consultant reports → `review-history/<role>-YYYY-MM-DD.md`
-  (none yet)
-- Mock-campaign 08 doc →
-  `../save-restore-program/simulations/mock-campaign-08-dm-writeup-phase.md`
-- Mock-campaign 08 test →
-  `../../src/persistence.simulation-08-dm-writeup-phase.test.ts`
-- Chargen round-trip tests →
-  `../../src/persistence.chargen-roundtrip.test.ts`
-- Cloud backup E2E →
-  `../../src/persistence.cloud-backup-e2e.test.ts`
-- Format-stability tests →
-  `../../src/persistence.format-stability.test.ts`
-- OP-045 →
-  `../save-restore-program/open-problems.md`
+  (extended: INV-EXTRA-LOOP, INV-RENAME-FIREWALL)
+- DEC-031 (run-#14 contract) → `../save-restore-program/decisions.md`
+- OP-045 RESOLVED → `../save-restore-program/open-problems.md`
+- Consultant briefs (v1) → `consultant-briefs/<role>.md`
+- Consultant briefs (v2 + adversarial) →
+  `consultant-briefs/<role>-v2.md`,
+  `consultant-briefs/adversarial-run14-fixes.md`
+- Consultant reports (v1) →
+  `review-history/<role>-2026-05-30.md`
+- Mock-campaign 09 doc →
+  `../save-restore-program/simulations/mock-campaign-09-ui-findability.md`
+- Mock-campaign 09 test →
+  `../../src/persistence.simulation-09-ui-findability.test.ts`
+- Player-digest-surface test →
+  `../../src/quire-app.player-digest-surface.test.ts`

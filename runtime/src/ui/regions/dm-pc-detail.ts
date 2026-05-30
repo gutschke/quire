@@ -76,6 +76,24 @@ export type SetThreadDebtCallback = (
 ) => void;
 export type ResetSpamCounterCallback = (pcId: string) => void;
 
+/**
+ * OP-045 (2026-05-30 run #14) — post-ratify PC rename callbacks.
+ * Emits a `pc-edit` event with the bound viewer's pcId for the
+ * three character-identity fields (name / pronouns / backstory).
+ * Coord-only by enforcement at the host layer; the component
+ * hides the editor when the callback is null.
+ *
+ * The TTRPG/UX expert's run-#14 finding noted: pre-fix, even if
+ * a host wired the pc-edit event the materializer dropped it.
+ * Run #14 added the name/pronouns/backstory branches to
+ * `applyCharacterEdits`; this is the matching UI surface.
+ */
+export type RenamePcCallback = (
+  pcId: string,
+  field: 'name' | 'pronouns' | 'backstory',
+  value: string
+) => void;
+
 const THREAD_DEBT_OPTIONS: ReadonlyArray<{
   key: '' | ThreadDebtLevel;
   label: string;
@@ -221,6 +239,28 @@ export class DmPcDetail extends LitElement {
   onSetThreadDebt: SetThreadDebtCallback | null = null;
   @property({ attribute: false })
   onResetSpamCounter: ResetSpamCounterCallback | null = null;
+  /**
+   * OP-045 (run #14): post-ratify rename callback.  When non-null,
+   * the DM sees an "Edit name / pronouns / backstory" disclosure
+   * row at the top of the surface.  Null = read-only (non-coord
+   * viewer or future-defensive feature gate).
+   */
+  @property({ attribute: false })
+  onRenamePc: RenamePcCallback | null = null;
+  /**
+   * OP-045 (run #14): the bound character's player-visible identity
+   * — name, pronouns, backstory.  Read from `effectiveCharacter`
+   * (record + pcEdits merge) so the editor shows the live values
+   * including any prior rename.  Host populates from
+   * `applyCharacterEdits(record, pcEdits[pcId])`.  Optional —
+   * absent for empty PCs or when the host hasn't computed yet.
+   */
+  @property({ attribute: false })
+  identity?: {
+    name?: string;
+    pronouns?: string;
+    backstory?: string;
+  };
   /** Verifier N2 (2026-05-26): asymmetry vs. the `DmDetailView`
    *  arc-state fields (which use `undefined`) is intentional.
    *  `null` here means "host explicitly said no caster-state for
@@ -280,6 +320,20 @@ export class DmPcDetail extends LitElement {
    */
   @state() private bondRejectConfirmId: string | null = null;
 
+  /**
+   * OP-045 (run #14): per-field rename editor state.  The DM clicks
+   * the "Edit" affordance on one of name / pronouns / backstory and
+   * a small input row appears with the live value pre-populated.
+   * Submit fires `onRenamePc(pcId, field, value)`.  Cancel reverts.
+   * Local-only @state; cleared on submit / cancel.
+   */
+  @state() private renameOpenField:
+    | 'name'
+    | 'pronouns'
+    | 'backstory'
+    | null = null;
+  @state() private renameDraft: string = '';
+
   // (Wave C5: inline-draft state + willUpdate guard moved into the
   // <magic-arc-controls> child component along with the arc-control
   // render methods.  This file stays a read-only renderer; arc
@@ -288,6 +342,7 @@ export class DmPcDetail extends LitElement {
   override render(): TemplateResult {
     const view = this.view;
     if (!view) return html``;
+    const renameAvailable = this.onRenamePc !== null;
     // Empty-state: show the card header so the DM knows the
     // surface exists, but with a brief muted line — better than
     // hiding entirely (DM scanning expects the slot to be there).
@@ -297,6 +352,7 @@ export class DmPcDetail extends LitElement {
           DM details
           <span class="surface-private-tag">only you see this</span>
         </h2>
+        ${renameAvailable ? this.renderRenameSection(view) : nothing}
         <p class="muted">No DM-only state for ${view.pcName} yet.</p>
       </section>`;
     }
@@ -305,6 +361,7 @@ export class DmPcDetail extends LitElement {
         DM details — ${view.pcName}
         <span class="surface-private-tag">only you see this</span>
       </h2>
+      ${renameAvailable ? this.renderRenameSection(view) : nothing}
       ${this.renderMagicPhase(view)}
       ${this.renderTax(view.tax)}
       ${this.renderThreadDebt(view.threadDebt)}
@@ -316,6 +373,130 @@ export class DmPcDetail extends LitElement {
       ${this.renderBonds(view)}
       ${this.renderBondProposals(view)}
     </section>`;
+  }
+
+  /**
+   * OP-045 (2026-05-30 run #14): post-ratify rename UI.  Three
+   * fields (name / pronouns / backstory) the DM can edit on behalf
+   * of the player after pc-create has locked the seat.  Empty
+   * fields are intentionally allowed for pronouns (pronouns are
+   * optional); name + backstory require non-empty input
+   * (mirrors the materializer's caps).  Coord-only by callback
+   * presence; the host gates wiring.
+   *
+   * The TTRPG/UX expert's run-#14 finding placed this gap at the
+   * playtest-blocking tier: a player who picked "Theodore" in
+   * chargen and wants "Theo" the morning of session-1 had no
+   * working surface anywhere in the app.  This is the fix.
+   */
+  private renderRenameSection(
+    view: DmDetailView
+  ): TemplateResult | typeof nothing {
+    const name = this.identity?.name ?? view.pcName;
+    const pronouns = this.identity?.pronouns ?? '';
+    const backstory = this.identity?.backstory ?? '';
+    return html`<div class="dm-pc-detail-section dm-pc-rename">
+      <h3>Identity</h3>
+      <dl class="dm-pc-rename-grid">
+        ${this.renderRenameRow(
+          'name',
+          'Name',
+          name,
+          view.pcId,
+          { maxLength: 80, multiline: false, required: true }
+        )}
+        ${this.renderRenameRow(
+          'pronouns',
+          'Pronouns',
+          pronouns,
+          view.pcId,
+          { maxLength: 40, multiline: false, required: false }
+        )}
+        ${this.renderRenameRow(
+          'backstory',
+          'Backstory',
+          backstory,
+          view.pcId,
+          { maxLength: 8000, multiline: true, required: true }
+        )}
+      </dl>
+    </div>`;
+  }
+
+  private renderRenameRow(
+    field: 'name' | 'pronouns' | 'backstory',
+    label: string,
+    current: string,
+    pcId: string,
+    opts: { maxLength: number; multiline: boolean; required: boolean }
+  ): TemplateResult {
+    const isOpen = this.renameOpenField === field;
+    if (!isOpen) {
+      return html`<div class="dm-pc-rename-row">
+        <dt class="dm-pc-rename-label">${label}</dt>
+        <dd class="dm-pc-rename-value">
+          <span class="dm-pc-rename-current">${current || html`<em class="muted">(empty)</em>`}</span>
+          <button
+            type="button"
+            class="dm-pc-rename-edit"
+            @click=${() => {
+              this.renameOpenField = field;
+              this.renameDraft = current;
+            }}
+          >
+            Edit
+          </button>
+        </dd>
+      </div>`;
+    }
+    return html`<div class="dm-pc-rename-row dm-pc-rename-row-open">
+      <dt class="dm-pc-rename-label">${label}</dt>
+      <dd class="dm-pc-rename-value">
+        ${opts.multiline
+          ? html`<textarea
+              class="dm-pc-rename-input"
+              maxlength=${opts.maxLength}
+              rows="6"
+              .value=${this.renameDraft}
+              @input=${(e: Event) => {
+                this.renameDraft = (e.target as HTMLTextAreaElement).value;
+              }}
+            ></textarea>`
+          : html`<input
+              type="text"
+              class="dm-pc-rename-input"
+              maxlength=${opts.maxLength}
+              .value=${this.renameDraft}
+              @input=${(e: Event) => {
+                this.renameDraft = (e.target as HTMLInputElement).value;
+              }}
+            />`}
+        <div class="dm-pc-rename-actions">
+          <button
+            type="button"
+            @click=${() => {
+              this.renameOpenField = null;
+              this.renameDraft = '';
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="dm-pc-rename-save"
+            ?disabled=${opts.required && this.renameDraft.length === 0}
+            @click=${() => {
+              if (opts.required && this.renameDraft.length === 0) return;
+              this.onRenamePc?.(pcId, field, this.renameDraft);
+              this.renameOpenField = null;
+              this.renameDraft = '';
+            }}
+          >
+            Save
+          </button>
+        </div>
+      </dd>
+    </div>`;
   }
 
   /**

@@ -181,6 +181,66 @@ shipped) — `'no orphaned KNOWN_EVENT_KIND'` +
 
 **Status:** ENFORCED.
 
+### INV-EXTRA-LOOP — `extraFields` survive the full autosave loop (run #14)
+
+The run-#14 forward-compat architect re-audit found that
+INV-1's earlier test only covered
+`parseSaveDocument → stringifySave`.  Realistic save-restore
+flows through the AUTOSAVE LOOP:
+
+```
+parseSaveDocument → applySaveToLog → continue play →
+serializeSession → stringifySave
+```
+
+Pre-fix: `serializeSession` reconstructed the doc from
+`(events, campaign, peerId)` and ignored the parsed-doc's
+`extraFields`, so future runtime top-level fields were
+silently dropped on the first autosave after load.
+
+**Fix shipped (run #14):**
+1. `serializeSession` + `serializeSessionForViewer` now
+   accept an optional `extraFields` argument.
+2. `applySaveToLog` surfaces the loaded doc's extraFields on
+   `LoadResult` so the host can thread them back.
+3. `quire-app.ts` stores `loadedExtraFields` after
+   `loadFromString` and passes it to every serializer call.
+
+**Test:** `src/persistence.format-stability.test.ts` —
+`'INV-EXTRA-LOOP: extraFields survive the AUTOSAVE LOOP'` (4
+scenarios: full DM loop, player projection loop, DM
+projection loop, greenfield-no-extraFields).
+
+**Status:** ENFORCED in this run.
+
+### INV-RENAME-FIREWALL — Renaming a sub-field key on an existing kind is FORBIDDEN (run #14)
+
+The run-#14 forward-compat architect re-audit found that the
+`pc-edit` scrubber reads `payload.field` by name.  A
+hypothetical future v:2 that renames `field` → `path` would
+silently bypass the DM-only-field check: `p.field` is
+undefined, the check returns false, the event survives the
+player projection carrying `path: "dmNotes"`.
+
+**Contract:** Renaming a sub-field key on an existing event
+kind is FORBIDDEN.  A future runtime that evolves the shape
+MUST ship a new event kind name (e.g. `pc-edit-v2`).  The
+payload's `v` field is for non-shape-breaking sub-field
+additions (per DEC-030), NOT for renames.
+
+**Defense-in-depth (code-level):** the `pc-edit` scrubber
+now scans ALL string-valued top-level fields of the payload;
+any string matching a DM-only character field path drops
+the event.  This catches the rename even if the contract is
+accidentally broken.  Recorded in DEC-031.
+
+**Test:** `src/persistence.format-stability.test.ts` —
+`'INV-RENAME-FIREWALL'` (5 scenarios: v:1 baseline drop,
+v:1 pc-create scrub, v:2 rename bypass dropped, v:2 dotted
+path dropped, benign edit survives, materialize no-op).
+
+**Status:** ENFORCED in this run.
+
 ### INV-7 — Payload `v: 1` versioning is per-kind
 
 Each M1+ event kind validates its payload via
@@ -279,6 +339,11 @@ When a new event kind ships:
    scrubber to `PER_KIND_SCRUBBERS` in
    `src/persistence.ts` AND ensure the materializer
    tolerates the stripped sub-field's absence per DEC-030.
+   Prefer strip-by-field-NAME (`DM_ONLY_CHARACTER_FIELDS`)
+   over read-by-sub-field-key — see DEC-031 and
+   INV-RENAME-FIREWALL.  When you MUST evolve an existing
+   kind's sub-field-key shape, SHIP A NEW KIND NAME, not a
+   v:2 with renamed keys.
 5. If the kind name conflicts with a kind a future
    runtime might add, BUMP MINOR VERSION in
    `SAVE_SCHEMA_VERSION` (rare; almost always safe to

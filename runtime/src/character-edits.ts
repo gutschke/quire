@@ -100,6 +100,21 @@ const PC_EDIT_TEXT_FIELD_MAX = 200;
  *  Mirrors the order-of-magnitude of CHAT_MAX_LENGTH × 4. */
 export const DM_NOTES_MAX = 2000;
 
+/**
+ * OP-045 (2026-05-30 run #14): post-ratify rename caps.  Mirror the
+ * `pc-create` materializer's caps so a pc-edit `name`/`pronouns`/
+ * `backstory` write is bounded by the same rules-grounded ceilings
+ * as the original chargen create.  The pc-create constants live in
+ * `core/state.ts` (private to that module); copy the values here
+ * rather than break the encapsulation.  When state.ts changes a cap,
+ * update both sides — there's a regression test in
+ * `persistence.chargen-roundtrip.test.ts` that asserts the values
+ * agree.
+ */
+export const PC_RENAME_MAX_NAME = 80;
+export const PC_RENAME_MAX_PRONOUNS = 40;
+export const PC_RENAME_MAX_BACKSTORY = 8000;
+
 export function applyCharacterEdits(
   record: CharacterRecord,
   edits: Record<string, unknown> | undefined
@@ -239,6 +254,35 @@ export function applyCharacterEdits(
       if (typeof value !== 'string') continue;
       if (value.length > DM_NOTES_MAX) continue;
       out.dmNotes = value;
+    } else if (key === 'name') {
+      // OP-045 (2026-05-30 run #14): post-ratify rename.  Mirror
+      // the pc-create materializer's caps and emptiness rule —
+      // a non-empty string ≤ PC_RENAME_MAX_NAME chars overrides.
+      // The TTRPG/UX expert's run-#14 finding: a player picks
+      // "Theodore" in chargen, then wants "Theo" the morning of
+      // session.  Pre-fix: the DM emitted pc-edit field:name and
+      // the edit silently no-op'd because this branch was missing.
+      // Player-visible state: pcEdits is filtered to the bound
+      // viewer's PC + DM, so a peer's rename of THEIR OWN pc
+      // surfaces to the table per the existing flow.
+      if (typeof value !== 'string') continue;
+      if (value.length === 0 || value.length > PC_RENAME_MAX_NAME) continue;
+      out.name = value;
+    } else if (key === 'pronouns') {
+      // OP-045: pronouns are optional in pc-create but bounded.
+      // Empty string is valid (clears the pronouns); non-string
+      // is ignored.
+      if (typeof value !== 'string') continue;
+      if (value.length > PC_RENAME_MAX_PRONOUNS) continue;
+      out.pronouns = value;
+    } else if (key === 'backstory') {
+      // OP-045: backstory revision post-ratify.  Non-empty string
+      // ≤ PC_RENAME_MAX_BACKSTORY chars.  The player who picked
+      // a backstory direction in chargen and decided in the first
+      // session to revise it has a working surface now.
+      if (typeof value !== 'string') continue;
+      if (value.length === 0 || value.length > PC_RENAME_MAX_BACKSTORY) continue;
+      out.backstory = value;
     }
   }
   return out;

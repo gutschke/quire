@@ -21,9 +21,11 @@ import { EventLog, type QuireEvent } from './core/event-log';
 import { materialize } from './core/state';
 import {
   serializeSession,
+  serializeSessionForViewer,
   stringifySave,
   parseSaveDocument,
   applySaveToLog,
+  projectSaveForViewer,
   SAVE_SCHEMA_VERSION,
   type SaveDocument
 } from './persistence';
@@ -426,6 +428,360 @@ describe('INV-6 cross-check: materializer registry parity (sanity)', () => {
     // this import will break and the contract is broken.
     expect(KNOWN_EVENT_KINDS.size).toBeGreaterThan(0);
     expect(MATERIALIZER_KINDS.size).toBeGreaterThan(0);
+  });
+});
+
+describe('INV-EXTRA-LOOP: extraFields survive the AUTOSAVE LOOP', () => {
+  /**
+   * Run-#14 forward-compat architect finding (P0 #1): the lead's
+   * run-#13 INV-1 fix covered `parseSaveDocument → stringifySave`
+   * round-trip, but NOT the realistic autosave loop:
+   *
+   *     parse → applySaveToLog → continue play → serializeSession →
+   *     stringifySave
+   *
+   * Pre-fix `serializeSession` ignored the parsed-doc's extraFields,
+   * so the future-runtime's top-level keys were silently dropped on
+   * the FIRST autosave following load.  This test pins the full loop.
+   */
+  it('extraFields survive parse → applySaveToLog → serialize → stringify', () => {
+    // Simulate a future runtime's save with a known top-level extra.
+    const futureSave = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [],
+      dmAnnotations: { lastReadDigest: 'digest-1', mood: 'tense' },
+      cloudSyncMetadata: { hash: 'abc123' }
+    };
+    const futureJson = JSON.stringify(futureSave);
+
+    // Step 1: parse the save (today's runtime).
+    const parsed = parseSaveDocument(futureJson);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    // Step 2: apply to a fresh log (this is the autosave loop's
+    // entry: the events go to disk via the EventLog, but the
+    // top-level extras are NOT in the event log — they only live
+    // on the SaveDocument).
+    const log = new EventLog('today-peer');
+    const loadResult = applySaveToLog(log, parsed.doc);
+    expect(loadResult.applied).toBe(0); // no events in this save
+    // P0 #1: applySaveToLog surfaces extraFields on LoadResult so
+    // the caller can thread them back into serializeSession.
+    expect(loadResult.extraFields).toBeDefined();
+    expect(loadResult.extraFields).toEqual({
+      dmAnnotations: { lastReadDigest: 'digest-1', mood: 'tense' },
+      cloudSyncMetadata: { hash: 'abc123' }
+    });
+
+    // Step 3: continue play — append a local event.
+    log.append('peer-join', { v: 1, name: 'today-dm' });
+
+    // Step 4: autosave — serializeSession MUST be threaded the
+    // loaded extraFields, or it sheds them silently.
+    const doc = serializeSession(
+      log.events(),
+      CAMPAIGN,
+      'today-peer',
+      loadResult.extraFields
+    );
+
+    // Step 5: stringify + re-parse.  The future extras MUST survive.
+    const json = stringifySave(doc);
+    const reparsed = JSON.parse(json);
+    expect(reparsed.dmAnnotations).toEqual({
+      lastReadDigest: 'digest-1',
+      mood: 'tense'
+    });
+    expect(reparsed.cloudSyncMetadata).toEqual({ hash: 'abc123' });
+    // And the autosave loop's own event is present.
+    expect(reparsed.events).toHaveLength(1);
+    expect(reparsed.events[0].kind).toBe('peer-join');
+  });
+
+  it('extraFields survive parse → applySaveToLog → serializeSessionForViewer (PLAYER) → stringify', () => {
+    // Same loop but through the player-projection serializer.
+    const futureSave = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [],
+      dmAnnotations: { lastReadDigest: 'digest-1' }
+    };
+    const parsed = parseSaveDocument(JSON.stringify(futureSave));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const log = new EventLog('today-peer');
+    const loadResult = applySaveToLog(log, parsed.doc);
+    log.append('peer-join', { v: 1, name: 'today-player' });
+
+    // viewer projection — non-coord (player) save.
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'today-peer',
+      'some-other-coord-peer', // viewer != coord = player projection
+      loadResult.extraFields
+    );
+    const json = stringifySave(doc);
+    const reparsed = JSON.parse(json);
+    expect(reparsed.dmAnnotations).toEqual({
+      lastReadDigest: 'digest-1'
+    });
+  });
+
+  it('extraFields survive parse → applySaveToLog → serializeSessionForViewer (DM) → stringify', () => {
+    const futureSave = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'today-peer',
+      events: [],
+      dmAnnotations: { lastReadDigest: 'digest-1' }
+    };
+    const parsed = parseSaveDocument(JSON.stringify(futureSave));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const log = new EventLog('today-peer');
+    const loadResult = applySaveToLog(log, parsed.doc);
+    log.append('peer-join', { v: 1, name: 'today-dm' });
+
+    // viewer projection — coord (DM) save.
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'today-peer',
+      'today-peer', // viewer == coord = full save
+      loadResult.extraFields
+    );
+    const json = stringifySave(doc);
+    const reparsed = JSON.parse(json);
+    expect(reparsed.dmAnnotations).toEqual({
+      lastReadDigest: 'digest-1'
+    });
+  });
+
+  it('a fresh session (no loaded save) does not include extraFields', () => {
+    // Greenfield path: no prior save loaded.  serializeSession called
+    // with extraFields=undefined must NOT include any extraFields key
+    // in the output (the doc.extraFields property is omitted).
+    const log = new EventLog('today-peer');
+    log.append('peer-join', { v: 1, name: 'fresh' });
+    const doc = serializeSession(log.events(), CAMPAIGN, 'today-peer');
+    expect(doc.extraFields).toBeUndefined();
+    const json = stringifySave(doc);
+    const reparsed = JSON.parse(json);
+    // Known fields only.
+    const keys = new Set(Object.keys(reparsed));
+    expect(keys.has('dmAnnotations')).toBe(false);
+  });
+
+  it('passing extraFields={} (empty object) is treated as undefined', () => {
+    // Defensive: an empty extraFields map shouldn't add an empty
+    // section to the serialized output.
+    const log = new EventLog('today-peer');
+    log.append('peer-join', { v: 1, name: 'fresh' });
+    const doc = serializeSession(log.events(), CAMPAIGN, 'today-peer', {});
+    expect(doc.extraFields).toBeUndefined();
+  });
+});
+
+describe('INV-RENAME-FIREWALL: scrubbers strip DM-only field NAMES regardless of sub-field key', () => {
+  /**
+   * Run-#14 forward-compat architect finding (P0 #2): the
+   * `pc-edit` scrubber reads `payload.field` by name and drops the
+   * event when the value is a known DM-only character field path
+   * (`dmNotes`, `name` etc).  A future runtime that renames the sub-
+   * field key from `field` to `path` (a v:2 evolution) would bypass
+   * the scrubber: `payload.field` is undefined → scrubber thinks the
+   * event is safe → the event is kept on the player projection
+   * carrying `path: 'dmNotes'` → DM-private text leaks.
+   *
+   * The defense: the scrubber pattern must be DOC'd to forbid
+   * renaming the field-name key on existing kinds.  The contract is
+   * recorded in `format-stability.md` §INV-RENAME-FIREWALL and
+   * DEC-031 (decisions.md).  This test pins the present-day
+   * behavior of `projectSaveForViewer` to a v:1 pc-edit so a future
+   * regression that allowed v:2 renames (without bumping the kind
+   * name) lands a failing test loudly.
+   *
+   * The companion defense for the v:2 case the architect described
+   * (scrubber-by-name-NOT-key) is: today's runtime's `isPayloadV1`
+   * check rejects v:2 payloads at materialize time (INV-7).  So
+   * even if the v:2 event survives the player projection through
+   * a future bug, the materializer no-ops it.  But that's a
+   * defense-in-depth question; the FIRST line of defense is the
+   * contract pinned here.
+   */
+  it('v:1 pc-edit with field:dmNotes is dropped from player projection (today)', () => {
+    const dmEditEvent = buildEvent(
+      'dm-peer',
+      1,
+      'pc-edit',
+      { v: 1, pcId: 'pc-1', field: 'dmNotes', value: 'secret antagonist clue' },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'dm-peer',
+      events: [dmEditEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(0); // dropped by scrubber
+  });
+
+  it('v:1 pc-create with dmNotes is stripped from player projection (today)', () => {
+    const createEvent = buildEvent(
+      'dm-peer',
+      1,
+      'pc-create',
+      {
+        v: 1,
+        pcId: 'pc-1',
+        name: 'Yui',
+        pronouns: 'she/her',
+        backstory: 'A short backstory.',
+        dmNotes: 'antagonist arc plant'
+      },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'dm-peer',
+      events: [createEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(1);
+    const payload = (projected.events[0] as QuireEvent).payload as Record<
+      string,
+      unknown
+    >;
+    // Player-visible fields stay.
+    expect(payload.name).toBe('Yui');
+    expect(payload.pronouns).toBe('she/her');
+    expect(payload.backstory).toBe('A short backstory.');
+    // DM-only sub-fields are stripped.
+    expect(payload.dmNotes).toBeUndefined();
+  });
+
+  it('defense-in-depth: a future v:2 pc-edit with path:dmNotes (rename bypass) IS DROPPED by the strengthened scrubber', () => {
+    // Run #14 INV-RENAME-FIREWALL: the lead's run-#14 fix to the
+    // pc-edit scrubber scans ALL top-level string values for
+    // DM-only field-path names.  This pins the bypass-defense.
+    const bypassEvent = buildEvent(
+      'future-dm',
+      1,
+      'pc-edit',
+      {
+        // hypothetical future shape: rename `field` → `path`.
+        v: 2,
+        pcId: 'pc-1',
+        path: 'dmNotes',
+        value: 'future-attempted-leak'
+      },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [bypassEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    // The scrubber DROPS the event because `path: "dmNotes"` is a
+    // string value matching a DM-only character field name.
+    expect(projected.events).toHaveLength(0);
+  });
+
+  it('defense-in-depth: a v:2 pc-edit with a tax.releaseMoment-shaped dotted string is ALSO dropped', () => {
+    // A dotted path under a DM-only top-level field is itself
+    // DM-only (isDmOnlyCharacterFieldPath returns true for
+    // 'tax.releaseMoment').  The scan picks it up.
+    const bypassEvent = buildEvent(
+      'future-dm',
+      1,
+      'pc-edit',
+      {
+        v: 2,
+        pcId: 'pc-1',
+        target: 'tax.releaseMoment',
+        value: 'future-attempted-tax-leak'
+      },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'future-dm',
+      events: [bypassEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(0);
+  });
+
+  it('the strengthened scrubber does NOT over-strip: a benign pc-edit harm=2 SURVIVES', () => {
+    // Regression: the value-scan must not false-positive on
+    // player-visible payloads.  `harm`/`stress`/`advancements` are
+    // NOT DM-only top-level fields, so a payload with `field:
+    // "harm"` and `value: 2` survives.
+    const benignEvent = buildEvent(
+      'dm-peer',
+      1,
+      'pc-edit',
+      { v: 1, pcId: 'pc-1', field: 'harm', value: 2 },
+      1700000000000
+    );
+    const doc = {
+      $schemaVersion: SAVE_SCHEMA_VERSION,
+      savedAt: '2026-05-30T13:00:00.000Z',
+      campaign: CAMPAIGN,
+      savedByPeerId: 'dm-peer',
+      events: [benignEvent]
+    };
+    const projected = projectSaveForViewer(doc, false);
+    expect(projected.events).toHaveLength(1);
+    const payload = (projected.events[0] as QuireEvent).payload as Record<
+      string,
+      unknown
+    >;
+    expect(payload.field).toBe('harm');
+    expect(payload.value).toBe(2);
+  });
+
+  it('a hypothetical v:2 pc-edit with path:dmNotes — silent no-op at materialize (INV-7) is the second line of defense', () => {
+    // This test documents the CONTRACT, not the today-behavior of the
+    // scrubber.  The scrubber would PASS THROUGH the v:2 event because
+    // p.field is undefined.  But INV-7 says the v:2 payload no-ops at
+    // materialize.  Together: a future runtime that ships a v:2
+    // pc-edit-with-renamed-field MUST bump kind name (per DEC-031);
+    // if it doesn't, the player save will INCLUDE the event (firewall
+    // hole) but materialize won't apply it.  That's not enough —
+    // DEC-031 forbids the rename.  We pin the materialize no-op to
+    // make the test surface its dependency on the contract.
+    const v2Event = buildEvent(
+      'future-dm',
+      1,
+      'pc-edit',
+      { v: 2, pcId: 'pc-1', path: 'dmNotes', value: 'future-leak' },
+      1700000000000
+    );
+    const log = new EventLog('today-peer');
+    log.apply(v2Event);
+    // Materialize is the second line of defense.  Today's runtime
+    // ignores v:2 payloads.
+    expect(() => materialize(log.events())).not.toThrow();
   });
 });
 

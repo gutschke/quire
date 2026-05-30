@@ -69,6 +69,25 @@ export interface CampaignContextRequest {
     npcs?: string[];
   };
   scope: ContextScope;
+  /**
+   * FINDING-E (2026-05-30 run #14): prior-session digest markdown
+   * to surface as `# Previously` context.  Closes the run-#14
+   * TTRPG/UX expert + AI integration auditor finding: the DM's
+   * literal use case ("help guide authoring the next chapter")
+   * failed because `submitAiPrompt` built context from campaign
+   * files only and never injected `state.sessionDigests`.
+   *
+   * Pass the array's markdown bodies; the builder joins them in
+   * causal order into a `# Previously` block.  Player-facing
+   * context (`buildPlayerFacingContext`) may pass digest markdown
+   * too — the digest is firewall-classified as player-visible by
+   * design (sessionDigests pass `serializeSessionForViewer`).
+   * `dmGuidance` (a separate prompt-input field) is NOT included
+   * here; this is the saved markdown only.
+   *
+   * Undefined / empty array = no `# Previously` block emitted.
+   */
+  priorDigests?: ReadonlyArray<string>;
   signal?: AbortSignal;
 }
 
@@ -190,7 +209,36 @@ export async function buildCampaignContext(
       }
     })
   );
-  return fetches.filter((f): f is ContextFile => f !== null);
+  const files = fetches.filter((f): f is ContextFile => f !== null);
+  // FINDING-E (run #14): synthesize a `# Previously` block from
+  // prior session-digest markdown when the caller passed any.
+  // This is the DM's bridge from last week's session to "help guide
+  // authoring the next chapter" — the literal AI integration
+  // auditor's Top-3 finding.  No `dmGuidance`; markdown only.
+  // Player-facing context may also pass digests through this path;
+  // the digest IS player-visible per the firewall classification.
+  if (req.priorDigests && req.priorDigests.length > 0) {
+    const joined = req.priorDigests
+      .map((md) => md.trim())
+      .filter((md) => md.length > 0)
+      .join('\n\n---\n\n');
+    if (joined.length > 0) {
+      const body = `# Previously\n\nThese are the saved session recaps from prior play, in chronological order.\n\n${joined}`;
+      // Place after campaign.json/world but before per-episode scenes
+      // so the AI's locality bias still prefers current-episode
+      // material; the digests anchor "what happened last time."
+      // The placement is achieved by INSERTING before all but the
+      // first two files (campaign.json + world/overview.md) when
+      // present; in practice push to the end is fine — the system
+      // prompt + content order tells the model what to use.  Keep
+      // it simple: append.
+      files.push({
+        path: 'session-digests/previously.md',
+        content: body
+      });
+    }
+  }
+  return files;
 }
 
 /**

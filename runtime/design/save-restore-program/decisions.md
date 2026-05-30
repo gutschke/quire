@@ -15,6 +15,88 @@ references the prior. Format:
 
 ---
 
+## DEC-031 — Scrubbers strip DM-only field NAMES regardless of sub-field key (2026-05-30, run #14)
+
+**Decision:** Per-kind scrubbers in
+`persistence.ts:PER_KIND_SCRUBBERS` must defend against the
+"future field-rename bypass" class.  The today-implementation
+of the `pc-edit` scrubber reads `payload.field` by name; a
+hypothetical future v:2 that renames the sub-field key from
+`field` to `path` (or any other) would silently bypass the
+DM-only-field check.
+
+The defense ships in TWO LAYERS:
+
+1. **Contract-level prohibition (forward-compat contract):**
+   Renaming a sub-field key on an existing kind is FORBIDDEN.
+   A future runtime that needs to evolve the shape MUST add
+   a new event kind name (e.g. `pc-edit-v2`).  Per-kind
+   payload `v` versioning stays inside the payload; the
+   payload's field-key shape is frozen.  Codified in
+   `design/playtest-readiness/format-stability.md`
+   §INV-RENAME-FIREWALL and the Maintainer Self-Check.
+
+2. **Code-level defense-in-depth (run #14 ship):** The
+   `pc-edit` scrubber now scans ALL string-valued top-level
+   fields of the payload.  If ANY string matches a DM-only
+   character field path (per `isDmOnlyCharacterFieldPath`),
+   the event is dropped from the player projection regardless
+   of which sub-field key carries it.  This catches the v:2
+   rename even if the contract is broken accidentally.
+
+**Why:** The forward-compat architect (2026-05-30 report,
+run #14) identified this as a P0 firewall hazard.  The
+materializer's `isPayloadV1` check is the THIRD line of
+defense (silent no-op on v:2 payload); the scrubber is the
+FIRST.  Skipping the scrubber would land DM-private text in
+the player save file even though the materializer wouldn't
+APPLY the edit — the LEAK is the firewall hole, not the
+APPLY.
+
+**Alternatives considered:**
+- Make the scrubber version-aware (gate on `p.v === 1`).
+  Rejected: a v:2 author who accidentally breaks the
+  contract by renaming the key would write `p.v = 1`
+  thinking the new shape is back-compat; the version check
+  would let it through.  The string-scan defends regardless.
+- Drop ALL v:2-or-higher pc-edit events entirely.
+  Rejected: forward-compat principle says unknown shapes
+  survive the LOG so the future runtime can re-materialize.
+  The log should keep the event; the player PROJECTION drops
+  the leaky payload.
+- Apply the same string-scan to every other scrubbed kind.
+  Deferred: the audit found `pc-edit` is the only kind
+  whose scrubber-by-key would bypass on rename today.  Other
+  scrubbers strip by field-NAME already
+  (`PC_EVENT_DM_ONLY_PAYLOAD_FIELDS`,
+  `FOCUS_DM_ONLY_PAYLOAD_FIELDS`,
+  `RETIRE_DM_ONLY_PAYLOAD_FIELDS`).  If a future scrubber
+  reads by sub-field key, this DEC applies and the new
+  scrubber must include a string-scan.
+
+**Tradeoffs:** The string-scan is O(payload-keys) per event;
+payloads are small (5-10 keys) and the scan is hot only on
+the player-projection path (not on materialize).  Negligible
+cost.
+
+False-positive risk: a benign pc-edit could carry a string
+value coincidentally matching "dmNotes" or "tax".  The audit
+of today's emitters found no such case (values are user-typed
+prose, numbers, booleans, or enum values that don't collide
+with the DM-only field name set).  The regression test
+`'the strengthened scrubber does NOT over-strip: a benign
+pc-edit harm=2 SURVIVES'` pins the no-false-positive
+property.
+
+**Revisit if:** A new event kind whose scrubber reads
+sub-fields by key (not by name) lands; reapply the
+string-scan defense.  Or: a future emitter writes a benign
+string value matching a DM-only field name; at that point
+the scan must be narrowed to specific known sub-field-name
+keys.
+
+---
+
 ## DEC-030 — Materializers tolerate firewall-stripped optional sub-fields (2026-05-30)
 
 **Decision:** When a per-kind scrubber in

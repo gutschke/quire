@@ -6,7 +6,19 @@ severity, evidence, hypothesis, owner, status.
 Newest at top. When fixed, link to the commit and move to a separate
 "resolved" section at the bottom.
 
-## OP-045 — Chargen rename gap: applyCharacterEdits has no handler for name/pronouns/backstory [run #13 chargen-roundtrip finding] [R4: class 2 UX-gap, P1]
+## OP-045 — Chargen rename gap: applyCharacterEdits has no handler for name/pronouns/backstory [RESOLVED 2026-05-30 run #14] [R4: class 2 UX-gap, P1]
+
+**STATUS:** RESOLVED in run #14.  `applyCharacterEdits` now
+has `name` / `pronouns` / `backstory` branches matching
+`pc-create` caps (80 / 40 / 8000); `dm-pc-detail` mounts a
+post-ratify "Identity" disclosure row (DM-side) with Edit
+buttons per field; quire-app threads `onRenamePc` and the
+effective-character `identity` block.  Regression tests
+flipped from LOCKED-BROKEN to FIXED in
+`persistence.chargen-roundtrip.test.ts` (9 new assertions).
+Engine: ~30 LOC.  UI: ~120 LOC.  See
+`src/character-edits.ts` + `src/ui/regions/dm-pc-detail.ts`
++ `src/quire-app.ts:renderDmPcDetail`.
 
 **Severity:** P1 for the playtest experience.  Not a firewall
 issue; not a data-loss issue; but a **player can't change their

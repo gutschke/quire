@@ -82,13 +82,23 @@ describe('applyCharacterEdits', () => {
   });
 
   it('ignores unknown keys', () => {
+    // Run #14 OP-045 update: `backstory` is NOW an editable key.  The
+    // previous version of this test pinned the old behavior
+    // (backstory edits ignored).  Use unknown-shaped keys instead.
     const r = applyCharacterEdits(base(), {
       hax: 'oops',
       'stats.bogus': 9,
-      backstory: 'not editable here'
+      'nonsense.field': 'irrelevant'
     });
     expect(r.stats?.str).toBe(0);
-    expect(r.backstory).toBe(base().backstory);
+    expect((r as unknown as Record<string, unknown>).hax).toBeUndefined();
+  });
+
+  it('OP-045 (run #14): applies backstory edit (formerly ignored as unknown)', () => {
+    const r = applyCharacterEdits(base(), {
+      backstory: 'revised backstory after first session'
+    });
+    expect(r.backstory).toBe('revised backstory after first session');
   });
 
   it('ignores wrong-type values', () => {

@@ -49,6 +49,165 @@ export const quireAppStyles = css`
       padding: 0.3rem 1rem;
     }
 
+    /* =============================================================
+     * Run #14 visual pass — global foundation
+     *
+     * Item set: tokens consumption start (high-traffic surfaces),
+     * :focus-visible ring, global button reset, landing hero,
+     * radii unification to 3-step scale.  Bounded by WS-G's
+     * UI-iteration safety playbook — the change is intentionally
+     * CSS-only and small in surface area so the re-validation pass
+     * (mock-09 + npm test) catches anything that drifts.
+     *
+     * Sites that previously inlined their own focus-outline,
+     * border-radius, or button background SHOULD migrate to these
+     * tokens in subsequent passes.  This commit lands the
+     * foundation; per-region migrations are tracked by the
+     * visual-design re-audit brief for run #15.
+     * ============================================================= */
+    *:focus-visible {
+      outline: var(--ring-focus);
+      outline-offset: 2px;
+      border-radius: var(--r-chip);
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border-radius: var(--r-chip);
+      padding: var(--s-2) var(--s-3);
+      border: 1px solid color-mix(in oklch, var(--ink-prose) 18%, transparent);
+      background: var(--button-bg);
+      color: inherit;
+      transition: background var(--motion-hover), border-color var(--motion-hover);
+    }
+    button:hover {
+      background: var(--button-bg-hover);
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: var(--button-bg-primary);
+      color: var(--button-ink-primary);
+      border-color: transparent;
+      font-weight: 600;
+    }
+    .btn-primary:hover {
+      background: color-mix(in oklch, var(--accent-teal) 88%, white);
+    }
+
+    /* Visual #5 — no-campaign landing hero.  Promotes the
+     * "Open Underleaf" CTA from a plain-blue text link to an
+     * intentional first-impression card with a primary button.
+     * The DM's first 30 seconds: a centered hero instead of three
+     * stacked plaintext cards. */
+    .landing-hero {
+      max-width: 560px;
+      margin: clamp(2rem, 8vh, 6rem) auto 1.5rem;
+      padding: var(--s-6);
+      background: var(--surface-card);
+      border-radius: var(--r-card);
+      border: var(--border-hairline);
+      box-shadow: var(--shadow-card);
+      text-align: center;
+    }
+    .landing-hero h1 {
+      font-size: var(--type-section);
+      margin: 0 0 var(--s-2);
+    }
+    .landing-hero p {
+      color: color-mix(in oklch, var(--ink-prose) 70%, transparent);
+      margin: 0 0 var(--s-4);
+    }
+    .landing-hero .landing-cta {
+      display: inline-block;
+      padding: var(--s-3) var(--s-6);
+      border-radius: var(--r-chip);
+      background: var(--button-bg-primary);
+      color: var(--button-ink-primary);
+      font-weight: 600;
+      text-decoration: none;
+      box-shadow: var(--shadow-elev-1);
+      transition: background var(--motion-hover);
+    }
+    .landing-hero .landing-cta:hover {
+      background: color-mix(in oklch, var(--accent-teal) 88%, white);
+    }
+
+    /* Player session-open digest surface (run #14 P1c) — the
+     * "Previously, at the table…" card players see when the DM
+     * is re-orienting and a digest is available. */
+    .session-open-player-recap {
+      border-left: 3px solid var(--accent-teal);
+    }
+    .session-open-player-digest {
+      white-space: pre-wrap;
+      font-family: inherit;
+      font-size: var(--type-prose);
+      line-height: 1.6;
+      margin: var(--s-3) 0 0;
+      padding: var(--s-3);
+      background: color-mix(in oklch, var(--surface-card) 75%, transparent);
+      border-radius: var(--r-chip);
+    }
+
+    /* OP-045 — dm-pc-detail rename editor styles (run #14). */
+    .dm-pc-rename {
+      margin-bottom: var(--s-4);
+    }
+    .dm-pc-rename-grid {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+      margin: var(--s-2) 0 0;
+    }
+    .dm-pc-rename-row {
+      display: grid;
+      grid-template-columns: minmax(7rem, auto) 1fr;
+      gap: var(--s-3);
+      align-items: baseline;
+    }
+    .dm-pc-rename-label {
+      color: color-mix(in oklch, var(--ink-prose) 65%, transparent);
+      font-size: var(--type-chrome-base);
+      margin: 0;
+    }
+    .dm-pc-rename-value {
+      display: flex;
+      align-items: baseline;
+      gap: var(--s-2);
+      margin: 0;
+      flex-wrap: wrap;
+    }
+    .dm-pc-rename-current {
+      flex: 1;
+      min-width: 0;
+    }
+    .dm-pc-rename-edit {
+      font-size: var(--type-chrome-tight);
+    }
+    .dm-pc-rename-input {
+      flex: 1 1 16rem;
+      min-width: 12rem;
+      padding: var(--s-2);
+      border-radius: var(--r-chip);
+      border: var(--border-hairline);
+      background: var(--surface-card);
+      color: var(--ink-prose);
+      font: inherit;
+    }
+    .dm-pc-rename-row-open {
+      grid-template-columns: minmax(7rem, auto) 1fr;
+    }
+    .dm-pc-rename-actions {
+      display: flex;
+      gap: var(--s-2);
+      margin-top: var(--s-2);
+      width: 100%;
+    }
+    /* =========================== end run #14 foundation =========================== */
+
     /*
      * P3D-3: chargen route renders outside the five-region shell
      * (a player visiting an invite URL doesn't need the cockpit).
