@@ -335,3 +335,124 @@ describe('AutosaveController — storage key convention', () => {
     expect(window.localStorage.getItem(expectedKey)).not.toBeNull();
   });
 });
+
+describe('AutosaveController — persistent-storage request (M5)', () => {
+  it('calls navigator.storage.persist() after a successful save', () => {
+    const persistMock = vi.fn().mockResolvedValue(true);
+    // Stub navigator.storage on globalThis. happy-dom may or may not
+    // surface it depending on version; we set it directly.
+    const origNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        ...origNavigator,
+        storage: { persist: persistMock, estimate: vi.fn() }
+      }
+    });
+    try {
+      const doc = makeDoc('owner-a', 'repo-a');
+      const c = new AutosaveController(makeHost(), () => doc);
+      c.performNow();
+      expect(persistMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: origNavigator
+      });
+    }
+  });
+
+  it('only requests persistence once across multiple saves', () => {
+    const persistMock = vi.fn().mockResolvedValue(true);
+    const origNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        ...origNavigator,
+        storage: { persist: persistMock, estimate: vi.fn() }
+      }
+    });
+    try {
+      const doc = makeDoc('owner-b', 'repo-b');
+      const c = new AutosaveController(makeHost(), () => doc);
+      c.performNow();
+      c.performNow();
+      c.performNow();
+      expect(persistMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: origNavigator
+      });
+    }
+  });
+
+  it('survives a missing navigator.storage gracefully', () => {
+    const origNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { ...origNavigator, storage: undefined }
+    });
+    try {
+      const doc = makeDoc('owner-c', 'repo-c');
+      const c = new AutosaveController(makeHost(), () => doc);
+      // Should not throw.
+      expect(() => c.performNow()).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: origNavigator
+      });
+    }
+  });
+
+  it('survives a persist() that throws synchronously', () => {
+    const persistMock = vi.fn(() => {
+      throw new Error('blocked');
+    });
+    const origNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        ...origNavigator,
+        storage: { persist: persistMock, estimate: vi.fn() }
+      }
+    });
+    try {
+      const doc = makeDoc('owner-d', 'repo-d');
+      const c = new AutosaveController(makeHost(), () => doc);
+      expect(() => c.performNow()).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: origNavigator
+      });
+    }
+  });
+
+  it('survives a persist() that returns a rejected promise', async () => {
+    const persistMock = vi.fn().mockRejectedValue(new Error('denied'));
+    const origNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        ...origNavigator,
+        storage: { persist: persistMock, estimate: vi.fn() }
+      }
+    });
+    try {
+      const doc = makeDoc('owner-e', 'repo-e');
+      const c = new AutosaveController(makeHost(), () => doc);
+      c.performNow();
+      // Let the rejected promise settle; an unhandled rejection
+      // would surface as an error in this microtask flush.
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: origNavigator
+      });
+    }
+  });
+});

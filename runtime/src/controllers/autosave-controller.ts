@@ -49,6 +49,26 @@ export class AutosaveController implements ReactiveController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quotaWarned: boolean = false;
   /**
+   * M5 (2026-05-29 save-restore program): one-shot sticky flag for
+   * `navigator.storage.persist()`. We ask the browser to mark our
+   * origin as persistent the first time we successfully write a save
+   * for a campaign. The API is idempotent (the browser keeps the
+   * flag once granted), but the prompt is intrusive on some
+   * browsers so we ONLY ask after the first successful save — at
+   * which point the user has demonstrated they're committed enough
+   * to lose data over.
+   *
+   * Per WHATWG Storage spec: `persist()` resolves to `true` when the
+   * browser grants persistence, `false` when it doesn't (e.g. third-
+   * party context, user denied, browser policy). Failure is non-
+   * fatal — we just don't get the eviction protection.
+   *
+   * The sticky-flag is in-memory only. If the user reloads the page,
+   * we'll ask again — but `persist()` is a no-op if already granted,
+   * so this is cheap.
+   */
+  private persistRequested: boolean = false;
+  /**
    * M2 (2026-05-29 save-restore program): bound visibilitychange
    * handler so we can `removeEventListener` on host-disconnect.  The
    * arrow form captures `this`; storing the ref means add/remove
@@ -155,8 +175,41 @@ export class AutosaveController implements ReactiveController {
     }
     try {
       window.localStorage?.setItem(storageKey(doc.campaign), json);
+      // M5: after the first successful save, ask the browser to mark
+      // this origin's storage as persistent — protects the autosave
+      // from being silently evicted under storage pressure (TTRPG-UX
+      // finding 1). One-shot; subsequent saves don't re-prompt.
+      this.requestPersistentStorage();
     } catch {
       // QuotaExceededError, sandboxed contexts, etc.  Non-fatal.
+    }
+  }
+
+  /**
+   * M5: best-effort request for persistent storage. The browser may
+   * prompt the user, silently grant, or silently deny. Either way the
+   * result is non-fatal — the autosave still works without the flag,
+   * but is eligible for eviction.
+   *
+   * Idempotent: only fires once per controller lifetime. The browser
+   * itself remembers persistence-granted across reloads, so this is
+   * cheap on re-runs.
+   */
+  private requestPersistentStorage(): void {
+    if (this.persistRequested) return;
+    this.persistRequested = true;
+    if (typeof navigator === 'undefined') return;
+    const storage = navigator.storage;
+    if (!storage || typeof storage.persist !== 'function') return;
+    // Fire-and-forget; we don't surface the outcome to the user.
+    // Result-handling left in for future surfacing in the DM-only
+    // operational view (per ux-strategy.md DM-only).
+    try {
+      void storage.persist().catch(() => {
+        /* swallowed — non-fatal */
+      });
+    } catch {
+      /* swallowed — non-fatal */
     }
   }
 

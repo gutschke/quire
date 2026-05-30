@@ -177,6 +177,12 @@ import {
   type AiProvider
 } from './controllers/ai-key-store';
 import { AutosaveController } from './controllers/autosave-controller';
+import {
+  listRecentCampaigns,
+  formatCampaignAge,
+  formatCampaignSlug,
+  type RecentCampaign
+} from './controllers/recently-played';
 import { decideRoute } from './controllers/route-policy';
 import {
   KNOWN_EVENT_KINDS,
@@ -4849,6 +4855,54 @@ export class QuireApp extends LitElement {
             >Open Underleaf →</a
           >
         </p>
+      </section>
+      ${this.renderRecentlyPlayed()}
+    `;
+  }
+
+  /**
+   * M5 (2026-05-29 save-restore program) — recently-played list on
+   * the no-campaign landing. Lists every campaign with a Quire save
+   * in this browser's localStorage, sorted most-recent-first.
+   *
+   * Silent-player firewall: per ux-strategy.md, a player's stripped
+   * save (no DM-only events) shows identically to a DM's. The label
+   * is in-fiction-supportive ("Pick up where you left off") rather
+   * than filesystem-shaped ("Open recent file").
+   *
+   * No-op when the visitor has no Quire saves in their browser —
+   * fresh installs and first-time visitors see the existing landing
+   * unchanged.
+   */
+  private renderRecentlyPlayed(): TemplateResult | typeof nothing {
+    let recents: RecentCampaign[];
+    try {
+      recents = listRecentCampaigns();
+    } catch {
+      return nothing;
+    }
+    if (recents.length === 0) return nothing;
+    return html`
+      <section class="card recent-campaigns">
+        <h2>Pick up where you left off</h2>
+        <ul>
+          ${recents.map(
+            (r) => html`
+              <li>
+                <a
+                  href=${`?campaign=${formatCampaignSlug(r.campaign)}`}
+                  @click=${(e: Event) =>
+                    this.navigate(e, {
+                      kind: 'campaign',
+                      slug: formatCampaignSlug(r.campaign)
+                    })}
+                  >${formatCampaignSlug(r.campaign)}</a
+                >
+                — last seen ${formatCampaignAge(r.savedAt)}
+              </li>
+            `
+          )}
+        </ul>
       </section>
     `;
   }
