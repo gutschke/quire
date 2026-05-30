@@ -15,6 +15,97 @@ references the prior. Format:
 
 ---
 
+## DEC-035 — Player-digest in-memory seen-marker resets on campaign navigation + leaveSession (2026-05-30, run #16)
+
+**Decision:** `playerLastSeenDigestTsInMemory` (the
+process-scoped mirror of the per-campaign persisted seen
+marker introduced in DEC-033) MUST be reset to `0` on:
+
+1. `navigateToRoute` slug-mismatch branch (cross-campaign
+   navigation while the browser tab stays open).
+2. `leaveSession` (clean home-route / session shutdown).
+
+The persisted localStorage key is owner+repo-scoped so it
+already isolates correctly across campaigns; the in-memory
+mirror is a global instance field whose stale value would
+otherwise suppress campaign B's recap if B's latest digest's
+ts < A's dismissed marker.
+
+**Why:** Adversarial v3 H-1 (`review-history/adversarial-
+run15-fixes-2026-05-30.md`).  Single-campaign playtest 1 does
+not trigger this; the fix is two lines and trivially safe to
+ship before playtest so the multi-campaign DM workflow works
+correctly on day one.
+
+**Alternatives considered:**
+- Eliminate the in-memory mirror.  Rejected: the mirror is
+  belt-and-suspenders for the "player joined before
+  getCurrentCampaign() resolves" race (DEC-033's rationale).
+- Per-campaign in-memory map.  Rejected: complexity, no
+  benefit over reset-on-navigate.
+
+**Tradeoffs:** None — the persisted seen-marker is the
+load-bearing one; the mirror is a race-window patch.
+
+**Revisit if:** A future surface relies on the in-memory
+mirror persisting across navigations (e.g. cross-campaign
+"global notifications").  None today.
+
+---
+
+## DEC-034 — Digest-draft discard-and-load on campaign-slug change (2026-05-30, run #16)
+
+**Decision:** When `<session-digest>`'s `campaignSlug`
+property changes mid-life (host re-renders with a different
+campaign), the component:
+
+1. Cancels any pending debounced persist timer.
+2. Clears the in-memory draft + error message +
+   generatedByResponseId.
+3. Loads the new slug's persisted draft (if any).
+
+This is the **discard-and-load** semantic.  The current draft
+(if any) belongs to the PRIOR campaign and is preserved in
+localStorage under the prior campaign's key — it will surface
+again when the DM returns to that campaign.
+
+**Why:** Adversarial v3 H-2 (`review-history/adversarial-
+run15-fixes-2026-05-30.md`).  The run-#15 `loadPersistedDraft`
+early-returned if `this.draft.length > 0`, leaving the prior
+campaign's draft visible on the new campaign's editor surface
+AND the next keystroke would persist campaign A's text under
+campaign B's storage key.  Threat-model-wise this is on-DM-
+device only (no peer leak), but a DM running two campaigns
+from one browser would cross-contaminate drafts and could
+accidentally Save A's recap into B.
+
+**Alternatives considered:**
+- Prompt the DM ("Discard the in-progress draft?").  Heavier;
+  matches the chargen pattern, but a campaign-slug change is
+  not the same load-bearing decision as chargen rename — the
+  campaign change IS the decision.
+- Merge the drafts (concatenate or interleave).  Nonsensical
+  for recap prose.
+- Preserve the draft "in case the DM meant the slug change
+  to be transient."  Rejected: the slug change IS the
+  authoritative campaign identity — preserving means leaking.
+
+**Tradeoffs:** A DM who types a draft for campaign A, then
+switches to campaign B BEFORE the 750ms debounced save has
+fired, loses the unsaved keystrokes for A.  This is the
+same boundary as `disconnectedCallback` (already flushes
+pending), but the campaign-switch path runs synchronously
+through `updated()` before the next tick fires the timer.
+Acceptable: the DM's intent on a campaign-switch is "I'm
+done with A's surface" by construction, and the typical
+DM workflow finishes the draft before switching.
+
+**Revisit if:** Real DM usage shows the campaign-switch
+data-loss boundary biting (then add a flush-pending-save
+step before the discard).
+
+---
+
 ## DEC-032 — Scrubber rename-firewall narrows to FIELD_NAME_KEYS + extends to bond-ratify + pc-create (2026-05-30, run #15)
 
 **Decision:** Revise the run-#14 rename-firewall defense in two
@@ -226,6 +317,27 @@ string-scan defense.  Or: a future emitter writes a benign
 string value matching a DM-only field name; at that point
 the scan must be narrowed to specific known sub-field-name
 keys.
+
+**Run #16 amendment — explicit scope of the string-scan
+defense:** The `FIELD_NAME_KEYS` × `isDmOnlyCharacterFieldPath`
+scan defends ONLY the DM_ONLY_CHARACTER_FIELDS vocabulary,
+applied to the three kinds where the rename-via-character-
+field-key bypass is plausible (`pc-edit`, `bond-ratify`,
+`pc-create`).  Other event kinds whose scrubbers strip
+DM-only sub-fields — `focus-grant` (strips `boundFor`,
+`notes`), `pc-retire`/`pc-archive` (strips `reason`,
+`scene`), `map-blob-add`/`map-blob-move` (strips blob
+position fields) — have DIFFERENT DM-only vocabularies and
+remain at contract-only forward-compat protection per §1
+above.  Adversarial v3 H-3 documented this gap; the
+defense-in-depth extension (introduce kind-specific
+vocabularies + a generalized
+`payloadFieldNameKeyNamesField(p, vocab)` helper) is a
+**post-playtest backlog item** filed as OP-046.  No live
+hazard: v:2 shapes don't exist today; the contract
+prohibition in §1 + the materializer's `isPayloadV1` silent
+no-op are the first two layers.  Tracking the extension
+keeps the loop closed.
 
 ---
 

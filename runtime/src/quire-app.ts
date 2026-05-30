@@ -1530,6 +1530,14 @@ export class QuireApp extends LitElement {
         // the first campaign-B autosave would otherwise emit
         // campaign A's extraFields.  One-line additive defense.
         this.loadedExtraFields = undefined;
+        // Run #16 (adversarial v3 H-1): reset the player-digest
+        // in-memory seen-marker on cross-campaign navigation.  The
+        // persisted localStorage key is owner+repo-scoped so it's
+        // safe; the in-memory mirror is process-scoped and would
+        // otherwise suppress campaign B's recap if B's latest
+        // digest has ts < the dismissed-A marker.  Not a leak
+        // (no DM-only content); UX correctness.
+        this.playerLastSeenDigestTsInMemory = 0;
         this._appState ={
           kind: 'loading',
           slug: route.slug,
@@ -6786,6 +6794,11 @@ export class QuireApp extends LitElement {
     // so a fresh session doesn't inherit unknown top-level fields from
     // the prior session's save.
     this.loadedExtraFields = undefined;
+    // Run #16 (adversarial v3 H-1): reset the player-digest in-memory
+    // seen-marker on clean session shutdown / home-route.  Paired
+    // with the navigateToRoute slug-mismatch reset; this covers the
+    // clean-leave path.
+    this.playerLastSeenDigestTsInMemory = 0;
   }
 
   /**

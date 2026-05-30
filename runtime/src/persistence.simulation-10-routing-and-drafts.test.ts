@@ -302,6 +302,144 @@ describe('Mock Campaign 10 — routing + drafts (run #15)', () => {
     expect(textarea!.value).toBe('In-progress recap text');
   });
 
+  // --- Scenario 8: H-2 cross-campaign digest-draft leak (run #16) ---
+  it('Scenario 8: <session-digest> on a campaign-slug change discards the prior in-memory draft AND does NOT persist it under the new slug (H-2 fix)', async () => {
+    await import('./ui/regions/session-digest');
+    const slugA = 'campaign-A-slug';
+    const slugB = 'campaign-B-slug';
+
+    // Seed a persisted draft for slug B (so we can confirm load).
+    saveDigestDraft(slugB, { markdown: 'B existing draft' });
+
+    // Mount with slug A; type a dirty draft.
+    const dlg = document.createElement('session-digest') as unknown as {
+      priorDigests: unknown[];
+      onGenerate: (() => Promise<unknown>) | null;
+      onSave: ((md: string, rid?: string) => boolean) | null;
+      campaignSlug: string;
+    };
+    Object.assign(dlg, {
+      priorDigests: [],
+      onGenerate: async () => ({ ok: true, markdown: '', responseId: '' }),
+      onSave: () => true,
+      campaignSlug: slugA
+    });
+    document.body.appendChild(dlg as unknown as Element);
+    await flush();
+    await flush();
+
+    // Simulate the DM typing a draft for campaign A.
+    const textarea1 = (dlg as unknown as Element).querySelector(
+      'textarea.session-digest-draft'
+    ) as HTMLTextAreaElement | null;
+    // Empty drafts render no textarea; type via the property + input.
+    // Instead, drive the draft state through the property update
+    // shape used by the generate path.
+    const internal = dlg as unknown as { draft: string };
+    internal.draft = 'A IN-PROGRESS spoiler-adjacent recap';
+    (dlg as unknown as { requestUpdate?: () => void }).requestUpdate?.();
+    await flush();
+
+    // Now the DM "switches campaigns" — host re-renders with slug B.
+    (dlg as unknown as { campaignSlug: string }).campaignSlug = slugB;
+    await flush();
+    await flush();
+
+    // The new render must show CAMPAIGN B's draft, not A's.
+    const textarea2 = (dlg as unknown as Element).querySelector(
+      'textarea.session-digest-draft'
+    ) as HTMLTextAreaElement | null;
+    expect(textarea2).toBeTruthy();
+    expect(textarea2!.value).toBe('B existing draft');
+    expect(textarea2!.value).not.toContain('A IN-PROGRESS');
+
+    // And localStorage MUST NOT have campaign A's text under
+    // campaign B's storage key — the H-2 hazard.
+    const persistedB = loadDigestDraft(slugB);
+    expect(persistedB!.markdown).toBe('B existing draft');
+    expect(persistedB!.markdown).not.toContain('A IN-PROGRESS');
+
+    // Defensive: campaign A's own key should be UNTOUCHED — we
+    // didn't trigger a persist for it (the @input handler never
+    // fired in this test path), so it should remain whatever
+    // localStorage had for it (null).  We do NOT assert A was
+    // persisted; the design call is that mid-edit transitions
+    // without a persist tick = data loss for A (acceptable;
+    // matches the "tab close before debounce" boundary already
+    // documented in DEC-035 below).
+    void textarea1;
+  });
+
+  // --- Scenario 9: H-1 in-memory mirror cross-campaign reset (run #16) ---
+  it('Scenario 9: playerLastSeenDigestTsInMemory resets on navigateToRoute slug-mismatch + leaveSession (H-1 fix)', async () => {
+    const net = new InMemoryNetwork();
+    const dm = mountApp('DM10-9', net);
+    dm.startHosting();
+    await flush();
+    const dmSession = (dm as unknown as {
+      session: { append: (k: string, p: unknown) => void };
+    }).session;
+    // Author a LATE digest (high ts).
+    dmSession.append('session-digest', {
+      v: 1,
+      sessionStartTs: 2_000_000_000_000,
+      markdown: 'Campaign A late digest.'
+    });
+    await flush();
+
+    const player = mountApp('PLAYER10-9', net);
+    player.joinCodeDraft = 'DM10-9';
+    player.displayNameDraft = 'Player';
+    player.joinSession();
+    await flush();
+    await flush();
+    await flush();
+    // Dismiss to set the seen-marker AND the in-memory mirror.
+    const dismiss = player.shadowRoot!.querySelector(
+      '.session-open-player-recap-dismiss'
+    ) as HTMLButtonElement | null;
+    expect(dismiss).toBeTruthy();
+    dismiss!.click();
+    await flush();
+
+    const mirror1 = (
+      player as unknown as { playerLastSeenDigestTsInMemory: number }
+    ).playerLastSeenDigestTsInMemory;
+    // Mirror records the digest event's ts (wall-clock at append),
+    // not the payload's sessionStartTs.  Just confirm it advanced.
+    expect(mirror1).toBeGreaterThan(0);
+
+    // Simulate the player navigating to a DIFFERENT campaign URL.
+    // navigateToRoute with a mismatched slug must reset the
+    // in-memory mirror so the new campaign's digest doesn't get
+    // suppressed by the prior campaign's seen-ts.
+    (
+      player as unknown as { navigateToRoute: (route: unknown) => void }
+    ).navigateToRoute({
+      kind: 'campaign',
+      owner: 'other-owner',
+      repo: 'other-repo',
+      ref: 'main'
+    });
+    await flush();
+    const mirror2 = (
+      player as unknown as { playerLastSeenDigestTsInMemory: number }
+    ).playerLastSeenDigestTsInMemory;
+    expect(mirror2).toBe(0);
+
+    // Also test the leaveSession reset path (covers home-route /
+    // session shutdown).
+    (
+      player as unknown as { playerLastSeenDigestTsInMemory: number }
+    ).playerLastSeenDigestTsInMemory = 9_000_000_000_000;
+    (player as unknown as { leaveSession: () => void }).leaveSession();
+    await flush();
+    const mirror3 = (
+      player as unknown as { playerLastSeenDigestTsInMemory: number }
+    ).playerLastSeenDigestTsInMemory;
+    expect(mirror3).toBe(0);
+  });
+
   // --- Scenario 7: FC-2 narrowing — "Tax" rename round-trips ---
   it('Scenario 7: a pc-edit { field:name, value:Tax } SURVIVES the player projection (FC-2 narrowing fix)', async () => {
     const { projectSaveForViewer, SAVE_SCHEMA_VERSION } = await import(

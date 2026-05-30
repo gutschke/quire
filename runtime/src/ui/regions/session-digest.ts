@@ -162,9 +162,38 @@ export class SessionDigest extends LitElement {
    * prop changes (host swaps between campaigns) so the right
    * draft surfaces.  Triggered via updated() — the framework
    * calls it after a property update has been applied.
+   *
+   * Run #16 (H-2, adversarial v3): on a campaign-slug CHANGE
+   * (not the initial mount), the in-memory draft belongs to the
+   * PRIOR campaign and must not bleed into the new one.  Discard
+   * the in-memory draft + cancel any pending debounced save (which
+   * would otherwise write campaign A's text under campaign B's
+   * storage key on next tick), THEN load campaign B's persisted
+   * draft.
+   *
+   * Design call (DEC-034): discard-and-load is canonical for the
+   * wrap-digest surface.  The DM's intent when changing campaigns
+   * is "I'm now authoring campaign B's recap" — campaign A's draft
+   * (if any) is preserved in localStorage under A's key and will
+   * surface when the DM returns to A.  No prompt; matches the
+   * silent-persistence model used elsewhere (chargen-persistence).
    */
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has('campaignSlug')) {
+      const prev = changed.get('campaignSlug') as string | undefined;
+      const isInitialMount = prev === undefined;
+      if (!isInitialMount) {
+        // Cross-campaign switch.  Cancel pending save (would write
+        // OLD text under NEW key) and clear in-memory draft so the
+        // load can populate cleanly.
+        if (this.digestDraftSaveTimer !== null) {
+          clearTimeout(this.digestDraftSaveTimer);
+          this.digestDraftSaveTimer = null;
+        }
+        this.draft = '';
+        this.errorMessage = null;
+        this.generatedByResponseId = undefined;
+      }
       this.loadPersistedDraft();
     }
   }
@@ -175,6 +204,12 @@ export class SessionDigest extends LitElement {
     // a regeneration just landed).  Only load when the local draft
     // is empty — the persistence path is for "tab closed without
     // saving."
+    //
+    // Run #16 (H-2): updated() clears the in-memory draft on a
+    // campaign-slug CHANGE before calling us, so this early-return
+    // only fires on the initial-mount case where connectedCallback
+    // raced ahead of the lifecycle.  Either way the invariant
+    // ("don't drop an unsaved draft on the floor") holds.
     if (this.draft.length > 0) return;
     const persisted = loadDigestDraft(this.campaignSlug);
     if (!persisted) return;

@@ -713,3 +713,73 @@ pin the FC-2 narrowing + parity surfaces.
 
 Document deferrals + next-run brief inputs in `status.md`.
 
+---
+
+## Appendix C — Run #16 triage + PLAYTEST GREEN (2026-05-30)
+
+Two v3 consultant reports landed in `review-history/` on
+2026-05-30: `adversarial-run15-fixes-2026-05-30.md` and
+`ttrpg-ux-expert-v3-2026-05-30.md`.  Both signed off **GO
+for playtest 1**.
+
+### Triage table
+
+| # | Source | Finding | P | Ship | Owner |
+|---|---|---|---|---|---|
+| Adv-v3-H1 | adversarial v3 H-1 | `playerLastSeenDigestTsInMemory` not reset on cross-campaign navigation | **P3** | this run (cheap) | lead |
+| Adv-v3-H2 | adversarial v3 H-2 | `<session-digest>` keeps prior-campaign draft visible on slug change + persists under new slug's key | **P2** | this run (DM-multi-campaign-per-browser hazard) | lead |
+| Adv-v3-H3 | adversarial v3 H-3 | FC-2 scrubber parity incomplete for focus-grant + pc-retire + map-blob (defense-in-depth) | P3 | doc only this run (OP-046 filed) | post-playtest |
+| Adv-v3-Q5 | adversarial v3 Q5 | Missing `value:'dmNotes'` SURVIVAL pin (companion to "Tax") | P3 | optional this run | lead |
+| UX-v3-#1 | ttrpg-ux v3 next-change #1 | UX-4 free-write + pre-gen chargen paths still placeholders | known-issue | doc-only in handoff | M8-track |
+| UX-v3-#2 | ttrpg-ux v3 next-change #2 | UX-6 `dmGuidance` UI surface (XS) | P2 | post-playtest | next-run-lead |
+| UX-v3-#3 | ttrpg-ux v3 next-change #3 | Backstory editor collapse (XS) | P2 | post-playtest | next-run-lead |
+
+### Rationale notes
+
+- **H-2 is the only P2 this turn.**  Multi-campaign-per-browser
+  is a plausible test-table workflow (the test table is a
+  single human running one Cloudflare-hosted instance).  Fix
+  is small (~10 LOC + 1 mock-10 scenario).  DEC-034 logged.
+- **H-1 is P3 but tiny** — three lines.  Ships alongside H-2
+  while the seat is warm.  DEC-035 logged.
+- **H-3 is documented architectural deferral.**  DEC-031
+  amended; OP-046 filed.  No live hazard (v:2 shapes don't
+  exist; contract prohibition + materializer silent-no-op
+  cover).
+- **UX-3 v2 #3 (backstory collapse) + UX-6 (dmGuidance UI)**:
+  both XS-effort, both P2/post-playtest.  Deferred to keep
+  this turn focused on the playtest-handoff doc.
+- **Visual cohesion items 2-5** (deferred from run #15):
+  walked the visual v2 #2-#5 list (`<h1>Quire</h1>` demotion,
+  `.session-bar` migration, DM-operational variant, pill
+  radii) — none load-bearing for playtest 1; the v3
+  consultants did not surface visual regressions and the
+  ttrpg-ux-expert v3 affirmed the cockpit is cohesive
+  enough.  Skipped to keep the playtest-handoff doc the
+  focus deliverable.
+
+### What this turn ships
+
+- H-2 fix: `<session-digest>` discard-and-load on
+  `campaignSlug` change (DEC-034) + Mock-10 Scenario 8.
+- H-1 fix: in-memory mirror reset on `navigateToRoute`
+  slug-mismatch + `leaveSession` (DEC-035) + Mock-10
+  Scenario 9.
+- H-3 deferral: DEC-031 amendment + OP-046.
+- **`design/playtest-readiness/playtest-handoff.md`** — the
+  deliverable for the human + DM + test table.
+- Final sweep: 3045 tests + 2 skipped = 3047 (up from
+  3045 baseline; +2 net).
+- Updated status.md with FINAL PLAYTEST GREEN flag.
+
+### Verdict
+
+**PLAYTEST GREEN.**  Both v3 consultants signed off; the run
+#16 fixes close the only P2 (H-2) + the tiny P3 (H-1) for
+defense-in-depth; H-3 is documented as a post-playtest
+backlog item with no live hazard.  The playtest-handoff doc
+captures everything the human + DM need before running
+session 1.
+
+The reserved run #17 contingency is **unspent**.
+

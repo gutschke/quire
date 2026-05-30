@@ -1,14 +1,15 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-30 run #13 (program WIDENED to
-Playtest-Readiness; see `../playtest-readiness/status.md` for
-the master plan + 4 consultant briefs queued + 4 new test
-files; this program is folded as workstreams WS-A/B/C/D within
-that larger effort).
-**Active milestone:** M6a-FS playable release GREEN (unchanged
-from run #12); playtest-readiness program is the active
-container per `../playtest-readiness/playtest-readiness-plan.md`.
-**Latest deploy hash:** 8501e48 (run #13 ship)
+**Last updated:** 2026-05-30 run #16 (PLAYTEST GREEN —
+program-lead final run before playtest 1).  See
+`../playtest-readiness/status.md` for the playtest-readiness
+status + handoff doc.  This program continues as the
+underlying save/restore mechanism but is no longer the
+active container; the playtest-readiness program governs.
+**Active milestone:** M6a-FS playable release GREEN
+(unchanged from run #12); playtest-readiness program is
+PLAYTEST GREEN per `../playtest-readiness/playtest-handoff.md`.
+**Latest deploy hash:** TBD after run #16 push
 **Branch:** main
 
 ## Run #13 quick links

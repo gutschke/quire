@@ -6,6 +6,68 @@ severity, evidence, hypothesis, owner, status.
 Newest at top. When fixed, link to the commit and move to a separate
 "resolved" section at the bottom.
 
+## OP-046 — Defense-in-depth: per-kind FIELD_NAME_KEYS vocab for focus-grant / pc-retire / pc-archive / map-blob scrubbers [OPEN, P3, post-playtest]
+
+**Severity:** P3 — defense-in-depth only.  No live hazard
+under today's code; contract-level prohibition (DEC-031 §1)
++ materializer `isPayloadV1` silent no-op are the first two
+defenses; the OP is the third-layer extension.
+
+**Evidence (adversarial v3, 2026-05-30, H-3):** The FC-2
+string-scan defense added in run #15 (DEC-032) defends ONLY
+the `DM_ONLY_CHARACTER_FIELDS` vocabulary, applied to
+`pc-edit`, `bond-ratify`, and `pc-create`.  Per
+`design/playtest-readiness/review-history/adversarial-run15-
+fixes-2026-05-30.md` §H-3, the following kinds strip
+DM-only sub-fields by NAME from their scrubbers and would
+be bypassed by a hypothetical v:2 rename:
+
+- `focus-grant` strips `boundFor` + `notes` (by name)
+- `pc-retire` / `pc-archive` strip `reason` + `scene` (by name)
+- `map-blob-add` / `map-blob-move` strip blob position fields
+  per `mapBlobScrub`
+
+A v:2 author renaming e.g. `scene` → `path` in pc-retire
+would bypass the by-name strip; per DEC-031 §1 this is
+contract-forbidden, but the third-layer scan does not catch it.
+
+**Hypothesis (fix path):** Introduce kind-specific DM-only
+field vocabularies:
+
+```
+FOCUS_DM_ONLY_FIELDS = ['boundFor', 'notes']
+RETIRE_DM_ONLY_FIELDS = ['reason', 'scene']
+MAP_BLOB_DM_ONLY_FIELDS = [...]
+```
+
+Plus a generalized helper:
+
+```
+function payloadFieldNameKeyNamesField(p, vocab): boolean
+```
+
+Each scrubber consults its own vocab × FIELD_NAME_KEYS.
+Same shape as the run-#15 `payloadFieldNameKeyNamesDmField`
+helper but parameterized.
+
+**Real-world impact:** None today.  v:2 shapes don't exist;
+contract-level prohibition (DEC-031 §1) + materializer
+silent-no-op cover.  This OP closes the defense-in-depth
+loop for future engineers extending those kinds.
+
+**Owner:** post-playtest backlog.
+**Status:** OPEN.  P3.  Defer until: (a) a v:2 shape is
+designed for any of those kinds, OR (b) a future audit
+elevates "scrubber-by-name vs scrubber-by-key" defense-in-
+depth to a uniform pattern.
+
+**Cross-cuts:** DEC-031 (codifies the contract-level
+defense + ships the pc-edit narrow scan), DEC-032 (extends
+the scan to bond-ratify + pc-create + narrows to
+FIELD_NAME_KEYS), `format-stability.md` §INV-RENAME-FIREWALL.
+
+---
+
 ## OP-045 — Chargen rename gap: applyCharacterEdits has no handler for name/pronouns/backstory [RESOLVED 2026-05-30 run #14] [R4: class 2 UX-gap, P1]
 
 **STATUS:** RESOLVED in run #14.  `applyCharacterEdits` now
