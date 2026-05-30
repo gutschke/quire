@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-05-29 end-of-session 2 (M4 + M5-partial + M6 design)
 **Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (after BLOCKING OP-016 CORS probe)
-**Latest deploy hash:** see `git log` HEAD short-SHA (to fill in after push)
-**Branch:** main
+**Latest deploy hash:** 9e6009a (M6 auth-strategy draft 2)
+**Branch:** main (origin up to date)
 
 ## Session log (most recent first)
 
