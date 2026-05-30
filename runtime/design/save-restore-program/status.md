@@ -1,7 +1,13 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 (M1 + M2 + M3 shipped)
+**Last updated:** 2026-05-29 end-of-session (M1 + M2 + M3 shipped)
 **Active milestone:** M4 — Restore-drill CI (next)
+**Latest deploy hash:** build 99c837c
+**Branch:** main (origin up to date)
+
+## Session log (most recent first)
+
+- **2026-05-29 (this session):** M0 docs + M1 firewall + M2 tab-close + M3 re-broadcast. Three pushes to origin/main. 12 new tests; all 2584 pass; typecheck clean.
 
 ## Just shipped
 
