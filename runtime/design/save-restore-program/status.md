@@ -2,8 +2,8 @@
 
 **Last updated:** 2026-05-29 end-of-session 3 (NEW-ADV-1/2 firewall fix + draft-3 auth strategy)
 **Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (BLOCKED on 12 open-problems + OP-016 CORS probe; see ship gates)
-**Latest deploy hash:** a7dedac (NEW-ADV-1/2 firewall fix + 11 new regression tests) — draft-3 docs commit pending
-**Branch:** main (origin up to date through `a7dedac`)
+**Latest deploy hash:** 78a4600 (draft-3 docs); preceding code commit a7dedac (NEW-ADV-1/2 firewall fix + 11 new regression tests)
+**Branch:** main (push pending)
 
 ## Session log (most recent first)
 
