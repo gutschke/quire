@@ -17,7 +17,7 @@ critical fixes + foundation continuation + mock-10 + run-#16 briefs)
 - WS-G (UI-iteration discipline): MOCK-10 shipped + mock-09
   Scenario 4 updated to exercise production routing
 
-**Latest deploy hash:** see end of run #15 entry
+**Latest deploy hash:** 6a6f8f4 (run #15 ship)
 **Branch:** main
 
 ---
