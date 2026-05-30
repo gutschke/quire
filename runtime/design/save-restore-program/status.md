@@ -7,7 +7,7 @@ deferred, not blocking playable release)
 **Active milestone:** M6a-FS-2 SHIPPED / playable-release-plan.md
 milestone 2 complete.  Next: M6a-FS-3 (cross-device probe +
 simulations 04-05).
-**Latest deploy hash:** (will record after push)
+**Latest deploy hash:** e9fbf47 (run #9 ship — M6a-FS-2)
 **Branch:** main
 
 ## Session log (most recent first)
