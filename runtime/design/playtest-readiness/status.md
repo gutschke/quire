@@ -17,7 +17,7 @@ P0/P1 fixes + visual CSS foundation + mock-09 + v2 briefs)
 - WS-G (UI-iteration discipline): MOCK-09 shipped (WS-G
   validation walk for the visual pass)
 
-**Latest deploy hash:** (pending push)
+**Latest deploy hash:** 6ac731b (run #14 ship)
 **Branch:** main
 
 ---
