@@ -4,7 +4,7 @@
 M6a OAuth orchestrator + Drive uploadAppdata scaffolded with
 48 new tests)
 **Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (all doc gates now closed; orchestration code scaffolded; remaining inline gates (OP-020 listener / OP-022 401 / OP-023 sub-mismatch / OP-024 APP) land in the cloud-push.ts + UI follow-up)
-**Latest deploy hash:** d1fe7d5 (run #6 code + docs)
+**Latest deploy hash:** d7778c2 (run #6 code + docs)
 **Branch:** main
 
 ## Session log (most recent first)
