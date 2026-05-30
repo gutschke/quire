@@ -42,6 +42,54 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-005 — `applyEvent` propagates via the `sync-response` gossip path by default (2026-05-29)
+
+**Decision:** `Peer.applyEvent(event)` now forwards newly-applied
+events to all connected peers using `forwardShareToOthers` (sync-
+response, hub-forwarding path). Callers can opt out with
+`{ propagate: false }`.
+
+**Why:** The architect-claim reproduction
+(`peer.restore-rebroadcast.test.ts`) showed the 3-peer race: bob+carol
+are connected, alice joins, on-connect bob+carol sync-request alice
+who responds with EMPTY (her log was just constructed), THEN alice
+loads N events via applyEvent. Pre-fix those N events never reach
+bob+carol — pull-only model leaves a permanent gap. Default-on
+propagation closes it.
+
+**Why sync-response not share:** The `share` envelope is rejected by
+the R2.1 impersonation defense when `event.peerId !== from`. Restored
+events may be authored by a PRIOR session's peers (e.g. "bob's log
+was restored from alice's autosave"). `sync-response` is exempt by
+design — gossip-forwarding inherently re-ships events authored by
+others. Recipients dedup via the EventLog id check, so retries are
+idempotent.
+
+**Alternatives:**
+- Always propagate (no opt-out). Rejected: the `regenerateCode` path
+  in session-controller leaves the network + rejoins; propagating
+  during the in-between window has nothing to broadcast to and
+  generates wasted work later. The opt-out keeps the seam usable.
+- Batch propagate (one sync-response with all loaded events). Future
+  optimization. Today's per-event broadcast is O(N×P) but correct;
+  recipients dedup. Real campaigns load <10k events from save,
+  multiplied by <8 peers ≈ 80k message-sends. localStorage saves
+  the day on per-message overhead. Revisit if profiling shows it
+  matters.
+- Make the loader call `Peer.append` to "re-author" each event.
+  Rejected: that creates NEW event ids and breaks idempotency,
+  defeats the LWW determinism, and double-counts every restored
+  event for everyone who already had it.
+
+**Tradeoffs:** A peer who restores from save fires N broadcasts. For
+realistic N (<10k for a long campaign) this is acceptable. The
+recipient dedup at EventLog.apply makes retries free.
+
+**Revisit if:** A profiling pass shows the per-event broadcast is
+a bottleneck for a real DM session. Then batch into chunks.
+
+---
+
 ## DEC-004 — Tab-close uses `visibilitychange === 'hidden'`, NOT `beforeunload` (2026-05-29)
 
 **Decision:** `AutosaveController` listens for `visibilitychange` on

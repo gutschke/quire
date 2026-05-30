@@ -34,7 +34,7 @@ DoD:
 - Test: a synthesized `visibilitychange → hidden` after an unflushed change
   writes localStorage before returning.
 
-## M3 — Restore re-broadcast
+## M3 — Restore re-broadcast (DONE 2026-05-29)
 
 **Architect finding 1.** `Peer.applyEvent` does not share re-applied events.
 "Any party member can continue" is currently false; restored events stay local.

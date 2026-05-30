@@ -1,7 +1,7 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 (M2 shipped)
-**Active milestone:** M3 — Restore re-broadcast (next; needs reproduction)
+**Last updated:** 2026-05-29 (M1 + M2 + M3 shipped)
+**Active milestone:** M4 — Restore-drill CI (next)
 
 ## Just shipped
 
@@ -10,50 +10,63 @@
 - Map-blob unrevealed label leak sealed via reveal-mask scrubber.
 - `causedByResponseId` scrubbed from `pc-create` + `pc-edit` for non-coord saves.
 - `EVENT_KINDS_NO_SCRUB_NEEDED` + lint forces explicit per-kind decision.
-- 40-seed save-path firewall fuzz lands as the SAVE-STREAM companion to `state.firewall-fuzz`.
+- 40-seed save-path firewall fuzz — SAVE-STREAM companion to `state.firewall-fuzz`.
 
 ### M2 — Tab-close durability (DONE)
 
-- `AutosaveController` now listens for `visibilitychange === 'hidden'` and flushes synchronously if a save is pending. Closes the 1.5s data-loss window on tab-close (Architect finding #5, Test-QA finding #2).
-- Used `visibilitychange` not `beforeunload` per DEC-004 (mobile + bfcache reliability).
-- `hostDisconnected()` cancel-on-route-change behavior preserved (distinct from tab-close); doc commented inline.
-- 6 new unit tests pin: listener registered, listener removed, flush on hidden, no-op on visible, no-op when nothing pending, no double-write after flush.
+- `AutosaveController` listens for `visibilitychange === 'hidden'` and flushes pending saves synchronously. Closes the 1.5s data-loss window on tab-close.
+- `hostDisconnected()` cancel-on-route-change preserved (distinct from tab-close).
+- 6 new unit tests pin the contract.
 
-Tasks #420, #421, #422 marked complete.
+### M3 — Restore re-broadcast (DONE)
 
-All 2578 vitest tests pass. TypeScript clean.
+The architect's claim WAS REAL — in the 3-peer case. Reproduction
+test (`peer.restore-rebroadcast.test.ts`):
+- 2-peer scenario: pull from new joiner catches up, no bug.
+- 3-peer scenario: bob+carol connect first, alice joins with empty
+  log, on-connect sync-request → alice responds empty, THEN alice
+  loads saved events. Pre-fix bob+carol never see them. ←  THE BUG.
+
+Fix: `Peer.applyEvent(event, { propagate = true })` now forwards
+newly-applied events via `forwardShareToOthers` (sync-response,
+hub-forwarding). Opt-out preserved for the `regenerateCode` path.
+Sync-response chosen over `share` because restored events may have
+been authored by other peers' prior sessions (R2.1 impersonation
+defense would reject those over `share`).
+
+Tasks #420, #421, #422, #423 marked complete.
+
+All 2584 vitest tests pass. TypeScript clean.
 
 ## Up next
 
-### M3 — Restore re-broadcast (NEXT, needs reproduction first)
+### M4 — Restore-drill CI (NEXT)
 
-Architect finding #1: `Peer.applyEvent` does not share re-applied
-events. The hypothesis is that a player who restores their autosave
-and joins a fresh session has their unique events silently never
-propagate to the table.
+Promote three currently-e2e-only assertions to fast unit tests +
+add a nightly restore-drill: 1-second deterministic seed → 100-event
+soak → save → restore → byte-identical (modulo savedAt) + 0
+unknownKinds + convergence.
 
-**BUT** the architect-claim deserves verification — Peer's
-constructor pulls a `sync-request` from every already-connected peer
-on join, which makes the NEW peer the asker. If the new peer responds
-to other peers' sync-requests with its full log (which it does via
-`handleMessage` → `since(clock)` → `sync-response`), the restored
-events WOULD propagate through the existing path.
+Likely 2-3 commits:
+1. Test harness for byte-identical roundtrip (modulo savedAt).
+2. Soak-100-event drill as a unit test.
+3. Promote cross-week save-load-continue + branch-divergence-merge
+   from e2e to vitest.
 
-Plan for M3:
-1. Write an integration test that constructs the architect's scenario
-   (peer A loads N events from save → peer A joins a fresh
-   transport with peers B and C → assert B and C see all N events).
-2. If the test PASSES, the architect finding is invalidated. Update
-   `open-problems.md` OP-001 to RESOLVED-AS-NOT-A-BUG. Move on.
-3. If the test FAILS, dig in: which event is dropped? Why does
-   sync-response not carry it? Then patch with the minimum-blast-
-   radius fix.
+### M5 — Discoverability (after M4)
 
-This is the most rigorous path because the architect's claim doesn't
-match my reading of the protocol, and the "trust but verify" memory
-applies.
+- `navigator.storage.persist()` request on first session-write.
+- Resume prompt: scene + PCs + digest headline.
+- Recently-played list on no-campaign landing.
+- DM-only soft-warn on eviction (silent-player firewall enforced).
 
-### M4, M5, M6, M7, M8 — see roadmap.md.
+### M6 — Honest scope (after M5)
+
+Decision pending the human (OP-006).
+
+### M7 — Simulated playtest
+
+### M8 — UAT readiness
 
 ## Decisions pending the human
 
@@ -69,9 +82,9 @@ applies.
 - 🟢 Self-completing scrubber registry (M1 shipped).
 - 🟢 Save-path taint fuzz (M1 shipped).
 - 🟢 Tab-close durability (M2 shipped).
-- 🟡 "Any party member can continue" — M3 reproduction needed before patch.
-- 🔴 Browser-eviction handling — no `navigator.storage.persist()`, M5 work pending.
-- 🟡 e2e-only critical-path coverage — M4 work pending.
+- 🟢 "Any party member can continue" promise — REAL (M3 shipped).
+- 🔴 Browser-eviction handling — no `navigator.storage.persist()`, M5 pending.
+- 🟡 e2e-only critical-path coverage — M4 next.
 - 🔴 Honest scope — GitHub-push + Drive sync implied but not built. Human decision required.
 
 ## Where to find things

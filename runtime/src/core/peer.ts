@@ -156,18 +156,54 @@ export class Peer {
   }
 
   /**
-   * Apply an externally-provided event to the local log without
-   * broadcasting.  Used by load/restore paths: the events were
-   * authored by someone else (the original session's peers), so
-   * R2.1's transport-sender vs event.peerId check would reject any
-   * re-share we'd attempt.  Future joiners catch up via the normal
-   * sync-response pull when they connect.  Returns whether the
-   * event was newly applied (false if duplicate or invalid).
+   * Apply an externally-provided event to the local log.  Used by
+   * load/restore paths.
+   *
+   * M3 (2026-05-29 save-restore program, Architect finding #1 +
+   * peer.restore-rebroadcast.test.ts reproduction): by default we
+   * propagate newly-applied events to connected peers via the
+   * sync-response gossip path (hub-forwarding).  Without this,
+   * a peer that loads N events from save AFTER joining an existing
+   * session never sends those events to peers who already
+   * sync-requested before the load happened.  The pull-only model
+   * left a permanent gap.
+   *
+   * We use `forwardShareToOthers` rather than the `share` envelope
+   * because the event author may be a PRIOR peer from the saved
+   * session (e.g. "bob's event-log was reconstructed from alice's
+   * autosave"), and the R2.1 impersonation defense rejects `share`
+   * messages whose event.peerId differs from the transport sender.
+   * `sync-response` is exempt by design — gossip-forwarding
+   * inherently re-ships events authored by others.
+   *
+   * Callers that explicitly do NOT want propagation (e.g. internal
+   * dedup tests) can pass `{ propagate: false }`.  The
+   * `regenerateCode` path also uses no-propagate because it
+   * leaves + re-joins the network and the new connections handle
+   * catch-up via the normal sync-request path.
+   *
+   * Returns whether the event was newly applied (false if duplicate
+   * or invalid).
    */
-  applyEvent(event: QuireEvent): boolean {
+  applyEvent(
+    event: QuireEvent,
+    options: { propagate?: boolean } = {}
+  ): boolean {
+    const propagate = options.propagate !== false;
     const applied = this.log.apply(event);
-    if (applied) this.notifyStateChange();
-    return applied;
+    if (!applied) return false;
+    if (propagate) {
+      // Treat ourselves as the "originalSender" — forwardShareToOthers
+      // ships to every connected peer except us, which is exactly the
+      // intent here.  Each recipient applies via sync-response (also
+      // exempt from re-forwarding to avoid loops), then their own
+      // notifyStateChange fires.  EventLog dedup at the recipient
+      // makes the operation idempotent if another path delivered
+      // the same event first.
+      this.forwardShareToOthers(this.peerId, event);
+    }
+    this.notifyStateChange();
+    return true;
   }
 
   close(): void {

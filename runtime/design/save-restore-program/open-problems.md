@@ -74,19 +74,15 @@ are KEPT.
 
 ---
 
-## OP-001 — `applyEvent` does not broadcast (LIVE BUG)
+## OP-001 — `applyEvent` does not broadcast [RESOLVED 2026-05-29]
 
 **Severity:** P0 (breaks the user-stated promise)
-**Evidence:** Architect finding #1. `Peer.applyEvent` at `core/peer.ts:158-171`
-calls `this.log.apply(event)` and notifies, but never sends. Hub-forwarding
-via `sync-response` only fires from `handleMessage`, not from local apply.
-**Hypothesis:** Add a `propagate` flag (default `false` for the
-load-restore case so we don't re-broadcast the WHOLE save on every load).
-Actually wait — that's the opposite of what we want. The thread is: when a
-peer loads its OWN save and then joins a session, its unique events MUST
-reach the table. The pull-based sync-response from a NEW peer would carry
-them IF the joining peer responds to other peers' sync-requests with its
-log — which IT DOES via the existing `handleMessage` → `sync-request`
-path. So is this a real bug or not? **Needs investigation in M3.**
-**Owner:** save-restore lead.
-**Status:** queued for M3 — must reproduce before fixing.
+**Resolution:** Reproduced in
+`src/core/peer.restore-rebroadcast.test.ts`. The 2-peer case
+works (pull from new joiner), the 3-peer "alice restores AFTER
+joining, bob+carol already connected" case FAILS pre-fix.
+`applyEvent` now propagates via `forwardShareToOthers` (sync-response)
+by default. Opt-out via `{ propagate: false }` preserved for the
+session-controller `regenerateCode` path.
+See DEC-005 for full rationale.
+Commit: M3 ship.
