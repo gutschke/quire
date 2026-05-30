@@ -9,7 +9,7 @@ ran and surfaced OP-039)
 **Active milestone:** M6a-FS-1 / playable-release-plan.md milestone 1
 (DM operational view live; flagship mock campaign passes; next
 run = session-digest chip + reconnect button + simulations 02-03)
-**Latest deploy hash:** (recorded by closing commit below)
+**Latest deploy hash:** 4a546af (run #8 docs); host integration + simulation at f2ab369
 **Branch:** main
 
 ## Session log (most recent first)
