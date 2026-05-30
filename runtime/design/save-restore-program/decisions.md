@@ -42,6 +42,133 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-026 — APP+WebAuthn-in-popup verification deferred to UAT (2026-05-29)
+
+**Decision:** OP-024 (APP + WebAuthn-in-popup detector +
+fallback) is implemented per the design (popup-failure detector
+shared with OP-015, full-page-redirect fallback), but VERIFIED
+against a real APP-enrolled Google account is deferred to UAT
+(M8). The detector + fallback ship in M6a; the live APP-flow
+walkthrough is a UAT checklist item.
+
+**Why:** No APP-enrolled test account is available to the
+program lead today. The detector logic itself is mechanically
+exercisable (popup-close-without-postMessage in <2s, error
+`security_key_required`, sessionStorage empty on return) and is
+covered by unit tests. The remaining gap is "does the real
+APP-WebAuthn ceremony INSIDE the popup behave the way our
+detector expects" — that needs hardware-key UX testing, which
+belongs in M8 UAT.
+
+Recorded as a known limitation in `open-problems.md` (OP-024
+status: "logic shipped, real-APP verification parked-until-UAT")
+and in `ux-strategy.md` as a UAT milestone item.
+
+**Alternatives:**
+- Block M6a ship on APP-flow verification. Rejected: no test
+  account today; would indefinitely block ship for a class of
+  user we cannot reach. The detector + fallback is the right
+  defense; UAT is the right venue for proving the runtime
+  experience.
+- Skip the detector + fallback entirely. Rejected: would leave
+  APP users silently locked out instead of falling back to the
+  full-page-redirect path.
+
+**Tradeoffs:** First APP-enrolled DM may surface a detection
+edge case (e.g. WebAuthn ceremony succeeds in popup but takes
+longer than 2s; our timeout fires false-positive). Acceptable
+as a UAT finding; we'll widen the timeout or change the signal
+once we have real data.
+
+**Revisit if:** A program contributor enrolls an account in APP
+specifically for testing (then run the live walkthrough and
+collapse the deferral), OR a UAT report surfaces a real APP
+user being silently broken (then expedite the detector tuning).
+
+---
+
+## DEC-025 — Well-known discovery doc hosted on Cloudflare Pages static asset (2026-05-29)
+
+**Decision:** The OAuth discovery document spec'd by DEC-017 +
+DEC-013 lives at `runtime/public/.well-known/quire-oauth.json`,
+served by Cloudflare Pages as a static asset. The maintainer
+edits the file and pushes; CDN-cache TTL is documented in
+`maintainer-ops.md`.
+
+**Why:** Three alternatives were considered for the hosting
+story (OP-018):
+
+1. **Cloudflare Pages static asset.** Cheapest, least moving
+   parts, no extra dependency. CDN cache TTL is short for
+   `.well-known` URLs on Pages (Cloudflare default is ~1-5
+   minutes for static files in this directory; documented as
+   the emergency-rotation lag in `maintainer-ops.md`).
+2. **Separate Cloudflare Worker.** Lets us serve the doc with
+   custom cache headers + edge logic (e.g. region-specific
+   client_id). Rejected: extra deploy surface, extra failure
+   mode, no demonstrated need for the dynamism.
+3. **Third-party static host (e.g. GitHub Pages).** Decouples
+   the discovery doc lifecycle from the Quire deploy.
+   Rejected: introduces a separate trust boundary
+   (compromise of the third-party host = compromise of the
+   client_id rotation channel). Cloudflare Pages is already
+   in our trust boundary for the bundle; folding the
+   discovery doc into the same boundary is correct.
+
+**Alternatives:** see above.
+
+**Tradeoffs:** Emergency rotation has CDN cache TTL of a few
+minutes. The runtime SHOULD treat the discovery doc as a hint
+("use this client_id by preference") rather than a hard
+override — the build-time embedded baseline (per OP-017g) is
+always the safe fallback. Documented in `maintainer-ops.md`.
+
+**Revisit if:** A real rotation incident takes longer than the
+TTL we're comfortable with (then pivot to a Worker with
+explicit cache-control headers).
+
+---
+
+## DEC-024 — Maintainer ops doc colocated with save-restore-program (2026-05-29)
+
+**Decision:** The cloud-sync maintainer ops doc lives at
+`design/save-restore-program/maintainer-ops.md`. Colocate with
+the rest of the program for discoverability — a future
+maintainer rebuilding context from disk finds the operational
+runbook next to the architectural docs.
+
+**Why:** Three locations were considered for the ops doc
+(OP-017g):
+
+1. **Colocated.** Inside `design/save-restore-program/`. Easy
+   to find when reading the program from `status.md` outward.
+   Risk: the program doc set already has 12 files; one more
+   makes resumption-from-disk denser.
+2. **Top-level `ops/`.** Future-proof if the maintainer surface
+   grows beyond save-restore (e.g. signaling-server ops,
+   Underleaf-publish ops). Risk: prematurely creates a
+   structure for a single doc.
+3. **Inside `docs/`.** With the user-facing docs. Rejected:
+   maintainer ops is NOT user-facing; co-locating with
+   user-facing docs causes accidental drift toward
+   end-user-readable framing that misses the audience.
+
+Picked colocated as the right default; promote to top-level
+`ops/` once a second ops doc lands (signaling-server, Underleaf-
+publish, anything else that needs out-of-band maintainer
+coordination).
+
+**Alternatives:** see above.
+
+**Tradeoffs:** The program doc set grows by one file. Mitigated
+by `status.md`'s "Where to find things" section pointing at it
+explicitly.
+
+**Revisit if:** A second non-save-restore ops doc gets written
+(then promote both to `ops/`).
+
+---
+
 ## DEC-023 — Threat model: zero attack surface from internet randos; malicious co-players out of scope (2026-05-29)
 
 **Decision:** Codify the human's verbatim product framing as

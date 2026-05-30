@@ -98,18 +98,28 @@ for account-loss durability):
 
 - BLOCKED ON (gate expanded by independent consultant pass — see
   draft-3 `auth-strategy.md` "M6a ship gates"):
-  - OP-016 (CORS probe).
-  - OP-017 (callback-page CSP + golden-diff CI).
-  - OP-017b (UX placement / discovery / error matrix).
-  - OP-017g (canonical client_id SRI + verified-app fingerprint).
-  - OP-018 (runtime-overridable client_id incident response).
-  - OP-019 (CONDITIONAL on OP-016: Worker fallback decision).
-  - OP-020 (two-tab OAuth race: per-flow UUID).
-  - OP-021 (state-nonce intent binding).
-  - OP-022 (mid-session 401 detection).
-  - OP-023 (account-switch detection via id_token `sub`).
-  - OP-024 (APP + WebAuthn-in-popup detection + fallback).
-  - OP-027 (player-content first-push consent ceremony).
+  - ✅ OP-016 (CORS probe) — SHIPPED run #4.
+  - ✅ OP-017 (callback-page CSP + golden-diff CI) — SHIPPED run #4.
+  - 🔴 OP-017b (UX placement / discovery / error matrix).
+  - ✅ OP-017g (canonical client_id integrity) — SHIPPED run #5.
+  - ✅ OP-018 (runtime-overridable client_id + discovery doc)
+    — SHIPPED run #5.
+  - ✅ OP-019 (CONDITIONAL on OP-016: Worker fallback decision)
+    — RESOLVED run #4 by OP-016 outcome (CORS open; no Worker).
+  - 🟡 OP-020 (two-tab OAuth race: per-flow UUID) — covered
+    incidentally by the OP-021 / DEC-012 envelope (`flowId`);
+    full listener-lifecycle wiring lands with M6a code.
+  - ✅ OP-021 (state-nonce intent binding) — LOGIC SHIPPED
+    run #5; UI wiring lands with M6a code.
+  - 🔴 OP-022 (mid-session 401 detection).
+  - 🔴 OP-023 (account-switch detection via id_token `sub`).
+  - 🟡 OP-024 (APP + WebAuthn-in-popup detection + fallback)
+    — logic ships with M6a code per DEC-026; real-world
+    verification parked-until-UAT (DEC-026, M8).
+  - ✅ OP-027 (player-content first-push consent ceremony)
+    — LOGIC SHIPPED run #5; UI hookup lands with M6a code.
+  - ✅ OP-030 (OAuth error PII redaction) — callback-side
+    SHIPPED run #4; opener-side redactor lands with M6a code.
   - NOT a gate (already shipped `a7dedac`): NEW-ADV-1 / NEW-ADV-2.
 - DoD:
   - PKCE S256 flow with `crypto.getRandomValues` for state +

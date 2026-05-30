@@ -164,7 +164,34 @@ scan campaign content; consider GitHub for dark fiction").
 
 ---
 
-## OP-030 — OAuth error logging may leak email PII [R4: class 1, P1]
+## OP-030 — OAuth error logging may leak email PII [R4: class 1, P1] [RESOLVED 2026-05-29 run #5 by way of run #4 callback ship]
+
+**Resolution (re-verified run #5):** The OAuth callback page
+(`public/auth/google/callback.js`, shipped run #4 `a78d109`)
+parses `error_description` from the Google redirect but
+DELIBERATELY does NOT forward it via `postMessage` — only the
+`error` enum is forwarded.  Google's token-endpoint error
+response itself is fetched directly by the opener; the opener
+code path is the next surface and is on the M6a-code TODO list
+(it will use a `redactOAuthError` helper before any logging).
+This run's gate ships the callback-side strip; the
+opener-side strip lands with M6a code.
+
+Per-line evidence in `callback.js:73-77` (the variable is
+parsed for completeness but the comment block explicitly notes
+"NOT the description, which can carry email PII — OP-030").
+
+Golden-diff hash covers the callback page so this defense
+cannot be silently regressed.  Re-verify: a future PR that
+adds `errorDescription` to the postMessage payload necessarily
+changes the file hash + must be called out explicitly in PR
+description.
+
+**Status (callback-side):** RESOLVED.
+**Follow-up (opener-side):** lands with M6a code — the
+`redactOAuthError(err)` helper + regression fuzz are still
+spec'd; track under the M6a OAuth code TODO, not as a separate
+ship gate.
 
 **Severity:** P2 (defense-in-depth).
 **Evidence:** NEW-PRV-8 (privacy consultant 2026-05-29).
@@ -216,7 +243,48 @@ lead (doc).
 
 ---
 
-## OP-027 — DM-uploads-players'-content has no consent ceremony [ACCEPT for M6a] [R4: class 2, P1 — confirmed by DEC-020]
+## OP-027 — DM-uploads-players'-content has no consent ceremony [ACCEPT for M6a] [R4: class 2, P1 — confirmed by DEC-020] [RESOLVED-LOGIC 2026-05-29 run #5]
+
+**Resolution (logic layer, run #5):** Consent ledger module
+`src/auth/cloud-push-consent.ts` ships with:
+- `hasAcknowledged(storage, campaignId, destination)` —
+  fail-closed lookup (re-prompts on missing / corrupt / version
+  mismatch / campaignId-or-destination mismatch in the record).
+- `recordAcknowledgment(storage, campaignId, destination, now)`
+  — idempotent write.
+- `withdrawAcknowledgment(storage, campaignId, destination)`
+  — hooks into the OP-029 "Disconnect → Erase" affordance.
+- `ConsentDestination` union — `google-drive-appdata`,
+  `google-drive-file`, `github-private`, `github-public`. Each
+  destination is a separate custody transfer, gets its own
+  acknowledgment (per DEC-020).
+- `browserLocalStorageConsentStorage()` for production +
+  `inMemoryConsentStorage()` for tests.
+- `DEFAULT_CONSENT_COPY` — engineering-language placeholder
+  copy spec (TTRPG-craft replaces at M8 per `ux-strategy.md`).
+- 19 unit tests in `src/auth/cloud-push-consent.test.ts`
+  covering round-trip, per-campaign / per-destination
+  independence, idempotency, withdrawal, and 6 fail-closed
+  defenses (corrupt JSON, unknown version, mismatched
+  campaignId / destination inside the record, non-numeric
+  acknowledgedAt, NaN).
+
+The UI hookup (dialog presentation + click handler) lands with
+M6a OAuth code — the consent ledger sits behind the
+"Push to Drive" click in the push-button path:
+
+```
+if (!hasAcknowledged(storage, campaignId, dest))
+  surface(DEFAULT_CONSENT_COPY)
+  if dialog.acknowledged:
+    recordAcknowledgment(storage, campaignId, dest, Date.now())
+    proceed to OAuth
+  else:
+    abort (no upload)
+```
+
+**Status (logic):** RESOLVED.
+**Status (UI hookup):** lands with M6a code; not a separate gate.
 
 **Severity:** P1 (firewall-ethos gating).
 **Evidence:** NEW-PRV-4 (privacy consultant 2026-05-29).
@@ -282,7 +350,19 @@ warning at 1MB / hard refuse at 10MB for the GitHub destination.
 
 ---
 
-## OP-024 — APP + WebAuthn-in-popup may fail silently [R4: class 1, P1]
+## OP-024 — APP + WebAuthn-in-popup may fail silently [R4: class 1, P1] [PARKED-UNTIL-UAT per DEC-026]
+
+**Resolution (run #5):** Per DEC-026, detector + fallback logic
+will ship as part of M6a code (shared with OP-015 popup-failure
+detection); real-world APP-enrolled-account walk-through is
+deferred to M8 UAT.  No APP test account is available to the
+program lead today; UAT is the right venue to verify the live
+WebAuthn-in-popup ceremony matches the detector's expectations.
+
+**Status:** logic ships with M6a code; UAT verification deferred
+to M8.  Surfaced in `ux-strategy.md` as a UAT milestone item.
+
+
 
 **Severity:** P1 (locked-C6 constraint).
 **Evidence:** NEW-SEC-6 (security consultant 2026-05-29).
@@ -343,7 +423,43 @@ IndexedDB blob too.
 
 ---
 
-## OP-021 — State nonce is not bound to user intent (campaign / action) [R4: class 1, P1]
+## OP-021 — State nonce is not bound to user intent (campaign / action) [R4: class 1, P1] [RESOLVED-LOGIC 2026-05-29 run #5]
+
+**Resolution (logic layer, run #5):** Pure helper module
+`src/auth/oauth-state.ts` ships with:
+- `mintState({payload, secret, now, random?, hmac?})` —
+  produces an envelope + base64url-encoded state parameter.
+- `verifyState({stateParam, ctx})` — fully validates an
+  incoming state: shape, intent vocabulary, freshness
+  (10-minute window per `STATE_MAX_AGE_MS`, 60s future-skew
+  tolerance), flowId match (OP-020), campaignId match
+  (DEC-012), HMAC over the intent fields.
+- `signingMessage({...})` — stable serializer used by both
+  mint + verify.
+- `freshSessionSecret()` + `freshFlowId()` — Web Crypto
+  primitives.
+- `webCryptoHmacSha256Hex` + `webCryptoRandom` — production
+  HMAC + RNG; both pluggable for tests.
+- 26 unit tests in `src/auth/oauth-state.test.ts` covering:
+  - Round trip for `push` + `connect` intents.
+  - Tamper rejection across every intent field (intent,
+    campaignId, ts, fileRev) + per-tab secret mismatch.
+  - Freshness window (stale, future-skew, boundary).
+  - Two-tab race (flowId mismatch) + two-flow race
+    (campaignId mismatch).
+  - Malformed input defenses (non-base64, non-JSON,
+    missing fields, unknown intent).
+  - Constant-time hex compare smoke check (same/different keys
+    via HMAC determinism).
+
+The wiring (call `mintState` at click time, store the secret
+in `sessionStorage`, register the listener with the per-flow
+UUID, call `verifyState` on the postMessage return) lands with
+the M6a OAuth code — the helpers are the load-bearing
+correctness primitives.
+
+**Status:** RESOLVED-LOGIC. UI wiring + sessionStorage
+persistence land with M6a code; not a separate gate.
 
 **Severity:** P1 (firewall — wrong-campaign-write risk).
 **Evidence:** NEW-SEC-2 (security consultant 2026-05-29).
@@ -424,7 +540,37 @@ review BEFORE any Worker code.
 
 ---
 
-## OP-018 — Canonical OAuth client_id has no compromise-rotation path [R4: class 1, P1 — confirmed by DEC-017]
+## OP-018 — Canonical OAuth client_id has no compromise-rotation path [R4: class 1, P1 — confirmed by DEC-017] [RESOLVED 2026-05-29 run #5]
+
+**Resolution (run #5):** Three-component rotation channel
+shipped per DEC-013 + DEC-017 + DEC-025:
+- `public/.well-known/quire-oauth.json` — discovery doc
+  hosted as a Cloudflare Pages static asset (DEC-025).
+  Schema: `{version, issued, providers: {google, github},
+  maintainer: {tag, commit, contact}}`.  Provider entries
+  carry `status` (`verified`/`placeholder`/`unavailable`),
+  `client_id`, `consent_app_name`, `fingerprint_sha256`,
+  `note`.  Placeholder values today; production values land
+  with M6a OAuth app registration.
+- `src/auth/canonical-client-id.ts` — build-time embedded
+  baseline.  Carries `GOOGLE` + `GITHUB` constants with the
+  same shape; `assertReadyForOAuth(entry)` refuses
+  initiation on placeholder.  `resolveClientId(entry,
+  envOverride?)` honors precedence
+  (env-override > baseline > placeholder).  Self-hoster
+  override via build-time `QUIRE_OAUTH_CLIENT_ID_GOOGLE` env
+  var (per DEC-013); query-param + campaign-manifest
+  override hooks documented in `maintainer-ops.md` §5.
+- `design/save-restore-program/maintainer-ops.md` — rotation
+  runbook (when to rotate, the 8-step procedure, the
+  "don't do this" anti-list, incident-response cheat sheet
+  for "Google revoked our app" / "suspected compromise" /
+  "Cloudflare deploy compromised").
+
+CDN-cache TTL acknowledged at ~1-5 min for emergency
+rotation per DEC-025; documented in `maintainer-ops.md` §3b.
+
+**Status:** RESOLVED.
 
 **Severity:** P1 (incident response).
 **Evidence:** NEW-SEC-5 (security consultant 2026-05-29).
@@ -558,7 +704,56 @@ as the natural M7+ direction if a user pushes back.
 
 ---
 
-## OP-017g — Canonical client_id integrity (SRI + verified-app fingerprint) [R4: class 1, P0 — CRITICAL under DEC-023]
+## OP-017g — Canonical client_id integrity (SRI + verified-app fingerprint) [R4: class 1, P0 — CRITICAL under DEC-023] [RESOLVED 2026-05-29 run #5]
+
+**Resolution (run #5):** Three-layer defense shipped:
+1. **Build-time embedded baseline.**
+   `src/auth/canonical-client-id.ts` carries the canonical
+   `client_id` + a SHA-256 fingerprint of the consent-screen-
+   displayed app name + a `status` enum
+   (`'verified' | 'placeholder' | 'unavailable'`).  The runtime
+   trusts this baseline by default; `assertReadyForOAuth(entry)`
+   hard-stops on placeholder.  `resolveClientId(entry,
+   envOverride?)` honors env-override > baseline > placeholder
+   precedence so self-hosters pass `QUIRE_OAUTH_CLIENT_ID_GOOGLE`
+   at build time.
+2. **Golden-diff CI.**
+   `scripts/golden-diff-canonical-client-id.test.mjs` pins
+   SHA-256 hashes of BOTH `src/auth/canonical-client-id.ts`
+   AND `public/.well-known/quire-oauth.json`.  Any change
+   without updating the hashes in the same PR fails the
+   build — same pattern as `golden-diff-callback.test.mjs`
+   (OP-017).  Additional structural assertions: exports
+   present, discovery doc shape valid, status vocabulary
+   limited, fingerprint is 64 hex chars.
+3. **Discovery doc.** `public/.well-known/quire-oauth.json`
+   served by Cloudflare Pages static asset (DEC-025); the
+   runtime treats this as a HINT, not a binding override.
+   `allowDiscoveryOverride: false` per-entry in v1 ships
+   closed; the hook is present for future incident-response
+   discovery-driven rotation.
+
+Plus `design/save-restore-program/maintainer-ops.md` (DEC-024)
+documents the rotation runbook, the verified-app fingerprint
+computation, self-hoster overrides, and the incident-response
+cheat sheet.
+
+The "Subresource Integrity (SRI) on the bundle" defense from
+the original hypothesis was downgraded to "not required" in
+the auth-strategy.md §A10 revision: Vite chunk-split bundles
+embed hashes in the entry HTML; an attacker who swaps
+`canonical-client-id.ts` can also swap the SRI hash.  SRI
+duplicates the protection without closing the actual
+supply-chain attack vector.  Cloudflare Pages deploy-key +
+branch-protection (documented in `maintainer-ops.md`) IS the
+load-bearing trust boundary.
+
+23 unit tests (`canonical-client-id.test.ts`) + 6 structural +
+2 hash-pinning tests (`golden-diff-canonical-client-id.test.mjs`).
+Build verified: `public/.well-known/quire-oauth.json` lands in
+`dist/.well-known/quire-oauth.json` post-build.
+
+**Status:** RESOLVED.
 
 **Severity:** P0 (BLOCKS M6a; supply-chain primitive).
 **Evidence:** NEW-ADV-5 (adversarial consultant 2026-05-29).

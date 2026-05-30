@@ -1,0 +1,27 @@
+{
+  "$schema": "https://quire.pages.dev/.well-known/quire-oauth.schema.json",
+  "version": 1,
+  "issued": "2026-05-29",
+  "note": "OAuth client_id discovery for Quire cloud-sync. See design/save-restore-program/maintainer-ops.md for rotation runbook. The runtime treats this document as a HINT; the build-time embedded baseline (src/auth/canonical-client-id.ts) is the safe fallback if this doc is unreachable, malformed, or returns 'unavailable'.",
+  "providers": {
+    "google": {
+      "status": "placeholder",
+      "client_id": "PROBE_BOGUS_CLIENT_ID.apps.googleusercontent.com",
+      "consent_app_name": "Quire (placeholder — pending verified OAuth app registration)",
+      "fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "note": "Replace with the real verified-OAuth-app client_id + the SHA-256 of the canonical consent-screen-displayed app name when the maintainer registers the production OAuth app. Until then, the runtime refuses to initiate the OAuth flow against this placeholder (the 'placeholder' status acts as a hard-stop flag)."
+    },
+    "github": {
+      "status": "placeholder",
+      "client_id": "PLACEHOLDER_GITHUB_CLIENT_ID",
+      "consent_app_name": "Quire (placeholder — pending OAuth app registration)",
+      "fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "note": "Replace at GitHub Device Flow registration time (M6c)."
+    }
+  },
+  "maintainer": {
+    "tag": "save-restore-program-m6a-pending",
+    "commit": "pending-m6a-ship",
+    "contact": "see runtime/design/save-restore-program/maintainer-ops.md"
+  }
+}

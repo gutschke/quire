@@ -381,23 +381,33 @@ What's the worst an attacker can do with each artifact?
 - **M6c (later):** GitHub Device Flow + same `drive.appdata`-shape
   save committed to a configured GitHub path.
 
-**M6a ship gates (draft 3):** before M6a code can land, the
-following open-problems MUST be closed (status checked at PR time
-against `open-problems.md`):
+**M6a ship gates (draft 3, status checked at PR time against
+`open-problems.md`):**
 
-- OP-016 (CORS probe).
-- OP-017 (callback-page CSP + golden-diff CI).
-- OP-017b (UX placement / discovery / error matrix).
-- OP-017g (canonical client_id integrity — SRI + verified-app
-  fingerprint).
-- OP-018 (canonical client_id runtime-overridable from day one).
-- OP-019 (CONDITIONAL on OP-016: Worker fallback decision record).
-- OP-020 (two-tab OAuth race: per-flow UUID).
-- OP-021 (state-nonce intent binding).
-- OP-022 (mid-session 401 detection + auto-prompt).
-- OP-023 (account-switch detection via id_token sub).
-- OP-024 (APP + WebAuthn-in-popup detection + fallback).
-- OP-027 (player-content consent ceremony).
+CLOSED before M6a code:
+- ✅ OP-016 (CORS probe) — run #4.
+- ✅ OP-017 (callback-page CSP + golden-diff CI) — run #4.
+- ✅ OP-017g (canonical client_id integrity) — run #5.
+- ✅ OP-018 (runtime-overridable client_id + discovery doc)
+  — run #5.
+- ✅ OP-019 (Worker fallback decision) — run #4 (not needed,
+  CORS open).
+- ✅ OP-021 (state-nonce intent binding, logic) — run #5.
+- ✅ OP-027 (player-content consent ceremony, logic) — run #5.
+- ✅ OP-030 (OAuth error PII strip, callback-side) — run #4.
+
+LANDS WITH M6a CODE (not separate gates):
+- OP-020 (per-flow UUID listener lifecycle wiring; envelope
+  carrier shipped run #5).
+- OP-022 (mid-session 401 detection wrapper).
+- OP-023 (account-switch id_token `sub` cache + match).
+- OP-024 (APP + WebAuthn popup-failure detector + full-page
+  fallback; UAT walk-through deferred per DEC-026).
+- OP-030 (opener-side `redactOAuthError` + fuzz).
+
+STILL OPEN before M6a code:
+- 🔴 OP-017b (UX placement / discovery / error matrix —
+  doc + design work).
 
 NEW-ADV-1/2 (the apply-side + rebroadcast firewall) is **already
 shipped** in commit `a7dedac` (DEC-010) and validated by
@@ -600,7 +610,7 @@ preserved `code_verifier`.
 Test matrix: Chrome stable, Firefox Strict, Safari ITP, Brave
 Aggressive (NEW-PRV-1).
 
-## §A10 Supply-chain integrity (NEW in draft 3, NEW-ADV-5 / OP-017g)
+## §A10 Supply-chain integrity (REVISED run #5, NEW-ADV-5 / OP-017g)
 
 The shipped `client_id` is a security primitive. An attacker
 who compromises Quire's Cloudflare Pages deploy OR npm package
@@ -608,18 +618,62 @@ OR Underleaf-hosted bundle can swap it for theirs and read every
 prior Quire save the user pushes (Google's per-app isolation is
 keyed on the creating client_id).
 
-Defenses (all required for M6a public ship):
+**Run #5 ship (this milestone):** items 1-3 below are now
+LANDED as code + docs.  Item 4 is documented in
+`maintainer-ops.md` (DEC-024) and remains the maintainer's
+ongoing responsibility.
 
-1. **Subresource Integrity (SRI)** on the deployed bundle.
-2. **Publish-time manifest** with the canonical `client_id` + a
-   build-time-computed hash; runtime verification.
-3. **README** publishes the canonical client_id value + a
-   screenshot of Google's verified-OAuth-app consent screen so
-   users have a reference to diff against. Coordinated with
-   §A11's account-mismatch flow ("Backing up as: <email>" — the
-   verified-app + the email together = strong signal).
-4. **Ops:** Cloudflare Pages deploy-key + branch-protection
-   requirements documented in maintainer ops doc.
+Defenses:
+
+1. **Build-time embedded baseline.**  `src/auth/canonical-client-id.ts`
+   carries the canonical `client_id` + a SHA-256 fingerprint of
+   the consent-screen-displayed app name + a `status` flag
+   (`'verified' | 'placeholder' | 'unavailable'`).  The runtime
+   trusts this baseline by default and refuses to initiate
+   OAuth against a `'placeholder'` status (the placeholder is
+   the M6a code-ship checkpoint — flipping `GOOGLE.status` to
+   `'verified'` is the moment cloud sync goes live).
+2. **Golden-diff CI.**  `scripts/golden-diff-canonical-client-id.test.mjs`
+   pins SHA-256 hashes of both `src/auth/canonical-client-id.ts`
+   AND `public/.well-known/quire-oauth.json`.  Any change without
+   updating the hashes in the same PR fails the build — the same
+   pattern as the callback-page golden-diff (OP-017).  This is
+   the supply-chain defense against an attacker slipping a
+   client_id swap past code review.
+3. **Discovery doc.**  `public/.well-known/quire-oauth.json`
+   serves as the per-deploy hint the runtime fetches at first
+   OAuth use.  Per DEC-025, hosting is Cloudflare Pages static
+   asset (CDN cache TTL ~1-5 min for emergency rotation).  Per
+   DEC-013 / DEC-017, the discovery doc is a HINT — the runtime
+   still trusts the embedded baseline by default; the discovery
+   doc CAN propose a different client_id (rotation channel) but
+   the runtime refuses to act on the proposal unless the
+   baseline's per-entry `allowDiscoveryOverride` is `true`
+   (v1 ships closed; the hook is in place for future incident
+   response).
+4. **Maintainer-ops runbook.**  `maintainer-ops.md` (DEC-024)
+   documents the rotation runbook, self-hoster override paths
+   (env var / query param / campaign-manifest), incident-response
+   cheat sheet (revoke / rotate / re-pivot), and Cloudflare Pages
+   deploy-key + branch-protection requirements.
+
+**Self-hoster override:** three paths, all documented in
+`maintainer-ops.md` §5.  Build-time env var
+(`QUIRE_OAUTH_CLIENT_ID_GOOGLE`) is the recommended path
+(reproducible build, deploy-audit trail).  Query parameter and
+campaign-manifest paths are spec'd for v1+ but not consumed by
+the runtime in v1 — placeholder hooks per DEC-013.
+
+**Why no Subresource Integrity (SRI) on the bundle:**  SRI
+binds a `<script src>` hash at the source-document level, but
+Vite emits chunk-split bundles whose hashes are computed at
+build time and embedded in the index.html.  Cloudflare Pages
+already delivers integrity via the build-pipeline trust
+boundary (deploy-key + branch-protection); adding SRI on top
+duplicates the protection without closing the supply-chain
+attack vector (an attacker who can swap `canonical-client-id.ts`
+can also swap the SRI hash).  Revisit if the threat model
+introduces a third-party CDN.
 
 ## §A7 OAuth callback page (REVISED in draft 3, NEW-ADV-8 / OP-017)
 
