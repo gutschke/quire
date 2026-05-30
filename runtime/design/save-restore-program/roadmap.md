@@ -146,9 +146,11 @@ playable release:
   SHIPPED 2026-05-30 run #9.  Surfaced OP-040 (P2,
   pc-mark-realization stripped on sync-response) — does
   NOT block playable release; fix path TBD at M7+.
-- 🟡 **M6a-FS-3 (run #10)** — cross-device probe
+- ✅ **M6a-FS-3 (run #10)** — cross-device probe
   (§FS.11) + mock campaigns 04 (chargen spoiler
   authorship) + 05 (cloud push during active play).
+  SHIPPED 2026-05-30 run #10.  Surfaced OP-041 + OP-042
+  (both P2 — neither blocks playable release).
 - 🟡 **M6a-FS-4 (run #11)** — game-mechanic edges +
   mock campaign 06.
 - 🟡 **M6a-FS-5 (run #12)** — network partition +

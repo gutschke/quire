@@ -201,6 +201,11 @@ import {
   formatCampaignSlug,
   type RecentCampaign
 } from './controllers/recently-played';
+import {
+  CrossDeviceProbeController,
+  type CrossDeviceProbeMatch
+} from './controllers/cross-device-probe';
+import { SAVE_STORAGE_PREFIX } from './controllers/autosave-controller';
 import { decideRoute } from './controllers/route-policy';
 import {
   KNOWN_EVENT_KINDS,
@@ -812,6 +817,17 @@ export class QuireApp extends LitElement {
   @state() loadStatus: { kind: 'idle' | 'loading' | 'loaded' | 'error'; message?: string } =
     { kind: 'idle' };
   @state() resumePromptDoc: SaveDocument | null = null;
+  /**
+   * M6a-FS-3 (run #10) — cross-device probe outcome (§FS.11 / §A11).
+   * Surfaces a `[Load it] [Start fresh]` prompt next to the resume
+   * prompt when the DM lands on a campaign URL with NO local
+   * autosave AND a folder IS already connected for this campaign
+   * AND the folder contains a matching save file.  DM-only by
+   * construction (the folder handle is the DM's per-origin handle);
+   * DEC-015 forbids auto-load so the surface ALWAYS requires a
+   * deliberate click.
+   */
+  @state() crossDeviceProbeMatch: CrossDeviceProbeMatch | null = null;
   /**
    * E-LARGE-1 step 2 (2026-05-27): coord-yield + reclaim cluster
    * extracted to `ReclaimController`.  The controller owns the
@@ -1466,6 +1482,14 @@ export class QuireApp extends LitElement {
       // Reuse already-loaded campaign if the slug matches.
       let campaign = this.getCurrentCampaign();
       if (!campaign || this.currentCampaignSlugMatches(route.slug) === false) {
+        // M6a-FS-3 (run #10): new campaign landing — drop the
+        // cross-device probe guard so the next checkResumePrompt
+        // fires a fresh probe.  Cheap (no-op when controller is
+        // not yet built).
+        if (this._crossDeviceProbe) {
+          this._crossDeviceProbe.reset();
+          this.crossDeviceProbeMatch = null;
+        }
         this._appState ={
           kind: 'loading',
           slug: route.slug,
@@ -3784,6 +3808,44 @@ export class QuireApp extends LitElement {
   }
 
   /**
+   * M6a-FS-3 (run #10) — Lazy `CrossDeviceProbeController` (§FS.11).
+   *
+   * Reuses the same `getFsApiCloudPush()` instance so a probe + a
+   * subsequent push/pull all see the same handle store.  Local-
+   * autosave gate reads `window.localStorage` against the same key
+   * that `AutosaveController.storageKey` writes to — kept in this
+   * one spot so a future change to that prefix only has to be
+   * tracked here (and the `SAVE_STORAGE_PREFIX` import keeps the
+   * coupling explicit).
+   */
+  private _crossDeviceProbe: CrossDeviceProbeController | null = null;
+  private getCrossDeviceProbe(): CrossDeviceProbeController {
+    if (!this._crossDeviceProbe) {
+      this._crossDeviceProbe = new CrossDeviceProbeController({
+        cloudPush: this.getFsApiCloudPush(),
+        hasLocalAutosave: (_campaignId: string): boolean => {
+          // campaignId here is the same string the host uses to talk
+          // to FsApiCloudPush (`<owner>/<repo>@<ref>`).  The autosave
+          // key is `quire.save.<owner>-<repo>`.  Re-derive from the
+          // active campaign rather than trying to parse the id —
+          // safer than splitting on chars that may appear in repo
+          // names.
+          try {
+            const campaign = this.getCurrentCampaign();
+            if (!campaign) return false;
+            const src = campaign.base.source;
+            const key = `${SAVE_STORAGE_PREFIX}${src.owner}-${src.repo}`;
+            return window.localStorage?.getItem(key) !== null;
+          } catch {
+            return false;
+          }
+        }
+      });
+    }
+    return this._crossDeviceProbe;
+  }
+
+  /**
    * OP-037 (run #9, M6a-FS-2): gate for the session-digest backup
    * chip surface (`ux-strategy.md §A10-A`).  The chip surfaces only
    * if the browser supports the File System Access API path
@@ -5766,6 +5828,7 @@ export class QuireApp extends LitElement {
       ${this.renderReclaimConfirmation()}
       ${this.renderYieldPrompt()}
       ${this.renderResumePrompt()}
+      ${this.renderCrossDeviceProbePrompt()}
     `;
   }
 
@@ -5946,6 +6009,52 @@ export class QuireApp extends LitElement {
             Yes, take over
           </button>
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * M6a-FS-3 (run #10) — Cross-device probe prompt (§FS.11 / §A11).
+   * Renders BESIDE the resume prompt when a folder is connected on
+   * this device AND it contains a matching save AND no local
+   * autosave exists.  Per DEC-015 the surface ALWAYS requires a
+   * deliberate click — never auto-loads.  DM-only by construction
+   * (folder handles are per-origin and only the DM connects them).
+   */
+  private renderCrossDeviceProbePrompt(): TemplateResult {
+    const match = this.crossDeviceProbeMatch;
+    if (!match) return html``;
+    // Defense-in-depth: if a session is active and the local viewer
+    // is NOT coord, suppress.  The match shouldn't have surfaced
+    // for a non-coord (the connected-folder gate inside the probe
+    // controller already excludes them in the typical case) but
+    // close the loop here.
+    if (this.session && !this.isCoordinator()) return html``;
+    const ago = formatTimeAgo(new Date(match.lastModifiedMs).toISOString());
+    return html`
+      <div class="cross-device-probe-prompt" role="status"
+           data-testid="cross-device-probe-prompt">
+        <p>
+          Your connected folder
+          <strong>${match.folderName}</strong> has a backup
+          (${ago}, ${Math.max(1, Math.round(match.sizeBytes / 1024))}KB).
+        </p>
+        <div class="resume-prompt-actions">
+          <button @click=${() => this.dismissCrossDeviceProbe()}
+                  data-testid="cross-device-probe-start-fresh">
+            Start fresh
+          </button>
+          <button @click=${() => { void this.crossDeviceProbeLoad(); }}
+                  data-testid="cross-device-probe-load-it"
+                  autofocus>
+            Load it
+          </button>
+        </div>
+        <p class="hint">
+          Loading replaces this device's empty session with the
+          backup.  Starting fresh leaves the backup alone; you can
+          load it later from the operational view.
+        </p>
       </div>
     `;
   }
@@ -7308,6 +7417,123 @@ export class QuireApp extends LitElement {
     if (!campaign) return;
     const resumed = this.autosave.checkResume(campaign.base.source);
     if (resumed) this.resumePromptDoc = resumed;
+    // M6a-FS-3 (run #10): fire the cross-device probe IN PARALLEL.
+    // The probe controller has its own local-autosave gate, so if a
+    // resume prompt is already staged the probe short-circuits and
+    // we don't double-surface.  Fire-and-forget — the controller
+    // owns its own state and the host re-renders when the
+    // `crossDeviceProbeMatch` @state lands.
+    void this.maybeRunCrossDeviceProbe();
+  }
+
+  /**
+   * M6a-FS-3 (run #10) — run the cross-device probe for the current
+   * campaign.  Idempotent per landing thanks to the controller's
+   * once-per-landing guard.  Resets the guard when called against a
+   * NEW campaign id so navigating to a different campaign re-probes.
+   * Per `ux-strategy.md §A11` + DEC-015 — NEVER auto-loads.  Only
+   * stages a match outcome so the host can render `[Load it] [Start
+   * fresh]`.
+   *
+   * Silent-player firewall: the probe is only meaningful for the DM
+   * (the folder handle is the DM's per-origin handle, and the surface
+   * is gated behind `renderResumePrompt`'s campaign-landing context
+   * which is itself rendered the same way for DM + player but the
+   * probe-found prompt only resolves match for the DM who has a
+   * connected folder).  Defense-in-depth: the prompt template gates
+   * on `isCoordinator()` too.
+   */
+  private async maybeRunCrossDeviceProbe(): Promise<void> {
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return;
+    const src = campaign.base.source;
+    const campaignId = `${src.owner}/${src.repo}@${src.ref}`;
+    let probe: CrossDeviceProbeController;
+    try {
+      probe = this.getCrossDeviceProbe();
+    } catch {
+      // If FsApiCloudPush construction fails (test env without
+      // IndexedDB etc.), silently skip — the probe is best-effort
+      // and the resume prompt is the load-bearing fallback.
+      return;
+    }
+    try {
+      const outcome = await probe.maybeProbe({ campaignId });
+      if (outcome && outcome.kind === 'match') {
+        // Silent-player firewall: when a session IS active and the
+        // local viewer is a non-coord player, suppress.  The match
+        // shouldn't surface for a non-coord (the connected-folder
+        // gate inside the probe controller already excludes them in
+        // the typical case — a non-coord player wouldn't have
+        // connected a folder), but close the loop here as defense-
+        // in-depth.  In the "DM on campaign landing" case (which is
+        // the §A11 primary path), `sessionView` is null and the
+        // surface IS allowed — startHosting then runs after the DM
+        // clicks "Load it" so the events have somewhere to apply.
+        const isPlayerInActiveSession =
+          this.sessionView?.status === 'active' && !this.isCoordinator();
+        if (!isPlayerInActiveSession) {
+          this.crossDeviceProbeMatch = outcome;
+        }
+      } else {
+        this.crossDeviceProbeMatch = null;
+      }
+    } catch {
+      // Probe errors are silent per §A11 anti-pattern callout —
+      // ambiguous copy is worse than no copy.
+      this.crossDeviceProbeMatch = null;
+    }
+  }
+
+  /**
+   * M6a-FS-3 (run #10) — DM clicked "Load it" on the cross-device
+   * probe prompt.  Pulls the file from the connected folder and
+   * applies it through the existing `loadFromString` projection
+   * path (so the firewall + auto-reclaim invariants hold).  Mirrors
+   * `handleBackupsPullRequest` but with a different chip surface
+   * (the resume-prompt area, not the backups card).
+   */
+  async crossDeviceProbeLoad(): Promise<void> {
+    const match = this.crossDeviceProbeMatch;
+    if (!match) return;
+    // Dismiss the prompt before the async work fires so the DM
+    // doesn't see a stale prompt during pull.
+    this.crossDeviceProbeMatch = null;
+    const cloudPush = this.getFsApiCloudPush();
+    const result = await cloudPush.pullCampaignFromFolder({
+      campaignId: match.campaignId
+    });
+    if (!result.ok) {
+      this.loadStatus = {
+        kind: 'error',
+        message: `Couldn't load backup (${result.reason}).`
+      };
+      return;
+    }
+    if (this.session && this.sessionView?.status === 'active') {
+      this.loadFromString(result.body);
+    } else {
+      // Stage as the resume prompt — startHosting picks it up on
+      // session creation (same pattern as the existing Resume
+      // button).
+      const parsed = parseSaveDocument(result.body);
+      if (parsed.ok) {
+        this.resumePromptDoc = parsed.doc;
+        this.startHosting();
+      } else {
+        this.loadStatus = { kind: 'error', message: parsed.error };
+      }
+    }
+  }
+
+  /** DM clicked "Start fresh" — dismiss without loading. */
+  dismissCrossDeviceProbe(): void {
+    this.crossDeviceProbeMatch = null;
+    try {
+      this.getCrossDeviceProbe().dismiss();
+    } catch {
+      // Best-effort.  Controller failed to init — nothing to dismiss.
+    }
   }
 
   dismissResumePrompt(): void {

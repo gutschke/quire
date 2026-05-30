@@ -54,6 +54,80 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
+## OP-042 — Consent dialog can interleave with concurrent host actions during active play [mock-campaign-05 finding] [R4: class 2 UX-surprise, P2]
+
+**Severity:** P2 (class 2 — UX surprise, not corruption).
+**Evidence:** Mock campaign 05 (run #10 — cloud push during active
+play) FINDING-F.  When the M6a-FS consent dialog is open mid-
+session, share-envelope events from peers continue to flow into the
+DM's session.  This is INTENDED (the dialog shouldn't pause play).
+However, today's host event handlers do NOT gate any of:
+  - `handleBackupsPullRequest` (resume-prompt / cross-device probe load).
+  - `handleBackupsPushRequest` (manual push via the card).
+  - `crossDeviceProbeLoad`.
+on dialog open state.  A DM who opens the consent dialog AND then
+clicks the resume-prompt's "Load" can have both progress concurrently
+— the consent ack would land at the same time as the load fires
+events.
+**Hypothesis:** Today's UI requires the DM to physically click both
+the dialog and the resume button — a deliberate dual-click is the
+trigger.  A real DM under flow won't do this.  But a future
+auto-opening dialog (e.g. a backups-card timer triggers consent on
+session-close) would interleave more easily and a load click during
+the auto-open could surprise.
+**Mitigation:** Defer.  Document in `ux-strategy.md §A12-row-N` as
+"dialog open suppresses other modal interactions" — and add a
+single dialog-open gate to the relevant host handlers when the
+auto-open path lands.
+**Owner:** save/restore program lead.
+**Status:** OPEN.  Filed P2 — does NOT block playable release
+(today's interleave requires deliberate dual-intent).
+
+---
+
+## OP-041 — First-push silently overwrites orphan save in connected folder [mock-campaign-05 finding] [R4: class 2 data-loss, P2]
+
+**Severity:** P2 (class 2 — accidental data loss to a trusted
+party — the prior author of the orphan).
+**Evidence:** Mock campaign 05 (run #10 — cloud push during active
+play) FINDING-E.  `fs-api-cloud-push.ts pushCampaignToFolder` does
+read-before-write conflict detection via:
+```
+if (currentLastModified > record.lastObservedModifiedMs) → conflict
+```
+On a FRESH connect, `record.lastObservedModifiedMs === null`, so
+the conflict check short-circuits.  A folder that already contains
+a `<slug>.quire-save.json` (orphaned from a prior browser profile,
+a teammate's accidental push, a manual restore from an export,
+etc.) is silently overwritten on the DM's first push.
+**Why P2:** A DM connecting a fresh device to a folder with an
+existing save EXPECTS Quire to either read it first or warn.
+Today, the §FS.11 cross-device probe (shipped this run) DOES read
+the folder on landing — so in the §A11 happy path the DM sees
+the existing file and chooses [Load it] or [Start fresh].  When
+they choose [Start fresh], the intentional-overwrite semantic
+holds.  BUT: if the probe doesn't fire (e.g. the DM connects the
+folder AFTER landing, via the operational view's Connect chip),
+the first push overwrites without warning.
+**Hypothesis:** Tighten `pushCampaignToFolder` to:
+  - When `record.lastObservedModifiedMs === null` AND
+    `getFileHandle(create:false)` returns a non-null file,
+    surface a NEW `reason: 'first-push-orphan'` so the UI can
+    prompt: "A different device already saved here.  Overwrite?".
+  - When the DM confirms, set the baseline AND push.
+  - When the DM cancels, leave the file alone + offer Pull.
+**Recovery today:** Google Drive Desktop / Dropbox both have
+version history; the orphan is recoverable out-of-band.  The
+cross-device probe (§FS.11 shipped this run) closes the typical
+path.
+**Owner:** save/restore program lead.
+**Status:** OPEN.  Filed P2 — does NOT block playable release.
+The probe + sync-client version history together close the
+realistic data-loss window.  Schedule for M6a-FS-4 (run #11) or
+M6a-FS-5 (run #12) as a pre-release polish.
+
+---
+
 ## OP-040 — pc-mark-realization survives the OP-039 sync-response strip; player joining mid-tax sees no cast capability [mock-campaign-02 finding] [R4: class 2 gameplay-continuity, P2]
 
 **Severity:** P2 (class 2 — gameplay continuity, NOT a firewall leak).

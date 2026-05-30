@@ -175,20 +175,64 @@ Tests: 2913 + 2 skipped = 2915 (up from 2898 baseline; +17 new).
   may pick the OP-040 "reclassify out of PLAYER_SCOPE_STRIP_KINDS"
   fix during M7+ if friction-y.  Does NOT block playable release.
 
-### M6a-FS-3 (run #10)
+### M6a-FS-3 (run #10) [SHIPPED]
 
 **Cross-device probe + simulations 04-05.**
 
-- §FS.11 probe wired into the campaign-landing render path.  On
-  empty local state + connected folder, surface `[Load it]
-  [Start fresh]`.
-- Mock campaign 04: chargen spoiler-authorship — player writes
-  "I'm the prophesied one" in their backstory; campaign has
-  prophecy as a DM-only arc.  Verify silent-player firewall
-  holds + DM sees amber chip.
-- Mock campaign 05: cloud-folder push during active play (the
-  race-condition probe).
-- Findings → file or fix.
+All shipped:
+- §FS.11 probe wired:
+  - `src/controllers/cross-device-probe.ts` (10 unit tests) —
+    once-per-landing guard + gating on feature-available + folder-
+    connected + no-local-autosave.  NEVER auto-loads per DEC-015.
+  - Host wiring in `quire-app.ts`: `getCrossDeviceProbe()` lazy
+    field + `maybeRunCrossDeviceProbe()` fires on
+    `checkResumePrompt`; `crossDeviceProbeMatch` @state stages
+    a match; reset on campaign URL change.
+  - Render: `renderCrossDeviceProbePrompt()` renders inline next
+    to the resume prompt.  "Load it" (default-focused per
+    DEC-015) calls `crossDeviceProbeLoad()` which pulls + applies
+    via the existing `loadFromString` projection path.  "Start
+    fresh" calls `dismissCrossDeviceProbe()` — no folder mutation.
+  - 7 quire-app integration tests covering: match-staging, local-
+    autosave defers, no-folder no-match, no-matching-file, dismiss,
+    Load-it round trip, per-landing guard.
+
+- Mock campaign 04 (chargen spoiler authorship) SHIPPED at
+  `src/persistence.simulation-04-chargen-spoiler.test.ts`.  2 tests,
+  both pass.  Doc at `design/save-restore-program/simulations/
+  mock-campaign-04-chargen-spoiler-authorship.md`.  Findings A-C
+  sanity-confirmed (silent-player firewall holds across the
+  save/restore boundary for chargen drafts); FINDING-D documented
+  as a sub-P3 player-side recovery edge (player wipes device
+  between deliver and DM-accept).  No new OPs filed.
+
+- Mock campaign 05 (cloud push during active play) SHIPPED at
+  `src/persistence.simulation-05-cloud-push-during-active-play.test.ts`.
+  6 tests, all pass.  Doc at `design/save-restore-program/
+  simulations/mock-campaign-05-cloud-push-during-active-play.md`.
+  Findings A-D + G sanity-confirmed (snapshot semantics hold;
+  autosave + push independent; conflict detection works; offline
+  recovery works; visibilitychange flush doesn't conflict).
+  Surfaced FINDING-E → OP-041 (first-push silently overwrites
+  orphan file) and FINDING-F → OP-042 (consent dialog can
+  interleave with concurrent host actions).  Both P2 — do NOT
+  block playable release.
+
+Tests: 2938 + 2 skipped = 2940 (up from 2915; +25 new this run).
+Typecheck clean.  Build clean (645KB main chunk).
+No credentials in diff.
+
+### Known issues (M6a-FS-3 finds)
+
+- **OP-041 (P2):** First-push silently overwrites an orphan
+  `<slug>.quire-save.json` if the folder already contains one
+  AND the cross-device probe didn't fire.  Cross-device probe
+  closes the typical path; pre-release polish should add a
+  `'first-push-orphan'` reason to the conflict-check.
+- **OP-042 (P2):** Consent dialog can interleave with concurrent
+  host actions during active play.  Defer; document the
+  invariant in ux-strategy.md before any future auto-opening
+  dialog work lands.
 
 ### M6a-FS-4 (run #11)
 

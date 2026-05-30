@@ -1,18 +1,77 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 run #9 (OP-039 fixed + session-digest
-chip + reconnect button shipped; mock campaigns 02 + 03 ran;
-surfaced OP-040 as a load-bearing P2 classification tension —
-deferred, not blocking playable release)
-**Active milestone:** M6a-FS-2 SHIPPED / playable-release-plan.md
-milestone 2 complete.  Next: M6a-FS-3 (cross-device probe +
-simulations 04-05).
-**Latest deploy hash:** e9fbf47 (run #9 ship — M6a-FS-2)
+**Last updated:** 2026-05-30 run #10 (cross-device probe SHIPPED;
+mock campaigns 04 + 05 ran; OP-041 + OP-042 filed as P2 — neither
+blocks playable release)
+**Active milestone:** M6a-FS-3 SHIPPED / playable-release-plan.md
+milestone 3 complete.  Next: M6a-FS-4 (game-mechanic edges +
+simulation 06).
+**Latest deploy hash:** (filled after push)
 **Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-30 run #9 (this run):** M6a-FS-2 SHIPPED.
+- **2026-05-30 run #10 (this run):** M6a-FS-3 SHIPPED.
+
+  - **Cross-device probe (§FS.11) SHIPPED.**
+    `src/controllers/cross-device-probe.ts` (10 unit tests) is
+    a thin controller that consults the connected folder for a
+    matching `<slug>.quire-save.json` on cold-load with empty
+    local state.  Once-per-landing guard inside; gates on three
+    independent facts (FS API available + folder connected +
+    no local autosave).  NEVER auto-loads per DEC-015.
+    Host wiring in `quire-app.ts`: `getCrossDeviceProbe()`
+    lazy field; `maybeRunCrossDeviceProbe()` fires alongside
+    `checkResumePrompt`; `crossDeviceProbeMatch` @state stages
+    the result; reset on campaign URL change.
+    `renderCrossDeviceProbePrompt()` renders inline next to the
+    resume prompt template.  "Load it" (default-focused per
+    DEC-015) calls `crossDeviceProbeLoad()` which pulls + applies
+    via the existing `loadFromString` projection path.  "Start
+    fresh" calls `dismissCrossDeviceProbe()` — no folder
+    mutation.  Silent-player firewall: prompt suppressed when
+    a session is active AND the viewer is non-coord
+    (defense-in-depth).  7 quire-app integration tests cover:
+    match-staging, local-autosave-defers, no-folder no-match,
+    no-matching-file, dismiss, Load-it round trip, per-landing
+    guard.
+  - **Mock campaign 04 (chargen spoiler authorship) SHIPPED**
+    at `src/persistence.simulation-04-chargen-spoiler.test.ts`.
+    2 tests, both pass.  Doc at
+    `design/save-restore-program/simulations/mock-campaign-04-
+    chargen-spoiler-authorship.md`.  Findings A-C sanity-
+    confirmed: amber chip persists across save/restore; silent-
+    player firewall holds; cross-PC firewall holds for a fresh-
+    joining player.  FINDING-D documents a narrow sub-P3 player-
+    side recovery edge — not filed as OP (recovery path exists
+    via re-deliver from blank chargen).
+  - **Mock campaign 05 (cloud push during active play) SHIPPED**
+    at `src/persistence.simulation-05-cloud-push-during-active-
+    play.test.ts`.  6 tests, all pass.  Doc at
+    `design/save-restore-program/simulations/mock-campaign-05-
+    cloud-push-during-active-play.md`.  Findings A-D + G sanity-
+    confirmed (snapshot semantics; autosave + push independence;
+    conflict detection; offline recovery; visibilitychange flush
+    concurrency).  Surfaced two new P2 OPs:
+      - **FINDING-E → OP-041** — first-push silently overwrites
+        an orphan `<slug>.quire-save.json` if the folder
+        already contains one AND the cross-device probe didn't
+        fire.  Cross-device probe closes the typical path;
+        pre-release polish should add a `'first-push-orphan'`
+        reason to the conflict-check.
+      - **FINDING-F → OP-042** — consent dialog can interleave
+        with concurrent host actions during active play
+        (resume-prompt Load, cross-device probe Load, push).
+        Today the interleave requires deliberate dual-intent;
+        defer + document the invariant.
+    Neither blocks playable release.
+
+  Tests: 2938 + 2 skipped = 2940 (up from 2915 baseline, +25
+  new this run; +69 net since M6a-FS started).  Typecheck
+  clean.  Build clean (645KB main chunk, on par with prior
+  runs).  No credentials in diff.
+
+- **2026-05-30 run #9 (prior run):** M6a-FS-2 SHIPPED.
 
   - **OP-039 RESOLVED:** `defaultSyncResponseFilter` shipped in
     `persistence.ts` — drops PLAYER_SCOPE_STRIP_KINDS events on
@@ -782,6 +841,11 @@ Still pending (carry-over):
 - 🟢 Mock campaign 02 (magic discovery arc) — SHIPPED (run #9 — 2 tests; surfaced OP-040).
 - 🟢 Mock campaign 03 (co-DM transitions) — SHIPPED (run #9 — 3 tests; no new findings).
 - 🟡 OP-040 (pc-mark-realization stripped from sync-response) — FILED (run #9, P2 — does NOT block playable release).
+- 🟢 Cross-device probe (§FS.11) — SHIPPED (run #10 — `CrossDeviceProbeController` + host wiring + 17 tests; DEC-015 never-auto-load preserved).
+- 🟢 Mock campaign 04 (chargen spoiler authorship) — SHIPPED (run #10 — 2 tests; silent-player firewall holds across save/restore).
+- 🟢 Mock campaign 05 (cloud push during active play) — SHIPPED (run #10 — 6 tests; surfaced OP-041 + OP-042).
+- 🟡 OP-041 (first-push silently overwrites orphan save) — FILED (run #10, P2 — does NOT block playable release; mitigated by §FS.11 probe).
+- 🟡 OP-042 (consent dialog interleaves with concurrent host actions) — FILED (run #10, P2 — does NOT block playable release; today requires deliberate dual-intent).
 - 🟡 M6a-OAuth cloud-push.ts (DM-facing orchestration) — AFTER M6a-FS host wiring.
 - 🟡 M6a-OAuth per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
 - 🟡 M6a-OAuth mid-session 401 detection (OP-022) — lands with cloud-push.ts.
@@ -846,4 +910,12 @@ Still pending (carry-over):
 - **Mock campaign methodology / simulations (run #8 NEW)** →
   `simulations/` (mock-campaign-NN-<theme>.md +
   `src/persistence.simulation-NN-*.test.ts`)
+- **Cross-device probe controller (run #10 NEW)** →
+  `src/controllers/cross-device-probe.ts` (+ test file).
+  Host wiring in `src/quire-app.ts`:
+  `getCrossDeviceProbe()` / `maybeRunCrossDeviceProbe()` /
+  `crossDeviceProbeLoad()` / `dismissCrossDeviceProbe()` /
+  `renderCrossDeviceProbePrompt()`.
+- **Quire-app cross-device probe wiring tests (run #10 NEW)** →
+  `src/quire-app.cross-device-probe.test.ts` (7 tests).
 - Fork verification → `src/persistence.publish-fork.test.ts`
