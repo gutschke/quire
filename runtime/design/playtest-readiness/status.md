@@ -24,7 +24,7 @@ human + DM + test table need before session 1.
 - WS-G (UI-iteration discipline): mock-10 extended (+2
   scenarios for H-2 + H-1).
 
-**Latest deploy hash:** TBD after push (run #16 ship)
+**Latest deploy hash:** a75536e (run #16 ship)
 **Branch:** main
 
 ---

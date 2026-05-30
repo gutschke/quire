@@ -9,7 +9,7 @@ active container; the playtest-readiness program governs.
 **Active milestone:** M6a-FS playable release GREEN
 (unchanged from run #12); playtest-readiness program is
 PLAYTEST GREEN per `../playtest-readiness/playtest-handoff.md`.
-**Latest deploy hash:** TBD after run #16 push
+**Latest deploy hash:** a75536e (run #16 ship)
 **Branch:** main
 
 ## Run #13 quick links
