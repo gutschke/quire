@@ -7,7 +7,7 @@ DM-happy-path definition, but real player-side visible hit)
 **Active milestone:** M6a-FS-4 SHIPPED / playable-release-plan.md
 milestone 4 complete.  Next: M6a-FS-5 (OP-043 fix + simulation 07
 + pre-release sweep).
-**Latest deploy hash:** (TBD this push — update post-push)
+**Latest deploy hash:** 54fb73b (run #11 ship — M6a-FS-4)
 **Branch:** main
 
 ## Session log (most recent first)
