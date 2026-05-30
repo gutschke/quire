@@ -42,6 +42,75 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-009 — Default Drive scope is `drive.appdata`, not `drive.file` (2026-05-29)
+
+**Decision:** Cloud-sync to Google Drive defaults to the
+`drive.appdata` scope (hidden per-app folder). `drive.file` is
+available as an opt-in setting for users who want manual recovery
+via Drive's UI.
+
+**Why:** The ADV-1 review finding (in `auth-strategy-review.md`)
+identified a P1 leak: a DM accidentally clicking "Anyone with link
+can view" on their Drive UI exposes the cleartext save (DM-coord
+projection includes DM-only events) to anyone with the link.
+`drive.appdata` is not visible in the user's Drive UI and not
+shareable — closes the leak path structurally rather than relying
+on a runtime warning.
+
+**Why opt-in `drive.file`:** Some users want a manual backup workflow
+("if Quire breaks, I can grab the JSON from my Drive"). Offer it,
+with a docs link explaining the share-link warning.
+
+**Alternatives:**
+- Default to `drive.file` with ACL-check warning. Rejected: the ACL
+  query has eventual-consistency concerns and the warning relies on
+  the DM reading it before clicking through.
+- Don't offer `drive.file` at all. Rejected: removes a legitimate
+  recovery path some users will value.
+
+**Tradeoffs:** `drive.appdata` is opaque to the DM (no manual
+inspection via Drive UI). Mitigation: DM-only operational view
+exposes a "Download backup" button that fetches the appdata file
+and saves it to local disk.
+
+**Revisit if:** Google deprecates `drive.appdata` or imposes a
+quota that hurts. (Currently quota is shared with Drive's main 15GB
+free tier; not a problem for sub-1MB Quire saves.)
+
+---
+
+## DEC-008 — M6 ships in three layered stages: appdata-ephemeral → passphrase-refresh → GitHub (2026-05-29)
+
+**Decision:** M6 splits into M6a/M6b/M6c.
+- **M6a:** Google Drive `drive.appdata` + PKCE + ephemeral
+  access_token in JS memory (re-auth per session).
+- **M6b:** Add passphrase-encrypted refresh_token in IndexedDB for
+  cross-session persistence. APP users degrade to M6a.
+- **M6c:** GitHub Device Flow + same save format committed to a
+  configured repo path.
+
+**Why:** Per UX-3 review finding, "re-auth every session" is
+UX-unacceptable for weekly DMs. But the strict-no-creds C4 constraint
+also has real value (especially for APP users). The layered ship
+gets us the SHIPPABLE-FROM-DAY-ONE M6a while the UX-acceptable
+M6b lands as a follow-up. M6c is the GitHub path which is similar
+mechanics but different ceremony — natural follow-up.
+
+**Alternatives:**
+- Single-shot ship of all three. Rejected: too much scope for one
+  reviewable commit; review surface area is enormous.
+- Skip M6c entirely. Rejected: Underleaf is already GitHub-hosted;
+  the symmetry of "campaign content on GitHub, saves on GitHub
+  too" is valuable.
+
+**Tradeoffs:** M6a-only is the minimum-viable ship. DMs running M6a
+will re-auth per session for the duration of M6b development.
+
+**Revisit if:** M6a UX is acceptable enough that M6b is unnecessary.
+(Polling DMs after a few sessions of M6a-only will tell us.)
+
+---
+
 ## DEC-007 — Build cloud sync (M6); strict OAuth + no creds in browser is the floor (2026-05-29)
 
 **Decision:** Build cloud sync per the human's mid-session OP-006 call.

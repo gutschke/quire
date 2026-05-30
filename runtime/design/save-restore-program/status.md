@@ -1,97 +1,128 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 end-of-session (M1 + M2 + M3 shipped)
-**Active milestone:** M4 — Restore-drill CI (next)
-**Latest deploy hash:** build 99c837c
-**Branch:** main (origin up to date)
+**Last updated:** 2026-05-29 end-of-session 2 (M4 + M5-partial + M6 design)
+**Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (after BLOCKING OP-016 CORS probe)
+**Latest deploy hash:** see `git log` HEAD short-SHA (to fill in after push)
+**Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-29 (this session):** M0 docs + M1 firewall + M2 tab-close + M3 re-broadcast. Three pushes to origin/main. 12 new tests; all 2584 pass; typecheck clean.
+- **2026-05-29 session 2 (this session):** M4 restore-drill ship +
+  M5 recently-played list + navigator.storage.persist() request +
+  M6 cloud-sync auth-strategy.md draft 1 + self-review (draft 2)
+  + decisions/open-problems updated. Three pushes pending.
+  +22 tests; all 2618 pass; typecheck clean; build clean.
+- **2026-05-29 session 1:** M0 docs + M1 firewall + M2 tab-close +
+  M3 re-broadcast. 12 new tests; all 2584 pass.
 
-## Just shipped
+## Just shipped this session
 
-### M1 — Firewall: leaks sealed + self-completing tripwire (DONE)
+### M4 — Restore-drill CI (DONE, commit c3e2707)
 
-- Map-blob unrevealed label leak sealed via reveal-mask scrubber.
-- `causedByResponseId` scrubbed from `pc-create` + `pc-edit` for non-coord saves.
-- `EVENT_KINDS_NO_SCRUB_NEEDED` + lint forces explicit per-kind decision.
-- 40-seed save-path firewall fuzz — SAVE-STREAM companion to `state.firewall-fuzz`.
+- `src/persistence.restore-drill.test.ts` — 12 tests covering
+  byte-identical roundtrip, 100-event soak convergence across 3 peers,
+  cross-week save→load→continue, sick-DM handoff, branch-divergence
+  merge (both orderings), LWW determinism under concurrent
+  coordinator-claim (closes OP-004), schema sanity.
+- `npm run drill` script for focused local iteration.
+- Drill suite runs in ~140ms — kept in default `npm test`, not
+  promoted to nightly (DEC-006 rationale).
 
-### M2 — Tab-close durability (DONE)
+### M5-partial — Recently-played + persist (DONE, commit 0ef07c3)
 
-- `AutosaveController` listens for `visibilitychange === 'hidden'` and flushes pending saves synchronously. Closes the 1.5s data-loss window on tab-close.
-- `hostDisconnected()` cancel-on-route-change preserved (distinct from tab-close).
-- 6 new unit tests pin the contract.
+- `src/controllers/recently-played.ts` — scans `localStorage` for
+  `quire.save.*` keys, returns sorted-most-recent-first.
+  17 tests (FakeStorage; sort, limit, malformed-skip; time-ago
+  granularity from moments to years).
+- `renderRecentlyPlayed()` in quire-app.ts surfaces the list under
+  "No campaign loaded" — silent-player-firewall preserving (stripped
+  saves display identically to DM saves).
+- `AutosaveController.requestPersistentStorage()` fires
+  `navigator.storage.persist()` after the first successful save.
+  Fire-and-forget, tolerant of missing API / throw / rejected
+  promise. 5 tests.
 
-### M3 — Restore re-broadcast (DONE)
+### M6 design — Auth strategy + self-review (commits pending)
 
-The architect's claim WAS REAL — in the 3-peer case. Reproduction
-test (`peer.restore-rebroadcast.test.ts`):
-- 2-peer scenario: pull from new joiner catches up, no bug.
-- 3-peer scenario: bob+carol connect first, alice joins with empty
-  log, on-connect sync-request → alice responds empty, THEN alice
-  loads saved events. Pre-fix bob+carol never see them. ←  THE BUG.
-
-Fix: `Peer.applyEvent(event, { propagate = true })` now forwards
-newly-applied events via `forwardShareToOthers` (sync-response,
-hub-forwarding). Opt-out preserved for the `regenerateCode` path.
-Sync-response chosen over `share` because restored events may have
-been authored by other peers' prior sessions (R2.1 impersonation
-defense would reject those over `share`).
-
-Tasks #420, #421, #422, #423 marked complete.
-
-All 2584 vitest tests pass. TypeScript clean.
+- `design/save-restore-program/auth-strategy.md` — draft 1 + draft 2
+  with self-review applied.
+- `design/save-restore-program/auth-strategy-review.md` — full
+  issue log (SEC/PRV/ADV/UX/ARC tags + P0/P1/P2 severity + fix
+  proposals). Transparency note: program lead acted as the
+  consultant role since no spawn-sub-agent tool is available in
+  this harness.
+- DEC-008 (layered ship M6a → M6b → M6c).
+- DEC-009 (`drive.appdata` default scope; closes ADV-1 leak path).
+- OP-006 superseded by build-decision; OP-007/008/009/010/012
+  resolved or superseded by draft-2 review; OP-013/014/015/016
+  newly filed.
 
 ## Up next
 
-### M4 — Restore-drill CI (NEXT)
+### IMMEDIATELY: OP-016 CORS probe (BLOCKING M6a)
 
-Promote three currently-e2e-only assertions to fast unit tests +
-add a nightly restore-drill: 1-second deterministic seed → 100-event
-soak → save → restore → byte-identical (modulo savedAt) + 0
-unknownKinds + convergence.
+Before any M6a code lands, verify `oauth2.googleapis.com/token`
+accepts CORS requests from our origin. Build a tiny dev-only test
+script that hits the endpoint with deliberately bogus payload and
+asserts JSON-error (CORS open) NOT CORS-block. If blocked, add a
+Cloudflare Worker token-exchange proxy.
 
-Likely 2-3 commits:
-1. Test harness for byte-identical roundtrip (modulo savedAt).
-2. Soak-100-event drill as a unit test.
-3. Promote cross-week save-load-continue + branch-divergence-merge
-   from e2e to vitest.
+### M5 follow-up (task #429)
 
-### M5 — Discoverability (after M4)
+Enrich the resume prompt with scene title + PC names + session
+digest headline. Deferred this session — needs design conversation
+around engine-emits-signal vs campaign-authored-copy.
 
-- `navigator.storage.persist()` request on first session-write.
-- Resume prompt: scene + PCs + digest headline.
-- Recently-played list on no-campaign landing.
-- DM-only soft-warn on eviction (silent-player firewall enforced).
+### M6a — Drive `drive.appdata` + PKCE + ephemeral
 
-### M6 — Honest scope (after M5)
+Implementation kick-off after OP-016 verified. Per
+auth-strategy.md "What's locked": PKCE S256, `drive.appdata`,
+ephemeral in-memory access_token, `crypto.getRandomValues` for
+state + verifier, strict origin validation on postMessage.
 
-Decision pending the human (OP-006).
+### M6b — Passphrase-encrypted refresh_token
+
+Follow-up; requires UX validation of "type your Quire passphrase
+to unlock cloud sync" with a real DM. APP users degrade to M6a.
+
+### M6c — GitHub Device Flow
+
+Same save format, committed to a configured repo path. Public-repo
+only in v1.
 
 ### M7 — Simulated playtest
 
 ### M8 — UAT readiness
 
-## Decisions pending the human
+## Decisions pending the human (SHORT LIST — see at-end-of-turn report)
 
-- **OP-006 — Build OR strip GitHub-push + Drive sync.** Recommended
-  default: strip + park as M6 roadmap. The threat-model questions
-  (whose token? whose repo? does a player's event log push to the
-  DM's repo?) need a design pass before code.
+1. **Drive scope default — `drive.appdata` (hidden) confirmed?**
+   DEC-009 locked the choice; if you prefer `drive.file` default,
+   say so before M6a starts.
+2. **Layered ship pacing — M6a-only first, M6b later?** DEC-008
+   locked it; pace is yours to override.
+3. **Is the in-house self-review acceptable?** I acted as the
+   security/UX consultant role because the harness has no spawn-
+   sub-agent tool. If you want an independent pass, flag.
+4. **CORS probe before code** — OP-016 BLOCKS M6a. Want me to ship
+   the probe in the next turn?
 
 ## Health summary
 
 - 🟢 Living docs bootstrapped.
-- 🟢 Firewall leaks sealed (M1 shipped).
-- 🟢 Self-completing scrubber registry (M1 shipped).
-- 🟢 Save-path taint fuzz (M1 shipped).
-- 🟢 Tab-close durability (M2 shipped).
-- 🟢 "Any party member can continue" promise — REAL (M3 shipped).
-- 🔴 Browser-eviction handling — no `navigator.storage.persist()`, M5 pending.
-- 🟡 e2e-only critical-path coverage — M4 next.
-- 🔴 Honest scope — GitHub-push + Drive sync implied but not built. Human decision required.
+- 🟢 Firewall leaks sealed (M1).
+- 🟢 Self-completing scrubber registry (M1).
+- 🟢 Save-path taint fuzz (M1).
+- 🟢 Tab-close durability (M2).
+- 🟢 "Any party member can continue" — REAL (M3).
+- 🟢 Restore-drill CI gates byte-identical + soak + LWW (M4).
+- 🟢 Recently-played landing list (M5-partial).
+- 🟢 navigator.storage.persist() requested on first save (M5).
+- 🟡 Resume-prompt enrichment — deferred (M5 follow-up #429).
+- 🟡 Eviction soft-warn (DM-only) — TODO (M5).
+- 🟢 Honest scope — cloud sync designed (M6 draft 2).
+- 🔴 M6a CORS probe — BLOCKS implementation start.
+- 🔴 M6a Drive auth flow — code pending.
 
 ## Where to find things
 
@@ -101,4 +132,5 @@ Decision pending the human (OP-006).
 - Known issues → `open-problems.md`
 - Test plan → `test-strategy.md`
 - UX plan → `ux-strategy.md`
+- Cloud-sync auth → `auth-strategy.md` (+ `auth-strategy-review.md`)
 - Sub-agent transcripts → `simulations/`

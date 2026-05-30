@@ -85,17 +85,52 @@ DoD:
 
 **Human decision 2026-05-29:** build cloud sync — DM-initiated, OAuth-
 based, no credentials in the browser, must work under Google Advanced
-Protection. Specs live in `auth-strategy.md` (draft 1 written this
-session). Consultants slated: OAuth/web-security architect + privacy/
-threat reviewer + adversarial save-format reviewer + UX validator.
+Protection. Specs live in `auth-strategy.md` (drafts 1+2). Self-
+reviewed in `auth-strategy-review.md` (no spawn-sub-agent tool in
+this harness — program lead acted as consultant role).
 
-DoD (revised):
-- `auth-strategy.md` draft 1 written ✅
-- Security consultants review the OAuth flow design.
-- UX expert validates the OAuth-popup-vs-redirect-vs-device-code UX.
-- Decisions logged DEC-007 onward.
-- Implementation only after design lock.
-- User-facing copy + docs reflect the final shape.
+Layered ship per DEC-008:
+
+### M6a — Drive `drive.appdata` PKCE + ephemeral (FIRST)
+
+- BLOCKED ON: OP-016 CORS probe at `oauth2.googleapis.com/token`.
+- DoD:
+  - PKCE S256 flow with `crypto.getRandomValues` for state +
+    code_verifier.
+  - Popup launches to `accounts.google.com/o/oauth2/v2/auth` with
+    scope=`drive.appdata`, redirect_uri=our origin.
+  - Callback page validates origin + state, postMessages auth code
+    to opener.
+  - Opener exchanges code+verifier for access_token (in-memory only).
+  - Push: serialize SaveDocument → Drive appdata file (per-campaign
+    file name); track Drive file_id in campaign manifest in
+    localStorage.
+  - Pull: fetch appdata file → parse → applySaveToLog.
+  - Logout: revoke token (best-effort) + clear in-memory state.
+  - Tests: unit + integration; popup mocked.
+
+### M6b — Passphrase-encrypted refresh_token (FOLLOW-UP)
+
+- DoD:
+  - Request offline_access (refresh_token) during OAuth.
+  - WebCrypto-derive AES-GCM-256 key from passphrase + per-origin
+    salt; encrypt refresh_token; persist to IndexedDB.
+  - On session-open: prompt for passphrase; decrypt; refresh
+    access_token; proceed.
+  - APP users: detect refresh-token-revocation; degrade to M6a
+    re-auth.
+  - Tests: WebCrypto roundtrip, wrong-passphrase rejection,
+    revocation-degrade.
+
+### M6c — GitHub Device Flow (LATER)
+
+- DoD:
+  - Device Flow: show user code + verification URL; poll
+    /login/oauth/access_token.
+  - Same SaveDocument format committed to configured repo path
+    (`saves/<campaign-slug>.json`).
+  - Public-repo only in v1; private-repo deferred to v1.1 (GitHub
+    App registration).
 
 ## M7 — Simulated playtest
 

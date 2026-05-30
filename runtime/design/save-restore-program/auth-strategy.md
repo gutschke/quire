@@ -1,6 +1,16 @@
 # Auth Strategy — Cloud Sync (M6)
 
-**Status:** 🟡 Draft 1 (2026-05-29) — pending security + UX review.
+**Status:** 🟡 Draft 2 (2026-05-29 — self-reviewed by program lead).
+See `auth-strategy-review.md` for the issue log feeding this revision.
+
+**Draft history:**
+- Draft 1 (2026-05-29 mid-session): captured human's locked
+  constraints, proposed PKCE-based architecture, ten open questions.
+- Draft 2 (2026-05-29 later): incorporated SEC/PRV/ADV/UX/ARC review
+  findings. Key shifts: default to `drive.appdata` (closes share-
+  link leak path), layered M6 ship (ephemeral-first, passphrase-opt-
+  in for refresh tokens), CORS probe blocks ship, same save format
+  for Drive + GitHub.
 
 The human made the OP-006 call (2026-05-29 mid-session): **build cloud sync**.
 Constraints they gave us (verbatim, then decomposed):
@@ -94,27 +104,35 @@ the answer is "in the user's head", not in storage. Worth UX validation
 because it can change "re-auth every session" to "type passphrase once
 per device per <refresh-token-TTL>". **OPEN QUESTION 2.**
 
-### A2. Google Drive — scope
+### A2. Google Drive — scope (REVISED to default to `drive.appdata`)
 
-`drive.file` semantics (per Google docs):
+**Draft 2 revision (per ADV-1 review):** Default scope is now
+`drive.appdata` — the hidden per-app folder Google maintains
+behind the user's Drive UI.
 
-- App can create files in user's Drive.
-- App can read/write/delete files IT created (or files explicitly
-  opened via Google Picker).
-- App CANNOT see anything else in the user's Drive.
+`drive.appdata` semantics:
+- App can create / read / write / delete files in a per-app
+  hidden folder.
+- The user does NOT see this folder in their Drive UI.
+- The folder is OWNED by the user but accessible ONLY to our app.
+- Cannot be shared (no share-link risk — closes ADV-1 P1 leak path).
 
-This is the minimum-viable for Quire. Each campaign = one file (probably
-`<campaign-slug>.quire.json` or similar). The DM sees the file in their
-Drive normally; they can move it, rename it (we re-find by file ID
-stored in the campaign manifest in localStorage), share it via Drive's
-"Share" UI.
+`drive.file` is the documented alternative for users who want manual
+recovery via the Drive UI. We offer it as an opt-in setting ("Save
+to a visible Drive file instead") with a warning about share-link
+risk.
 
-**Alternative:** `drive.appdata` — hidden per-app folder that the user
-never sees. **Trade-off:** the user can't browse to their save and
-inspect it / back it up via their normal Drive workflow. PRO: lower
-attack surface (no accidental "Anyone with link can view" share). PRO:
-no clutter in user's Drive. CON: opaque — DM has no manual recovery
-path if Quire breaks. **OPEN QUESTION 3** — defer to UX expert.
+**Trade-off:** `drive.appdata` is opaque to the DM (no manual
+recovery via Drive's UI). Mitigation: the DM-only operational view
+exposes a "Download backup" button that fetches the appdata file and
+streams it as a regular download — the DM can keep a copy on their
+hard drive if they want manual recovery.
+
+**Why this is now locked-in:** ADV-1 (share-link leak risk) is a P1
+threat under the civilized-peer model — DMs accidentally clicking
+"Anyone with link can view" on a Drive UI is plausible and
+unrecoverable once it happens. Defaulting to appdata eliminates the
+risk class entirely.
 
 ### A3. Google Advanced Protection Program compat
 
@@ -180,9 +198,13 @@ users install it on a repo) and is probably the right long-term answer
 typically hosted in the Underleaf-style public-content repo pattern.
 **Defer private-repo support to v1.1; document the limitation.**
 
-### A6. Save format on cloud
+### A6. Save format on cloud (LOCKED draft 2)
 
-For both Drive and GitHub:
+Per ARC-1: SAME save format for Drive + GitHub destinations. The
+runtime already produces git-friendly deterministic JSON via
+`stringifySave` (alphabetically-sorted keys, per-event lines) — this
+format works equally well as a single file on Drive or a committed
+file on GitHub. No format-per-destination complexity.
 
 - The DM's save = the DM-coord projection (full event log, DM-only
   events included). It's the DM's own Drive / repo; they're saving their
@@ -192,12 +214,11 @@ For both Drive and GitHub:
 - The PLAYER'S save (if we ever let players push) would be the player-
   scrubbed projection — already firewall-clean. But we're deferring
   player-side push, so this doesn't matter in v1.
-- The save file is **cleartext JSON** on the cloud destination. If a DM
-  shares the Drive file via "Anyone with the link can view", the contents
-  are exposed to whoever has the link. This matches the threat model
-  (civilized peers, accidental disclosure). **The push UI must warn the
-  DM if they're about to push to a destination that is shared — see
-  OPEN QUESTION 5.**
+- The save file is **cleartext JSON** on the cloud destination. With
+  `drive.appdata` as the default (per A2 draft 2), the file is not
+  shareable through Drive's UI — closes the ADV-1 P1 share-link leak
+  path. For opt-in `drive.file` users, a push-time ACL check warns
+  before writing to a shared file (per OP-012).
 
 ### A7. Conflict resolution (two DMs, one file)
 
@@ -267,27 +288,56 @@ What's the worst an attacker can do with each artifact?
 5. User accidentally pastes the URL containing the auth code into a chat
    (auth code leaks). Without code_verifier, the auth code is useless.
 
-## Open questions (route to consultants)
+## Open questions — RESOLVED in draft 2
+
+| # | Question | Resolution |
+|---|---|---|
+| OQ1 | Re-auth every session UX-acceptable? | NO (UX-3). Layered ship: M6a = ephemeral, M6b = passphrase-opt-in refresh tokens. |
+| OQ2 | Refresh-token storage: WebCrypto + passphrase? | YES, M6b only. Salted-hash passphrase → AES-GCM-256 key → encrypt refresh_token → IndexedDB. |
+| OQ3 | `drive.file` vs `drive.appdata`? | `drive.appdata` default, `drive.file` opt-in (ADV-1). |
+| OQ4 | GitHub Device Flow vs PKCE? | Device Flow default per UX-2; PKCE as fallback for self-host. |
+| OQ5 | Share-link warning UI? | Only for opt-in `drive.file` users (OP-012). `drive.appdata` users can't share. |
+| OQ6 | Full save vs chunks? | Full save, same format Drive + GitHub (ARC-1). |
+| OQ7 | Multi-DM concurrent push? | Pull-rebase-push; surface merge summary in DM-only operational view (ARC-2). |
+| OQ8 | OAuth callback page? | Tiny static page on OUR origin; postMessage with explicit targetOrigin (SEC-2). |
+| OQ9 | Access_token theft blast radius? | `drive.appdata` scope only (no other Drive access); 60-min TTL. Documented in token threat model. |
+| OQ10 | APP compat? | PKCE + drive.appdata is APP-compatible. Re-auth-every-session mode (M6a) WORKS for APP users; M6b passphrase mode degrades to re-auth for APP users. |
+
+## Open questions — NEW in draft 2
 
 | # | Question | Routed to |
 |---|---|---|
-| OQ1 | Is "re-auth every session" UX-acceptable, or do we need refresh tokens? | UX expert |
-| OQ2 | If refresh tokens: passphrase-derived WebCrypto key for encryption? Or accept "ephemeral access_token only"? | Security reviewer |
-| OQ3 | `drive.file` (visible) vs `drive.appdata` (hidden) — what serves the DM better? | UX expert |
-| OQ4 | GitHub Device Flow (G1) vs PKCE redirect (G2) — which is more natural in the TTRPG context? | UX expert |
-| OQ5 | Push UI must warn on "Anyone with link" shared destinations? How does this surface? | UX expert + Adversarial |
-| OQ6 | Cloud file = full materialized save OR append-only event-log chunks? | Architect |
-| OQ7 | Multi-DM concurrent push: pull-rebase-push as proposed; any edge cases? | Architect |
-| OQ8 | OAuth callback page: TRUSTED tiny static page or third-party host? | Security reviewer |
-| OQ9 | What does an attacker who briefly possesses an access_token achieve? Verify per A6 (Token threat model). | Security reviewer |
-| OQ10 | APP compat — verify PKCE+drive.file does NOT trip APP gates. | Security reviewer |
+| OQ11 | Verify token endpoint CORS is open for PKCE public-client from our origin (SEC-3). | Dev probe, BLOCKING ship. |
+| OQ12 | COOP / COEP headers on Quire's prod origin compatible with OAuth popup? (PRV-1) | Verify in deployment config. |
+| OQ13 | Self-hoster OAuth-app override mechanism (ARC-3) — build-time env or runtime config? | Architect. |
 
-## What's locked even before consultant review
+## What's locked (after draft 2 self-review)
 
 - OAuth flow MUST use PKCE (S256) — no implicit grant, no client_secret in the SPA.
-- Scopes MUST be minimum-viable (`drive.file` not `drive`; `public_repo` not `repo` for v1).
-- Access tokens MUST NOT persist to localStorage/IndexedDB unencrypted.
+- Scopes MUST be minimum-viable: **`drive.appdata`** (default) or
+  `drive.file` (opt-in) for Google; `public_repo` for GitHub v1.
+- Access tokens MUST NOT persist to localStorage/IndexedDB
+  unencrypted. M6a: in-memory only. M6b: refresh_token encrypted
+  with passphrase-derived AES-GCM-256 key, in IndexedDB.
 - The user authenticates on the **third party's domain**, never types
   third-party credentials into Quire.
 - The save document on the cloud destination is the same `SaveDocument`
   format the rest of the runtime understands — no new file format.
+- `state` nonce + PKCE `code_verifier` MUST come from
+  `crypto.getRandomValues` (256+ bits entropy each). See SEC-5.
+- postMessage to OAuth callback page MUST use explicit `targetOrigin`
+  matching our origin (NOT `*`); opener MUST validate `event.origin`,
+  `event.source`, AND state nonce. See SEC-2.
+- Default destination on Drive is `drive.appdata` (hidden); user
+  cannot accidentally share it. See ADV-1.
+
+## Ship layering (REVISED in draft 2)
+
+- **M6a (first ship):** OAuth PKCE + `drive.appdata` + ephemeral
+  access_token in JS memory. Re-auth per session (browser-tab
+  lifetime).
+- **M6b (follow-up):** Add passphrase-protected refresh_token in
+  IndexedDB. UX: "Type your Quire passphrase to unlock cloud sync
+  across sessions." APP users degrade to M6a behavior.
+- **M6c (later):** GitHub Device Flow + same `drive.appdata`-shape
+  save committed to a configured GitHub path.

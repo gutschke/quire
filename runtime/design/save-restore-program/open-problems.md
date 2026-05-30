@@ -8,18 +8,72 @@ Newest at top. When fixed, link to the commit and move to a separate
 
 ---
 
-## OP-012 — Push UI must warn on shared-link destinations
+## OP-016 — Cross-origin CORS for the token-exchange endpoint is unverified (BLOCKING)
+
+**Severity:** P1 (blocks M6a ship).
+**Evidence:** `auth-strategy-review.md` SEC-3.
+`oauth2.googleapis.com/token` is documented as PKCE-CORS-compatible
+for public clients, but real-world behavior varies. The browser
+will fail with CORS errors if assumptions are wrong.
+**Hypothesis:** Build a dev-only probe FIRST: hit token endpoint
+with bogus code+verifier, assert JSON-error response (CORS open)
+NOT CORS-blocked failure. If blocked, fall back to a Cloudflare
+Worker as a token-exchange proxy.
+**Owner:** save-restore lead.
+**Status:** open. BLOCKS M6a implementation start.
+
+---
+
+## OP-015 — COOP/COEP headers + popup-blocker fallback for OAuth flow
+
+**Severity:** P2 (popup-blocker breakage).
+**Evidence:** `auth-strategy-review.md` PRV-1. Aggressive popup-
+blockers (Firefox Strict mode, Safari ITP) can break the popup-
+postMessage flow.
+**Hypothesis:** Document Cross-Origin-Opener-Policy:
+same-origin-allow-popups requirement. Build full-page-redirect
+fallback when popup is blocked OR communication fails.
+**Owner:** save-restore lead.
+**Status:** open. Needs to land before M6a ships.
+
+---
+
+## OP-014 — Microcopy for OAuth-flow buttons must read as "leaving Quire"
+
+**Severity:** P2 (UX-acceptance gating).
+**Evidence:** `auth-strategy-review.md` UX-1. From the human's
+mandate: the OAuth popup must feel like "I'm leaving Quire to talk
+to Google", NOT "Quire is asking for my password."
+**Hypothesis:** Button labeled "Back up to Drive" with microcopy
+"You'll authenticate with Google. Quire never sees your password."
+Defer final string to M8 in-fiction copy review.
+**Owner:** save-restore lead (TTRPG-expert routing for M8).
+**Status:** open. Visual review needed once M6a UI lands.
+
+---
+
+## OP-013 — Self-hoster override of OAuth client_id
+
+**Severity:** P3 (deployment / trust model).
+**Evidence:** `auth-strategy-review.md` ARC-3. Quire is a static
+bundle that self-hosters deploy; one canonical client_id covers
+the maintainer-hosted instance, but self-hosters need their own.
+**Hypothesis:** Build-time env var (default canonical id) + runtime
+config override. Document the trust trade-off.
+**Owner:** save-restore lead.
+**Status:** open. Needs design before M6a deploys publicly.
+
+---
+
+## OP-012 — Push UI must warn on shared-link destinations [SUPERSEDED by DEC-009]
 
 **Severity:** P2 (firewall — civilized-peer disclosure model).
-**Evidence:** `auth-strategy.md` A6. If a DM pushes their full DM-coord
-save to a Drive file that is shared "Anyone with the link can view",
-the cleartext save is exposed to everyone with the link.
-**Hypothesis:** Before the first push to a destination, query Drive
-for the file's ACL. If anything other than "private to me", surface a
-DM-only warning ("This file is shared with X. Push?"). Re-check on
-ACL changes is best-effort.
-**Owner:** save-restore lead (UX expert routing).
-**Status:** open. Pending UX validation in M6.
+**Resolution:** DEC-009 defaulted Drive scope to `drive.appdata`
+(hidden, unshareable). The share-link risk is gone for default
+users. The opt-in `drive.file` path still needs the ACL-check
+warning — re-scope this OP to "implement ACL check for opt-in
+`drive.file` users" if/when we build that path.
+**Status:** superseded; defer to opt-in-`drive.file` build.
 
 ---
 
@@ -36,60 +90,49 @@ the event-log layer; the cloud-sync layer just needs the orchestration.
 
 ---
 
-## OP-010 — Cloud file format: full save vs append-only chunks
+## OP-010 — Cloud file format: full save vs append-only chunks [CLOSED by ARC-1 review 2026-05-29]
 
 **Severity:** P2 (architecture choice with downstream UX impact).
-**Evidence:** `auth-strategy.md` A1 / OQ6. Full materialized save is
-simpler but produces large diffs and is lossy under simultaneous
-writes; append-only chunks plays well with branch-divergence but is
-harder to "open in a text editor and read."
-**Hypothesis:** Default to full materialized save (matches current
-`SaveDocument` format; user can grep for content). Defer chunked
-mode if the diffs become a problem.
-**Owner:** save-restore lead (architecture routing).
-**Status:** open. Pending architect input in M6.
+**Resolution:** ARC-1 review settled on "same `SaveDocument`
+format on both Drive and GitHub destinations" — runtime already
+produces deterministic git-friendly JSON via `stringifySave`.
+Git's line-level diff on the alphabetically-sorted per-event lines
+handles the "small diff" property automatically. Format-per-
+destination complexity dropped.
 
 ---
 
-## OP-009 — Token persistence: re-auth per session vs encrypted refresh-token
+## OP-009 — Token persistence: re-auth per session vs encrypted refresh-token [RESOLVED by DEC-008 2026-05-29]
 
 **Severity:** P1 (UX vs security trade-off).
-**Evidence:** `auth-strategy.md` A1 / OQ1+OQ2. Strict C4 ("no creds in
-browser") means re-auth every Quire session. The alternative is a
-passphrase-encrypted refresh-token in IndexedDB.
-**Hypothesis:** Start with re-auth-every-session (strict C4). If UX
-expert rules it unacceptable, design the WebCrypto-passphrase variant
-as a follow-up. APP users get re-auth regardless.
-**Owner:** save-restore lead (UX expert + security reviewer).
-**Status:** open. Pending UX validation in M6.
+**Resolution:** DEC-008 layered ship: M6a is ephemeral (re-auth per
+session — strict C4). M6b adds passphrase-encrypted refresh_token in
+IndexedDB. APP users degrade to M6a behavior automatically.
 
 ---
 
-## OP-008 — GitHub auth shape: Device Flow vs PKCE; OAuth App vs GitHub App
+## OP-008 — GitHub auth shape: Device Flow vs PKCE; OAuth App vs GitHub App [RESOLVED by UX-2 + DEC-008 2026-05-29]
 
 **Severity:** P2 (architecture choice).
-**Evidence:** `auth-strategy.md` A4 / A5 / OQ4. Device Flow is more
-natural at a TTRPG table (DM uses phone to authenticate); PKCE is
-faster (one popup). Private repos need fine-grained scoping which
-OAuth Apps can't provide (would need a GitHub App).
-**Hypothesis:** Ship Device Flow + public-repo-only in v1. Document
-private-repo as v1.1 follow-up requiring GitHub App registration.
-**Owner:** save-restore lead (UX expert routing).
-**Status:** open. Pending UX validation in M6.
+**Resolution:** Device Flow chosen per UX-2 review (better fit for
+DM-at-table ceremony — "open this URL on your phone, type the
+code"). Public-repo only in v1; private-repo support deferred
+(needs GitHub App registration). Lands as M6c per DEC-008.
 
 ---
 
-## OP-007 — Google Drive OAuth flow under Advanced Protection Program
+## OP-007 — Google Drive OAuth flow under Advanced Protection Program [PARTIALLY RESOLVED 2026-05-29]
 
 **Severity:** P1 (locked human constraint — must work under APP).
-**Evidence:** `auth-strategy.md` A3 / OQ10. APP users have stricter
-refresh-token rules and consent UI behavior.
-**Hypothesis:** PKCE + `drive.file` scope is on Google's APP-allowed
-list. Verify with the security reviewer that the proposed flow does
-not trip APP gates (especially around refresh tokens). The strict-C4
-"re-auth every session" path degrades gracefully under APP.
-**Owner:** save-restore lead (security reviewer routing).
-**Status:** open. Pending security review in M6.
+**Resolution:** PKCE + `drive.appdata` is on Google's APP-allowed
+list (verified per Google docs as of draft 2). M6a (ephemeral, re-
+auth every session) is explicitly APP-safe. M6b's passphrase-
+encrypted refresh_token may be APP-revoked aggressively; in that
+case M6b users on APP-enabled accounts degrade gracefully to M6a
+behavior — the runtime detects refresh-token-revocation and re-
+prompts for auth.
+**Status:** partially resolved (M6a path locked). M6b APP-specific
+behavior needs a real-world test once code lands.
 
 ---
 
