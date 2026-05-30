@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONSENT_COPY,
+  DEFAULT_CONSENT_COPY_FS_API,
   consentKey,
   hasAcknowledged,
   inMemoryConsentStorage,
@@ -215,7 +216,8 @@ describe('per-destination acknowledgment independence', () => {
     'google-drive-appdata',
     'google-drive-file',
     'github-private',
-    'github-public'
+    'github-public',
+    'fs-api'
   ];
 
   it('acknowledging one destination does not bleed into others', () => {
@@ -226,6 +228,29 @@ describe('per-destination acknowledgment independence', () => {
         expect(hasAcknowledged(s, CAMPAIGN_A, other)).toBe(other === target);
       }
     }
+  });
+
+  it('fs-api destination round-trips through hasAcknowledged', () => {
+    const s = inMemoryConsentStorage();
+    expect(hasAcknowledged(s, CAMPAIGN_A, 'fs-api')).toBe(false);
+    recordAcknowledgment(s, CAMPAIGN_A, 'fs-api', 1_700_000_000);
+    expect(hasAcknowledged(s, CAMPAIGN_A, 'fs-api')).toBe(true);
+    withdrawAcknowledgment(s, CAMPAIGN_A, 'fs-api');
+    expect(hasAcknowledged(s, CAMPAIGN_A, 'fs-api')).toBe(false);
+  });
+
+  it('fs-api consent does NOT bleed into google-drive-appdata (sibling destinations)', () => {
+    // Spirit of DEC-020: each destination is a SEPARATE custody
+    // transfer.  The DM agreeing to drop the save in a folder
+    // on their disk has NOT agreed to also push to Drive's
+    // appdata — they're different surfaces from the DM's
+    // mental model, and the consent ceremony must respect
+    // that boundary.
+    const s = inMemoryConsentStorage();
+    recordAcknowledgment(s, CAMPAIGN_A, 'fs-api', 1_700_000_000);
+    expect(hasAcknowledged(s, CAMPAIGN_A, 'google-drive-appdata')).toBe(
+      false
+    );
   });
 });
 
@@ -260,5 +285,55 @@ describe('DEFAULT_CONSENT_COPY — semantic-spec smoke check', () => {
 
   it('has a non-empty cancel label so the dialog is dismissable', () => {
     expect(DEFAULT_CONSENT_COPY.cancelLabel.length).toBeGreaterThan(0);
+  });
+});
+
+describe('DEFAULT_CONSENT_COPY_FS_API — semantic-spec smoke check', () => {
+  it('mentions the folder as destination explicitly', () => {
+    const allText = [
+      DEFAULT_CONSENT_COPY_FS_API.title,
+      ...DEFAULT_CONSENT_COPY_FS_API.body
+    ].join(' ');
+    expect(/folder/i.test(allText)).toBe(true);
+  });
+
+  it('clarifies that Quire does NOT speak to the cloud provider', () => {
+    // This is the load-bearing semantic difference from the
+    // Drive-OAuth copy: the M6a-FS path's threat surface
+    // depends on the DM understanding that Quire writes to a
+    // folder and the OS-level sync tool is the one talking to
+    // the cloud.  Microcopy must communicate that distinction.
+    const allText = DEFAULT_CONSENT_COPY_FS_API.body.join(' ');
+    expect(/do not speak|do not.*cloud|we do not/i.test(allText)).toBe(true);
+  });
+
+  it('names example sync tools so DM can map to their own setup', () => {
+    const allText = DEFAULT_CONSENT_COPY_FS_API.body.join(' ');
+    // Generic enough to survive copy edits at M8; just verify
+    // SOME provider name is mentioned.
+    expect(/Drive|Dropbox|OneDrive|iCloud/i.test(allText)).toBe(true);
+  });
+
+  it('reassures about player visibility (they can read what they wrote)', () => {
+    const allText = DEFAULT_CONSENT_COPY_FS_API.body.join(' ');
+    expect(/players can read/i.test(allText)).toBe(true);
+  });
+
+  it('clarifies that the folder is not player-visible', () => {
+    const allText = DEFAULT_CONSENT_COPY_FS_API.body.join(' ');
+    expect(/cannot see/i.test(allText)).toBe(true);
+  });
+
+  it('mentions player-authored content categories', () => {
+    const allText = DEFAULT_CONSENT_COPY_FS_API.body.join(' ');
+    expect(/chat/i.test(allText)).toBe(true);
+    expect(/character|bond/i.test(allText)).toBe(true);
+  });
+
+  it('has non-empty acknowledge + cancel labels', () => {
+    expect(
+      DEFAULT_CONSENT_COPY_FS_API.acknowledgeLabel.length
+    ).toBeGreaterThan(0);
+    expect(DEFAULT_CONSENT_COPY_FS_API.cancelLabel.length).toBeGreaterThan(0);
   });
 });

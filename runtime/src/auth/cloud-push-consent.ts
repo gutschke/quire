@@ -70,12 +70,26 @@
 /**
  * Recognized cloud destinations.  Each destination is a separate
  * custody transfer and gets its own acknowledgment.
+ *
+ * The `fs-api` destination (added 2026-05-29 run #7 alongside
+ * M6a-FS) represents the File System Access API path: the DM
+ * picks an OS-level folder which is presumed to be inside a
+ * desktop sync client's watched tree (Google Drive Desktop,
+ * Dropbox, OneDrive, iCloud Drive, …).  The consent ceremony
+ * still applies — the player content is leaving the table for a
+ * destination the players didn't directly authorize — even
+ * though Quire itself never speaks to the cloud provider.  The
+ * destination is `fs-api` rather than e.g. `fs-api-google-drive`
+ * because Quire CANNOT KNOW which provider syncs the folder; the
+ * DM chose the folder and they (alone) know whose desktop sync
+ * client is watching it.
  */
 export type ConsentDestination =
   | 'google-drive-appdata'
   | 'google-drive-file'
   | 'github-private'
-  | 'github-public';
+  | 'github-public'
+  | 'fs-api';
 
 /**
  * The acknowledgment record persisted per (campaign, destination).
@@ -288,5 +302,30 @@ export const DEFAULT_CONSENT_COPY: ConsentDialogCopySpec = {
     'Quire shows this notice once per campaign per backup destination.'
   ],
   acknowledgeLabel: 'Back up to my Drive',
+  cancelLabel: 'Not now'
+};
+
+/**
+ * Default copy for the M6a-FS destination — same DM-only
+ * ceremony, slightly different framing because the destination
+ * is "YOUR folder" not "YOUR Drive."
+ *
+ * The DM is responsible for knowing which cloud provider
+ * (if any) is watching the chosen folder.  Quire's role is to
+ * make the destination explicit at the consent moment so the DM
+ * understands what they're agreeing to.
+ *
+ * Engineering placeholder; final wording is M8-deferred to
+ * TTRPG-craft per `ux-strategy.md`.
+ */
+export const DEFAULT_CONSENT_COPY_FS_API: ConsentDialogCopySpec = {
+  title: 'Backing up your table to a folder',
+  body: [
+    'You are saving the full table’s content — including your players’ chat, character drafts, and bond notes — to a folder on YOUR device.',
+    'If that folder is watched by a sync tool (Google Drive, Dropbox, OneDrive, iCloud Drive, …), the file will be uploaded to YOUR cloud.  Quire writes only to the folder; we do not speak to any cloud provider directly.',
+    'Players can read what they have written to this campaign; they cannot see this folder.',
+    'Quire shows this notice once per campaign per backup destination.'
+  ],
+  acknowledgeLabel: 'Back up to this folder',
   cancelLabel: 'Not now'
 };
