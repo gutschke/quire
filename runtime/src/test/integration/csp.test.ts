@@ -77,19 +77,35 @@ function coversPeerjs(sources: string[], scheme: string): boolean {
   });
 }
 
+/**
+ * Cloudflare Pages `_headers` allows path-scoped rules (e.g.
+ * `/auth/google/callback*` per OP-017) ahead of the wildcard
+ * `/*` rule.  This test cares about the WILDCARD CSP — the policy
+ * the runtime SPA itself receives.  Find the `/*` block and read
+ * its Content-Security-Policy.
+ */
 function parseCspConnectSrc(headersText: string): string[] | null {
-  const cspLine = headersText
-    .split('\n')
-    .map((l) => l.trim())
-    .find((l) => l.startsWith('Content-Security-Policy:'));
-  if (!cspLine) return null;
-  const policy = cspLine.slice('Content-Security-Policy:'.length).trim();
-  const directives = policy.split(';').map((d) => d.trim());
-  for (const d of directives) {
-    if (d.startsWith('connect-src ')) {
-      return d.slice('connect-src '.length).split(/\s+/);
+  const lines = headersText.split('\n');
+  let inWildcardBlock = false;
+  for (const raw of lines) {
+    // A new path block begins with a line that starts at column 0
+    // and starts with `/`.  Within a block, header lines are
+    // indented with two spaces.
+    if (raw.length > 0 && raw[0] === '/') {
+      inWildcardBlock = raw.trim() === '/*';
+      continue;
     }
-    if (d === 'connect-src') return [];
+    if (!inWildcardBlock) continue;
+    const line = raw.trim();
+    if (!line.startsWith('Content-Security-Policy:')) continue;
+    const policy = line.slice('Content-Security-Policy:'.length).trim();
+    const directives = policy.split(';').map((d) => d.trim());
+    for (const d of directives) {
+      if (d.startsWith('connect-src ')) {
+        return d.slice('connect-src '.length).split(/\s+/);
+      }
+      if (d === 'connect-src') return [];
+    }
   }
   return null;
 }

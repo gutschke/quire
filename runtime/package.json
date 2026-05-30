@@ -13,7 +13,8 @@
     "test:e2e": "playwright test",
     "drill": "vitest run src/persistence.restore-drill.test.ts src/persistence.firewall-fuzz.test.ts src/core/peer.restore-rebroadcast.test.ts src/core/state.firewall-fuzz.test.ts",
     "check-bundle": "node scripts/check-bundle-size.mjs",
-    "lint-campaign-links": "node scripts/lint-campaign-links.mjs"
+    "lint-campaign-links": "node scripts/lint-campaign-links.mjs",
+    "cors-probe": "node scripts/cors-probe-google-token.mjs"
   },
   "dependencies": {
     "dompurify": "^3.4.5",

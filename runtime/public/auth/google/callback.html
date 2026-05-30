@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  Quire OAuth callback landing page (M6a, OP-017).
+
+  This page is the redirect_uri Google sends the user back to
+  after consent.  It is the MOST security-critical static page in
+  the deploy (per DEC-023 + OP-017g): an attacker who reflects the
+  raw URL into postMessage would leak the auth code; an attacker
+  who can inject script here can XSS into the opener context and
+  steal session storage / drive the user's Quire instance.
+
+  Defenses (all enforced by the page itself + the _headers file):
+    1. Strict CSP: default-src 'none'; script-src 'self';
+       style-src 'self' 'unsafe-inline'.  No inline scripts.  No
+       remote resources.  No images.  No connections.
+    2. Body parses URLSearchParams ONLY.  postMessage payload is
+       { code, state, flowId } — never the raw URL.
+    3. opener validates event.origin === window.location.origin
+       AND state matches before doing anything with code.
+    4. Page is golden-diff'd by
+       scripts/golden-diff-callback.test.mjs — any change without
+       explicit sign-off fails the build.
+
+  DM-facing copy is in-fiction-supportive per the prime directive
+  AND honest about what's happening.  Players should NOT see this
+  page (callback is DM-initiated; it lands in a popup the DM
+  opened from the DM-only operational view).
+
+  IMPORTANT: do not add inline event handlers, inline styles
+  beyond the embedded <style>, or remote resources.  The
+  golden-diff test will fail and CSP would block them at runtime.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Quire — Returning from Google</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 1rem;
+        box-sizing: border-box;
+        text-align: center;
+        background: Canvas;
+        color: CanvasText;
+      }
+      h1 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      p {
+        font-size: 0.9rem;
+        margin: 0;
+        max-width: 32ch;
+        opacity: 0.75;
+      }
+      .status {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.8rem;
+        opacity: 0.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Returning to Quire</h1>
+    <p>Closing this window. If it stays open, you can close it manually.</p>
+    <p class="status" id="status">Verifying response&hellip;</p>
+    <script type="module" src="./callback.js"></script>
+  </body>
+</html>

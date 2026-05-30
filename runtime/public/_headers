@@ -2,6 +2,30 @@
 # runtime feature set grows; for the phase-1 scaffold the policy is the
 # minimum useful baseline.
 
+# OAuth callback page (M6a, OP-017): the most security-critical static page
+# in the deploy.  Per DEC-023, defenses target internet randos (zero attack
+# surface) and accidental disclosure.  The callback page MUST:
+#   - default-src 'none'   — refuse every resource not explicitly allowed.
+#   - script-src 'self'    — only our own callback.js; no inline scripts.
+#   - style-src 'self' 'unsafe-inline' — inline <style> in callback.html.
+#     'unsafe-inline' tolerated ONLY for stylistic chrome; the page has no
+#     interactive surface a CSS injection could weaponize.
+#   - connect-src 'none'   — the page does no XHR / fetch.
+#   - frame-ancestors 'none' — refuse to be embedded.
+#   - form-action 'none'   — no <form> submission.
+#   - base-uri 'none'      — disallow <base> tag.
+# Path-specific rules in Cloudflare Pages override the global `/*` rule
+# beneath them (Pages applies the FIRST matching rule per header name).
+# Keep this stanza ABOVE the wildcard.
+/auth/google/callback*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Cross-Origin-Resource-Policy: same-origin
+
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://raw.githubusercontent.com https://api.anthropic.com https://generativelanguage.googleapis.com https://*.peerjs.com wss://*.peerjs.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
   X-Content-Type-Options: nosniff
