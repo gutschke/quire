@@ -593,7 +593,43 @@ land the discovery-document mechanism as M6.1.
 
 ---
 
-## OP-017b — Cloud-sync UX ship-blockers: placement, discovery, error matrix [ACCEPT for M6a] [R4: class 2, P1]
+## OP-017b — Cloud-sync UX ship-blockers: placement, discovery, error matrix [ACCEPT for M6a] [R4: class 2, P1] [RESOLVED 2026-05-29 run #6]
+
+**Resolution (run #6):** Three new sections shipped in
+`ux-strategy.md`:
+- **§A10 Placement.**  Primary: session-digest chip at
+  session-close (DM-only conditional preserves silent-player
+  firewall).  Discovery: DM operational view "Backups" section
+  (always-rendered when surface open; shows account email per
+  NEW-SEC-4; Disconnect Drive wires into
+  `withdrawAcknowledgment` + token-revoke).  Deferred: the
+  consultant's recently-played-row badge (depends on §A11
+  probe being live; tracked as M6a-UI follow-up).  Rejected:
+  setup-wizard / first-launch ceremony (admin-before-play
+  violation of the prime directive).
+- **§A11 Cross-device discovery probe.**  Probe runs when
+  empty local state AND Drive connected on this device.  Shape:
+  one `drive-api.listAppdata` call with
+  `name = quire-<campaignId>.json` filter.  Surfacing:
+  `[Load it]` (default action) `[Start fresh]` per DEC-015 —
+  NEVER auto-load.  If Drive isn't connected,
+  `[Check Drive for backups]` one-liner offers manual probe.
+- **§A12 Error UX matrix.**  Five rows pinning detection
+  signal → placeholder copy → recovery action for
+  popup-blocked / user-denied / network-failure /
+  account-mismatch / app-blocked.  Six error-surface principles
+  lock the shape (local safety first, single primary action,
+  silent-player firewall preserved, modal vs. non-modal rule,
+  no exception-to-string, shared orchestrator entry points).
+
+Final wording deferred to M8 (TTRPG-craft owns in-fiction
+copy).
+
+The shape + behavior is locked; orchestrator + Drive code
+ship in the same run consume the §A12 codes as typed
+failure reasons.
+
+**Status:** RESOLVED.
 
 **Severity:** P1 (M6a ship-blocking; spec omissions).
 **Evidence:** NEW-UX-1, NEW-UX-2, NEW-UX-3 (UX consultant

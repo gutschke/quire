@@ -1,15 +1,38 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 run #5 (DEC-024..026 + four M6a
-ship-gates closed in code: OP-017g + OP-018 + OP-021 + OP-027;
-OP-030 re-verified on disk)
-**Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (4 new ship-gates closed this run; OP-017b remains as the last doc-only gate; rest land WITH the M6a OAuth code)
-**Latest deploy hash:** 263cc71 (run #5 code + docs)
+**Last updated:** 2026-05-29 run #6 (OP-017b LAST DOC GATE CLOSED;
+M6a OAuth orchestrator + Drive uploadAppdata scaffolded with
+48 new tests)
+**Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (all doc gates now closed; orchestration code scaffolded; remaining inline gates (OP-020 listener / OP-022 401 / OP-023 sub-mismatch / OP-024 APP) land in the cloud-push.ts + UI follow-up)
+**Latest deploy hash:** d1fe7d5 (run #6 code + docs)
 **Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-29 run #5 (this run):** Highest-priority M6a gate
+- **2026-05-29 run #6 (this run):** Closed OP-017b — last doc
+  gate before M6a code.  Three new ux-strategy.md sections
+  shipped: §A10 (placement: session-digest chip primary +
+  DM operational view discovery surface; setup-wizard
+  explicitly rejected per prime directive), §A11 (cross-device
+  pull-on-discovery probe + Load/Start-fresh prompt per
+  DEC-015), §A12 (5-row error matrix: popup-blocked /
+  user-denied / network-failure / account-mismatch /
+  app-blocked).  Then started M6a OAuth orchestration code:
+  `src/auth/oauth-orchestrator.ts` (PKCE flow lifecycle with
+  injectable popup; typed ConnectGoogleResult with 7 failure
+  reasons mapping to §A12 rows; no-throw-past-
+  assertReadyForOAuth contract; access_token is
+  JS-memory-only per DEC-007 C4) + `src/auth/drive-api.ts`
+  (one method: uploadAppdata create+update against
+  drive.appdata; multipart/related; If-Match propagation;
+  typed failure reasons including OP-022 unauthorized routing
+  + OP-011 precondition-failed for pull-rebase-push).  Stopped
+  after orchestrator + one Drive method per the run-#6
+  mandate's stop-condition guidance: one solid layer
+  closes the "click → file in drive.appdata" mechanical
+  chain.  Tests: 2777 (2775 passed + 2 skipped), up from
+  2729 baseline (+48).  Typecheck clean, build clean.
+- **2026-05-29 run #5 (prior run):** Highest-priority M6a gate
   shipped — canonical client_id integrity + runtime override +
   discovery doc (OP-017g + OP-018, P0 under DEC-023 class 1).
   State-nonce intent-binding logic shipped (OP-021, P1, the
@@ -49,7 +72,151 @@ OP-030 re-verified on disk)
 - **2026-05-29 session 1:** M0 docs + M1 firewall + M2
   tab-close + M3 re-broadcast.
 
-## Just shipped this run (5)
+## Just shipped this run (6)
+
+### OP-017b — UX placement / discovery / error matrix (LAST doc gate)
+
+- **`ux-strategy.md` §A10 "Cloud-sync placement + first-encounter
+  discovery"** — locked two placement surfaces, deferred a
+  third, explicitly rejected a fourth:
+  - **PRIMARY: session-digest chip.**  Renders at session-close
+    behind the digest's existing DM-only conditional.
+    Microcopy preserves silent-player firewall.  This is the
+    moment the DM *understands* backup value — also the
+    natural anchor for the first-push consent ceremony
+    (OP-027 / DEC-020).
+  - **DISCOVERY: DM operational view "Backups" section.**
+    Always-rendered when the view is open; surfaces account
+    email (NEW-SEC-4 mismatch defense), connection state,
+    push staleness.  Wires Disconnect Drive →
+    `withdrawAcknowledgment` + best-effort token revoke.
+  - **DEFERRED: recently-played row badge.**  The
+    consultant's third surface, depends on the §A11 probe
+    being live.  Track under M6a-UI follow-up.
+  - **REJECTED: setup-wizard / first-launch ceremony.**
+    Admin-before-play violation.  The DM should never
+    encounter cloud sync before they're ready to use it.
+- **`ux-strategy.md` §A11 "Cross-device handoff discovery"** —
+  probe specced.  Trigger: empty local state + Drive
+  connected on this device.  Probe shape: one
+  `drive-api.listAppdata` call with `name = quire-<campaignId>.json`
+  filter.  Surfacing: `[Load it]` (default) `[Start fresh]`
+  prompt per DEC-015 — NEVER auto-load.  Anti-pattern callout
+  against ambiguous "maybe-backup" copy.  If Drive isn't
+  connected, the landing shows existing "no save found" UI
+  with an additional `[Check Drive for backups]` one-liner —
+  click triggers OAuth, then probe runs.
+- **`ux-strategy.md` §A12 "Error UX matrix"** — five-row table
+  pinning detection signal → placeholder copy → recovery
+  action for each NEW-UX-3 failure mode.  Six error-surface
+  principles lock the shape:
+  1. Local safety stated first (DM doesn't panic).
+  2. Single primary action per error.
+  3. Silent-player firewall: errors render only on DM surface.
+  4. Modal vs. non-modal rule based on flow lifecycle.
+  5. No exception-to-string for OAuth errors; unknown maps to
+     network-failure (most innocuous bucket).
+  6. Recovery actions share orchestrator entry points so the
+     matrix is testable as state transitions.
+
+  Final wording deferred to M8 (TTRPG-craft owns in-fiction
+  copy per `ux-strategy.md`'s existing pattern).
+
+### M6a OAuth orchestrator — `src/auth/oauth-orchestrator.ts`
+
+- `OAuthOrchestrator.connectGoogle({campaignId, intent,
+  fileRev})` composes the run-#5 primitives into one PKCE
+  flow:
+  - `assertReadyForOAuth(GOOGLE)` precheck (placeholder → typed
+    `not-configured` failure; popup not opened, session store
+    untouched).
+  - `freshFlowId` + `freshSessionSecret` mint per-flow
+    identifiers (OP-020).
+  - PKCE S256: `freshCodeVerifier` from `random.randomBytes(32)`
+    base64url-encoded; `code_challenge = base64url(SHA-256(verifier))`
+    via `crypto.subtle.digest`.
+  - `mintState` produces the intent-bound state envelope per
+    DEC-012.
+  - Popup is injectable (`OAuthPopup` interface) returning
+    `OAuthPopupResult` union (`message` / `popup-blocked` /
+    `popup-closed`).  Production wires `window.open` + per-flow
+    listener; tests inject synthetic events.
+  - Token exchange via injectable `FetchLike`; parses Google's
+    token response; decodes `id_token` payload for `sub`
+    (DEC-019 + NEW-SEC-4); asserts granted scope contains
+    `drive.appdata` (defense-in-depth scope check).
+  - Returns typed `ConnectGoogleResult` with 7 failure
+    reasons mapped to §A12 rows.
+  - `error_description` from Google's token-endpoint error
+    body is NEVER propagated (OP-030 PII strip).
+  - access_token is JS-memory-only per DEC-007 C4 — the
+    `OAuthSessionStore` only ever sees the per-flow HMAC
+    secret, wiped on every exit path.
+
+- 28 unit tests in `oauth-orchestrator.test.ts`:
+  - Gate check (placeholder baseline → not-configured).
+  - Happy path (token + sub + expires_in + scope assertion).
+  - Auth URL composition (every PKCE param verified).
+  - env-override client_id (self-host path per DEC-013).
+  - Popup timeout propagation.
+  - Per-flow secret wiped on success AND on every failure
+    path.
+  - Each failure branch wired correctly.
+  - `state-rejected` carries verifier-side subcode
+    (bad-signature, campaign-mismatch).
+  - Audit test: access_token never lands in session store.
+  - `parseCallbackMessage` shape validator: 7 cases including
+    rejecting code-without-state and orphan-state-without-code.
+
+### Drive REST `uploadAppdata` — `src/auth/drive-api.ts`
+
+- `uploadAppdata({accessToken, fileName, body, fileId?,
+  ifMatchRevisionId?}, fetchImpl)` against the
+  `drive.appdata` space.  Create (POST + `appDataFolder`
+  parent in metadata) vs. update (PATCH + no parent change)
+  keyed on `fileId` presence.  `If-Match` propagation for
+  the pull-rebase-push concurrency lane (DEC-016 / OP-011).
+- 7-reason typed failure enum: `unauthorized` (401 → OP-022
+  routing), `forbidden` (403), `not-found` (404),
+  `precondition-failed` (412 → caller pulls-rebases-pushes),
+  `network-failure` (fetch reject / 5xx), `malformed-response`
+  (200 but bad body), `quota-exceeded` (403 with
+  `quotaExceeded`/`userRateLimitExceeded` reason hint).
+- Drive error message strings NEVER appear in the typed
+  result (OP-030 — Drive 401 bodies can carry user email
+  PII).  Only the small fixed-vocabulary `error.code` enum
+  rides on `errorCode`.
+- 20 unit tests in `drive-api.test.ts`:
+  - Happy create (POST, Bearer auth, multipart body shape,
+    `appDataFolder` parent in metadata).
+  - Happy update (PATCH, no parent change, If-Match
+    propagation).
+  - Each HTTP error → its typed reason (8 cases).
+  - PII strip audit (401 with email in error.message → result
+    JSON does not contain the email).
+  - Request-shape invariants (Content-Type multipart, fields=
+    selector).
+  - `isRetryable` predicate (network + quota only).
+
+### Why we stopped here (architectural note)
+
+The run-#6 mandate said: "STOP after the orchestrator + one
+Drive API method + their tests" if Piece 2 trends too large.
+The orchestrator + uploadAppdata together close the
+mechanical chain "click → file in drive.appdata" — one solid
+layer.  The caller layer (cloud-push.ts) + the remaining
+two Drive methods (downloadAppdata, listAppdata) is the
+NEXT natural unit; building it now would have meant a
+larger diff at the same architectural seam without an
+intermediate ship.
+
+Next-up natural ship is cloud-push.ts (the DM-facing
+orchestration: wires hasAcknowledged / recordAcknowledgment +
+orchestrator + drive-api), then the §A11 probe (which
+depends on listAppdata), then the UI surfaces (§A10
+chip + operational view section).
+
+## Prior run shipped (5)
 
 ### DEC-024..026 logged in `decisions.md`
 
@@ -165,33 +332,60 @@ Opener-side `redactOAuthError` lands with M6a OAuth code.
 
 ## Up next
 
-### IMMEDIATELY: Remaining gate before M6a OAuth code
+### IMMEDIATELY: cloud-push.ts (DM-facing orchestration)
 
-- **🔴 OP-017b (UX placement / discovery / error matrix)** —
-  doc + design work.  The last truly-blocking gate; the
-  others (OP-020 / 022 / 023 / 024 / 030 opener-side) land
-  WITH the M6a code per the run-#5 auth-strategy revision.
-
-### Then — M6a OAuth code
-
-Wire the shipped helpers (canonical-client-id,
-oauth-state, cloud-push-consent) into:
-- PKCE flow with `crypto.getRandomValues` for state +
-  code_verifier.
-- Per-flow UUID listener pattern (OP-020 wiring).
-- Popup → callback → postMessage → opener →
-  `verifyState` → token exchange.
+Wires the run-#6 orchestrator + Drive client + run-#5
+consent ledger into:
+- `pushCampaignToDrive({campaignId, saveDocument})`:
+  consult consent ledger → `connectGoogle({intent:'push'})`
+  → `uploadAppdata({...stringifySave(saveDocument)})` →
+  return typed result.
+- `pullCampaignFromDrive({campaignId})`: needs
+  `downloadAppdata` (next Drive method).
+- Per-flow listener wiring (OP-020): hook `window.open` +
+  `addEventListener('message', filter-by-flowId, then
+  removeEventListener)` per popup.  Production seam for the
+  `OAuthPopup` interface.
+- sessionStorage-backed `OAuthSessionStore` adapter (the
+  in-memory one in `oauth-orchestrator.ts` is test-only).
 - `redactOAuthError` helper + fuzz (OP-030 opener-side).
-- 401/account-switch handlers (OP-022/023).
+- 401-detection wrapper around drive-api calls
+  (OP-022): bubble `unauthorized` to a "Re-connect Drive"
+  chip surface.
+- Cached id_token.sub for account-switch detection
+  (OP-023 / NEW-SEC-4): compare on every re-auth.
 - APP popup-failure detector + full-page fallback
-  (OP-024 / OP-015).
-- Push: serialize SaveDocument → Drive appdata file;
-  track Drive file_id in localStorage manifest.
-- Pull: fetch → projectSaveForViewer → applyLoadedEvents.
-- First-push consent dialog (wires DEFAULT_CONSENT_COPY
-  + `hasAcknowledged` / `recordAcknowledgment`).
+  (OP-024 / OP-015): if popup closes within 2s OR posts
+  `security_key_required`, fall back to full-page redirect.
+
+### Then — Remaining Drive methods + §A11 probe
+
+- `drive-api.downloadAppdata({accessToken, fileId})` for
+  pull.
+- `drive-api.listAppdata({accessToken, query})` for the
+  §A11 cross-device probe.
+- §A11 probe wiring at campaign-landing.
+
+### Then — M6a UI surfaces (§A10)
+
+- Session-digest chip ("Back up tonight's session to my
+  Drive?").
+- DM operational view "Backups" section.
+- Error-matrix UI rendering (§A12).
+- First-push consent dialog (wires `DEFAULT_CONSENT_COPY` +
+  `hasAcknowledged` / `recordAcknowledgment`).
 - Logout: revoke token (best-effort) + clear in-memory
   state.
+
+### Maintainer prerequisite — register the real Google OAuth app
+
+`GOOGLE.status` is still `'placeholder'` in
+`canonical-client-id.ts`.  Until the maintainer registers
+the verified OAuth app + flips the baseline,
+`assertReadyForOAuth(GOOGLE)` refuses every flow, so the UI
+surfaces will render in a "Cloud sync is not yet available
+in this build" state.  See `maintainer-ops.md` for the
+checklist.
 
 ### Then — M6c-B (personal backup, DEC-016 priority)
 
@@ -223,25 +417,23 @@ TTL empirical pinning + TTRPG-craft consent-dialog copy.
 
 ## Decisions pending the human (SHORT LIST)
 
-None pending from this run.  Prior-run pending items
-(OP-017g maintainer-doc location, OP-018 discovery hosting,
-OP-024 APP test account) all answered + logged as
-DEC-024/025/026.
+None pending from this run.  No new product calls needed —
+Piece 1 (UX matrix) was engineering-level (the locked
+DEC-015 / DEC-026 / firewall-ethos + prime directive
+constraints were sufficient framing).  Piece 2 (orchestrator
++ Drive method) was pure engineering against the run-#5
+locked design.
 
-Worth surfacing for next run:
-1. **OP-017b — UX placement / discovery / error matrix.**
-   The last "BEFORE M6a code" gate.  The work is a
-   `ux-strategy.md` extension (§A10 + §A11 spec'd in
-   `auth-strategy.md` draft 3; UX spec needs to absorb
-   it).  Could be done in a single run; doesn't need
-   product calls — just engineering + UX-routing.
-2. **M6a OAuth registration trigger.**  The canonical
+Still pending (carry-over):
+1. **M6a OAuth registration trigger.**  The canonical
    `client_id` baseline ships as `'placeholder'` —
    `assertReadyForOAuth()` refuses initiation.  Flipping
    to `'verified'` requires the maintainer to register the
-   verified Google OAuth app in Cloud Console.  Schedule
-   that work before M6a code can ship the live cloud-sync
-   surface.
+   verified Google OAuth app in Cloud Console (see
+   `maintainer-ops.md`).  This is a maintainer task, NOT a
+   program lead task — DO NOT flip the status in code.
+   Schedule before M6a UI lands so the runtime can
+   actually serve cloud sync end-to-end.
 
 ## Health summary
 
@@ -270,13 +462,18 @@ Worth surfacing for next run:
 - 🟢 GitHub publish-and-fork verified mechanical (run #4).
 - 🟢 M6c roadmap split (M6c-A + M6c-B) (run #4).
 - 🟢 Threat model framing (DEC-023) load-bearing across program.
-- 🔴 M6a UX placement / discovery / errors (OP-017b) — BLOCKS.
-- 🟡 M6a per-flow UUID listener wiring (OP-020) — lands with M6a code.
-- 🟡 M6a mid-session 401 detection (OP-022) — lands with M6a code.
-- 🟡 M6a account-switch detection (OP-023) — lands with M6a code.
-- 🟡 M6a APP popup detection + fallback (OP-024) — lands with M6a code; UAT-deferred per DEC-026.
-- 🟡 OP-030 opener-side redactor — lands with M6a code.
-- 🔴 M6a Drive auth flow — code pending.
+- 🟢 M6a UX placement / discovery / errors (OP-017b) — SHIPPED (run #6).
+- 🟢 M6a OAuth orchestrator (PKCE + state + intent) — SHIPPED (run #6).
+- 🟢 M6a Drive uploadAppdata (create + update + If-Match) — SHIPPED (run #6).
+- 🟡 M6a cloud-push.ts (DM-facing orchestration) — NEXT.
+- 🟡 M6a per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
+- 🟡 M6a mid-session 401 detection (OP-022) — lands with cloud-push.ts.
+- 🟡 M6a account-switch detection (OP-023) — lands with cloud-push.ts.
+- 🟡 M6a APP popup detection + fallback (OP-024) — lands with cloud-push.ts; UAT-deferred per DEC-026.
+- 🟡 OP-030 opener-side redactor — lands with cloud-push.ts.
+- 🟡 Drive downloadAppdata + listAppdata — lands with §A11 probe.
+- 🟡 M6a UI surfaces (§A10 chip + operational view + consent dialog + error matrix renderer) — lands in UI follow-up run.
+- 🟡 Maintainer task: register verified Google OAuth app + flip `GOOGLE.status` from `'placeholder'` to `'verified'`.
 
 ## Where to find things
 
@@ -306,4 +503,9 @@ Worth surfacing for next run:
   `src/auth/oauth-state.ts`
 - **Cloud-push consent ledger (run #5 NEW)** →
   `src/auth/cloud-push-consent.ts`
+- **OAuth orchestrator (run #6 NEW)** →
+  `src/auth/oauth-orchestrator.ts` (+ test file)
+- **Drive REST client (run #6 NEW)** →
+  `src/auth/drive-api.ts` (uploadAppdata; download + list
+  to follow) (+ test file)
 - Fork verification → `src/persistence.publish-fork.test.ts`

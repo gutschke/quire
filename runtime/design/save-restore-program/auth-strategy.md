@@ -387,6 +387,8 @@ What's the worst an attacker can do with each artifact?
 CLOSED before M6a code:
 - ✅ OP-016 (CORS probe) — run #4.
 - ✅ OP-017 (callback-page CSP + golden-diff CI) — run #4.
+- ✅ OP-017b (UX placement / discovery / error matrix) —
+  run #6.
 - ✅ OP-017g (canonical client_id integrity) — run #5.
 - ✅ OP-018 (runtime-overridable client_id + discovery doc)
   — run #5.
@@ -396,18 +398,29 @@ CLOSED before M6a code:
 - ✅ OP-027 (player-content consent ceremony, logic) — run #5.
 - ✅ OP-030 (OAuth error PII strip, callback-side) — run #4.
 
-LANDS WITH M6a CODE (not separate gates):
-- OP-020 (per-flow UUID listener lifecycle wiring; envelope
-  carrier shipped run #5).
-- OP-022 (mid-session 401 detection wrapper).
-- OP-023 (account-switch id_token `sub` cache + match).
+PARTIALLY SHIPPED IN M6a CODE (run #6):
+- ✅ Orchestrator core: PKCE + state envelope wiring +
+  token exchange + id_token.sub extraction +
+  drive.appdata scope assertion (`src/auth/oauth-orchestrator.ts`).
+- ✅ Drive uploadAppdata (create + update + If-Match
+  propagation) — `src/auth/drive-api.ts`.
+
+LANDS WITH cloud-push.ts + UI (next run(s)):
+- OP-020 (per-flow UUID listener lifecycle wiring — envelope
+  carrier + flowId-match shipped run #5/#6; production
+  popup wrapper lands with cloud-push.ts).
+- OP-022 (mid-session 401 detection wrapper — surfaces
+  `unauthorized` from drive-api as a "Re-connect Drive"
+  chip).
+- OP-023 (account-switch id_token `sub` cache + match
+  using the run-#6 `idTokenSub` return field).
 - OP-024 (APP + WebAuthn popup-failure detector + full-page
   fallback; UAT walk-through deferred per DEC-026).
 - OP-030 (opener-side `redactOAuthError` + fuzz).
-
-STILL OPEN before M6a code:
-- 🔴 OP-017b (UX placement / discovery / error matrix —
-  doc + design work).
+- §A11 cross-device probe (depends on
+  `drive-api.listAppdata`).
+- §A12 error-matrix UI rendering (consumes orchestrator's
+  typed failure reasons).
 
 NEW-ADV-1/2 (the apply-side + rebroadcast firewall) is **already
 shipped** in commit `a7dedac` (DEC-010) and validated by

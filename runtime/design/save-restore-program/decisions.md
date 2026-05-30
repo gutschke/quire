@@ -42,6 +42,78 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-027 — M6a cloud-sync placement: session-digest primary + DM operational view secondary (2026-05-29)
+
+**Decision:** The "Back up to my Drive" affordance lives on
+TWO surfaces in M6a:
+1. **Primary, just-in-time:** the session-digest chip at
+   session-close.  This is the moment a DM understands the
+   value of backup (they just finished a session; they're
+   about to close the tab).
+2. **Discovery, always-available:** the DM-only operational
+   view's "Backups" section.  A DM who knows the
+   operational view exists can find backup state at any
+   time; a DM who doesn't will encounter it via the chip.
+
+The consultant's third surface — a "cloud backup attached"
+badge on the recently-played row — is DEFERRED.  It depends
+on the §A11 cross-device probe being live AND the DM being
+signed into Drive on the device where the landing renders.
+
+The fourth obvious surface — a setup-wizard / first-launch
+"Connect cloud sync" ceremony — is REJECTED.  Setup wizards
+fail the TTRPG prime directive (admin before play).  A DM
+should never encounter cloud sync before they're ready to
+use it.
+
+**Why:** Three drivers:
+
+1. **Prime directive (TTRPG memory).**  A returning DM after
+   3 months sits down to RUN their table, not to administer
+   it.  Surfacing backup as a first-launch ceremony pushes
+   admin into the worst possible moment.
+2. **Discovery story.**  The session-digest chip recurs at
+   every session-close, so a DM who ignores it the first
+   time sees it again next session.  It is its own discovery
+   surface — no separate "did you know you can back up?"
+   surface needed.
+3. **Silent-player firewall.**  The session-digest already
+   renders behind a DM-only conditional.  Adding the backup
+   chip to the same surface inherits the firewall without
+   adding a new conditional path that could regress.
+
+**Alternatives:**
+
+- Single surface (digest-chip only).  Rejected: a DM who
+  wants to verify "is cloud backup still working?" mid-
+  campaign has no surface to check.  The operational view
+  is the natural home for engineering reality (per the
+  existing locked principle 3 in `ux-strategy.md`).
+- Add the recently-played row badge in M6a.  Rejected for
+  M6a: the badge requires the §A11 probe to be live OR
+  requires probing local manifest state for "cloud
+  attached" hints we don't track today.  Better as a
+  follow-up once §A11 ships.
+- First-launch setup wizard.  Rejected per prime directive.
+- "Connect Drive" pre-prompt on the no-campaign landing.
+  Rejected for the same reason — admin before play.
+
+**Tradeoffs:** A DM who shuts down their tab between
+session-end and session-digest render misses the primary
+surface; they'd only encounter backup via the operational
+view (if they know it exists).  Acceptable — the operational
+view is the engineering-reality surface anyway, and the
+session-digest captures the modal moment.
+
+**Revisit if:** Real DM usage shows the operational view is
+too hidden to function as the discovery surface for
+backup-curious DMs (then promote a static "Backup status"
+chip somewhere always-visible), OR the recently-played
+badge becomes cheap once §A11 ships (then promote it
+back to M6a-tier).
+
+---
+
 ## DEC-026 — APP+WebAuthn-in-popup verification deferred to UAT (2026-05-29)
 
 **Decision:** OP-024 (APP + WebAuthn-in-popup detector +
