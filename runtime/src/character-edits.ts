@@ -41,6 +41,7 @@ import type {
   MoneyBand,
   ThreadDebtRung
 } from './character-loader';
+import { ADVANCEMENT_CAP } from './character-loader';
 
 const STAT_KEYS = new Set(['str', 'dex', 'con', 'int', 'wis', 'cha']);
 const TOP_NUMBER_KEYS = new Set(['harm', 'stress', 'advancements', 'marks']);
@@ -49,6 +50,14 @@ export const HARM_MAX = 4;
 export const STRESS_MAX = 4;
 export const STAT_MIN = -3;
 export const STAT_MAX = 3;
+/**
+ * OP-044 (2026-05-30 run #12): per rules.md:157 "every 5 marks, the
+ * PC may take one advancement" — the marks counter is the 0..5
+ * accumulator that resets when an advancement is taken.  Cap
+ * defensively at 5 so a malformed pc-edit can't push marks above
+ * the rules-grounded ceiling.
+ */
+export const MARKS_MAX = 5;
 
 // Phase B P1c: enums + bullets sets used by the per-field validation.
 const MAGIC_PHASES = new Set<MagicPhase>([
@@ -126,7 +135,15 @@ export function applyCharacterEdits(
       let clamped = value;
       if (key === 'harm') clamped = clamp(value, 0, HARM_MAX);
       else if (key === 'stress') clamped = clamp(value, 0, STRESS_MAX);
-      else clamped = Math.max(0, Math.floor(value));
+      // OP-044: clamp advancements + marks to their rules-grounded
+      // ceilings (8 and 5 respectively per rules.md:157,166).  The
+      // render layer self-protects via `>= ADVANCEMENT_CAP` chips
+      // but the engine accepting over-cap values is a latent defect.
+      else if (key === 'advancements') {
+        clamped = clamp(Math.floor(value), 0, ADVANCEMENT_CAP);
+      } else if (key === 'marks') {
+        clamped = clamp(Math.floor(value), 0, MARKS_MAX);
+      } else clamped = Math.max(0, Math.floor(value));
       (out as unknown as Record<string, unknown>)[key] = clamped;
     } else if (key === 'knowsTheyCanCast') {
       if (typeof value !== 'boolean') continue;

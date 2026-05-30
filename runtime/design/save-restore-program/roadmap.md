@@ -158,13 +158,16 @@ playable release:
   advancement-cap-not-clamped).  Neither blocks playable
   release per the DM-happy-path definition; OP-043 is queued
   as the FIRST item in M6a-FS-5.
-- 🟡 **M6a-FS-5 (run #12)** — OP-043 fix + network partition +
-  mock campaign 07 + final pre-release sweep.  Scope per
-  the "OP triage table" in `playable-release-plan.md`:
-  OP-043 mandatory, OP-041 + OP-044 if time, OP-040 + OP-042
-  post-release.
-- 🟡 **M6a-FS-6 (run #13, contingency)** — reserved for
-  any P0/P1 finding that needs a dedicated fix run.
+- ✅ **M6a-FS-5 (run #12)** — OP-043 fix + network partition
+  (mock campaign 07) + OP-041 + OP-044 + pre-release sweep.
+  SHIPPED 2026-05-30 run #12.  M6a-FS playable-release status
+  flipped to GREEN; the human can flip the maintainer switch
+  and deploy to actual players.  P2 issues OP-040 + OP-042
+  deferred post-release with documented workarounds.  +12 net
+  new tests (2948 → 2960).
+- 🟢 **M6a-FS-6 (contingency)** — not needed.  M6a-FS-5 closed
+  cleanly; reserved slot can absorb post-deployment user-report
+  findings if any.
 
 Browser support: Chromium desktop only (Chrome, Edge, Opera,
 Brave, Arc, …).  Safari / Firefox / mobile fall through to the

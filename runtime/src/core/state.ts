@@ -2958,13 +2958,28 @@ function applyPcRetireOrArchiveEvent(
     return;
   }
   if (p.inFictionReason.length > 200) return;
-  if (
-    p.reason !== 'died' &&
-    p.reason !== 'departed' &&
-    p.reason !== 'converted-to-npc' &&
-    p.reason !== 'other'
-  ) {
-    return;
+  // OP-043 (2026-05-30 run #12 fix): the player-save firewall
+  // (`persistence.ts:RETIRE_DM_ONLY_PAYLOAD_FIELDS`) strips
+  // `reason` + `scene` from non-coord projections.  Tolerate
+  // `p.reason === undefined` as "this event came through the
+  // firewall on a player-side restore" — materialize the seat into
+  // bound-retired with `retireReason` unset.  Render uses
+  // `inFictionRetireReason` (player-safe), so the result is visually
+  // correct.  Same SSOT-correct shape as `scrubMapBlobIfUnrevealed`
+  // (keep the event, drop the sub-field, materializer tolerates).
+  //
+  // When `reason` IS present (DM-coord save, live-play sync-response
+  // post-OP-039), validate the enum strictly — a malformed enum from
+  // a legitimate-looking source is still a defect signal.
+  if (p.reason !== undefined) {
+    if (
+      p.reason !== 'died' &&
+      p.reason !== 'departed' &&
+      p.reason !== 'converted-to-npc' &&
+      p.reason !== 'other'
+    ) {
+      return;
+    }
   }
   if (p.scene !== undefined) {
     if (typeof p.scene !== 'string') return;
@@ -3012,8 +3027,10 @@ function applyPcRetireOrArchiveEvent(
     // controllerPeerId is intentionally dropped — retired/archived
     // seats have no active player.
     inFictionRetireReason: p.inFictionReason,
-    retireReason: p.reason,
-    retiredScene: p.scene,
+    // OP-043: when reason was stripped by the firewall on a player
+    // save, leave the DM-only field unset (don't write `undefined`).
+    ...(p.reason !== undefined ? { retireReason: p.reason } : {}),
+    ...(p.scene !== undefined ? { retiredScene: p.scene } : {}),
     retiredAt: event.ts
   };
   if (wasHidden) newSeat.revealed = false;

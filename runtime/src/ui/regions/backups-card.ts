@@ -478,6 +478,13 @@ export class BackupsCard extends LitElement {
         return "Your browser asked to confirm folder access.  Click Reconnect.";
       case 'conflict':
         return "Another device updated this campaign's backup.  Pull first, then push.";
+      case 'first-push-orphan':
+        // OP-041 (run #12): the folder already contains a save we
+        // never observed.  Same recovery shape as conflict (pull
+        // first, decide).  The host can promote this to a
+        // dedicated dialog later; for now the chip nudges the DM
+        // toward the safer action.
+        return "This folder already has a save from another device.  Pull first to see it, or disconnect and reconnect to a fresh folder.";
       case 'write-failure':
         return "Couldn't write to the folder.  Check it still exists.";
       case 'not-connected':

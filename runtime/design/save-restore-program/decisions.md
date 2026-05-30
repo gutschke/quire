@@ -15,6 +15,61 @@ references the prior. Format:
 
 ---
 
+## DEC-030 — Materializers tolerate firewall-stripped optional sub-fields (2026-05-30)
+
+**Decision:** When a per-kind scrubber in
+`persistence.ts:PER_KIND_SCRUBBERS` strips a sub-field from an
+event's payload, the materializer in `core/state.ts` MUST tolerate
+that absence — produce the same materialized state shape, with the
+DM-only field left unset.  This is the SSOT-correct pattern for the
+save firewall: keep the event, drop the sub-field, materializer
+is tolerant.
+
+**Why:** OP-043 surfaced the inverse anti-pattern: the
+`pc-retire` / `pc-archive` materializer required `p.reason` to be
+one of four enum values; the firewall stripped it on player save;
+the materializer silently dropped the event; the retired seat
+showed as `bound-active` on a player's localStorage restore — a
+visible-broken-state class-2 regression.  The fix is small (allow
+`p.reason === undefined` and skip the seat's DM-only field
+assignment).  Codifying the pattern prevents the same shape from
+recurring on the next per-kind scrubber + materializer pair the
+program ships.
+
+The pattern check that surfaced no sibling bugs found that:
+- All OTHER scrubbers in PER_KIND_SCRUBBERS strip OPTIONAL fields
+  whose materializers validate only when present.
+- `pc-edit` drops the event entirely when DM-only (no materialize
+  attempt).
+- `pc-create` strips all DM-only character fields, all optional;
+  materializer requires only mandatory chargen fields.
+- `pc-retire` / `pc-archive` was the UNIQUE case because the
+  enum was treated as required.
+
+**Alternatives:**
+- Move the stripped field OUT of the scrubber list — wrong
+  direction; leaks DM material into player saves.  Rejected.
+- Synthesize a companion "presence" event for player saves that
+  omits the DM-only sub-field — heavy; new event kind, two
+  materializers, classification dance per shipped scrubber.
+  Rejected.
+
+**Tradeoffs:** The materializer's "required vs. optional"
+distinction becomes load-bearing.  A new per-kind scrubber that
+strips a field MUST come with a tolerance-on-absence check in
+the materializer.  Add the cross-check to the engineer's
+self-check list (the M6a-FS-5 pattern check is the precedent;
+codify it).
+
+**Revisit if:** A future scrubber/materializer pair encounters
+a genuinely required field that can't be made tolerant (e.g.
+an enum that the materializer NEEDS to select a downstream code
+path).  Then revisit option 3 (presence event) or reclassify
+the kind out of PLAYER_SCOPE_STRIP_KINDS / out of the per-kind
+scrubber.
+
+---
+
 ## DEC-001 — Charter the save/restore program (2026-05-29)
 
 **Decision:** Spin up `design/save-restore-program/` as the program's living

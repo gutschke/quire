@@ -63,6 +63,24 @@ describe('applyCharacterEdits', () => {
     expect(over.stress).toBe(STRESS_MAX);
   });
 
+  // OP-044 (2026-05-30 run #12): advancements + marks were
+  // floor-only before; clamp to their rules-grounded ceilings.
+  it('OP-044: clamps advancements to [0, ADVANCEMENT_CAP] (rules.md:166)', () => {
+    const over = applyCharacterEdits(base(), { advancements: 99 });
+    expect(over.advancements).toBe(8);
+    const neg = applyCharacterEdits(base(), { advancements: -5 });
+    expect(neg.advancements).toBe(0);
+    const at = applyCharacterEdits(base(), { advancements: 8 });
+    expect(at.advancements).toBe(8);
+  });
+
+  it('OP-044: clamps marks to [0, 5] (rules.md:157)', () => {
+    const over = applyCharacterEdits(base(), { marks: 99 });
+    expect(over.marks).toBe(5);
+    const neg = applyCharacterEdits(base(), { marks: -5 });
+    expect(neg.marks).toBe(0);
+  });
+
   it('ignores unknown keys', () => {
     const r = applyCharacterEdits(base(), {
       hax: 'oops',

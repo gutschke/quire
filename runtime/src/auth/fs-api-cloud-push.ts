@@ -251,6 +251,7 @@ export type PushResult =
         | 'not-connected' // no folder handle for this campaign
         | 'permission-revoked' // probe returned prompt / denied
         | 'conflict' // file modified externally since last push
+        | 'first-push-orphan' // OP-041: folder has an orphan save we never observed
         | 'write-failure' // I/O error during write
         | 'feature-unavailable';
     };
@@ -424,10 +425,20 @@ export class FsApiCloudPush {
    */
   async pushCampaignToFolder({
     campaignId,
-    body
+    body,
+    overwriteOrphan = false
   }: {
     campaignId: string;
     body: string;
+    /**
+     * OP-041 (2026-05-30 run #12): when the connected folder
+     * already contains a save we never observed (first push +
+     * orphan file), the push refuses with `'first-push-orphan'`.
+     * Pass `overwriteOrphan: true` after the DM acknowledges the
+     * overwrite warning to proceed.  Mirrors the conflict path
+     * (caller pulls or chooses to overwrite).
+     */
+    overwriteOrphan?: boolean;
   }): Promise<PushResult> {
     if (!this.isAvailable()) {
       return { ok: false, reason: 'feature-unavailable' };
@@ -448,16 +459,43 @@ export class FsApiCloudPush {
     // If it's newer than what we last observed, it was modified
     // externally — bail with conflict.
     let currentLastModified: number | null = null;
+    let currentSize: number | null = null;
     try {
       const existing = await handle.getFileHandle(fileName, {
         create: false
       });
       const file = await existing.getFile();
       currentLastModified = file.lastModified;
+      currentSize = file.size;
     } catch {
       // File doesn't exist yet — that's a NEW push, not a
       // conflict.  Fall through.
       currentLastModified = null;
+      currentSize = null;
+    }
+    // OP-041 (2026-05-30 run #12): first-push orphan defense.
+    // When we have no baseline (lastObservedModifiedMs === null)
+    // BUT the folder already contains a non-empty save file, we
+    // cannot tell whether the orphan is ours (e.g. an earlier
+    // session on this same device the picker forgot) or someone
+    // else's (a teammate's accidental push, a manual restore, a
+    // prior-profile leftover).  Refuse and surface a typed
+    // reason so the host can prompt: "A save already exists in
+    // this folder.  Pull it first, or overwrite?"
+    //
+    // 0-byte files are treated as "no meaningful orphan" — a
+    // previous failed createWritable() can leave a 0-byte
+    // placeholder per the FS-API contract; we treat that as
+    // our own residue and proceed.  Real orphans always have
+    // body content.
+    if (
+      record.lastObservedModifiedMs === null &&
+      currentLastModified !== null &&
+      currentSize !== null &&
+      currentSize > 0 &&
+      !overwriteOrphan
+    ) {
+      return { ok: false, reason: 'first-push-orphan' };
     }
     if (
       currentLastModified !== null &&

@@ -54,7 +54,18 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
-## OP-044 — Engine permits `advancements` value above ADVANCEMENT_CAP (8) [mock-campaign-06 finding] [R4: class 3 / class 2 latent, P3]
+## OP-044 — Engine permits `advancements` value above ADVANCEMENT_CAP (8) [mock-campaign-06 finding] [R4: class 3 / class 2 latent, P3] [RESOLVED 2026-05-30 run #12]
+
+**Resolution (run #12):** `applyCharacterEdits` now clamps
+`advancements` to `[0, ADVANCEMENT_CAP]` and `marks` to `[0, 5]`
+(rules.md:157,166).  Defense-in-depth alongside the existing UI
+render gate (`>= 8` chip).  New `MARKS_MAX = 5` constant exported
+from `character-edits.ts`.  2 new unit tests + mock-campaign-06
+FINDING-A test updated to expect the clamped behavior.
+
+**Status:** RESOLVED.
+
+
 
 **Severity:** P3 (latent; render gate self-protects).
 **Evidence:** Mock campaign 06 (run #11 — game-mechanic edges)
@@ -80,7 +91,51 @@ block playable release.
 
 ---
 
-## OP-043 — pc-retire player-save round-trip fails to materialize retired seat [mock-campaign-06 finding] [R4: class 2 gameplay-continuity, P1]
+## OP-043 — pc-retire player-save round-trip fails to materialize retired seat [mock-campaign-06 finding] [R4: class 2 gameplay-continuity, P1] [RESOLVED 2026-05-30 run #12]
+
+**Resolution (run #12):** `applyPcRetireOrArchiveEvent` now
+tolerates `p.reason === undefined` (firewall-stripped).  When
+the player-save firewall scrubs `reason` + `scene` from a
+non-coord projection, the materializer still flips the seat to
+`bound-retired` (or `bound-archived`) with `retireReason` +
+`retiredScene` unset.  Render uses `inFictionRetireReason`
+(player-safe), so the result is visually correct.  Same
+SSOT-correct shape as `scrubMapBlobIfUnrevealed` (keep the
+event, drop the sub-field, materializer is tolerant).
+
+2 new regression tests in `state.test.ts` cover both
+`pc-retire` + `pc-archive` paths.  Mock-campaign-06 FINDING-B
+test updated to expect the fixed behavior; sim-06 now asserts
+the retired seat materializes on player-save round-trip.
+
+**Pattern check** (the "walk PER_KIND_SCRUBBERS × materializers"
+investigation per run #12 mandate): all other entries in
+`PER_KIND_SCRUBBERS` strip OPTIONAL fields whose materializers
+validate only when present.  `pc-retire` / `pc-archive` were
+unique in requiring `reason` to be a non-undefined enum value.
+**No sibling bugs found.**  Survey:
+  - `pc-edit`: drops the event entirely when `field` is DM-only
+    → no materialize attempt.  Wrapper-level `causedByResponseId`
+    strip is benign (materializer ignores).
+  - `map-blob-add` / `map-blob-move`: strips `blob.label`.
+    Materializer is a no-op stub today (M3a/M6 future).
+  - `focus-grant`: strips `focus.boundFor` + `focus.notes`.
+    Materializer only requires `focus.name`; both stripped
+    fields are validated-when-present.
+  - `pc-retire` / `pc-archive`: strips `reason` + `scene`.
+    **THIS WAS THE BUG.**  Now fixed.
+  - `bond-ratify`: strips `dmNotes`.  Materializer validates
+    when present; absent is fine.
+  - `pc-create`: strips all DM-only character fields (magicPhase,
+    knowsTheyCanCast, tax, threadDebt, accidentalGrants,
+    alignmentDrift, dmNotes) + `causedByResponseId`.
+    Materializer requires only the mandatory chargen fields
+    (pcId, name, pronouns, tags, stats, skills, backstory) +
+    validates DM-only fields when present.
+
+**Status:** RESOLVED.
+
+
 
 **Severity:** P1 (class 2 — visible-broken-state gameplay
 continuity, NOT a firewall leak).
@@ -185,7 +240,28 @@ auto-open path lands.
 
 ---
 
-## OP-041 — First-push silently overwrites orphan save in connected folder [mock-campaign-05 finding] [R4: class 2 data-loss, P2]
+## OP-041 — First-push silently overwrites orphan save in connected folder [mock-campaign-05 finding] [R4: class 2 data-loss, P2] [RESOLVED 2026-05-30 run #12]
+
+**Resolution (run #12):** `pushCampaignToFolder` now refuses
+with `'first-push-orphan'` when the connected folder contains
+a NON-EMPTY save file we never observed.  Added
+`overwriteOrphan?: boolean` option so the host can proceed
+after a DM acknowledgment.  0-byte placeholder files (left by
+a previous failed `createWritable()`) are NOT treated as
+orphans — they're our own residue and we proceed normally.
+The `<backups-card>` `pushErrorMessage` got a new branch:
+"This folder already has a save from another device.  Pull
+first to see it, or disconnect and reconnect to a fresh
+folder."
+
+2 new unit tests in `fs-api-cloud-push.test.ts` cover the
+refusal + the overwrite path.  Sim-05 offline-recovery test
+continues to pass (the 0-byte exception preserves the retry
+path).
+
+**Status:** RESOLVED.
+
+
 
 **Severity:** P2 (class 2 — accidental data loss to a trusted
 party — the prior author of the orphan).

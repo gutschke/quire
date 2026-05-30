@@ -273,26 +273,129 @@ this run).  Typecheck clean.  Build clean.  No credentials.
 
 - **OP-044 (P3):** post-release polish (low priority).
 
-### M6a-FS-5 (run #12)
+### M6a-FS-5 (run #12) [SHIPPED]
 
-**Pre-release sweep + OP-043 fix + simulation 07 + cleanup.**
+**Pre-release sweep + OP-043 fix + simulation 07 + optional fixes.**
 
-Three pieces, in priority order:
+All shipped:
 
-1. **Fix OP-043** (FIRST, P1).  Tolerate `p.reason === undefined`
-   in `applyPcRetireOrArchiveEvent` — materialize the seat into
-   `bound-retired` with `retireReason` absent.  Mirror for
-   `pc-archive` (same materializer).  Regression test in
-   `state.test.ts` covering both paths.  Mock-campaign-06 test
-   updated to expect the fixed behavior.
+1. **OP-043 fixed.**  `applyPcRetireOrArchiveEvent` now tolerates
+   `p.reason === undefined` (firewall-stripped).  Materializes
+   the seat into `bound-retired` with `retireReason` absent;
+   render uses `inFictionRetireReason` (player-safe) so the
+   result is visually correct.  Same SSOT-correct shape as
+   `scrubMapBlobIfUnrevealed`.  2 regression tests in
+   `state.test.ts` (pc-retire + pc-archive); mock-campaign-06
+   test updated to expect the fixed behavior.
 
-2. **Mock campaign 07 (network partition).**  Peer goes offline
-   mid-session, comes back with diverged log.  Merge is
-   deterministic + firewall-correct.
+2. **PER_KIND_SCRUBBERS × materializers pattern check.**
+   Walked every entry in PER_KIND_SCRUBBERS against its
+   materializer.  All other scrubbers strip OPTIONAL fields
+   (`focus-grant` boundFor/notes, `bond-ratify` dmNotes,
+   `pc-create` DM-only character fields, `map-blob-add/move`
+   label, `pc-edit` drops entirely).  `pc-retire`/`pc-archive`
+   were the unique case because the materializer required
+   `reason` to be an enum value.  **No sibling bugs found.**
 
-3. **Pre-release OP sweep + ship/defer call for OP-040 / OP-041 /
-   OP-042 / OP-044** (the four other open OPs — see "OP triage
-   table" below).
+3. **Mock campaign 07 (network partition) SHIPPED** at
+   `src/persistence.simulation-07-network-partition.test.ts`.
+   6 tests, all pass.  Doc at `design/save-restore-program/
+   simulations/mock-campaign-07-network-partition.md`.
+   Scenarios exercised:
+     - Two-peer partition: player offline N events; rejoin →
+       both peers converge (player's log is DM's minus the
+       DM-only events the firewall stripped on sync-response).
+     - Three-peer partition: isolated player + active table
+       both write; merge converges; FINDING-A documented
+       (raw-log asymmetry: Anya holds scratch-note via `share`
+       envelope, Mei does not via sync-response filter; both
+       converge to identical filtered + saved projections).
+     - Coord partition + DM-only events: scratch-note authored
+       pre-partition does NOT propagate to a late-joining
+       player via sync-response (OP-039 filter holds).
+     - Save during partition: minority-partition save reflects
+       only local view; restore + re-sync converges via the
+       standard sync path.
+     - Deterministic convergence: concurrent-author chats
+       converge to byte-identical materialized state.
+     - Save-during-partition + restore on fresh peer: rejoin
+       and converge; firewall holds.
+   No new OPs filed.
+
+4. **OP-041 shipped.**  `pushCampaignToFolder` now refuses with
+   `'first-push-orphan'` when the connected folder contains a
+   non-empty save we never observed.  New `overwriteOrphan`
+   option lets the host proceed after DM acknowledgment.  0-byte
+   placeholder files (left by a failed `createWritable()`) are
+   treated as benign and do NOT trip the defense.  Backups-card
+   surface gets a new error-message branch.  2 new unit tests;
+   sim-05 offline-recovery test verified by the 0-byte
+   exception.
+
+5. **OP-044 shipped.**  `applyCharacterEdits` now clamps
+   `advancements` to `[0, ADVANCEMENT_CAP]` and `marks` to
+   `[0, 5]` (rules.md:157+166).  Defensive: render layer
+   self-protects via `>= 8` chip, but the engine accepting
+   over-cap values was a latent defect.  2 new unit tests;
+   mock-campaign-06 FINDING-A test updated to expect the
+   clamped behavior.
+
+Tests: 2954 + 2 skipped = 2956 → 2958 + 2 skipped = 2960 (up
+from 2948 baseline, +12 new this run; +89 net since M6a-FS
+started).  Typecheck clean.  Build clean (646KB main chunk).
+No credentials in diff.
+
+### Known issues (M6a-FS-5 finds)
+
+- **FINDING-A (architectural asymmetry, documented):** in a
+  partition-then-heal scenario, a player who was at the active
+  table when a DM-only event was authored holds it in their RAW
+  in-memory log (via the direct `share` broadcast).  A player
+  who was partitioned at author time + caught up via
+  `sync-response` does NOT (OP-039 filter strips).  Both
+  projections at every USER-VISIBLE surface (filterForViewer +
+  serializeSessionForViewer) are identical.  This is the
+  accepted-by-design firewall boundary; documented in the mock
+  campaign test as a class 2 invariant rather than filed as a
+  new OP.
+
+### Pre-release sweep — playable-release-plan walk-through
+
+Walking the "Definition of playable release" + "Required
+user-visible surfaces" + "Required error UX coverage":
+
+| Capability | Status | Verification |
+|---|---|---|
+| 1. Open campaign URL, play session normally | GREEN | M1/M2/M3 SSOT; no regressions |
+| 2. Connect a folder + ack consent | GREEN | `connectFolder` + `cloud-push-consent-dialog` + 19 + 11 unit tests |
+| 3. Push now → "Pushed N bytes to <slug>.quire-save.json" | GREEN | `pushCampaignToFolder` + sim-01 + sim-05 |
+| 4. Close browser | GREEN | M2 tab-close durability; autosave flush on pagehide |
+| 5. Next-week open + Pull → continue | GREEN | `pullCampaignFromFolder` + `loadFromString` + sim-01 |
+| 6. Second machine via sync-tool mirror + Connect same folder + Pull | GREEN | §FS.11 cross-device probe shipped run #10 |
+| **Operational view (DEC-029)** | GREEN | `<dm-operational-view>` + 7 tests; launcher chip on DM Aside; Escape closes |
+| **Session-digest chip (OP-037)** | GREEN | `<session-digest>` `showBackupChip` + 5 tests; dispatches event to open operational view |
+| **Cross-device probe (§A11/§FS.11)** | GREEN | `CrossDeviceProbeController` + host wiring + 17 tests; DEC-015 never-auto-load preserved |
+| `feature-unavailable` error UX | GREEN | unavailable card with reason-specific copy (4 reasons) |
+| `cancelled` (picker dismissed) error UX | GREEN | "No folder picked" chip |
+| `permission-denied` error UX | GREEN | "Your browser blocked write access" |
+| `permission-revoked` error UX | GREEN | reconnect button + chip state machine (4 tests) |
+| `conflict` (external write) error UX | GREEN | "Pull first, then push" chip |
+| `first-push-orphan` error UX (NEW run #12) | GREEN | "Pull first to see it, or disconnect and reconnect" chip |
+| `write-failure` error UX | GREEN | "Couldn't write to the folder" chip |
+| `not-connected` error UX | GREEN | "Connect a folder first" chip |
+| **Bug bar — NO P0/firewall-leaking bugs** | GREEN | restore-firewall fuzz + save-side fuzz + M4 restore-drill all pass; mock-campaign cross-firewall assertions pass |
+| **Bug bar — NO P1 data-loss in happy path** | GREEN | OP-043 (P1) fixed run #12; all P1s closed pre-release |
+| **Bug bar — P2 with documented work-around** | YELLOW (acceptable) | OP-040 + OP-042 deferred per triage; documented + workflow workarounds noted |
+| Honest copy / no engineering jargon in player-visible | GREEN | DM-only surface; defense-in-depth via `renderForDm` short-circuit |
+| `maintainer-ops.md §8.5` describes flip-live | GREEN | Run #7 ship |
+| Mock campaign simulations (01-07) | GREEN | 26 tests across 7 sim files |
+| README user copy is M8 / not a blocker | GREEN | Out-of-scope per plan |
+
+**Overall: M6a-FS playable-release status: GREEN.**  All
+required capabilities verified working.  Bug bar met: NO open
+P0/P1 issues; P2 issues OP-040 + OP-042 deferred post-release
+with documented workarounds.  The human can flip the maintainer
+switch and deploy to actual players.
 
 ### M6a-FS-6 (run #13, contingency)
 

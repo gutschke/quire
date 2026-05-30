@@ -423,6 +423,62 @@ describe('FsApiCloudPush — pushCampaignToFolder', () => {
     ).toBe('{"externally-edited":true}');
   });
 
+  // OP-041 (2026-05-30 run #12): first-push orphan defense — when
+  // the folder already contains a save file we never observed,
+  // refuse with 'first-push-orphan' so the host can prompt the DM
+  // to pull-or-overwrite.
+  it('OP-041: refuses first push when an orphan save already exists', async () => {
+    const dir = makeMockDirectory();
+    const cp = new FsApiCloudPush(
+      buildDeps({ picker: async () => dir.handle })
+    );
+    await cp.connectFolder({
+      campaignId: CAMPAIGN_A,
+      consentAlreadyAcknowledged: true
+    });
+    // Folder already contains an orphan save (different device,
+    // teammate's accidental push, prior-profile leftover).
+    dir.setFile(
+      'owner-repo-main.quire-save.json',
+      '{"orphan":true}',
+      1_700_000_000_000
+    );
+    const result = await cp.pushCampaignToFolder({
+      campaignId: CAMPAIGN_A,
+      body: '{"v":"ours"}'
+    });
+    expect(result).toEqual({ ok: false, reason: 'first-push-orphan' });
+    // Orphan was NOT overwritten.
+    expect(
+      dir.state.files.get('owner-repo-main.quire-save.json')?.contents
+    ).toBe('{"orphan":true}');
+  });
+
+  it('OP-041: overwriteOrphan:true proceeds with the first push past the orphan', async () => {
+    const dir = makeMockDirectory();
+    const cp = new FsApiCloudPush(
+      buildDeps({ picker: async () => dir.handle })
+    );
+    await cp.connectFolder({
+      campaignId: CAMPAIGN_A,
+      consentAlreadyAcknowledged: true
+    });
+    dir.setFile(
+      'owner-repo-main.quire-save.json',
+      '{"orphan":true}',
+      1_700_000_000_000
+    );
+    const result = await cp.pushCampaignToFolder({
+      campaignId: CAMPAIGN_A,
+      body: '{"v":"ours"}',
+      overwriteOrphan: true
+    });
+    expect(result.ok).toBe(true);
+    expect(
+      dir.state.files.get('owner-repo-main.quire-save.json')?.contents
+    ).toBe('{"v":"ours"}');
+  });
+
   it('returns permission-revoked when the handle has lost write', async () => {
     const dir = makeMockDirectory();
     const cp = new FsApiCloudPush(

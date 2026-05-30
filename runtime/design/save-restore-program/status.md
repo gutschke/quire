@@ -1,18 +1,117 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-30 run #11 (game-mechanic edges audit +
-mock campaign 06 SHIPPED; OP-043 P1 + OP-044 P3 filed; OP-043
-queued as M6a-FS-5 first work — not a release blocker per the
-DM-happy-path definition, but real player-side visible hit)
-**Active milestone:** M6a-FS-4 SHIPPED / playable-release-plan.md
-milestone 4 complete.  Next: M6a-FS-5 (OP-043 fix + simulation 07
-+ pre-release sweep).
-**Latest deploy hash:** 54fb73b (run #11 ship — M6a-FS-4)
+**Last updated:** 2026-05-30 run #12 (M6a-FS-5 SHIPPED; OP-043 P1
+fixed; OP-041 P2 + OP-044 P3 also shipped; mock campaign 07
+SHIPPED; PER_KIND_SCRUBBERS × materializers pattern walk =
+no sibling bugs; pre-release sweep walked — **M6a-FS PLAYABLE
+RELEASE STATUS: GREEN**)
+**Active milestone:** M6a-FS-5 SHIPPED / playable-release-plan.md
+milestone 5 complete.  **The human can flip the maintainer switch
+and deploy to actual players.**  Next: M6a-OAuth resumption
+(separate maintainer gate per `maintainer-ops.md`).
+**Latest deploy hash:** TBD (pending push at end of run #12)
 **Branch:** main
+
+## M6a-FS Playable-Release Status: **GREEN**
+
+All required capabilities verified working:
+- Open campaign URL + play normally → GREEN
+- Connect a folder + ack consent → GREEN
+- Push now → "Pushed N bytes" → GREEN
+- Close browser → GREEN
+- Next-week open + Pull + continue → GREEN
+- Second machine via sync-tool mirror → GREEN
+- Operational view (DEC-029) → GREEN
+- Session-digest chip (OP-037) → GREEN
+- Cross-device probe (§FS.11) → GREEN
+- All 8 error-UX rows in §A12 wired → GREEN
+- NO P0/P1 firewall bugs → GREEN (OP-043 fixed run #12)
+- NO P1 data-loss in happy path → GREEN
+- P2 deferred (OP-040, OP-042) with documented workarounds → YELLOW (acceptable per plan)
+- Honest copy (DM-only surface, no jargon in player view) → GREEN
+- Mock-campaign simulations 01-07 (26 tests) → GREEN
+
+See `playable-release-plan.md` for the full capability table.
 
 ## Session log (most recent first)
 
-- **2026-05-30 run #11 (this run):** M6a-FS-4 SHIPPED.
+- **2026-05-30 run #12 (this run):** M6a-FS-5 SHIPPED.
+
+  - **OP-043 RESOLVED:** `applyPcRetireOrArchiveEvent` now
+    tolerates `p.reason === undefined` (firewall-stripped).
+    Player-save restore now materializes the retired seat with
+    `inFictionRetireReason` + `seatMemory` preserved; DM-only
+    `retireReason` + `retiredScene` remain unset.  Same shape
+    as `scrubMapBlobIfUnrevealed`.  2 regression tests +
+    mock-campaign-06 FINDING-B test updated to expect the fixed
+    behavior.  DEC-030 codifies the pattern: per-kind scrubbers
+    + materializers form a contract; the materializer MUST
+    tolerate absence of stripped fields.
+
+  - **Pattern check (PER_KIND_SCRUBBERS × materializers):** walked
+    every scrubber against its materializer.  ALL other scrubbers
+    strip OPTIONAL fields validated-when-present by their
+    materializers.  `pc-retire`/`pc-archive` was the unique case
+    (required enum).  **NO sibling bugs found.**  Findings
+    documented inline in OP-043's resolution block.
+
+  - **Mock campaign 07 (network partition) SHIPPED** at
+    `src/persistence.simulation-07-network-partition.test.ts`.
+    6 tests, all pass.  Doc at `design/save-restore-program/
+    simulations/mock-campaign-07-network-partition.md`.
+    Scenarios:
+      - Two-peer partition: player offline N events → rejoin;
+        player log = DM log minus DM-only events (sync-response
+        filter stripped them).
+      - Three-peer partition: isolated player + active table both
+        write; merge converges.  FINDING-A documented (raw-log
+        asymmetry: Anya holds scratch-note via direct `share`
+        envelope; Mei does not via sync-response filter; both
+        converge to identical filtered + saved projections).
+      - Coord partition + DM-only events: late-joining player
+        via sync-response does NOT receive the scratch-note from
+        the partial-log player (OP-039 filter holds across
+        partition).
+      - Save during partition: minority-partition save reflects
+        only local view; restore + re-sync converges via standard
+        sync path.
+      - Deterministic convergence: concurrent-author chats
+        converge to byte-identical state.
+      - Save-during-partition + restore on fresh peer: rejoin
+        and converge; firewall holds across save/restore + sync
+        boundary.
+
+  - **OP-041 RESOLVED (P2):** `pushCampaignToFolder` now refuses
+    with `'first-push-orphan'` when the connected folder contains
+    a NON-EMPTY save we never observed.  New `overwriteOrphan`
+    option lets the host proceed after DM ack.  0-byte placeholder
+    files from a failed `createWritable()` are NOT treated as
+    orphans (preserves the sim-05 offline-recovery contract).
+    `<backups-card>` `pushErrorMessage` got a new branch for the
+    user-visible copy.  2 new unit tests.
+
+  - **OP-044 RESOLVED (P3):** `applyCharacterEdits` now clamps
+    `advancements` to `[0, ADVANCEMENT_CAP]` (rules.md:166) and
+    `marks` to `[0, 5]` (rules.md:157).  Defense-in-depth
+    alongside the UI render gate.  2 new unit tests.
+
+  - **Pre-release sweep COMPLETED.**  Walked every item in
+    `playable-release-plan.md`'s definition of "playable release"
+    + required user-visible surfaces + 8 error UX rows.  All
+    GREEN.  Bug bar met (NO P0/P1 open; P2 deferred with
+    documented workarounds).  Capability table appended to
+    `playable-release-plan.md` end of `M6a-FS-5` section.
+
+  - **DEC-030 logged.**  Materializers tolerate firewall-stripped
+    optional sub-fields — codifies the SSOT-correct pattern that
+    OP-043's fix exemplifies; closes the future-engineer self-
+    check loop.
+
+  Tests: 2958 + 2 skipped = 2960 (up from 2948 baseline, +12
+  new this run; +89 net since M6a-FS started).  Typecheck clean.
+  Build clean (646KB main chunk).  No credentials in diff.
+
+- **2026-05-30 run #11 (prior run):** M6a-FS-4 SHIPPED.
 
   - **Mock campaign 06 (game-mechanic edges) SHIPPED** at
     `src/persistence.simulation-06-game-mechanic-edges.test.ts`.
@@ -892,8 +991,13 @@ Still pending (carry-over):
 - 🟡 OP-041 (first-push silently overwrites orphan save) — FILED (run #10, P2 — does NOT block playable release; mitigated by §FS.11 probe).
 - 🟡 OP-042 (consent dialog interleaves with concurrent host actions) — FILED (run #10, P2 — does NOT block playable release; today requires deliberate dual-intent).
 - 🟢 Mock campaign 06 (game-mechanic edges) — SHIPPED (run #11 — 8 tests; surfaced OP-043 + OP-044).
-- 🟡 OP-043 (pc-retire player-save round-trip fails to materialize) — FILED (run #11, P1 — does NOT block playable release per DM-happy-path definition; M6a-FS-5 priority).
-- 🟡 OP-044 (engine permits `advancements` > 8) — FILED (run #11, P3 — UI render gate self-protects; post-release polish).
+- 🟢 OP-043 (pc-retire player-save round-trip) — RESOLVED (run #12 — materializer tolerates firewall-stripped `reason`; 2 regression tests).
+- 🟢 OP-044 (engine permits `advancements` > 8) — RESOLVED (run #12 — clamp to ADVANCEMENT_CAP + marks to MARKS_MAX; 2 unit tests).
+- 🟢 OP-041 (first-push silently overwrites orphan save) — RESOLVED (run #12 — `'first-push-orphan'` reason + `overwriteOrphan` option; 2 unit tests).
+- 🟢 Mock campaign 07 (network partition) — SHIPPED (run #12 — 6 tests; FINDING-A documented as accepted-by-design firewall surface).
+- 🟢 PER_KIND_SCRUBBERS × materializers pattern walk — COMPLETED (run #12 — no sibling bugs found).
+- 🟢 Pre-release sweep — COMPLETED (run #12 — all capabilities GREEN).
+- 🟢 **M6a-FS playable release** — **GREEN** (run #12 — human can flip maintainer switch + deploy).
 - 🟡 M6a-OAuth cloud-push.ts (DM-facing orchestration) — AFTER M6a-FS host wiring.
 - 🟡 M6a-OAuth per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
 - 🟡 M6a-OAuth mid-session 401 detection (OP-022) — lands with cloud-push.ts.

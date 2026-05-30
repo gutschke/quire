@@ -3263,6 +3263,54 @@ describe('materialize — pc-retire / pc-archive (Phase B-prime)', () => {
     expect(state.pcSlots[1]?.state).toBe('bound-active');
   });
 
+  // OP-043 regression (2026-05-30 run #12): the player-save firewall
+  // strips `reason` + `scene` from non-coord projections (see
+  // `persistence.ts:RETIRE_DM_ONLY_PAYLOAD_FIELDS`).  The materializer
+  // MUST tolerate a missing `reason` so the player still sees the
+  // retired seat after restoring their autosave.  Same SSOT-correct
+  // shape as scrubMapBlobIfUnrevealed: keep the event, drop the
+  // sub-field, materializer tolerates.
+  it('OP-043: pc-retire with firewall-stripped `reason` still retires the seat', () => {
+    const log = setup();
+    log.append('pc-retire', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-retired',
+      inFictionReason: 'Mei walked into the silence.',
+      seatMemory: 'She heard them and answered.'
+      // reason + scene intentionally absent (firewall-stripped)
+    });
+    const state = materialize(log.events());
+    const seat = state.pcSlots[1];
+    expect(seat?.state).toBe('bound-retired');
+    expect(seat?.inFictionRetireReason).toBe(
+      'Mei walked into the silence.'
+    );
+    expect(seat?.seatMemory).toBe('She heard them and answered.');
+    // DM-only fields remain unset (firewall stripped them).
+    expect(seat?.retireReason).toBeUndefined();
+    expect(seat?.retiredScene).toBeUndefined();
+    // retiredAt still lands (event.ts is available to the materializer).
+    expect(seat?.retiredAt).toBeGreaterThan(0);
+  });
+
+  it('OP-043: pc-archive with firewall-stripped `reason` still archives the seat', () => {
+    const log = setup();
+    log.append('pc-archive', {
+      v: 1,
+      pcId: 'mei',
+      state: 'bound-archived',
+      inFictionReason: 'Stepped back from the party.'
+      // reason + scene intentionally absent (firewall-stripped)
+    });
+    const state = materialize(log.events());
+    const seat = state.pcSlots[1];
+    expect(seat?.state).toBe('bound-archived');
+    expect(seat?.inFictionRetireReason).toBe('Stepped back from the party.');
+    expect(seat?.retireReason).toBeUndefined();
+    expect(seat?.retiredScene).toBeUndefined();
+  });
+
   it('rejects retire targeting a pcId with no seat', () => {
     const log = setup();
     log.append('pc-retire', {

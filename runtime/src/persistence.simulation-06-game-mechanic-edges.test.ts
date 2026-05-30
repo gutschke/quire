@@ -286,19 +286,10 @@ describe('Mock Campaign 06 — Game-mechanic edges through save/restore', () => 
     expect(anyaRestoredEffective.advancements).toBe(8);
 
     // -----------------------------------------------------------
-    // FINDING-A (latent): pc-edit allows advancements > 8.
-    //
-    // Push value 9 directly via pc-edit — applyCharacterEdits's
-    // `else { clamped = Math.max(0, Math.floor(value)); }` branch
-    // for TOP_NUMBER_KEYS does NOT cap advancements at the rules.md
-    // cap.  Only harm + stress get bounded.  The cap is enforced by
-    // the SESSION-OPEN-STAGE carryover-card renderer (which
-    // disables the take-advancement button at >= 8), NOT by the
-    // engine.  A hostile peer (DEC-023 class 3 = out of scope) or
-    // a bug in a future AI-write path could land 9+ advancements.
-    //
-    // The cap-reached chip still renders at >= 8 — so the UX is
-    // self-protecting in the realistic flow.  Latent only.
+    // OP-044 FIX (run #12): pc-edit now clamps `advancements` at
+    // ADVANCEMENT_CAP (8).  A pc-edit writing value=9 is clamped
+    // to 8 on the way in; the engine no longer accepts over-cap
+    // values.  Defense-in-depth alongside the UI render gate.
     // -----------------------------------------------------------
     dm.append('pc-edit', {
       v: 1,
@@ -311,13 +302,7 @@ describe('Mock Campaign 06 — Game-mechanic edges through save/restore', () => 
       dm.state().synthesizedPcs['anya'] as CharacterRecord,
       dm.state().pcEdits['anya']
     );
-    // Latent: engine accepts 9.  Documented as FINDING-A.
-    expect(anyaOver.advancements).toBe(9);
-    // But the UI cap-reached chip uses `>= 8`, so the chip still
-    // renders correctly at over-cap values.  Render gate is:
-    //   `if (c.advancements >= 8) → cap-reached chip`
-    // 9 >= 8 still triggers the chip, so the UI safety holds.
-    expect((anyaOver.advancements ?? 0) >= 8).toBe(true);
+    expect(anyaOver.advancements).toBe(8);
   });
 
   // -----------------------------------------------------------
@@ -529,55 +514,27 @@ describe('Mock Campaign 06 — Game-mechanic edges through save/restore', () => 
     expect(payload['seatMemory']).toBe('She heard them and answered.');
 
     // -----------------------------------------------------------
-    // FINDING-B (NEW BUG, load-bearing): pc-retire materializer
-    // requires `reason` field but the player-save firewall strips
-    // it.  Result: a player who restores their own autosave (or
-    // loads a save via §FS.11 cross-device probe as non-coord)
-    // sees the retired seat materialize as `bound-active` —
-    // INCORRECT.  The retired-tile does NOT render for the player.
+    // OP-043 FIX (run #12): pc-retire materializer now tolerates
+    // `p.reason === undefined` (firewall-stripped).  A player who
+    // restores their own autosave (or loads a save via §FS.11
+    // cross-device probe as non-coord) sees the retired seat
+    // materialize as `bound-retired` — the player-safe fields
+    // (`inFictionRetireReason`, `seatMemory`) survive, the DM-only
+    // fields (`retireReason`, `retiredScene`) remain unset.
     //
-    // Root cause: `core/state.ts:applyPcRetireOrArchiveEvent` line
-    // 2961-2968 requires `p.reason` to be one of four enum values;
-    // when the firewall scrubs `reason`, the event is silently
-    // dropped at materialization time, so the seat keeps its
-    // pre-retire state.
-    //
-    // Severity: P2 (class 2 — gameplay continuity).  The DM-coord
-    // save path is unaffected (DM keeps `reason`); only player
-    // autosave + cross-device probe non-coord load surface this.
-    // Live-play sync-response keeps `reason` per OP-039 fix
-    // (sync-response strips by KIND not sub-field), so a player
-    // rejoining mid-session via WebRTC is unaffected.
-    //
-    // Same shape as OP-040 (firewall stripping needed for play
-    // continuity).  Fix paths (in priority order):
-    //   1. Materializer tolerates missing `reason` (treat as
-    //      'other' or leave the field undefined).  Player save
-    //      then materializes the seat as bound-retired with no
-    //      reason enum — render is the same (filterForViewer
-    //      strips reason anyway).
-    //   2. Move `reason` out of PER_KIND_SCRUBBERS RETIRE_DM_ONLY
-    //      list — but then player saves leak the enum.  Worse.
-    //   3. Synthesize a synthetic pc-retire-presence event the
-    //      player save emits in lieu of the scrubbed one.  Heavy.
-    //
-    // Path 1 is the natural fix.  Document here; file as OP.
+    // Same SSOT-correct shape as `scrubMapBlobIfUnrevealed`:
+    // keep the event, drop the sub-field, materializer tolerates.
     // -----------------------------------------------------------
     const restored = restoreToState(anyaAutosaveBody);
     const meiSeatRestored = restored.state.pcSlots[1];
-    // BUG: seat stays bound-active even though pc-retire event was
-    // in the player's save.  Once the fix lands, this expectation
-    // flips to 'bound-retired' (+ the assertions below that are
-    // commented out re-engage).
-    expect(meiSeatRestored?.state).toBe('bound-active');
-    // expect(meiSeatRestored?.state).toBe('bound-retired');
-    // expect(meiSeatRestored?.inFictionRetireReason).toBe(
-    //   'Mei walked into the silence.'
-    // );
-    // expect(meiSeatRestored?.seatMemory).toBe('She heard them and answered.');
-    // DM-only metadata is GONE on player restore.
-    // expect(meiSeatRestored?.retireReason).toBeUndefined();
-    // expect(meiSeatRestored?.retiredScene).toBeUndefined();
+    expect(meiSeatRestored?.state).toBe('bound-retired');
+    expect(meiSeatRestored?.inFictionRetireReason).toBe(
+      'Mei walked into the silence.'
+    );
+    expect(meiSeatRestored?.seatMemory).toBe('She heard them and answered.');
+    // DM-only metadata is absent on player restore (firewall stripped).
+    expect(meiSeatRestored?.retireReason).toBeUndefined();
+    expect(meiSeatRestored?.retiredScene).toBeUndefined();
   });
 
   // FINDING-B regression: verify a DM-coord restore DOES preserve
