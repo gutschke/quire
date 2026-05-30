@@ -1,16 +1,55 @@
 # Auth Strategy — Cloud Sync (M6)
 
-**Status:** 🟡 Draft 2 (2026-05-29 — self-reviewed by program lead).
-See `auth-strategy-review.md` for the issue log feeding this revision.
+**Status:** 🟡 Draft 3 (2026-05-29 — incorporates independent
+consultant pass: 4 reports x 9-10 findings each = 33 new findings
+on top of draft 2's 16-finding self-review).
 
-**Draft history:**
+See `auth-strategy-review.md` for the lead's draft-2 self-review
+and `review-history/{security,privacy,ux,adversarial}-consultant-2026-05-29.md`
+for the independent reviewers' draft-3 input.
+
+**Draft 3 changes (from draft 2):**
+- §A1 spec now binds OAuth `state` to user intent (NEW-SEC-2,
+  DEC-012) AND uses a per-flow UUID listener pattern (NEW-SEC-1).
+- §A1.5 NEW: popup-failure detection + full-page-redirect fallback
+  (NEW-SEC-6 APP+WebAuthn, NEW-PRV-1 ETP partitioning).
+- §A4 reconfirms Device Flow as default but adds "Use popup
+  instead" fallback (NEW-UX-2 disagreement with UX-2).
+- §A7 (callback page) NEW: strict CSP + golden-diff CI
+  (NEW-ADV-8).
+- §A8 (client_id) now spec'd as runtime-overridable from day one
+  (DEC-013, supersedes ARC-3 / OP-013).
+- §A9 NEW: token revocation on logout + 401-detection auto-prompt
+  + account-switch detection (NEW-SEC-3, NEW-SEC-4).
+- §A10 NEW: SRI + supply-chain integrity (NEW-ADV-5).
+- §A11 NEW: Error UX matrix (NEW-UX-3).
+- §A12 NEW: Cross-device pull-on-discovery (NEW-UX-2, DEC-015).
+- §A13 NEW: "What's saved" disclosure + first-push consent
+  acknowledgment (NEW-PRV-4, DEC-011; NEW-ADV-4).
+- §A14 NEW: Co-DM identity / per-DM-appdata (NEW-UX-4, DEC-014).
+- §A15 NEW: Account-loss durability + GitHub-as-recovery rank
+  (NEW-ADV-3).
+- §A6 expanded: M6b KDF specified (PBKDF2-SHA256, ≥600k iter,
+  AES-GCM-256, passphrase ≥12) per NEW-SEC-7. Passphrase
+  recovery semantics locked (NEW-UX-7).
+- Restore-side firewall §B NEW: NEW-ADV-1/2 fix already shipped
+  in commit `a7dedac` (DEC-010); documented here for the M6 reader.
+- §C NEW: Privacy + cross-tab posture (M5 list scope to
+  sha256(google_sub) per NEW-PRV-3 / OP-026).
+
+## Draft history
+
 - Draft 1 (2026-05-29 mid-session): captured human's locked
   constraints, proposed PKCE-based architecture, ten open questions.
 - Draft 2 (2026-05-29 later): incorporated SEC/PRV/ADV/UX/ARC review
-  findings. Key shifts: default to `drive.appdata` (closes share-
-  link leak path), layered M6 ship (ephemeral-first, passphrase-opt-
-  in for refresh tokens), CORS probe blocks ship, same save format
-  for Drive + GitHub.
+  findings from the lead's self-review. Key shifts: default to
+  `drive.appdata` (closes share-link leak path), layered M6 ship
+  (ephemeral-first, passphrase-opt-in for refresh tokens), CORS
+  probe blocks ship, same save format for Drive + GitHub.
+- Draft 3 (2026-05-29 evening): incorporated 33 findings from the
+  independent consultant pass (security / privacy / UX / adversarial).
+  NEW-ADV-1/2 shipped as code (`a7dedac`); rest documented as
+  open problems + decisions, surfaced in this doc for the M6 reader.
 
 The human made the OP-006 call (2026-05-29 mid-session): **build cloud sync**.
 Constraints they gave us (verbatim, then decomposed):
@@ -331,7 +370,7 @@ What's the worst an attacker can do with each artifact?
 - Default destination on Drive is `drive.appdata` (hidden); user
   cannot accidentally share it. See ADV-1.
 
-## Ship layering (REVISED in draft 2)
+## Ship layering (REVISED in draft 2; M6a gates expanded in draft 3)
 
 - **M6a (first ship):** OAuth PKCE + `drive.appdata` + ephemeral
   access_token in JS memory. Re-auth per session (browser-tab
@@ -341,3 +380,296 @@ What's the worst an attacker can do with each artifact?
   across sessions." APP users degrade to M6a behavior.
 - **M6c (later):** GitHub Device Flow + same `drive.appdata`-shape
   save committed to a configured GitHub path.
+
+**M6a ship gates (draft 3):** before M6a code can land, the
+following open-problems MUST be closed (status checked at PR time
+against `open-problems.md`):
+
+- OP-016 (CORS probe).
+- OP-017 (callback-page CSP + golden-diff CI).
+- OP-017b (UX placement / discovery / error matrix).
+- OP-017g (canonical client_id integrity — SRI + verified-app
+  fingerprint).
+- OP-018 (canonical client_id runtime-overridable from day one).
+- OP-019 (CONDITIONAL on OP-016: Worker fallback decision record).
+- OP-020 (two-tab OAuth race: per-flow UUID).
+- OP-021 (state-nonce intent binding).
+- OP-022 (mid-session 401 detection + auto-prompt).
+- OP-023 (account-switch detection via id_token sub).
+- OP-024 (APP + WebAuthn-in-popup detection + fallback).
+- OP-027 (player-content consent ceremony).
+
+NEW-ADV-1/2 (the apply-side + rebroadcast firewall) is **already
+shipped** in commit `a7dedac` (DEC-010) and validated by
+`persistence.restore-firewall-fuzz.test.ts`. It is not a gate; it
+is a closed prerequisite.
+
+NEW-PRV-3 (M5 recently-played cross-tab leak, OP-026) is **a
+follow-up to M5** — not strictly M6a-blocking but ships ALONGSIDE
+M6a since the fix uses the same OAuth-derived account hash.
+
+## §B Restore-side firewall (SHIPPED `a7dedac`, DEC-010)
+
+The independent adversarial review's NEW-ADV-1 found the 5th
+breach in the render-gated-but-restore-not-gated firewall class:
+the cloud-save load path didn't consult the LOADING peer's coord
+status, so a returning ex-DM pulling their save while connected
+as a player landed raw `scratch-note` / `ai-prompt` /
+`caster-state-set` / `dmNotes` events in their local log AND
+rebroadcast them to the table via DEC-005 applyEvent propagation.
+NEW-ADV-2 caught the same leak from the broadcast side.
+
+The fix is two complementary surfaces, both using the same
+`PER_KIND_SCRUBBERS` + `PLAYER_SCOPE_STRIP_KINDS` SSOT:
+
+1. **`projectSaveForViewer(doc, viewerIsCoord)`** in
+   `persistence.ts` — the symmetric restore-side companion to
+   `serializeSessionForViewer`. Called by `quire-app.loadFromString`
+   with `viewerIsCoord=(sessionView.mode==='host')` before
+   `applyLoadedEvents`. Host loads are no-op (auto-reclaim on
+   next tick); guest loads strip DM-only events before they
+   enter the log.
+
+2. **`defaultRebroadcastFilter(event)`** in `persistence.ts` —
+   the rebroadcast-side classifier wired into `Peer` via the
+   constructor's `rebroadcastFilter` option (production seam in
+   `session-controller.ts`). `Peer.forwardShareToOthers` runs
+   every event through the filter before sending: DM-only kinds
+   are dropped, partial-payloads are field-scrubbed.
+
+Validated by `src/persistence.restore-firewall-fuzz.test.ts`
+(11 tests planting sentinels in every DM-only kind + sub-field
+surface; assertions cover the restore projection, the
+rebroadcast filter, AND an end-to-end integration scenario).
+
+The map-blob rebroadcast scrubber uses a conservative empty
+reveal-mask (drops labels). The receiving peer re-materializes
+the revealed state from its own log. A player who receives a
+rebroadcast `map-blob-add` for a not-yet-revealed blob sees it
+on their map without a label until the reveal fires.
+Acceptable; documented in `defaultRebroadcastFilter`'s doc
+comment as the conservative-safe choice.
+
+## §C Privacy + cross-tab posture (NEW in draft 3)
+
+Per NEW-PRV-3 + OP-026: M5's recently-played list lives in
+`localStorage`, which is same-origin shared across all tabs +
+profiles signed into the same OS user. Two distinct humans
+sharing a laptop see each other's campaign slugs + timestamps.
+
+**Plan:** Once OAuth runs, scope the recently-played list by
+`sha256(google_sub)`. Two distinct Google users get disjoint
+lists. Pure-local DMs (no OAuth) keep today's anonymous
+behavior. This is a follow-up to M5 (commit `0ef07c3`); ships
+alongside M6a because it depends on the OAuth-derived account
+hash being available.
+
+Per NEW-PRV-5 + OP-028: every save event carries the authoring
+`peerId`. The same DM saving multiple campaigns embeds the same
+`peerId` in every save — a cross-campaign re-identifier. A DM
+who pushes a public campaign to GitHub (M6c) AND a private one
+to Drive (M6a) is linkable to the same person without any other
+identifier. Documented as a limitation; a peerId-rotation
+primitive (per-campaign) is a follow-up. Surface the participant
+ID in the DM-only operational view so a security-conscious DM
+can rotate when creating a new campaign.
+
+Per NEW-PRV-4 + DEC-011: the DM-coord cloud save contains every
+player's authored content (chat, character drafts, bond notes,
+intent statements). On first push per campaign, surface a
+one-time DM-only acknowledgment dialog. Silent-player-firewall
+preserved: players are NOT notified; the DM is educated.
+
+Per NEW-PRV-9 + OP-031: `drive.appdata` semantics need
+verified citation — Google's documented behavior is "orphaned
+but not deleted" on revoke, and TOS reserves the right to scan
+all Drive content (regardless of folder visibility). Update
+docs before M6a public ship; DM-only "Disconnect → Erase"
+action handles the revoke-cleanup gap.
+
+## §A11 Error UX matrix (NEW in draft 3, NEW-UX-3)
+
+Five failure modes need designed copy. Final strings deferred to
+M8 in-fiction review (per `ux-strategy.md`); the matrix below
+is the engineering spec for which states each handler must cover.
+
+| Failure | Detection | Copy spec |
+|---|---|---|
+| Popup blocked | 3s timeout w/o postMessage | "Your browser blocked the Drive popup. [Try again in this tab]" → full-page redirect (OP-015) |
+| User denies consent | OAuth error `access_denied` | "You didn't grant access. Quire saves locally for now. [Try again]" — no shame |
+| Network failure | fetch reject | "Couldn't reach Google. Your session is safe locally. [Retry]" |
+| Account mismatch | id_token `sub` mismatch (NEW-SEC-4) | At consent: "Backing up as: markus@gmail.com. [Wrong account?]" — surface BEFORE file write |
+| APP-blocked refresh | `invalid_grant` on refresh | First auth: "Heads-up: your Google account asks for fresh sign-in each session." |
+
+## §A12 Cross-device pull-on-discovery (NEW in draft 3, NEW-UX-2 / DEC-015)
+
+When the DM lands on a campaign URL with no local state AND has
+connected Drive, Quire probes `drive.appdata` for a file matching
+the campaignId. If found, surface "[Load it] [Start fresh]" with
+Load as the default. NEVER auto-load silently — surprise restore
+is worse than missing backup.
+
+Probe cost: one Drive REST call per campaign landing where Drive
+is connected. ~200ms median; budgeted as part of page render.
+
+## §A13 "What's saved" disclosure + first-push consent (NEW in draft 3)
+
+Two surfaces, both DM-only (silent-player-firewall):
+
+1. **What's saved.** Per NEW-ADV-4 + OP-017f: a permanent
+   "What's in your Drive backup" doc lists the kinds + fields
+   that ride along (AI-prompts, npc-pins, bond-ratify.dmNotes,
+   chargen-pack-deliver, etc.). Surface as a "What's saved?"
+   link from the operational view.
+2. **First-push consent.** Per NEW-PRV-4 + DEC-011: one-time
+   per campaign, "You are uploading the full table's content
+   (including your players' chat, character drafts, and bond
+   notes) to YOUR Google Drive. [Acknowledge]" Persists to
+   `localStorage`; re-prompted on campaign-id change.
+
+## §A14 Co-DM identity / per-DM-appdata (NEW in draft 3, DEC-014)
+
+Each co-DM connects their OWN Drive account and pushes to their
+own `drive.appdata`. Pull-on-discovery (§A12) probes whichever
+co-DM is signed in. Shared canonical ownership is deferred to
+M6c (GitHub naturally shares).
+
+Documented limitation: if BOTH co-DMs lose access to their
+Google accounts, no backup survives. Mitigated by M6c sequencing
+(see §A15).
+
+## §A15 Account-loss durability (NEW in draft 3, NEW-ADV-3)
+
+`drive.appdata` is structurally irrecoverable if the DM's Google
+account dies (suspended / billed-out / hostile-reset). Quire's
+"durable campaign" promise has a single point of failure on the
+DM's Google account.
+
+Mitigations (choose ≥1; tracked as OP-017e):
+
+1. Mandatory local-disk copy on each cloud push (auto-fire the
+   "Download backup" action from the operational view).
+2. Promote `drive.file` opt-in to "the recoverability path" in
+   docs (not just a footnote).
+3. Re-rank M6c (GitHub) ahead of M6b. A GitHub-hosted save
+   survives the DM's Google account.
+
+Re-ranking M6c is the cleanest answer; pending product call.
+Until then, mitigation (1) — auto-download on push — is the
+backstop.
+
+## §A9 Token lifecycle (REVISED in draft 3)
+
+Beyond logout / revoke, three lifecycle paths need handling:
+
+1. **Mid-session 401 detection (NEW-SEC-3 / OP-022).** Drive
+   REST calls wrap a 401/403 handler that clears in-memory
+   token + surfaces a non-modal "Re-connect Drive" chip with
+   immediate re-auth on click. Same pattern for `invalid_grant`
+   on M6b refresh-token redemption (signals APP-revoked or
+   user-revoked → drop encrypted IndexedDB blob too).
+2. **Account-switch detection (NEW-SEC-4 / OP-023).** Cache the
+   `sub` from the id_token at first auth. On every refresh OR
+   re-auth, verify the returned `sub` matches the cached one.
+   Mismatch → refuse with "You're now signed into a different
+   Google account; existing campaign saves won't be visible.
+   Sign back into <email> or start a new connection."
+3. **APP + WebAuthn-in-popup (NEW-SEC-6 / OP-024).** Detect
+   popup-close-without-message in <2s OR error
+   `security_key_required` → trigger the full-page redirect
+   fallback (§A1.5).
+
+## §A1.5 Popup-failure fallback (NEW in draft 3)
+
+Per NEW-SEC-6 + NEW-PRV-1 + OP-015: popup contexts can fail for
+multiple reasons (popup-blockers, browser ETP / storage
+partitioning, APP WebAuthn ceremony incompatible with
+`same-origin-allow-popups`).
+
+Detection: any of (a) popup closes within 2s without
+postMessage; (b) postMessage carries `security_key_required` or
+similar error; (c) sessionStorage from the popup is empty on
+return (storage-partitioning hint).
+
+Fallback: full-page redirect using the SAME PKCE flow. State
+preserved via `sessionStorage` keyed by per-flow UUID (OP-020).
+On return, the page loads, detects `?code=…&state=…` in URL,
+re-validates state + intent + flow UUID, redeems with the
+preserved `code_verifier`.
+
+Test matrix: Chrome stable, Firefox Strict, Safari ITP, Brave
+Aggressive (NEW-PRV-1).
+
+## §A10 Supply-chain integrity (NEW in draft 3, NEW-ADV-5 / OP-017g)
+
+The shipped `client_id` is a security primitive. An attacker
+who compromises Quire's Cloudflare Pages deploy OR npm package
+OR Underleaf-hosted bundle can swap it for theirs and read every
+prior Quire save the user pushes (Google's per-app isolation is
+keyed on the creating client_id).
+
+Defenses (all required for M6a public ship):
+
+1. **Subresource Integrity (SRI)** on the deployed bundle.
+2. **Publish-time manifest** with the canonical `client_id` + a
+   build-time-computed hash; runtime verification.
+3. **README** publishes the canonical client_id value + a
+   screenshot of Google's verified-OAuth-app consent screen so
+   users have a reference to diff against. Coordinated with
+   §A11's account-mismatch flow ("Backing up as: <email>" — the
+   verified-app + the email together = strong signal).
+4. **Ops:** Cloudflare Pages deploy-key + branch-protection
+   requirements documented in maintainer ops doc.
+
+## §A7 OAuth callback page (REVISED in draft 3, NEW-ADV-8 / OP-017)
+
+The callback page is the most security-critical static page in
+the deploy. Per NEW-ADV-8:
+
+1. **Strict CSP:** `default-src 'none'; script-src 'self';
+   style-src 'self'; connect-src 'self'`. NO inline scripts.
+2. **Parsing:** `URLSearchParams` ONLY. postMessage payload is
+   `{ code, state, flowId }` — never the raw URL. flowId is a
+   sanity check (OP-020); opener re-validates.
+3. **state at callback:** sanity-check the embedded HMAC at the
+   callback as defense in depth (opener re-verifies on receipt).
+4. **CI audit:** the file is golden-diff'd against a checked-in
+   snapshot. Any change without explicit sign-off fails the
+   build. The CSP header is deploy-time-asserted by a test that
+   GETs the deployed URL and checks the header.
+
+## §A4 GitHub Device Flow (REVISED in draft 3)
+
+Per NEW-UX-2 disagreement: Device Flow is correct for the at-
+table DM but breaks for first-time setup when the DM is alone
+on a laptop with no phone handy. Default: Device Flow. Fallback
+link in the UI: "Use a popup instead" → switches to the GitHub
+PKCE OAuth flow (G2 in §A4).
+
+## §A1 OAuth flow state (REVISED in draft 3, NEW-SEC-1 / NEW-SEC-2)
+
+The state-of-the-flow management gets explicit listener
+lifecycle + intent binding:
+
+1. **Per-flow UUID.** Every "Push to Drive" / "Pull from Drive"
+   click mints a new UUID. `sessionStorage` keys are
+   `quire.oauth.flow.<uuid>.{verifier,state,intent}` —
+   not a single well-known key.
+2. **Listener scoped to flow.** `window.addEventListener('message',
+   handler)` added at `window.open`; removed on popup-close OR
+   onmessage-success. Listener body validates
+   `event.data.flowId === my.flowId` BEFORE redeeming the code.
+3. **Intent embedded in state.** Per DEC-012: `state =
+   base64url({nonce, intent, campaignId, fileRev, ts, flowId})`
+   plus HMAC over intent fields using a per-tab session secret.
+4. **Stale-state defense.** `ts` within 10 minutes; otherwise
+   refuse with "Sign-in took too long; try again."
+
+This closes NEW-SEC-1 (two-tab race) and NEW-SEC-2 (intent
+binding). Civilized-peer threat model accepts campaign-id in
+URL-bar history.
+
+---
+
+**End of draft 3.** Open questions that still need human
+judgment are surfaced at end-of-turn (see status.md).

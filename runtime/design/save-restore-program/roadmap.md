@@ -93,19 +93,41 @@ Layered ship per DEC-008:
 
 ### M6a — Drive `drive.appdata` PKCE + ephemeral (FIRST)
 
-- BLOCKED ON: OP-016 CORS probe at `oauth2.googleapis.com/token`.
+- BLOCKED ON (gate expanded by independent consultant pass — see
+  draft-3 `auth-strategy.md` "M6a ship gates"):
+  - OP-016 (CORS probe).
+  - OP-017 (callback-page CSP + golden-diff CI).
+  - OP-017b (UX placement / discovery / error matrix).
+  - OP-017g (canonical client_id SRI + verified-app fingerprint).
+  - OP-018 (runtime-overridable client_id incident response).
+  - OP-019 (CONDITIONAL on OP-016: Worker fallback decision).
+  - OP-020 (two-tab OAuth race: per-flow UUID).
+  - OP-021 (state-nonce intent binding).
+  - OP-022 (mid-session 401 detection).
+  - OP-023 (account-switch detection via id_token `sub`).
+  - OP-024 (APP + WebAuthn-in-popup detection + fallback).
+  - OP-027 (player-content first-push consent ceremony).
+  - NOT a gate (already shipped `a7dedac`): NEW-ADV-1 / NEW-ADV-2.
 - DoD:
   - PKCE S256 flow with `crypto.getRandomValues` for state +
     code_verifier.
+  - State binds intent (DEC-012): `{nonce, intent, campaignId,
+    fileRev, ts, flowId}` + HMAC.
+  - Per-flow UUID listener pattern (OP-020).
   - Popup launches to `accounts.google.com/o/oauth2/v2/auth` with
     scope=`drive.appdata`, redirect_uri=our origin.
-  - Callback page validates origin + state, postMessages auth code
-    to opener.
+  - Popup-failure detection + full-page-redirect fallback
+    (OP-015 / OP-024).
+  - Callback page: strict CSP + golden-diff CI + postMessage
+    `{code, state, flowId}` only (OP-017).
   - Opener exchanges code+verifier for access_token (in-memory only).
+  - 401/account-switch handlers wired (OP-022/023).
   - Push: serialize SaveDocument → Drive appdata file (per-campaign
     file name); track Drive file_id in campaign manifest in
     localStorage.
-  - Pull: fetch appdata file → parse → applySaveToLog.
+  - Pull: fetch appdata file → parse → projectSaveForViewer →
+    applyLoadedEvents (DEC-010, already shipped).
+  - First-push consent dialog (DEC-011 / OP-027).
   - Logout: revoke token (best-effort) + clear in-memory state.
   - Tests: unit + integration; popup mocked.
 

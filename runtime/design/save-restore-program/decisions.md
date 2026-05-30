@@ -42,6 +42,275 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-015 — Cross-device cloud discovery is pull-on-discovery, never auto-load (2026-05-29)
+
+**Decision:** When a DM lands on a campaign URL with no local
+state AND has connected Drive, Quire probes `drive.appdata` for
+a file matching the campaignId. If found, surface "[Load it]
+[Start fresh]" — Load is the default action. NEVER auto-load
+silently.
+
+**Why:** NEW-UX-2 framed the failure mode: DM on tablet next
+week with empty localStorage doesn't know the cloud backup
+exists; starts a fresh save; the next push destroys last week's
+events (pull-rebase-push can't rebase empty). Auto-load would
+solve discoverability but violates "no surprise restore" — a
+DM intending a fresh start should never have last week's events
+silently replayed.
+
+**Alternatives:**
+- Auto-load when local is empty. Rejected: silent restore is
+  worse than missing backup; surprises the DM.
+- No probe — DM must manually click "Pull from Drive." Rejected:
+  per NEW-UX-2 this is the failure mode itself.
+
+**Tradeoffs:** Probe runs on every cold landing where Drive is
+connected. Drive API call cost is one HEAD per campaignId;
+acceptable. Surface delay (~200ms median) is part of the page
+render budget.
+
+**Revisit if:** A DM reports the prompt is intrusive on repeat
+visits; cache the probe result with a freshness window.
+
+---
+
+## DEC-014 — Co-DM Drive ownership is per-DM-appdata for M6a; shared model deferred to M6c (2026-05-29)
+
+**Decision:** Each co-DM connects their OWN Drive account and
+pushes to their own `drive.appdata`. Pull-on-discovery (DEC-015)
+probes whichever co-DM is currently signed in. Shared canonical
+ownership is deferred to M6c (GitHub naturally shares via
+co-author commits on the same repo).
+
+**Why:** NEW-UX-4 identified the gap; per-DM-Drive is the
+simplest M6a model with no shared-state coordination. Designated-
+backup-DM and shared-Drive ownership models require additional
+ceremony (manifest events, ratification) that's M6c-shaped.
+
+**Alternatives:**
+- Designated backup-DM with hand-off recorded in manifest event.
+  Rejected for v1: extra UI surface + edge cases around primary-
+  DM-loss recovery exactly when we need backup most.
+- Shared Drive folder via `drive.file`. Rejected: re-introduces
+  the ADV-1 share-link risk DEC-009 defaults closed.
+
+**Tradeoffs:** Co-DMs each hold an independent backup; the CRDT
+merge layer handles divergence at restore time. Documented
+limitation: if BOTH co-DMs lose access to their accounts, no
+backup survives. Mitigated by M6c (GitHub) sequencing.
+
+**Revisit if:** Real co-DM workflows surface a need for a
+canonical shared backup; promote M6c or design a shared-Drive
+mechanism.
+
+---
+
+## DEC-013 — Default to runtime-overridable `client_id` from day one (2026-05-29)
+
+**Decision:** Quire ships with a canonical client_id PLUS three
+override mechanisms from day one:
+1. Build-time env var (`QUIRE_OAUTH_CLIENT_ID`) for self-hosters.
+2. Runtime query parameter (`?clientId=...`) for emergency
+   discovery rotation.
+3. Campaign-manifest field (`oauth.clientId`) for per-campaign
+   override.
+
+Plus a discovery-document fetch at `/.well-known/quire-oauth.json`
+that returns the current canonical client_id + a status flag.
+If status is `unavailable`, surface "client_id unavailable —
+self-host or wait for fix" graceful-degradation banner.
+
+**Why:** NEW-SEC-5 framed the incident-response gap: if the
+canonical client_id is compromised (or revoked by Google, or
+abuse-rate-limited), rotation requires every DM to fetch a new
+bundle. Cloudflare Pages CDN cache lag means hours of degraded
+state. NEW-ADV-5 framed the supply-chain integrity angle: the
+shipped client_id is a security primitive an attacker who
+compromises the deploy can swap.
+
+Subsumes OP-013 (self-hoster override) — the same mechanism
+serves both incident-response rotation AND self-hosters.
+
+**Alternatives:**
+- Build-time only override. Rejected per NEW-SEC-5: a DM whose
+  client_id was rotated must wait for a new deploy + cache
+  invalidation; minutes-to-hours of unavailable backups.
+- Canonical-only (no override). Rejected: single point of
+  failure on the maintainer's OAuth app.
+
+**Tradeoffs:** Three override paths is more surface to test +
+document. Mitigation: query-param override is hidden behind a
+documented incident-response procedure ("emergency rotation");
+campaign-manifest override is opt-in per campaign; env-var
+override is documented in the self-hoster setup guide.
+
+**Revisit if:** Override usage becomes a vector for tricking
+DMs into auth-ing to a malicious client_id (then add a "you
+are using a non-canonical client_id" warning banner).
+
+---
+
+## DEC-012 — `state` nonce binds intent, not just CSRF (2026-05-29)
+
+**Decision:** The OAuth `state` parameter encodes the user's
+INTENT alongside the CSRF nonce:
+
+```
+state = base64url({
+  nonce: <crypto.getRandomValues 256-bit>,
+  intent: 'push' | 'pull' | 'connect',
+  campaignId: '<owner>/<repo>@<ref>',
+  fileRev: '<drive-revision-id> | null',
+  ts: <ms-epoch>,
+  flowId: '<per-flow-uuid>'
+})
+```
+
+Plus an HMAC over the intent fields using a per-tab session
+secret (generated at first `state` mint, stored in sessionStorage).
+On OAuth return:
+1. Verify HMAC (defends against tampering).
+2. Verify `flowId` matches the listener's current flow (NEW-SEC-1).
+3. Verify `campaignId` matches the currently-foregrounded
+   campaign (NEW-SEC-2).
+4. Verify `ts` is within 10 minutes (stale-state defense).
+
+**Why:** NEW-SEC-2 framed the gap: classic OAuth `state` answers
+"did this auth response correspond to MY request?" but NOT "and
+that request was to push CAMPAIGN X." A two-flow race lets a
+returning auth token write to the wrong campaign.
+
+Civilized-peer threat model accepts `campaignId` landing in
+URL-bar history (NOT a spoiler-relevant disclosure for Quire's
+model). Confirmed by adversarial-routing per the security
+consultant's hand-off.
+
+**Alternatives:**
+- Opaque `state` (today's draft). Rejected per NEW-SEC-2.
+- Server-side intent storage. Rejected: would re-introduce a
+  server component the no-server architecture excludes.
+
+**Tradeoffs:** `state` becomes longer (~200 chars vs ~40). Still
+well under URL length limits.
+
+**Revisit if:** Campaign-id-in-URL-bar becomes a complaint
+surface (re-evaluate the firewall classification).
+
+---
+
+## DEC-011 — Player content consent ceremony on first cloud push (2026-05-29)
+
+**Decision:** On the first cloud push for a campaign, surface a
+one-time DM-only acknowledgment dialog (silent-player-firewall
+preserved — players are NOT notified):
+
+> "You are uploading the full table's content (including your
+> players' chat, character drafts, and bond notes) to YOUR
+> Google Drive. Players can read what they have written to this
+> campaign; they cannot see this Drive folder. [Acknowledge]"
+
+The acknowledgment is per-campaign, persistent (`localStorage`),
+re-prompted on campaign-id change or destination change.
+
+**Why:** NEW-PRV-4 framed the gap: the DM-coord projection
+contains every player's authored content (chat, character drafts,
+bond notes, intent statements). Silent upload to the DM's Drive
+violates Quire's firewall ethos ("never tell a player about a
+thing they didn't consent to") in spirit — the player didn't
+consent to their words leaving the table. Also surfaces GDPR-
+adjacent concerns; the home-game safe harbor is unclear when
+content includes adult/violent fiction.
+
+**Alternatives:**
+- Per-player opt-out UI. Rejected for v1: prime directive
+  violation (admin before play). Deferred to v2 if a real DM
+  raises it.
+- No acknowledgment. Rejected: silent custody transfer of
+  player content fails the firewall ethos test.
+
+**Tradeoffs:** One extra click per campaign on first push.
+Mitigation: the dialog is also the natural surface for the
+NEW-ADV-4 "what's saved" disclosure (DEC-010 sibling).
+
+**Revisit if:** A player surfaces objection to backed-up
+content; promote per-player opt-out.
+
+---
+
+## DEC-010 — Restore + rebroadcast firewall is BOTH apply-side and broadcast-side (2026-05-29)
+
+**Decision:** NEW-ADV-1 + NEW-ADV-2 closure shipped in
+commit `a7dedac`. Two complementary surfaces:
+
+1. **Apply-side projection.** `persistence.ts` exports
+   `projectSaveForViewer(doc, viewerIsCoord)`, the symmetric
+   restore-side companion to `serializeSessionForViewer`.
+   `quire-app.loadFromString` calls it with
+   `viewerIsCoord=(sessionView.mode==='host')` before applying.
+   Host loads are a no-op projection (auto-reclaim on next tick);
+   guest loads strip DM-only events from the save before they
+   reach the local event log.
+
+2. **Broadcast-side classifier.** `persistence.ts` exports
+   `defaultRebroadcastFilter(event)`. `Peer` takes an optional
+   `rebroadcastFilter` in its constructor options;
+   `session-controller.ts` wires the default into production.
+   `Peer.forwardShareToOthers` runs every event through the
+   filter before sending — DM-only kinds dropped, partial-
+   payloads field-scrubbed via the same `PER_KIND_SCRUBBERS`
+   registry that the save-side projection uses.
+
+**Why:** The independent adversarial consultant's NEW-ADV-1 is
+the 5th breach in the render-gated-but-restore-not-gated class
+(same class as #392/#393/#395 + M1 map-blob). NEW-ADV-2 is the
+sister leak from DEC-005's auto-broadcast — even though
+NEW-ADV-1's projection prevents DM-only events from ENTERING
+the loading peer's log in the happy path, the broadcast filter
+is the defense-in-depth net if that projection ever regresses
+OR if a DM-only event reaches the log via a different path
+(buggy peer, hostile save, future regression).
+
+Both fixes use the SAME `PER_KIND_SCRUBBERS` + `PLAYER_SCOPE_STRIP_KINDS`
+registry; no new firewall list. The SSOT keeps classification
+load-bearing across save / load / rebroadcast surfaces.
+
+**Why injected (not imported) for the Peer filter:** The
+`core/` layer must not depend on `persistence.ts` (would
+introduce a circular import). Dependency injection via the
+constructor option keeps `core/peer.ts` clean and lets
+`session-controller.ts` wire the production seam.
+
+**Alternatives:**
+- Hard-refuse a coord-projection save when the local peer is
+  non-coord ("Reclaim coord first, then import."). Rejected:
+  legitimately broken for the cross-week sick-DM-handoff case
+  where the new coord LEGITIMATELY needs the prior DM's
+  scratch-notes + AI-context.
+- Move `PLAYER_SCOPE_STRIP_KINDS` into `core/` so peer.ts can
+  import it directly. Rejected as a larger refactor; revisit if
+  more controllers need the firewall registry.
+- Skip the rebroadcast filter and rely on NEW-ADV-1 alone.
+  Rejected: defense-in-depth; the SAME firewall regression
+  pattern keeps recurring (#392/#393/#395/M1 + now NEW-ADV-1).
+  The cost of the filter is one PER_KIND_SCRUBBERS lookup per
+  rebroadcast call; negligible.
+
+**Tradeoffs:** Map-blob payloads at rebroadcast time use a
+conservative empty reveal-mask (drop labels). The receiving
+peer re-materializes the revealed state from its own log. A
+player who receives a rebroadcast `map-blob-add` for a
+not-yet-revealed blob sees it appear on their map without a
+label until the reveal fires. Acceptable; the alternative
+(send the label, trust the receiver to strip on render) is
+the exact regression class NEW-ADV-2 catches.
+
+**Revisit if:** A real session shows the conservative reveal-
+mask is too aggressive for legitimate map-blob workflows
+(then teach the filter to compute the reveal-mask from the
+receiving peer's log before sending).
+
+---
+
 ## DEC-009 — Default Drive scope is `drive.appdata`, not `drive.file` (2026-05-29)
 
 **Decision:** Cloud-sync to Google Drive defaults to the
