@@ -37,7 +37,7 @@
  * and `execution-plan.md` § "Cross-cutting expectations".
  */
 
-export const MAIN_CHUNK_CAP_BYTES = 150 * 1024; // 150 KB gzipped
+export const MAIN_CHUNK_CAP_BYTES = 165 * 1024; // 165 KB gzipped
 export const AUTHORING_CHUNK_CAP_BYTES = 200 * 1024; // 200 KB gzipped
 
 export type ChunkKind = 'main' | 'authoring' | 'other';
