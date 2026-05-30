@@ -50,7 +50,7 @@ closed H-2 + H-1 and documented H-3 deferral as OP-046.
 - WS-G (UI-iteration discipline): mock-10 extended (+2
   scenarios for H-2 + H-1).
 
-**Latest deploy hash:** a75536e (run #16 ship)
+**Latest deploy hash:** 4779a9c (run #17 emergency ship)
 **Branch:** main
 
 ---
