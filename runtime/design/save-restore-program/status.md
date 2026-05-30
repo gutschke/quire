@@ -1,61 +1,59 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 (M1 shipped)
-**Active milestone:** M2 — Tab-close durability (next)
+**Last updated:** 2026-05-29 (M2 shipped)
+**Active milestone:** M3 — Restore re-broadcast (next; needs reproduction)
 
 ## Just shipped
 
 ### M1 — Firewall: leaks sealed + self-completing tripwire (DONE)
 
-Single commit closed Adversarial findings #1, #2, #3, #4 from the
-2026-05-29 four-expert review:
+- Map-blob unrevealed label leak sealed via reveal-mask scrubber.
+- `causedByResponseId` scrubbed from `pc-create` + `pc-edit` for non-coord saves.
+- `EVENT_KINDS_NO_SCRUB_NEEDED` + lint forces explicit per-kind decision.
+- 40-seed save-path firewall fuzz lands as the SAVE-STREAM companion to `state.firewall-fuzz`.
 
-- **Map-blob payload scrub** — `map-blob-add` and `map-blob-move`
-  events now drop the `label` field when the blob is UNREVEALED at
-  save time. Keep it when revealed (player already saw the label at
-  the table). Reveal-mask precomputed via the new
-  `ScrubContext` hook. Test: `persistence.hostile.test.ts` 4 cases.
-- **`causedByResponseId` scrub** — drops the AI-provenance tracer
-  from `pc-create` + `pc-edit` for non-coord saves. Coord keeps it
-  for audit. Tests: 3 cases.
-- **Self-completing scrubber registry** — `EVENT_KINDS_NO_SCRUB_NEEDED`
-  + lint in `persistence.coverage.test.ts`. Every player-visible kind
-  is now classified explicitly; a new kind without a decision trips
-  CI. Tests: 3 lint cases.
-- **Save-path taint fuzz** — `persistence.firewall-fuzz.test.ts` is
-  the SAVE-STREAM companion to `state.firewall-fuzz.test.ts`. 40
-  seeded scenarios x 4 non-coord viewers x ~12 sentinel-planting
-  payload shapes. 0 sentinels survive. Positive-control test
-  ensures revealed labels survive (catches over-strip).
+### M2 — Tab-close durability (DONE)
 
-Tasks #420 and #421 marked complete.
+- `AutosaveController` now listens for `visibilitychange === 'hidden'` and flushes synchronously if a save is pending. Closes the 1.5s data-loss window on tab-close (Architect finding #5, Test-QA finding #2).
+- Used `visibilitychange` not `beforeunload` per DEC-004 (mobile + bfcache reliability).
+- `hostDisconnected()` cancel-on-route-change behavior preserved (distinct from tab-close); doc commented inline.
+- 6 new unit tests pin: listener registered, listener removed, flush on hidden, no-op on visible, no-op when nothing pending, no double-write after flush.
 
-All 2572 vitest tests pass. TypeScript compiles clean.
+Tasks #420, #421, #422 marked complete.
+
+All 2578 vitest tests pass. TypeScript clean.
 
 ## Up next
 
-### M2 — Tab-close durability (NEXT)
+### M3 — Restore re-broadcast (NEXT, needs reproduction first)
 
-Architect finding #5 + Test-QA finding #2: the 1.5s autosave debounce
-window is structurally lost on tab-close.
-`AutosaveController.hostDisconnected()` cancels pending saves rather
-than flushing.
+Architect finding #1: `Peer.applyEvent` does not share re-applied
+events. The hypothesis is that a player who restores their autosave
+and joins a fresh session has their unique events silently never
+propagate to the table.
 
-Plan:
-1. Add `visibilitychange` listener that triggers `performNow()` when
-   `document.visibilityState === 'hidden'` AND a save is pending.
-2. Keep `hostDisconnected()` cancel-on-route-change semantics (those
-   are legitimate unmounts during navigation; a half-typed save
-   shouldn't fire during a slug change).
-3. Test: synthesized `visibilitychange → hidden` after an unflushed
-   change writes localStorage before the test returns.
+**BUT** the architect-claim deserves verification — Peer's
+constructor pulls a `sync-request` from every already-connected peer
+on join, which makes the NEW peer the asker. If the new peer responds
+to other peers' sync-requests with its full log (which it does via
+`handleMessage` → `since(clock)` → `sync-response`), the restored
+events WOULD propagate through the existing path.
 
-### M3 — Restore re-broadcast
+Plan for M3:
+1. Write an integration test that constructs the architect's scenario
+   (peer A loads N events from save → peer A joins a fresh
+   transport with peers B and C → assert B and C see all N events).
+2. If the test PASSES, the architect finding is invalidated. Update
+   `open-problems.md` OP-001 to RESOLVED-AS-NOT-A-BUG. Move on.
+3. If the test FAILS, dig in: which event is dropped? Why does
+   sync-response not carry it? Then patch with the minimum-blast-
+   radius fix.
 
-Architect finding #1. Will FIRST reproduce in an integration test
-before patching — there's an open question (OP-001) about whether the
-existing sync-pull path already covers some topologies. Don't fix
-what doesn't break.
+This is the most rigorous path because the architect's claim doesn't
+match my reading of the protocol, and the "trust but verify" memory
+applies.
+
+### M4, M5, M6, M7, M8 — see roadmap.md.
 
 ## Decisions pending the human
 
@@ -70,8 +68,8 @@ what doesn't break.
 - 🟢 Firewall leaks sealed (M1 shipped).
 - 🟢 Self-completing scrubber registry (M1 shipped).
 - 🟢 Save-path taint fuzz (M1 shipped).
-- 🟡 Tab-close durability — M2 next.
-- 🔴 "Any party member can continue" promise — M3 work pending verification.
+- 🟢 Tab-close durability (M2 shipped).
+- 🟡 "Any party member can continue" — M3 reproduction needed before patch.
 - 🔴 Browser-eviction handling — no `navigator.storage.persist()`, M5 work pending.
 - 🟡 e2e-only critical-path coverage — M4 work pending.
 - 🔴 Honest scope — GitHub-push + Drive sync implied but not built. Human decision required.

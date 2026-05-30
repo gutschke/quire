@@ -48,6 +48,23 @@ function storageKey(campaign: CampaignRefLike): string {
 export class AutosaveController implements ReactiveController {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quotaWarned: boolean = false;
+  /**
+   * M2 (2026-05-29 save-restore program): bound visibilitychange
+   * handler so we can `removeEventListener` on host-disconnect.  The
+   * arrow form captures `this`; storing the ref means add/remove
+   * pair use the same identity.
+   */
+  private readonly onVisibilityChange = (): void => {
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState !== 'hidden') return;
+    // Only do work when we have something in flight.  No-op when the
+    // user has just navigated and there's no pending save.
+    if (this.timer === null) return;
+    // Flush synchronously.  performNow() handles the build/quota/etc;
+    // we clear the pending timer first so it doesn't fire again.
+    this.cancelPending();
+    this.performNow();
+  };
 
   constructor(
     host: ReactiveControllerHost,
@@ -57,11 +74,38 @@ export class AutosaveController implements ReactiveController {
   }
 
   hostConnected(): void {
-    /* nothing to load — autosave is a one-way write path; resume
-     * uses checkResume() explicitly */
+    // M2: register the tab-close-flush listener.  We use
+    // `visibilitychange` rather than `beforeunload` because:
+    //   - `beforeunload` is suppressed on mobile Safari and during
+    //     `pagehide`-triggered bfcache eviction.
+    //   - `visibilitychange → hidden` fires reliably across
+    //     desktop + mobile and is THE recommended signal per
+    //     WHATWG / Page Lifecycle API.
+    //   - Synchronous `localStorage.setItem` inside a
+    //     visibilitychange handler is durable (the browser has not
+    //     yet released the page).
+    // The `pagehide` event is also fired but ONLY on real unloads;
+    // visibilitychange fires on background-tab too, which is the
+    // common DM case (switching to GitHub to look at scene markdown).
+    // Saving aggressively on tab-background isn't a problem — it's a
+    // single localStorage write debounced by `this.timer === null`.
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
+    }
   }
 
   hostDisconnected(): void {
+    // Cancel-on-route-change is intentional: a half-typed save
+    // shouldn't fire as the user navigates between campaigns.  The
+    // visibilitychange listener handles the tab-close case
+    // independently (it fires BEFORE hostDisconnected on tab-close,
+    // so the flush has already happened).
+    if (typeof document !== 'undefined' && document.removeEventListener) {
+      document.removeEventListener(
+        'visibilitychange',
+        this.onVisibilityChange
+      );
+    }
     this.cancelPending();
   }
 

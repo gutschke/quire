@@ -42,6 +42,49 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-004 — Tab-close uses `visibilitychange === 'hidden'`, NOT `beforeunload` (2026-05-29)
+
+**Decision:** `AutosaveController` listens for `visibilitychange` on
+`document`. When `visibilityState === 'hidden'` AND a save is pending,
+flush synchronously. The legacy `hostDisconnected()` cancel-on-route-
+change behavior is preserved (distinct path; legitimate unmount
+during slug navigation).
+
+**Why:**
+- `beforeunload` is suppressed on mobile Safari and during
+  `pagehide`-triggered bfcache eviction. Saves there are silently
+  lost.
+- `visibilitychange → hidden` fires reliably across desktop + mobile
+  and is the WHATWG Page Lifecycle recommendation.
+- Synchronous `localStorage.setItem` inside a `visibilitychange`
+  handler is durable — the browser has not yet released the page.
+- `pagehide` ALSO fires but only on real unloads. `visibilitychange`
+  fires on background-tab-too, which is the common DM case (alt-tab
+  to GitHub for scene markdown). Saving more aggressively is fine —
+  it's a single localStorage write, debounced internally by checking
+  `this.timer === null` before doing work.
+
+**Alternatives:**
+- `beforeunload` alone — rejected per above.
+- Both `beforeunload` + `visibilitychange` — rejected: double-write
+  in some browsers, no durability gain.
+- Make `hostDisconnected()` flush instead of cancel — rejected:
+  route-change-during-typing should NOT fire a save, and the Lit
+  lifecycle calls `hostDisconnected` for both tab-close AND
+  route-change without distinguishing them.
+
+**Tradeoffs:** Saving on tab-background increases localStorage write
+frequency in DM workflows that frequently alt-tab. Mitigation: the
+in-flight-pending check (`timer === null` short-circuit) means we
+only write when there's an actual buffered change. Real cost:
+near-zero.
+
+**Revisit if:** A reproducible test shows a tab-close path where
+`visibilitychange` does NOT fire (mobile Safari freeze, OS-level
+tab-kill) — then add `pagehide` as a second signal.
+
+---
+
 ## DEC-003 — Scrubber gets a precomputed reveal-mask via `ScrubContext` (2026-05-29)
 
 **Decision:** `EventScrubber` signature is now `(event, ctx) => …`

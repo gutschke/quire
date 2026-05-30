@@ -20,7 +20,7 @@ DoD:
 - Save-path taint fuzz (#420) lands — companion to `state.firewall-fuzz` for the SAVE STREAM.
 - Tests prove the leak is fixed AND prove regression class can't silently recur.
 
-## M2 — Tab-close durability
+## M2 — Tab-close durability (DONE 2026-05-29)
 
 **Architect finding 5 + Test-QA finding 2.** The 1.5s autosave debounce window
 is structurally lost on tab-close. `hostDisconnected()` actively cancels.
