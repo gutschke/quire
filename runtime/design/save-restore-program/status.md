@@ -4,7 +4,7 @@
 ship-gates closed in code: OP-017g + OP-018 + OP-021 + OP-027;
 OP-030 re-verified on disk)
 **Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (4 new ship-gates closed this run; OP-017b remains as the last doc-only gate; rest land WITH the M6a OAuth code)
-**Latest deploy hash:** (this run's commit; reported at push time)
+**Latest deploy hash:** 263cc71 (run #5 code + docs)
 **Branch:** main
 
 ## Session log (most recent first)
