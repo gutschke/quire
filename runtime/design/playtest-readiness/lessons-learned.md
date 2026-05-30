@@ -158,6 +158,54 @@ sliver the unit test pins.
 
 ---
 
+## LL-3 — Invisible dialogs (run #18 hotfix)
+
+**Bug:** the run #17 Start-fresh confirm dialog opened (the
+autofocus DID fire on the Cancel button — diagnostic in the
+user's console) but was completely invisible.  Same root cause
+hit `<cloud-push-consent-dialog>` (run #5/#6, never noticed
+because first-push is rare) and `<pc-revoke-confirm-dialog>`
+(run #18, never exercised before the user tried it).  User
+reported "Start fresh has no effect."
+
+**Pattern:** custom-element confirm dialogs override
+`createRenderRoot()` to render into LIGHT DOM (so host CSS
+reaches them) and emit a custom `<div class="*-backdrop">` +
+`<section class="*-dialog">` pair instead of a native
+`<dialog>` + `::backdrop`.  The class names referenced in the
+template MUST also exist as CSS rules in `quire-app.css.ts`.
+For all three dialogs they did NOT.  The dialog DOM was in the
+document, in normal flow, with `position: static`, no
+z-index, no backdrop, no centered child — invisible.
+
+**Carrier:** unit tests for each dialog asserted the rendered
+DOM shape (Cancel button present, Confirm button present,
+`resolve(true)` fires on click) — they never asserted the
+dialog was visible on a real page.  The `<quire-modal>` rewrite
+(DEC-038) was a sibling fix for the OTHER family (modals that
+used `<dialog>` + `<slot>` and lost children to the top-layer
+promotion) — that fix didn't apply here because these dialogs
+never used `<dialog>` at all.
+
+**Discipline:**
+- New rule: any custom-element confirm-dialog rendering to
+  light DOM MUST add its `*-backdrop` and `*-dialog` class
+  names to the `LIGHT_DOM_DIALOG_BACKDROPS` / `_BODIES` arrays
+  in `src/ui/styles/dialog-visibility.test.ts`.  The test is
+  a static check on `quire-app.css.ts` — fails at PR time if a
+  class is referenced in the template but has no CSS rule (or
+  has a rule but no `position: fixed` for the backdrop).
+- Adversarial reviewer playbook addendum: for every NEW
+  custom-element dialog, walk the END-TO-END user click in a
+  manual or e2e harness (not happy-dom, which doesn't compute
+  layout enough to surface invisible-but-present elements).
+- "Sliver test pinned smaller than what user sees" pattern is
+  now LL-1/LL-2/LL-3 — three independent escapes.  The unit-
+  test layer keeps missing the visibility/path/clearing
+  problems because it's the wrong altitude for them.
+
+---
+
 ## Lessons that did NOT need a new entry
 
 - The OP-039 firewall hole (run #9): caught by mock campaign 01,

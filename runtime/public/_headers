@@ -26,8 +26,19 @@
   Cross-Origin-Opener-Policy: same-origin-allow-popups
   Cross-Origin-Resource-Policy: same-origin
 
+# `/*` wildcard — applies to the main app pages.  Cloudflare Pages auto-
+# injects the Web Analytics beacon (`https://static.cloudflareinsights.com/
+# beacon.min.js`) into every page response when the project has Web
+# Analytics enabled.  The strict `script-src 'self'` baseline blocks that
+# beacon and logs a noisy CSP violation in every user's console — visible
+# to anyone debugging an unrelated issue (it scared a playtester).  We
+# allow the beacon explicitly: it's first-party (Cloudflare's own infra,
+# same provider that serves the Pages deploy), narrowly scoped to one
+# host, and load-bearing only for analytics.  The connect-src grant
+# mirrors the script-src grant so the beacon's POST back to
+# `https://cloudflareinsights.com` doesn't trip a second violation.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://raw.githubusercontent.com https://api.anthropic.com https://generativelanguage.googleapis.com https://*.peerjs.com wss://*.peerjs.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https://raw.githubusercontent.com https://api.anthropic.com https://generativelanguage.googleapis.com https://cloudflareinsights.com https://*.peerjs.com wss://*.peerjs.com; frame-ancestors 'none'; base-uri 'self'; form-action 'none'; object-src 'none'
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin

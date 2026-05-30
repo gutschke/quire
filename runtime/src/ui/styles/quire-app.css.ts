@@ -4780,6 +4780,155 @@ export const quireAppStyles = css`
       border-color: light-dark(#b45309, #f59e0b);
     }
 
+    /* Light-DOM custom-element dialogs (cloud-consent, start-fresh,
+       pc-revoke).  Each <foo-confirm-dialog> overrides createRenderRoot
+       to render into light DOM (so host CSS reaches it) and emits a
+       custom <div class="*-backdrop"> + <section class="*-dialog">
+       pair instead of using the <dialog> element + ::backdrop.  These
+       rules are what make them visible — without them the dialog DOM
+       exists in document flow with NO position/z-index/background, so
+       the user sees nothing happen when the affordance fires.  The
+       autofocus warning still prints because the Cancel button
+       actually got focused — that's the diagnostic. */
+    .cloud-consent-backdrop,
+    .start-fresh-backdrop,
+    .pc-revoke-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.55);
+      backdrop-filter: blur(2px);
+    }
+    .cloud-consent-dialog,
+    .start-fresh-dialog,
+    .pc-revoke-dialog {
+      box-sizing: border-box;
+      width: 100%;
+      max-width: 38rem;
+      max-height: calc(100vh - 2rem);
+      overflow-y: auto;
+      padding: 1.2rem 1.4rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 8px;
+      background: light-dark(#ffffff, #0f172a);
+      color: inherit;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+    /* Destructive variants get an amber left rail so the DM reads
+       them as "this is the one that wipes things." */
+    .start-fresh-dialog[data-variant='destructive'],
+    .pc-revoke-dialog {
+      border-left: 4px solid light-dark(#d97706, #f59e0b);
+    }
+    .cloud-consent-title,
+    .start-fresh-title,
+    .pc-revoke-title {
+      margin: 0 0 0.6rem;
+      font-size: 1.1em;
+      line-height: 1.3;
+    }
+    .start-fresh-slug {
+      margin: 0 0 0.8rem;
+      font-size: 0.85em;
+      color: light-dark(#475569, #94a3b8);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .cloud-consent-body p,
+    .start-fresh-body p {
+      margin: 0.5rem 0;
+      line-height: 1.45;
+    }
+    .pc-revoke-firewall-reminder {
+      margin: 0.3rem 0 0.9rem;
+      padding: 0.5rem 0.7rem;
+      border-left: 3px solid light-dark(#d97706, #f59e0b);
+      background: light-dark(#fffbeb, #1c1917);
+      font-size: 0.92em;
+      line-height: 1.4;
+    }
+    .pc-revoke-shape,
+    .pc-revoke-bonds {
+      margin: 0.6rem 0;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 5px;
+    }
+    .pc-revoke-shape legend,
+    .pc-revoke-bonds legend {
+      padding: 0 0.4rem;
+      font-weight: 500;
+      font-size: 0.92em;
+    }
+    .pc-revoke-shape label {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-start;
+      padding: 0.35rem 0;
+      cursor: pointer;
+      line-height: 1.4;
+    }
+    .pc-revoke-shape input[type='radio'] {
+      margin-top: 0.25rem;
+      flex: 0 0 auto;
+    }
+    .pc-revoke-bond-list {
+      margin: 0.3rem 0 0.5rem;
+      font-size: 0.9em;
+      color: light-dark(#475569, #cbd5e1);
+    }
+    .pc-revoke-npc-label,
+    .pc-revoke-tombstone-label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      margin: 0.5rem 0;
+      font-size: 0.92em;
+    }
+    .pc-revoke-npc-select,
+    .pc-revoke-tombstone-input {
+      padding: 0.4rem 0.5rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      border-radius: 4px;
+      background: light-dark(#ffffff, #1e293b);
+      color: inherit;
+      font: inherit;
+    }
+    .cloud-consent-actions,
+    .start-fresh-actions,
+    .pc-revoke-actions {
+      display: flex;
+      gap: 0.6rem;
+      justify-content: flex-end;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+    .cloud-consent-cancel,
+    .cloud-consent-acknowledge,
+    .start-fresh-cancel,
+    .start-fresh-confirm,
+    .pc-revoke-cancel,
+    .pc-revoke-confirm {
+      padding: 0.45rem 0.95rem;
+      border: 1px solid light-dark(#cbd5e1, #475569);
+      background: light-dark(#ffffff, #1e293b);
+      color: inherit;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .cloud-consent-acknowledge,
+    .start-fresh-confirm[data-destructive='true'],
+    .pc-revoke-confirm[data-destructive='true'] {
+      border-color: light-dark(#b45309, #f59e0b);
+      background: light-dark(#fef3c7, #422006);
+      color: light-dark(#7c2d12, #fde68a);
+      font-weight: 500;
+    }
+
     .reveal-chips {
       display: inline-flex;
       flex-wrap: wrap;
