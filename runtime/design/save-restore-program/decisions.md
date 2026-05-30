@@ -1,0 +1,66 @@
+# Save/Restore Program Decisions
+
+Append-only. Never edit a prior entry — supersede with a new entry that
+references the prior. Format:
+
+```
+## DEC-NNN — title (YYYY-MM-DD)
+
+**Decision:** ...
+**Why:** ...
+**Alternatives:** ...
+**Tradeoffs:** ...
+**Revisit if:** ...
+```
+
+---
+
+## DEC-001 — Charter the save/restore program (2026-05-29)
+
+**Decision:** Spin up `design/save-restore-program/` as the program's living
+doc set. Roadmap M0–M8 published. The 2026-05-29 four-expert review's
+findings are the seed backlog; future findings get logged here.
+
+**Why:** Save/restore was being shipped piecemeal across many other features.
+The four-expert review surfaced a live firewall leak, a broken "any party
+member can continue" promise, and a silent-eviction UX failure — none of
+which has a single owner. The program structure gives the work an owner-of-
+record and a continuity mechanism for cross-session work.
+
+**Alternatives:**
+- Add tasks to the global backlog without a doc set. Rejected: the
+  cross-cutting decisions (honest-scope, in-fiction copy, durability model)
+  need a single home, not 8 backlog tickets pointing at each other.
+- Extend the existing `multi-session-test-plan.md`. Rejected: that doc is
+  test-strategy-shaped, not program-shaped, and predates the broader scope.
+
+**Tradeoffs:** Adds another doc set the engineer must keep up to date.
+Mitigation: `status.md` is the single resumption-entry-point.
+
+**Revisit if:** Save/restore feels solved and the doc set goes stale (then
+collapse into a single `runtime/design/save-restore.md` post-mortem).
+
+---
+
+## DEC-002 — M1 fixes both Adversarial #1 (map-blob payload) AND #2 (causedByResponseId) in one commit (2026-05-29)
+
+**Decision:** Bundle the two field-granularity scrubber additions into a
+single M1 ship because they share the same scrubber-registry mechanism and
+the same test infrastructure.
+
+**Why:** The `PER_KIND_SCRUBBERS` registry is the cleanest place for both.
+Shipping them together means one new self-completing tripwire (Adversarial
+#3) covers both. Splitting would double the design overhead for negligible
+risk reduction.
+
+**Alternatives:**
+- Two separate commits. Rejected: needless ceremony.
+- Defer #2 because it's "latent today." Rejected: latent-today is exactly
+  when an audit-trail field gets quietly added downstream; the cheap fix
+  now precludes the regression.
+
+**Tradeoffs:** One slightly larger commit. Mitigation: tests cover each
+case independently so bisect still works.
+
+**Revisit if:** The two fixes pull in different directions during
+implementation (then split).
