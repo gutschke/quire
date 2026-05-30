@@ -401,9 +401,41 @@ export interface SaveDocument {
   campaign: CampaignRef;
   savedByPeerId: string;
   events: QuireEvent[];
+  /**
+   * Forward-compat passthrough bag for top-level fields a future
+   * runtime added that today's runtime doesn't recognize.  The
+   * parser populates this from any keys in the parsed object that
+   * aren't on the known list; `stringifySave` merges them back in.
+   *
+   * Required for INV-1 ("unknown top-level fields round-trip") per
+   * `design/playtest-readiness/format-stability.md`.  Without this,
+   * a future runtime that adds e.g. `dmAnnotations` and a today's
+   * runtime that load-then-save the doc would silently strip the
+   * field, dropping data on cross-version round-trips.
+   *
+   * NEVER use `extraFields` for known-DM-only data added by today's
+   * runtime — that would bypass the firewall.  All firewall-
+   * classified data MUST go through `events` (the SSOT).
+   * `extraFields` is purely a forward-compat passthrough for keys
+   * unknown to this runtime at load time.
+   */
+  extraFields?: Record<string, unknown>;
 }
 
 export const SAVE_SCHEMA_VERSION = '0.1.0';
+
+/**
+ * Keys that `parseSaveDocument` MUST recognize as first-class
+ * SaveDocument fields.  Any OTHER key encountered on the wire is
+ * passed through `extraFields` per INV-1 (forward-compat).
+ */
+const KNOWN_SAVE_DOCUMENT_KEYS = new Set<string>([
+  '$schemaVersion',
+  'savedAt',
+  'campaign',
+  'savedByPeerId',
+  'events'
+]);
 
 /**
  * Cap on the number of events accepted in a single save document.
@@ -911,9 +943,33 @@ export function defaultSyncResponseFilter(
  * sort (which they already are if they came from EventLog.events()).
  *
  * Pretty-printed (2-space indent) for git-friendly diffs.
+ *
+ * Forward-compat (INV-1): `doc.extraFields` (if present) is FLATTENED
+ * back into the top-level JSON object — these are top-level keys a
+ * future runtime added that we preserved on parse.  Their keys must
+ * NOT collide with our known fields (the parser guarantees this; the
+ * stringifier checks defensively).
  */
 export function stringifySave(doc: SaveDocument): string {
-  return stableStringify(doc, 2);
+  if (doc.extraFields === undefined) {
+    return stableStringify(doc, 2);
+  }
+  // Drop our placeholder property + merge the passthrough keys back
+  // in at the top level so the serialized form is indistinguishable
+  // from a save that simply HAD those keys natively.
+  const { extraFields, ...known } = doc;
+  const flattened: Record<string, unknown> = { ...known };
+  for (const key of Object.keys(extraFields)) {
+    if (KNOWN_SAVE_DOCUMENT_KEYS.has(key)) {
+      // Defensive: a caller passed extraFields with a known-key
+      // collision.  The known field wins; the extra is dropped to
+      // protect determinism + correctness.  In practice the parser
+      // never produces this state.
+      continue;
+    }
+    flattened[key] = extraFields[key];
+  }
+  return stableStringify(flattened, 2);
 }
 
 export function parseSaveDocument(input: string): ParseResult {
@@ -1007,6 +1063,16 @@ export function parseSaveDocument(input: string): ParseResult {
     };
   }
 
+  // INV-1: preserve unknown top-level fields so cross-version round-
+  // trips don't shed data.  Any key in `d` not on the known list is
+  // copied to `extraFields`.  See format-stability.md §INV-1.
+  let extraFields: Record<string, unknown> | undefined;
+  for (const key of Object.keys(d)) {
+    if (KNOWN_SAVE_DOCUMENT_KEYS.has(key)) continue;
+    if (extraFields === undefined) extraFields = {};
+    extraFields[key] = d[key];
+  }
+
   const doc: SaveDocument = {
     $schemaVersion: d.$schemaVersion,
     savedAt: d.savedAt,
@@ -1018,6 +1084,7 @@ export function parseSaveDocument(input: string): ParseResult {
     savedByPeerId: d.savedByPeerId,
     events: d.events as QuireEvent[]
   };
+  if (extraFields !== undefined) doc.extraFields = extraFields;
   return { ok: true, doc };
 }
 

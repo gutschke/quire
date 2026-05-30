@@ -6,6 +6,75 @@ severity, evidence, hypothesis, owner, status.
 Newest at top. When fixed, link to the commit and move to a separate
 "resolved" section at the bottom.
 
+## OP-045 — Chargen rename gap: applyCharacterEdits has no handler for name/pronouns/backstory [run #13 chargen-roundtrip finding] [R4: class 2 UX-gap, P1]
+
+**Severity:** P1 for the playtest experience.  Not a firewall
+issue; not a data-loss issue; but a **player can't change their
+PC's name after the DM ratifies** with the events the engine
+currently supports.
+
+**Evidence (run #13, WS-C chargen polish round-trip pass):**
+- `pc-create` (state.ts:2531) is first-write-wins: re-emitting
+  with the same `pcId` no-ops.  So a "rename via re-emit"
+  silently fails.
+- `pc-edit` payloads land in `state.pcEdits[pcId]` via
+  `applyPcEditEvent` (state.ts:2160).
+- `effectiveCharacter` merges via `applyCharacterEdits`
+  (character-edits.ts:103).
+- `applyCharacterEdits` has handlers for: stats.*, harm,
+  stress, advancements, marks, knowsTheyCanCast, magicPhase,
+  moneyBand, tax.*, threadDebt.*, alignmentDrift.*,
+  markBullets.*, dmNotes, and a few others — but **NO
+  handlers for `name`, `pronouns`, or `backstory`**.
+
+The result: a player wants to change "Theodore" to "Theo"
+post-acceptance.  The DM authors `pc-edit` field=name
+value='Theo'.  The event lands in `state.pcEdits[pcId]`.
+`effectiveCharacter` runs `applyCharacterEdits` over it.  The
+name branch is missing.  The PC still renders as "Theodore."
+
+**Locked test coverage:** three LOCKED-BROKEN assertions in
+`src/persistence.chargen-roundtrip.test.ts` PIN the broken
+state so a future fix surfaces as test updates, not a silent
+flip.
+
+**Hypothesis (fix paths):**
+1. **Add handlers to `applyCharacterEdits`** (recommended):
+   add `name` / `pronouns` / `backstory` branches with size
+   caps matching `pc-create`'s constraints
+   (`PC_CREATE_MAX_NAME`, `PC_CREATE_MAX_PRONOUNS`,
+   `PC_CREATE_MAX_BACKSTORY`).  Plus: ensure the
+   filterForViewer projection preserves the edit (it should —
+   `pcEdits` is player-visible state already).  Small diff
+   (~30 LOC) + 3-6 test updates.
+2. **New event kind `pc-rename`** — heavier; would let us
+   audit rename specifically, but `pc-edit` is the established
+   surface for character mutation.
+3. **Drop first-write-wins on pc-create** — wrong direction;
+   re-emission semantics are useful elsewhere.
+
+**Path 1 is the natural fix.**  Same shape as the other
+character edits.
+
+**Real-world impact (playtest hit):**
+- A player who picks an awkward name in chargen and wants to
+  change it post-ratify has no working surface.
+- The DM cannot rename a PC the player asked them to rename.
+- Mid-chargen rename in the chargen UI is fine (no `pc-create`
+  has fired yet).
+
+**Owner:** playtest-readiness program lead.
+**Status:** OPEN.  Filed P1.  Schedule for run #14 alongside
+the TTRPG/UX consultant's chargen findings.
+
+**Cross-cuts:**
+- The TTRPG/UX consultant brief (queued run #13) explicitly
+  asks Q2 about surgical edits for name/pronouns/backstory.
+- The visual-design consultant's surfaces will see the
+  rename UI; defer their feedback until the fix lands.
+
+---
+
 ## R4 re-triage block (2026-05-29 under DEC-023 threat framing)
 
 Per DEC-023, three classes drive severity:

@@ -1,0 +1,556 @@
+# Playtest-Readiness Program — Master Plan
+
+**Owner:** Playtest-Readiness Program Lead (formerly Save/Restore Program Lead)
+**Run #13 created:** 2026-05-30
+**Status:** in execution
+**Supersedes (in part):** `design/save-restore-program/playable-release-plan.md`
+(M6a-FS-5 shipped GREEN; that program is folded into this one as a
+single workstream — see WS-D)
+
+This document is the master plan for getting Quire ready for the
+first real human playtest. It exists because the human escalated
+scope from "M6a-FS playable release" (already GREEN) to "the whole
+product, polished and complete for actual humans."
+
+---
+
+## 1. North star — what "playtest-ready" means
+
+The playtest is the **first session a real DM runs with real
+players** using Quire as the table tool. After it concludes, the
+DM will write up what happened; that write-up will guide
+authoring the next chapter for the following week.
+
+Playtest-ready, decomposed into capabilities:
+
+### 1.1 First-impression capabilities (chargen + visuals)
+
+1. **Three players + a DM can walk in cold** and reach a
+   playable session within the first 30 minutes — no
+   engineering help, no doc-reading required.
+2. **Character creation works for every path** the campaign
+   admits: pre-gen pick, Q&A + AI synthesis, free-write. Each
+   path lands a complete PC the DM can ratify.
+3. **Editing the basics works.** A player can rename their PC,
+   change pronouns, and revise a backstory paragraph mid-
+   chargen AND after acceptance (within the rules' bounds).
+   None of these edits leak DM-only material; all survive a
+   tab close + reopen.
+4. **The UI looks modern and cohesive.** Not elaborate; not
+   amateur. A returning player from a polished web app
+   (Slack, Roll20 desktop, Linear) doesn't recoil at first
+   impression. This is a high bar but a bounded one: visual
+   polish, not content polish.
+
+### 1.2 Mid-session capabilities (play + AI)
+
+5. **Spoiler firewall holds in every panel** — chat, scene
+   reveals, AI panel, PC sheet, map, session digest. The
+   silent-player firewall (player never warned about a spoiler
+   they hit) is sacred.
+6. **AI assistance works.** DM can summon an AI suggestion that
+   reads the campaign + PC + episode context, and the response
+   reaches the DM without leaking to players. AI-write API
+   that proposes state changes works end-to-end with the
+   DM-accept gate.
+7. **In-session state changes propagate** to all peers
+   correctly. Harm, stress, marks, advancement-ready, focus
+   grants, scene reveals.
+
+### 1.3 End-of-session + bridge-to-next-session capabilities
+
+8. **DM can save the session locally** (autosave) AND push to
+   a connected cloud folder (M6a-FS GREEN). Restore from
+   cloud on the SAME machine and on a SECOND machine works.
+9. **DM write-up phase works.** After the session, the DM
+   writes (or AI-drafts) a session digest. The digest is
+   stored on the canonical event log, survives save/restore,
+   and is available as context for next session's authoring
+   + AI calls.
+10. **The save format is forward-compatible.** No hidden
+    skeletons. Extensible to new event kinds / new sub-fields
+    without breaking saves written today. Conversion tools
+    NOT required (the human's explicit relief).
+
+### 1.4 Bug bar
+
+- **NO P0 / firewall-leaking bugs.** A leak loses a season.
+- **NO P1 data-loss in any documented happy path.** Including
+  chargen, in-session play, save/restore, AND the DM write-up
+  loop.
+- **NO P1 first-impression failures.** Visual jank that makes
+  a new player think "this is unfinished" is a P1 here, even
+  if it doesn't break functionality.
+- **P2 deferred with documented workaround** is acceptable.
+
+### 1.5 Test coverage gates (CI)
+
+- 2960 baseline (run #12) must stay green or be intentionally
+  changed with a noted rationale.
+- New CI test pinning the save format (format-stability test).
+- Mock campaign 08 (DM write-up phase) shipped and pinned.
+- Chargen round-trip tests covering name/pronoun/backstory.
+- Full backup E2E test that exercises FS-API push/pull
+  beyond the in-memory mock used today.
+
+---
+
+## 2. Concerns map — the 8 decomposed concerns
+
+The human gave us 8 concerns. This table maps each to a
+workstream, scope, and gating.
+
+| # | Concern | Workstream | Scope this turn | Gating |
+|---|---|---|---|---|
+| 1 | Data-format forward-compat (no skeletons, extensible) | **WS-A: Format lock** | YES — autonomous engineering | None (pure code + tests) |
+| 2 | DM write-up phase deep review | **WS-B: Write-up phase** | YES — autonomous mock-campaign + expert review | Brief TTRPG/UX expert |
+| 3 | Chargen quality (name/pronoun/backstory) | **WS-C: Chargen polish** | YES — autonomous tests + expert review | Brief TTRPG/UX expert |
+| 4 | Full backup E2E | **WS-D: Backup verification** | YES — autonomous | None (extends M4) |
+| 5 | AI integration (assistance + write API) | **WS-E: AI integration audit** | PARTIAL — expert audit; small autonomous fixes | Brief AI integration auditor |
+| 6 | Visual design audit | **WS-F: Visual polish** | NO autonomous changes pending expert; just brief + collate | Brief visual-design expert; iterate next runs |
+| 7 | UI-iteration safety (re-run mock sessions after UI changes) | **WS-G: UI-change discipline** | YES — codify the discipline in this plan; create the re-validation playbook | None (process doc) |
+| 8 | Plan first, then execute by assigning sub-tasks | **this document** | YES — done | None |
+
+**WS-F is intentionally NOT executed autonomously this turn.**
+Any visual-chrome change requires the full re-validation pass
+per WS-G; it's the highest-friction work and the best fit for
+the expert's eye first.
+
+---
+
+## 3. Workstream breakdown
+
+Each workstream: owner, deliverable, success criteria, expert
+prerequisite (if any), follow-up runs.
+
+### WS-A — Data-format forward-compat lock
+
+**Owner:** lead, autonomous.
+
+**Deliverable (this turn):**
+
+1. Audit every event kind for `v` versioning. Document the
+   audit at `design/playtest-readiness/format-stability.md`.
+2. New CI test `src/persistence.format-stability.test.ts`
+   that:
+   - Snapshots the canonical save format shape.
+   - Asserts that adding new optional top-level fields would
+     survive a round trip (via a fuzz).
+   - Asserts that adding new optional event-payload sub-fields
+     survives a round trip (per DEC-030).
+   - Asserts a save written with an UNKNOWN event kind round-
+     trips correctly: unknownKinds counter increments, the
+     event survives in the log, and a future runtime adding
+     that kind to KNOWN_EVENT_KINDS resumes materialization.
+3. Fix any hazards surfaced by the audit — most likely:
+   `parseSaveDocument` reconstructs only known top-level
+   fields (lines 1010-1020). Decision: do we preserve
+   unknown top-level fields, or do we ship the explicit
+   reconstruction with an `unknownFields` counter in the
+   `ParseResult`? Recommend the former (preserve), with a
+   docs note that unknown fields are pass-through.
+
+**Success criteria:**
+- Audit doc lands.
+- New test file in `src/` passes on every CI run.
+- `format-stability.md` documents the contract a future PR
+  must hold to AND the assertion location in the test.
+- Save written by today's runtime can be opened by a runtime
+  that strips a future field; save written by a runtime with
+  a future field can be opened by today's runtime (loss-
+  tolerant where appropriate).
+
+**Expert prerequisite:** none. The forward-compat consultant
+brief is queued anyway (WS-A.2) to double-check the audit;
+their report folds into the next run.
+
+**Follow-up runs:** consultant report ingestion + any
+additional fixes they surface.
+
+### WS-B — DM write-up phase
+
+**Owner:** lead, autonomous on the mock campaign; consultant
+brief for the deep UX review.
+
+**Deliverable (this turn):**
+
+1. **Mock campaign 08** at
+   `src/persistence.simulation-08-dm-writeup-phase.test.ts` +
+   doc at
+   `design/save-restore-program/simulations/mock-campaign-08-dm-writeup-phase.md`.
+   Scenarios:
+   - Session ends → DM opens session-digest UI → DM types
+     digest body (or AI generates) → DM submits.
+   - Digest event lands in the event log.
+   - Save → restore → digest STILL present in
+     `state.sessionDigests`.
+   - Next session opens → digest is available as AI context
+     (via the existing AI context plumbing).
+   - Player save round-trips: digest survives the firewall
+     (sessionDigests are player-visible per existing
+     classification; verify).
+   - Co-DM transition: one DM writes digest, other DM sees it
+     after sync.
+
+2. **TTRPG/UX expert brief** scoped to "is the digest UI
+   doing its job?" — copy, IA placement, AI assistance.
+
+**Success criteria:** mock campaign passes; consultant
+report lands with actionable findings.
+
+**Expert prerequisite:** none for the mock campaign;
+expert brief is queued for next-run ingestion.
+
+### WS-C — Chargen polish
+
+**Owner:** lead, autonomous on the round-trip tests; consultant
+brief for the deep UX review.
+
+**Deliverable (this turn):**
+
+1. **Chargen round-trip test suite** at
+   `src/persistence.chargen-roundtrip.test.ts`. Scenarios:
+   - Mid-chargen rename (free-write path): edit the PC's
+     name, save, restore, name persists.
+   - Mid-chargen pronoun change: same.
+   - Mid-chargen backstory edit: same.
+   - Post-acceptance rename via `pc-edit` after the seat
+     is `bound-active`: round-trip + firewall holds.
+   - Q&A path: edit a draft answer mid-flow, save, restore,
+     answer persists (or correctly fails per current
+     design — pin the behavior).
+   - Cloud-folder round-trip variant of each.
+
+2. **TTRPG/UX expert brief** scoped to chargen polish.
+
+**Success criteria:** tests pass; consultant brief queued.
+
+**Expert prerequisite:** none for the tests; expert brief is
+queued.
+
+### WS-D — Full backup E2E
+
+**Owner:** lead, autonomous.
+
+**Deliverable (this turn):**
+
+1. Extend the existing M4 restore-drill (or add a sibling
+   test file) to exercise:
+   - A "substantial" campaign (~500 events covering chargen,
+     play, scene reveals, digests, advancement, retire).
+   - Push via `FsApiCloudPush.pushCampaignToFolder` against
+     the in-memory mock folder.
+   - Pull via `pullCampaignFromFolder`.
+   - Parse via `parseSaveDocument`.
+   - Apply via `loadFromString` (the projection path).
+   - Materialize both DM and player projections.
+   - Assert byte-identical for the DM projection; assert
+     firewall-clean for the player projection.
+
+2. Add an "operational view bypass" path verification — make
+   sure the consent dialog + push + cross-device probe pull
+   chain end-to-end works in the simulation. (Mostly already
+   covered by sim-05, but consolidate.)
+
+**Success criteria:** new test passes; substantial coverage
+of the realistic-size happy path.
+
+**Expert prerequisite:** none.
+
+### WS-E — AI integration audit
+
+**Owner:** consultant primary; lead for small fixes.
+
+**Deliverable (this turn):**
+
+1. **AI integration auditor brief** scoped to:
+   - AI sees current-episode detail + past episodes + future
+     with tact (per the locked AI context requirements).
+   - AI-write API hard-gates (per
+     `project_quire_ai_write_api_design`).
+   - Player-facing AI calls hardcode
+     `includeDmNotes: false` + forbidden-token post-check
+     (per `project_quire_ai_player_facing_scope`).
+   - Caster-state-set + apply-all-with-undo work as documented.
+
+2. (Pending consultant report) — lead picks up any P0/P1
+   surfaced in the next run.
+
+**Success criteria:** brief queued; report ingested next run.
+
+**Expert prerequisite:** none for the brief; report needed
+before any AI surface change.
+
+### WS-F — Visual polish
+
+**Owner:** consultant primary; ZERO autonomous changes this
+turn.
+
+**Deliverable (this turn):**
+
+1. **Visual-design / game-design expert brief** scoped to:
+   - First-impression audit of the landing, no-campaign
+     screen, campaign load, in-session cockpit, chargen
+     flow, AI panel, session-digest, operational view.
+   - Specific lens: modern + cohesive (NOT elaborate
+     graphics). Reference design tier: Linear, Stripe Docs,
+     GitHub today — not Notion, not Figma.
+   - Identify the 5-10 highest-leverage cosmetic changes
+     that would move a new player from "this looks
+     unfinished" to "this looks intentional."
+   - Must read campaign + world docs in
+     `/home/markus/src/ttrpg/underleaf/` so recommendations
+     match THIS game (Quire / Underleaf / The Quiet) not
+     generic RPG-genre tropes.
+
+**Why no autonomous changes:** any visual-chrome change has
+to be re-validated through WS-G (full mock-session walk).
+That overhead is wasted before the expert's pass tells us
+what to change.
+
+**Expert prerequisite:** none for the brief.
+
+**Follow-up runs:** ingest report → triage → ship the top
+3-5 changes → run WS-G re-validation → ship the next
+batch.
+
+### WS-G — UI-iteration safety discipline
+
+**Owner:** lead, autonomous; this is a process doc, not code.
+
+**Deliverable (this turn):**
+
+A new section in this plan (below — §6) defines the
+**UI-change re-validation playbook**:
+
+1. After ANY UI change (even chrome-only), the lead MUST
+   re-run all 7+ mock campaign simulations + format-stability
+   + chargen-roundtrip + the new DM-writeup test.
+2. For ANY launcher / event-handler / hotkey change, the lead
+   ALSO re-runs the discoverability check (see §6.2).
+3. The lead names which mock-campaign-test asserts the UI
+   element being changed; if no test asserts it, the lead
+   ADDS one before shipping the change.
+
+**Success criteria:** §6 lands; discipline visible from this
+doc forward.
+
+**Expert prerequisite:** none.
+
+---
+
+## 4. Sequencing rationale
+
+```
+Run #13 (this run)
+  ├─ WS-A: format lock           ◀── prerequisite to playtest
+  ├─ WS-B: writeup mock campaign  ◀── high human-asked priority
+  ├─ WS-C: chargen tests          ◀── high human-asked priority
+  ├─ WS-D: backup E2E             ◀── confidence in the core loop
+  └─ WS-G: discipline doc         ◀── unblocks future visual work
+
+Consultant briefs queued at end of run #13:
+  - visual-design expert (WS-F)
+  - TTRPG/UX expert (WS-B + WS-C deep review)
+  - forward-compat architect (WS-A double-check)
+  - AI integration auditor (WS-E)
+
+Run #14 (parallel-dispatched consultant return):
+  - Ingest 4 consultant reports
+  - Triage findings into P0/P1/P2
+  - Ship P0/P1 fixes (and any low-effort P2)
+  - Especially: top-leverage visual changes from WS-F
+  - WS-G re-validation after visual changes
+
+Run #15:
+  - Second round of expert iteration (per
+    feedback_multi_expert_iteration_pattern memory:
+    parallel rounds with verbatim cross-critique)
+  - Any AI write API gaps not closed yet
+  - Resume-prompt enrichment (M5 follow-up #429)
+
+Run #16 (contingency / additional polish):
+  - Reserve for one more round of expert iteration
+  - Final sweep + ship-blocker close-out
+  - PLAYTEST GREEN gate
+```
+
+**Why WS-A first:** the human said "after this play test, it
+could become more difficult to change the on-disk format" —
+locking it BEFORE the playtest data is generated is the
+right move; locking it AFTER means conversion tools.
+
+**Why WS-F deferred:** visual changes have the highest
+re-validation overhead per WS-G. The expert's report is what
+unblocks low-overhead targeting of the right changes.
+
+**Why ALL the expert briefs queued this turn:** parallel
+dispatch is the only way the program fits in the available
+runs. Per the **memory: multi-expert iteration pattern**,
+parallel rounds with verbatim cross-critique are the working
+model.
+
+---
+
+## 5. Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Format-stability test surfaces a hard-to-fix asymmetry | medium | medium | Audit explicit; preserve unknown top-level fields as a tight diff |
+| Visual expert wants ELABORATE graphics we don't have budget for | medium | low | Brief explicitly bounds scope: modern + cohesive, no elaborate graphics |
+| AI auditor finds a P0 spoiler-firewall hole in AI write API | medium | high | Hard gate — ship NO playtest until closed; budget for run #15 |
+| Chargen round-trip surfaces a Q&A draft persistence bug | low | medium | Was the OP-040 / OP-043 / DEC-030 pattern; precedent for fix shape |
+| DM write-up mock campaign finds the digest UI is not actually session-end-discoverable | medium | medium | Surface fix in WS-B; expert brief catches anyway |
+| Multi-expert iteration drifts open-ended | medium | high | Hard cap at run #16; if not GREEN by then, escalate to human |
+| Visual-design changes break gameplay tests (per WS-G) | medium | medium | Discipline doc; re-validation playbook; CI gates |
+| Cloud-folder push test reveals a real bug not caught by mocks | low | high | Sim-05 already covers a lot; the consultant brief catches what tests miss |
+
+---
+
+## 6. UI-iteration safety playbook (WS-G deliverable)
+
+When a UI change of any size lands — even if it's "just
+chrome":
+
+### 6.1 The re-validation gate
+
+Before pushing, run:
+
+```
+npm test                 # must stay GREEN
+```
+
+This covers:
+- All persistence simulations (7+ mock campaigns + the new
+  mock campaign 08).
+- All chargen tests (existing + the new round-trip suite).
+- All save-format + firewall + restore-drill tests.
+- All component-level unit tests.
+
+If the change touches any visible chrome (color, layout,
+typography, spacing), ALSO walk the **discoverability
+check** in §6.2.
+
+### 6.2 Discoverability check (chrome changes only)
+
+For each visible chrome change, ask:
+
+1. **Can the DM still find every primary action?** Walk the
+   in-session cockpit + DM operational view + chargen
+   review + session-digest + AI panel. Each launcher chip
+   or hotkey must still be visually identifiable.
+2. **Can a new player find their primary actions?** Walk a
+   fresh-bind chargen + a first chat + a dice roll. Each
+   primary CTA must be visually identifiable.
+3. **Has any test that pins copy/colors/layout regressed?**
+   Brittle-copy tests are flagged in the reviewer playbook;
+   any churn there must be a deliberate update.
+4. **Has any test been updated to pin the NEW chrome?** If
+   the change is "make the launcher chip bigger" and no
+   test currently asserts the chip exists, ADD a test
+   before shipping the change. (This is the "ship the
+   regression assertion with the finding" creed.)
+
+### 6.3 The post-change mock walk
+
+For changes to:
+- Chargen flow → walk mock campaign 04 (chargen spoiler) +
+  mock campaign 08 (DM writeup) + the new chargen-roundtrip
+  suite.
+- AI panel → walk mock campaign 02 (magic discovery —
+  exercises the AI context flow).
+- Session digest → walk mock campaign 08.
+- Cloud backup card → walk mock campaign 01 + 05 + 07.
+- DM operational view → walk mock campaign 01 + 05.
+
+This is faster than a full Playwright e2e because the mock
+campaigns drive the engine layer; the chrome change still
+has to survive the engine + projection assertions.
+
+### 6.4 When a consultant has reviewed
+
+If a consultant explicitly approved a visual proposal, the
+re-validation gate STILL applies. Consultants miss
+regressions; the mock campaigns are the safety net.
+
+---
+
+## 7. Resumption protocol — how a fresh invocation picks up
+
+A future "lead" (or this lead resuming) reads:
+
+1. `design/playtest-readiness/playtest-readiness-plan.md` —
+   this file. The plan.
+2. `design/playtest-readiness/status.md` — created end-of-
+   run with what shipped this turn + what's queued.
+3. `design/playtest-readiness/consultant-briefs/` — the
+   briefs queued for dispatch.
+4. `design/playtest-readiness/review-history/` — the
+   consultant reports that have landed.
+5. `design/save-restore-program/status.md` — the underlying
+   save/restore program status (still load-bearing).
+
+Then:
+
+- If the LATEST consultant report is unread, START with
+  ingestion (read → triage → ship P0/P1).
+- If all consultant reports are ingested, pick the next
+  unblocked workstream by ID order.
+- Always re-run `npm test` BEFORE shipping (baseline
+  gate); always run it AFTER shipping (regression gate).
+- Run `git log --oneline -5` to confirm the last short-SHA
+  matches `status.md`.
+
+### Consultant brief dispatch protocol
+
+The lead can't spawn sub-agents directly. The lead writes
+self-contained briefs into
+`design/playtest-readiness/consultant-briefs/<role>.md`.
+The parent dispatches them in parallel. Reports land in
+`design/playtest-readiness/review-history/<role>-YYYY-MM-DD.md`.
+
+Each brief MUST contain:
+- ROLE (1-2 sentence framing).
+- MANDATORY READS (file paths the consultant walks before
+  answering).
+- SPECIFIC QUESTIONS (numbered list; each question is
+  answerable, not open-ended).
+- OUTPUT FORMAT (the structure the report should follow).
+- OUTPUT FILE PATH (where the report should land).
+- WORD BUDGET (300-500; we want triage, not essays).
+
+---
+
+## 8. Out-of-scope-but-tracked
+
+- **Mobile / Safari / Firefox path.** M6a-OAuth covers this;
+  out of scope for THIS playtest.
+- **GitHub publish-and-fork.** M6c-A; later.
+- **Passphrase-encrypted refresh_token.** M6b; later.
+- **Final TTRPG-craft copy.** M8; later.
+- **Elaborate graphics** (custom illustrations, animated
+  realization ceremonies, etc.). Out of scope per the
+  human's explicit "modern + cohesive, no elaborate."
+- **Player-facing AI surface beyond what already exists.**
+  The locked AI-player-facing-scope memory governs.
+- **OAuth Drive (M6a-OAuth).** Gated on maintainer task.
+
+---
+
+## 9. Pending product calls (escalation list)
+
+None this turn. Past pending calls (M6a-OAuth maintainer
+task) remain on the save/restore queue.
+
+If WS-F (visual) or WS-E (AI) surfaces a product question
+the consultant report flags as "needs human call," it'll
+land in this section in the next run.
+
+---
+
+## 10. Status footer
+
+Updated end-of-run in `design/playtest-readiness/status.md`.
+This file (`playtest-readiness-plan.md`) is append-only at
+the section level; major plan-changes land as new
+appendices with the prior section preserved.

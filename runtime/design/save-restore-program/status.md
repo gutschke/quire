@@ -1,16 +1,25 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-30 run #12 (M6a-FS-5 SHIPPED; OP-043 P1
-fixed; OP-041 P2 + OP-044 P3 also shipped; mock campaign 07
-SHIPPED; PER_KIND_SCRUBBERS × materializers pattern walk =
-no sibling bugs; pre-release sweep walked — **M6a-FS PLAYABLE
-RELEASE STATUS: GREEN**)
-**Active milestone:** M6a-FS-5 SHIPPED / playable-release-plan.md
-milestone 5 complete.  **The human can flip the maintainer switch
-and deploy to actual players.**  Next: M6a-OAuth resumption
-(separate maintainer gate per `maintainer-ops.md`).
-**Latest deploy hash:** 910603e (run #12 ship — M6a-FS-5)
+**Last updated:** 2026-05-30 run #13 (program WIDENED to
+Playtest-Readiness; see `../playtest-readiness/status.md` for
+the master plan + 4 consultant briefs queued + 4 new test
+files; this program is folded as workstreams WS-A/B/C/D within
+that larger effort).
+**Active milestone:** M6a-FS playable release GREEN (unchanged
+from run #12); playtest-readiness program is the active
+container per `../playtest-readiness/playtest-readiness-plan.md`.
+**Latest deploy hash:** (set at end of run #13)
 **Branch:** main
+
+## Run #13 quick links
+
+- Playtest-readiness master plan: `../playtest-readiness/playtest-readiness-plan.md`
+- Format-stability contract: `../playtest-readiness/format-stability.md`
+- Consultant briefs: `../playtest-readiness/consultant-briefs/`
+- New mock campaign 08: `simulations/mock-campaign-08-dm-writeup-phase.md`
+- New OP-045 (chargen rename gap): `open-problems.md`
+
+## Prior milestone — M6a-FS Playable-Release Status: GREEN
 
 ## M6a-FS Playable-Release Status: **GREEN**
 
