@@ -172,7 +172,12 @@ import {
 // dialog is the shared consent ceremony component.
 import './ui/regions/dm-operational-view';
 import './ui/regions/cloud-push-consent-dialog';
+import './ui/regions/start-fresh-confirm-dialog';
 import type { CloudPushConsentDialog } from './ui/regions/cloud-push-consent-dialog';
+import type {
+  StartFreshConfirmDialog,
+  StartFreshConfirmSpec
+} from './ui/regions/start-fresh-confirm-dialog';
 import type { BackupsCard } from './ui/regions/backups-card';
 import {
   browserDirectoryPicker,
@@ -206,6 +211,7 @@ import {
   type CrossDeviceProbeMatch
 } from './controllers/cross-device-probe';
 import { SAVE_STORAGE_PREFIX } from './controllers/autosave-controller';
+import { clearChargenState } from './chargen-persistence';
 import { decideRoute } from './controllers/route-policy';
 import {
   KNOWN_EVENT_KINDS,
@@ -1859,6 +1865,14 @@ export class QuireApp extends LitElement {
         <cloud-push-consent-dialog
           data-testid="cloud-push-consent-dialog-root"
         ></cloud-push-consent-dialog>
+        <!-- Run #17 (Start fresh P0 fix): two-step confirmation
+             modal for "Start fresh."  Host-owned; mounted at root
+             so the modal backdrop spans the viewport.  Gated by
+             the same DM-only conditional as the prompts that
+             invoke it (resume-prompt + cross-device probe). -->
+        <start-fresh-confirm-dialog
+          data-testid="start-fresh-confirm-dialog-root"
+        ></start-fresh-confirm-dialog>
       </quire-shell>
     `;
   }
@@ -6235,7 +6249,7 @@ export class QuireApp extends LitElement {
           (${ago}, ${Math.max(1, Math.round(match.sizeBytes / 1024))}KB).
         </p>
         <div class="resume-prompt-actions">
-          <button @click=${() => this.dismissCrossDeviceProbe()}
+          <button @click=${() => { void this.dismissCrossDeviceProbe(); }}
                   data-testid="cross-device-probe-start-fresh">
             Start fresh
           </button>
@@ -6270,7 +6284,8 @@ export class QuireApp extends LitElement {
           event${doc.events.length === 1 ? '' : 's'} saved ${ago}.
         </p>
         <div class="resume-prompt-actions">
-          <button @click=${() => this.dismissResumePrompt()}>
+          <button @click=${() => { void this.dismissResumePrompt(); }}
+                  data-testid="resume-prompt-start-fresh">
             Start fresh
           </button>
           <button
@@ -6288,7 +6303,7 @@ export class QuireApp extends LitElement {
                 // hosted before clicking Resume).  Old direct-
                 // loadFromString path works in this case.
                 const json = stringifySave(doc);
-                this.dismissResumePrompt();
+                this.resumePromptDoc = null;
                 this.loadFromString(json);
               } else {
                 // Normal path: trigger host, which replays the
@@ -7758,8 +7773,22 @@ export class QuireApp extends LitElement {
     }
   }
 
-  /** DM clicked "Start fresh" — dismiss without loading. */
-  dismissCrossDeviceProbe(): void {
+  /**
+   * Run #17 (P0 fix): DM clicked "Start fresh" on the cross-device
+   * probe prompt.  Routes through the confirm gate so a misclick
+   * doesn't dismiss the prompt — the cloud file is locally safe
+   * (untouched per DEC-015) but the user can't tell this affordance
+   * apart from the destructive resume-prompt "Start fresh" by reading
+   * the label alone, so defense-in-depth: confirm both.
+   *
+   * After confirmation: simply drop the staged match + close the
+   * probe controller's guard.  The cloud file is NOT mutated.
+   */
+  async dismissCrossDeviceProbe(): Promise<void> {
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return;
+    const ok = await this.confirmStartFresh(campaign, 'safe');
+    if (!ok) return;
     this.crossDeviceProbeMatch = null;
     try {
       this.getCrossDeviceProbe().dismiss();
@@ -7768,8 +7797,170 @@ export class QuireApp extends LitElement {
     }
   }
 
-  dismissResumePrompt(): void {
+  /**
+   * Run #17 (P0 fix): DM clicked "Start fresh" on the resume prompt.
+   * This is the DESTRUCTIVE path — clears the local autosave + all
+   * chargen drafts + in-memory session state.  Confirmation modal
+   * gates the destructive action.
+   *
+   * Carriers cleared (per `design/playtest-readiness/start-fresh-
+   * diagnosis-2026-05-30.md`):
+   *   - C1: localStorage `quire.save.<owner>-<repo>` autosave
+   *   - C2: in-memory `resumePromptDoc`, `loadedExtraFields`,
+   *         `pcCharacterCache`, `playerLastSeenDigestTsInMemory`
+   *   - C3: live WebRTC peer connections (via announceLeaveAndExit
+   *         if a session is active; this fires peer-leave so OTHER
+   *         peers update their roster too)
+   *   - C4: cross-campaign extraFields (the `loadedExtraFields` ref)
+   *   - C5: chargen drafts (`quire.chargen.<slug>:slot1..9`)
+   *   - C6: cross-device probe guard (in-memory only; reset for
+   *         re-probe on next landing)
+   */
+  async dismissResumePrompt(): Promise<void> {
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) {
+      // Defensive: without a campaign we have no name + no
+      // localStorage key.  Drop the prompt silently — there's
+      // nothing to confirm against.
+      this.resumePromptDoc = null;
+      return;
+    }
+    const ok = await this.confirmStartFresh(campaign, 'destructive');
+    if (!ok) return;
+    this.startFreshForCampaign(campaign);
+  }
+
+  /**
+   * Run #17 (P0 fix): open the <start-fresh-confirm-dialog> with
+   * the right copy variant for this surface.  Returns true when the
+   * DM confirmed the destructive action; false on Cancel / Escape /
+   * backdrop / dialog-not-mounted.
+   *
+   * The dialog is host-owned (mounted at the shell root); this
+   * helper is the single call site for opening it so the slug +
+   * event-count derivation lives in one place.
+   */
+  private async confirmStartFresh(
+    campaign: LoadedCampaign,
+    variant: 'destructive' | 'safe'
+  ): Promise<boolean> {
+    // Query via renderRoot — the dialog is mounted inside the
+    // QuireApp shadow root, so light-DOM querySelector wouldn't
+    // find it.  (The cloud-push-consent-dialog query has the same
+    // shape via this.querySelector but works in production because
+    // the dialog renders to LIGHT dom via `createRenderRoot()`
+    // returning `this`; even so renderRoot.querySelector is the
+    // more reliable accessor across both render-root modes.)
+    const dlg = (this.renderRoot.querySelector(
+      'start-fresh-confirm-dialog'
+    ) ?? this.querySelector(
+      'start-fresh-confirm-dialog'
+    )) as StartFreshConfirmDialog | null;
+    if (!dlg) {
+      // Defensive: if the dialog hasn't mounted, REFUSE rather than
+      // proceed.  The user can retry.  This is the right failure
+      // mode for a destructive action.
+      return false;
+    }
+    const src = campaign.base.source;
+    const slug =
+      src.ref === 'main'
+        ? `${src.owner}/${src.repo}`
+        : `${src.owner}/${src.repo}@${src.ref}`;
+    const spec: StartFreshConfirmSpec = {
+      campaignName: campaign.base.manifest.name,
+      campaignSlug: slug,
+      eventCount: this.resumePromptDoc?.events?.length,
+      variant
+    };
+    return dlg.open(spec);
+  }
+
+  /**
+   * Run #17 (P0 fix): the actual "Start fresh" orchestration.
+   * Single source of truth so the resume-prompt path (and any
+   * future affordance) can call this without duplicating the
+   * clear-everything logic.
+   *
+   * Order matters:
+   *   1. Tear down live session FIRST so peer-leave fires before
+   *      we obliterate the autosave.  `announceLeaveAndExit` calls
+   *      `performNow()` which writes the leave-event to autosave —
+   *      we then clear that autosave below, but the wire message
+   *      already went out to other peers.
+   *   2. Clear localStorage carriers.
+   *   3. Reset in-memory state that's NOT covered by leaveSession.
+   *   4. Reset the cross-device probe guard so the next landing
+   *      can re-probe (intentional — if a folder is connected with
+   *      a backup, the DM should be re-offered "Load it" — Start
+   *      fresh doesn't touch the cloud).
+   */
+  private startFreshForCampaign(campaign: LoadedCampaign): void {
+    const src = campaign.base.source;
+
+    // 1. Tear down live session.  announceLeaveAndExit fires a
+    //    peer-leave on the wire so the other DMs / players see this
+    //    peer drop off their roster, then flushes the autosave +
+    //    calls leaveSession() which closes the WebRTC transport.
+    if (this.sessionView?.status === 'active') {
+      this.announceLeaveAndExit();
+    } else if (this.session) {
+      // Session exists but not active (connecting / error state).
+      // Still tear down so we don't carry a half-built peer.
+      this.leaveSession();
+    } else {
+      // No session at all — the resume-prompt path is the common
+      // case here.  Even so, leaveSession() does cheap in-memory
+      // resets (loadedExtraFields, pcCharacterCache, etc.) which we
+      // want.  Calling it with no session is a no-op for the
+      // session controller; the in-memory clears still run.
+      this.leaveSession();
+    }
+
+    // 2. Clear the localStorage autosave key.  This is the
+    //    user-reported bug carrier — the prior session's
+    //    pc-create event + the prior coord's peer-join were
+    //    surviving here.
+    try {
+      const key = `${SAVE_STORAGE_PREFIX}${src.owner}-${src.repo}`;
+      window.localStorage?.removeItem(key);
+    } catch {
+      // Sandbox / SSR — Start fresh fails gracefully.  The user
+      // can retry from a real localStorage context.
+    }
+
+    // 3. Clear chargen drafts for all slots on this campaign.
+    //    On a shared dev machine the drafts can re-seed a "fresh"
+    //    session with the prior PC's half-built chargen state.
+    //    Surfaced in the confirm modal copy so the DM isn't
+    //    surprised.
+    const draftSlug = `${src.owner}/${src.repo}`;
+    for (let slot = 1; slot <= 9; slot++) {
+      try {
+        clearChargenState(draftSlug, slot);
+      } catch {
+        // clearChargenState already swallows quota / SSR; defense.
+      }
+    }
+
+    // 4. Drop staged prompts so they don't re-render against
+    //    nulled state.
     this.resumePromptDoc = null;
+    this.crossDeviceProbeMatch = null;
+
+    // 5. Reset the cross-device probe guard for THIS landing.
+    //    Per DEC-015 + §A11, Start fresh does NOT touch the cloud
+    //    file — the next landing should re-probe + the DM gets
+    //    "Load it" again if they change their mind.
+    if (this._crossDeviceProbe) {
+      this._crossDeviceProbe.reset();
+    }
+
+    // 6. Defense-in-depth: explicitly clear loadedExtraFields.
+    //    leaveSession() already does this, but if a future
+    //    refactor splits the leaveSession cleanup, the Start fresh
+    //    contract holds regardless.
+    this.loadedExtraFields = undefined;
   }
 
   submitChat(text: string): boolean {

@@ -116,4 +116,67 @@ describe('<quire-modal>', () => {
     await el.updateComplete;
     expect(dialog).not.toBeNull();
   });
+
+  // Run #17 P0 regression: the "white frame" bug.  The previous
+  // shadow-DOM-less <slot> implementation rendered <dialog><slot/>
+  // </dialog> as a sibling of the host's children, so showModal()
+  // promoted an EMPTY <dialog> to the top layer and the form
+  // content rendered as a sibling that was hidden behind the
+  // backdrop.  Regression assertion: the host's children MUST be
+  // descendants of the inner <dialog>, not its siblings.
+  it("Run #17 regression: host children land INSIDE the <dialog>, not as siblings", async () => {
+    const el = mount();
+    el.innerHTML =
+      '<div class="payload"><button class="primary-action">Confirm</button></div>';
+    await el.updateComplete;
+    const dialog = el.querySelector('dialog.quire-modal-dialog');
+    expect(dialog).not.toBeNull();
+    const payload = el.querySelector('.payload');
+    expect(payload).not.toBeNull();
+    // Critical: payload is a descendant of the dialog (so showModal
+    // promotes it into the top layer).  In the previous broken
+    // design, payload was a SIBLING of the dialog.
+    expect(dialog!.contains(payload!)).toBe(true);
+    const btn = el.querySelector('.primary-action');
+    expect(btn).not.toBeNull();
+    expect(dialog!.contains(btn!)).toBe(true);
+  });
+
+  // Run #17 P0 regression: the host element's className is mirrored
+  // to the inner dialog so per-region CSS targeting reaches the
+  // dialog frame (which is what enters the top layer).
+  it('Run #17 regression: host class is mirrored onto the inner <dialog>', async () => {
+    const el = mount();
+    el.className = 'my-retire-modal';
+    document.body.appendChild(el);
+    el.innerHTML = '<p>hi</p>';
+    // Reconnect to pick up the className (mount happened before set).
+    el.remove();
+    document.body.appendChild(el);
+    await el.updateComplete;
+    const dialog = el.querySelector<HTMLDialogElement>(
+      'dialog.quire-modal-dialog'
+    );
+    expect(dialog).not.toBeNull();
+    expect(dialog!.classList.contains('my-retire-modal')).toBe(true);
+  });
+
+  // Run #17 P0 regression: dynamically-added children (e.g. Lit
+  // re-rendering the parent template) get re-parented into the
+  // dialog instead of remaining as stray host children.
+  it('Run #17 regression: dynamically-added children land inside the dialog', async () => {
+    const el = mount();
+    el.innerHTML = '<p class="first">first</p>';
+    await el.updateComplete;
+    // Simulate a later mutation (parent re-rendering a new node).
+    const newNode = document.createElement('p');
+    newNode.className = 'second';
+    newNode.textContent = 'second';
+    el.appendChild(newNode);
+    // MutationObserver fires async; flush microtasks.
+    await new Promise((r) => setTimeout(r, 0));
+    const dialog = el.querySelector('dialog.quire-modal-dialog');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.contains(el.querySelector('.second'))).toBe(true);
+  });
 });

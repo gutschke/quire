@@ -15,6 +15,191 @@ references the prior. Format:
 
 ---
 
+## DEC-038 — `<quire-modal>` wraps the host's children in a real `<dialog>` (2026-05-30, run #17 emergency)
+
+**Decision:** `<quire-modal>` no longer relies on `<slot>`
+distribution.  Instead, on connect (and on every subsequent
+mutation), it moves all of the host element's direct children
+into a single `<dialog class="quire-modal-dialog">` that it
+appends as the sole top-level child.  The host's `class`
+attribute is mirrored onto the inner `<dialog>` so per-region
+CSS targeting (e.g. `.chargen-dm-review-retire-modal { padding,
+border, background, … }`) styles the dialog frame itself —
+which is what enters the top layer when `showModal()` is
+called.  A MutationObserver catches dynamically-added children
+(typical of Lit re-renders) and re-parents them too.
+
+**Why:** the product owner hit a P0 during a playtest dry-run:
+"Trying to 'retire' the existing PC brings up a white frame in
+the middle of the screen, but I can't do anything to actually
+confirm."  Root cause: `<quire-modal>` rendered
+`<dialog><slot></slot></dialog>` into the host's LIGHT DOM, but
+`<slot>` only distributes inside a shadow root.  The host's
+children rendered as SIBLINGS of the empty `<dialog>`, so
+`showModal()` promoted the empty dialog to the top layer while
+the form content stayed in the normal flow — hidden behind the
+backdrop.  All four chargen-dm-review modals (review / edit /
+retire / revise) shared the bug; the user just hadn't tried
+the others in a flow yet.
+
+The slot-distribution failure was invisible to happy-dom
+tests because happy-dom does not implement showModal()'s
+top-layer semantics — every node was reachable via querySelector
+regardless of whether it would actually surface in production.
+
+**Alternatives:**
+- Shadow-DOM the `<quire-modal>`.  Rejected: per-region CSS
+  (`.chargen-dm-review-retire-modal`) cannot reach into a shadow
+  root without `::part` / CSS variables; every caller would need
+  to be migrated.  Significantly larger diff during an emergency
+  fix.
+- Render the form content as a property (`.content=${html\`…\`}`)
+  instead of children.  Rejected: every caller's site needs
+  rewriting; same blast radius as the shadow-DOM approach.
+- Use a portal pattern (e.g. moving content to body on open).
+  Rejected: Lit reconciliation gets confused when its template
+  markers move outside the parent component's render root.
+- Don't extract the modal primitive; let each caller manage its
+  own `<dialog>`.  Rejected: regressing the Phase 3a extraction
+  defeats the design's point and re-introduces the four-way
+  duplication.
+
+The chosen approach keeps the existing caller surface identical
+(`<quire-modal class="…"><div>…</div></quire-modal>`) and only
+changes the internal mechanic.  Zero caller-site changes
+required.
+
+**Tradeoffs:**
+- MutationObserver fires on every child-list mutation.  The
+  observer body is cheap (Array.from + conditional moves), and
+  Lit's reconciliation already minimizes child-list mutations,
+  so this is well under any performance threshold.
+- The `<dialog>` is created lazily and persists for the host's
+  lifetime — fine because the modal is a singleton per host
+  element.
+
+**Revisit if:** we adopt a different modal primitive (e.g. an
+HTML Popover-API-based one) or migrate to shadow DOM with
+themeable CSS variables.  Both would naturally supersede this
+decision; until then, the dialog-wrap stays.
+
+---
+
+## DEC-037 — Start fresh routes through a two-step confirm gate (2026-05-30, run #17)
+
+**Decision:** Every "Start fresh" affordance — the
+resume-prompt button AND the cross-device probe button — opens
+the host-owned `<start-fresh-confirm-dialog>` before doing any
+destructive work.  The dialog is mandatory even for the
+locally-safe variant (the cross-device probe) because the
+button label is identical to the destructive variant and the
+user can't tell them apart by reading the label alone.
+
+The dialog spec carries a `variant` field (`'destructive'` /
+`'safe'`) so the body copy correctly names what will be
+discarded (or, in the safe variant, that nothing will be
+discarded).  The destructive variant also surfaces the event
+count of the staged save so the DM can gauge "how much is at
+risk."
+
+Default focus is the Cancel button — a misclick / stray Enter
+press resolves as Cancel, NOT as Confirm.
+
+**Why:** the product owner ran a dry-run on 2026-05-30 and
+discovered the resume-prompt "Start fresh" button fires a
+destructive (silently broken) clear with no confirmation.  A
+single misclick discards months of progress.  The v3
+consultants signed off PLAYTEST GREEN without walking this
+surface — the unit test that pinned the dismiss handler asserted
+exactly the line of code that was broken, so it passed.
+
+**Alternatives:**
+- Confirm only the destructive variant.  Rejected: defense-in-
+  depth requires confirming both because the user can't tell
+  them apart, and the confirm modal is cheap.
+- Use `window.confirm()` instead of a custom dialog.  Rejected:
+  inconsistent chrome with the rest of the app + no way to
+  surface the event count + accessibility concerns.
+- Make Start fresh a hotkey-only affordance with no button.
+  Rejected: the button is the discoverable surface; hiding it
+  drives users to manually delete localStorage, which is worse.
+
+**Tradeoffs:** one more click for a DM who genuinely does want
+to start fresh.  Mitigation: the dialog auto-focuses Cancel so
+the DM keyboard path is "click → Tab → Enter" — same number of
+keypresses as a single confirmed click.
+
+**Revisit if:** a DM workflow accumulates many "Start fresh"
+clicks per session (the playtest will tell us).  Today's bar:
+DM Start fresh is a campaign-lifetime event, NOT a session-
+lifetime one — adding a click is fine.
+
+---
+
+## DEC-036 — Start fresh clears 6 carriers as an orchestrated unit (2026-05-30, run #17)
+
+**Decision:** `startFreshForCampaign(campaign)` is the single
+orchestrator that fires after the confirm modal resolves true.
+It clears six carriers in a deliberate order:
+
+1. **Live session teardown via `announceLeaveAndExit()`** when
+   a session is active.  This fires `peer-leave` on the wire
+   FIRST so other peers update their roster, then flushes the
+   autosave + tears down the local session.  When no session is
+   active, calls `leaveSession()` directly for the in-memory
+   resets it performs.
+2. **localStorage autosave key** (`quire.save.<owner>-<repo>`)
+   removed.  This is the user's exact bug carrier: the prior
+   session's events (including `pc-create` for the leftover
+   PC + `peer-join` for the stale DM peer) lived here.
+3. **Chargen drafts** (`quire.chargen.<slug>:slot1..9`) cleared
+   for every possible slot.  On a shared dev machine the drafts
+   can repopulate a "fresh" session; on real player devices a
+   real player should never see a DM's Start fresh, so this is
+   safe.  Surfaced in the confirm modal copy.
+4. **Staged prompts** (`resumePromptDoc` + `crossDeviceProbeMatch`)
+   cleared so the surfaces don't re-render against nulled
+   downstream state.
+5. **Cross-device probe guard** reset so the next landing
+   re-probes — if a folder is connected with a cloud backup,
+   the DM should be re-offered "Load it."  Start fresh
+   deliberately does NOT mutate cloud copies (DEC-015).
+6. **`loadedExtraFields`** explicitly cleared.  `leaveSession`
+   already does this, but if a future refactor splits the
+   leaveSession cleanup, the Start fresh contract holds
+   regardless.
+
+**Why:** the carrier walk found six distinct places state lives
+across "Start fresh."  Without a single orchestrator, each
+button would have to duplicate the list and any future button
+would forget at least one.  DRY this up at the right altitude
+so the contract is checkable by inspection.
+
+**Alternatives:**
+- Inline the clears in each button.  Rejected: drift waiting
+  to happen.
+- Hide the clears in `leaveSession`.  Rejected: leaveSession is
+  the CLEAN-shutdown path that preserves autosave for the next
+  resume.  Start fresh is the DESTRUCTIVE path.  Conflating
+  them breaks the resume-after-leave contract.
+- Skip the cross-device probe reset.  Rejected: the DM should
+  be re-offered "Load it" on a deliberate re-landing.
+
+**Tradeoffs:** chargen draft clearing on a shared dev machine
+can wipe a DM-helper's in-progress draft.  Mitigation: surface
+this in the confirm modal copy.  In production with real
+players on real devices, the players' chargen drafts live on
+DIFFERENT browsers — Start fresh on the DM's device doesn't
+touch them.
+
+**Revisit if:** a DM reports that Start fresh wiped a chargen
+draft they wanted to keep.  Then either narrow the clear
+(per-campaign-NOT-per-slot? per-session?) or make it opt-out
+in the confirm modal.  For the playtest, the wider clear is
+the safer default.
+
+---
+
 ## DEC-035 — Player-digest in-memory seen-marker resets on campaign navigation + leaveSession (2026-05-30, run #16)
 
 **Decision:** `playerLastSeenDigestTsInMemory` (the

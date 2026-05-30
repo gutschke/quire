@@ -781,5 +781,109 @@ backlog item with no live hazard.  The playtest-handoff doc
 captures everything the human + DM need before running
 session 1.
 
-The reserved run #17 contingency is **unspent**.
+The reserved run #17 contingency was **spent on a P0 the v3
+consultants missed** (see Appendix D).
+
+---
+
+## Appendix D — Run #17 (P0 emergency fixes) (2026-05-30)
+
+The product owner ran a real playtest dry-run on 2026-05-30
+and surfaced **TWO** P0 playtest blockers, both fixed before
+any real session.
+
+### P0-1: Start fresh
+
+- The resume-prompt "Start fresh" button fires a destructive
+  state-clear with NO confirmation.
+- The clear was a single line (`this.resumePromptDoc = null;`)
+  that didn't actually clear anything — the autosave / in-
+  memory state / WebRTC peers / chargen drafts all survived.
+
+Both v3 consultants (adversarial + ttrpg-ux) signed off
+PLAYTEST GREEN without walking this surface.  This is the
+SECOND instance of the trust-but-verify pattern (LL-2;
+LL-1 was UX-3 in run #14).
+
+### P0-2: Retire dialog "white frame"
+
+- The product owner clicked Retire on a bound PC.  Production
+  surfaced "a white frame in the middle of the screen, but I
+  can't do anything to actually confirm."
+- Root cause: `<quire-modal>` rendered `<dialog><slot></slot>
+  </dialog>` into LIGHT DOM, but `<slot>` only distributes
+  inside a shadow root.  The form (textarea + buttons) rendered
+  as SIBLINGS of the empty `<dialog>`.  `showModal()` promoted
+  only the dialog into the top layer; the form stayed in the
+  normal flow, hidden behind the backdrop.
+- All four chargen-dm-review modals (review / edit / retire /
+  revise) shared the bug; the user just happened to hit retire
+  first in this flow.
+- The bug slipped past every prior consultant pass because
+  happy-dom does not implement `showModal()`'s top-layer
+  semantics — every node was reachable via querySelector
+  regardless of whether it would surface in production.  This
+  is LL-3 in `lessons-learned.md`.
+
+### What shipped
+
+P0-1 (Start fresh):
+- `src/ui/regions/start-fresh-confirm-dialog.ts` (NEW Lit
+  region; 12 unit tests).
+- `startFreshForCampaign(campaign)` orchestrator in
+  `quire-app.ts` clearing all 6 carriers per DEC-036.
+- `dismissResumePrompt()` + `dismissCrossDeviceProbe()` rewired
+  through the confirm gate per DEC-037.
+- Mock Campaign 11 (`persistence.simulation-11-start-fresh.test.ts`)
+  — 8 production-path scenarios.
+- DEC-036 (orchestrator) + DEC-037 (confirm gate) +
+  OP-047 (resolved).
+
+P0-2 (Retire dialog):
+- `src/ui/components/quire-modal.ts` rewritten — drops the
+  light-DOM `<slot>` pattern, wraps the host's children in a
+  real `<dialog>` (mirrored host class for CSS pass-through).
+  Zero caller-site changes required.
+- `src/ui/components/quire-modal.test.ts` — 3 new regression
+  tests pinning the dialog-contains-content invariant.
+- `src/ui/regions/chargen-dm-review.test.ts` — 2 new regression
+  tests pinning the retire dialog end-to-end (controls inside
+  dialog + commit click fires onRetirePc).
+- DEC-038 (dialog-wrap pattern) added.
+
+Shared:
+- `lessons-learned.md` updated — LL-3 added for the
+  `<slot>`-in-light-DOM pattern.
+
+Tests: 3069 + 2 skipped = 3071 (up from 3045 baseline; +24
+net).  Typecheck clean.
+
+### Re-evaluated gate
+
+**PLAYTEST GREEN engineering-side.**  Both engineering
+contracts are now correct + end-to-end pinned by tests.
+Adversarial + format-stability passes don't need re-running
+(both fixes are isolated to Lit regions + handler routing; no
+save-format or firewall surfaces touched).
+
+If the visual / UX of the new confirm-modal copy needs a
+touch-up the human can flag it on first encounter — the modal
+copy is intentionally direct rather than gentle, on the
+hypothesis that a destructive action benefits from explicit
+honesty.
+
+The reserved contingency is now spent.  If a third P0 surfaces
+during the real playtest, escalate to the human.
+
+### Process change
+
+The discipline going forward, per LL-2 + LL-3: every state-
+clearing affordance AND every container-primitive (modal,
+popover, portal) ships with a mock-campaign-shaped end-to-end
+test that drives the production click handler + asserts
+user-visible state (including PLACEMENT — not just existence)
+NOT internal state fields.  Consultant briefs explicitly list
+"walk every dismiss/discard/clear button end-to-end" AND
+"verify content placement inside container primitives" as
+scoped questions.
 

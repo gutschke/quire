@@ -1875,6 +1875,77 @@ describe('<chargen-dm-review> — P-R6 retire flow', () => {
     expect(calls).toEqual([]);
     expect(el.querySelector('quire-modal.chargen-dm-review-retire-modal')).toBeNull();
   });
+
+  // Run #17 P0 regression: the user-reported "white frame" bug.
+  // After opening the retire dialog, the form (textarea + commit
+  // button) MUST render INSIDE the <dialog> element so showModal()
+  // promotes them into the top layer.  The previous slot-based
+  // <quire-modal> rendered the form as a SIBLING of the dialog —
+  // hidden behind the backdrop in production.  Pinning the
+  // dialog-contains-form invariant prevents that regression.
+  it("Run #17 regression: retire dialog renders its primary controls INSIDE the <dialog>", async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    el.onRetirePc = () => true;
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    const dialog = el.querySelector<HTMLDialogElement>(
+      'quire-modal.chargen-dm-review-retire-modal dialog.quire-modal-dialog'
+    );
+    expect(dialog).not.toBeNull();
+    // All primary controls land as descendants of the <dialog>.
+    const textarea = dialog!.querySelector('.chargen-dm-review-retire-reason-text');
+    const cancel = dialog!.querySelector('.chargen-dm-review-retire-cancel');
+    const commit = dialog!.querySelector('.chargen-dm-review-retire-commit');
+    expect(textarea).not.toBeNull();
+    expect(cancel).not.toBeNull();
+    expect(commit).not.toBeNull();
+    // Defense-in-depth: the host class is mirrored onto the dialog
+    // so per-region CSS (.chargen-dm-review-retire-modal { padding,
+    // border, … }) actually styles the dialog frame.
+    expect(dialog!.classList.contains('chargen-dm-review-retire-modal')).toBe(true);
+  });
+
+  // Run #17 P0 regression: end-to-end click flow.  Typing the
+  // required in-fiction reason and clicking commit fires the
+  // onRetirePc callback with the expected payload.  Together with
+  // the "controls inside dialog" assertion above, this confirms
+  // the dialog is clickable in production.
+  it("Run #17 regression: commit button inside the dialog actually fires onRetirePc", async () => {
+    const el = mount();
+    el.pcSlots = { 1: bound('mei-pc') };
+    const calls: Array<Record<string, unknown>> = [];
+    el.onRetirePc = (payload) => {
+      calls.push(payload);
+      return true;
+    };
+    await el.updateComplete;
+    el.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-seat-retire'
+    )!.click();
+    await el.updateComplete;
+    const dialog = el.querySelector<HTMLDialogElement>(
+      'quire-modal.chargen-dm-review-retire-modal dialog.quire-modal-dialog'
+    );
+    expect(dialog).not.toBeNull();
+    const textarea = dialog!.querySelector<HTMLTextAreaElement>(
+      '.chargen-dm-review-retire-reason-text'
+    )!;
+    textarea.value = 'walked away from the cell';
+    textarea.dispatchEvent(new Event('input'));
+    await el.updateComplete;
+    const commit = dialog!.querySelector<HTMLButtonElement>(
+      '.chargen-dm-review-retire-commit'
+    )!;
+    expect(commit.disabled).toBe(false);
+    commit.click();
+    expect(calls.length).toBe(1);
+    expect(calls[0].pcId).toBe('mei-pc');
+    expect(calls[0].inFictionReason).toBe('walked away from the cell');
+  });
 });
 
 describe('<chargen-dm-review> — Wave 2 stat swap-pair editor', () => {

@@ -6,6 +6,96 @@ severity, evidence, hypothesis, owner, status.
 Newest at top. When fixed, link to the commit and move to a separate
 "resolved" section at the bottom.
 
+## OP-048 — `<quire-modal>` slot-in-light-DOM rendered an empty dialog ("white frame" bug) [RESOLVED 2026-05-30 run #17] [P0]
+
+**Severity:** P0 — same playtest dry-run as OP-047.  Product
+owner verbatim: "Trying to 'retire' the existing PC brings up a
+white frame in the middle of the screen, but I can't do
+anything to actually confirm."
+
+**Hypothesis confirmed:** `<quire-modal>` used
+`createRenderRoot(): this` (light DOM, so callers' CSS could
+target it) AND rendered `<dialog><slot></slot></dialog>`.  But
+`<slot>` only distributes inside a shadow root; in light DOM
+it's an inert element.  The host's children rendered as
+SIBLINGS of the empty `<dialog>`, not inside it.  When
+`showModal()` ran, only the empty dialog entered the top layer;
+the form (textarea + Cancel + Retire commit) stayed in the
+normal flow, hidden behind the dialog backdrop.
+
+**Carrier shared by:** all four chargen-dm-review modals
+(review / edit / retire / revise) — the user hit retire first.
+The hotkey overlay (`.quire-help-overlay`) likely had the same
+shape; not user-confirmed but the fix is identical.
+
+**Why it slipped:** happy-dom does not implement `showModal()`'s
+top-layer semantics — every node was reachable via
+`querySelector` regardless of whether it would surface in
+production.  Tests asserted "the textarea exists somewhere
+inside `<quire-modal>`" — it did, just as a sibling.
+
+**Resolution:** DEC-038.  Rewrote `<quire-modal>` to
+programmatically wrap the host's existing (and dynamically-
+added, via MutationObserver) children inside a real `<dialog>`
+with the host's class mirrored on the dialog.  Zero caller-site
+changes.
+
+**Coverage:** 3 new regression tests in
+`src/ui/components/quire-modal.test.ts` (host children INSIDE
+dialog, class mirrored, dynamic children re-parent).  2 new
+regression tests in `src/ui/regions/chargen-dm-review.test.ts`
+(retire dialog controls inside the dialog + commit click fires
+onRetirePc end-to-end).
+
+**Lesson:** LL-3 in `design/playtest-readiness/lessons-learned.md`.
+For every container primitive (modal, popover, portal, shadow-
+root wrapper), test the content's PLACEMENT, not just its
+existence.
+
+---
+
+## OP-047 — Start fresh button had no confirm + didn't actually clear [RESOLVED 2026-05-30 run #17] [P0]
+
+**Severity:** P0 — the product owner ran a real playtest dry-run
+on 2026-05-30 and hit this bug.  Two failures in one:
+
+1. The resume-prompt + cross-device probe "Start fresh" buttons
+   fired destructive actions on a single click with NO
+   confirmation modal.
+2. The resume-prompt "Start fresh" was a one-line handler
+   (`this.resumePromptDoc = null;`) that didn't clear the
+   underlying localStorage autosave, the in-memory session
+   state, the WebRTC peer roster (via peer-leave to other
+   peers), the chargen drafts, or `loadedExtraFields`.
+
+**User-observed carrier:** "i still see the player that I
+created earlier" mapped to the prior `pc-create` event in the
+surviving autosave being replayed on the next host.  "A 'stale'
+instance of another dm that appears to be connected in the
+roster" mapped to the prior `peer-join` event in the same
+surviving autosave.
+
+**Resolution:** DEC-037 (confirm modal) + DEC-036 (clear-six-
+carriers orchestrator).  New file
+`src/ui/regions/start-fresh-confirm-dialog.ts`; new method
+`startFreshForCampaign(campaign)` in `quire-app.ts`;
+`dismissResumePrompt()` + `dismissCrossDeviceProbe()` rewired
+through `confirmStartFresh(campaign, variant)`.
+
+**Coverage:** Mock campaign 11
+(`src/persistence.simulation-11-start-fresh.test.ts`) — 8
+production-path scenarios.  Dialog unit tests —
+`src/ui/regions/start-fresh-confirm-dialog.test.ts` (12 tests).
+Cross-device probe test updated to drive the dialog
+(`src/quire-app.cross-device-probe.test.ts`).
+
+**Lesson:** LL-2 in `design/playtest-readiness/lessons-learned.md`.
+The v3 consultants signed off PLAYTEST GREEN; this bug
+invalidated the v3 GO call.  Second instance of the
+trust-but-verify pattern (LL-1 was UX-3 in run #14).
+
+---
+
 ## OP-046 — Defense-in-depth: per-kind FIELD_NAME_KEYS vocab for focus-grant / pc-retire / pc-archive / map-blob scrubbers [OPEN, P3, post-playtest]
 
 **Severity:** P3 — defense-in-depth only.  No live hazard

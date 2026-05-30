@@ -210,7 +210,7 @@ describe('QuireApp — cross-device probe wiring (M6a-FS-3)', () => {
     expect(cp.__listMock).toHaveBeenCalledTimes(1);
   });
 
-  it('dismissCrossDeviceProbe clears the match and does NOT pull', async () => {
+  it('dismissCrossDeviceProbe clears the match after confirm and does NOT pull', async () => {
     const cp = makeCloudPush();
     const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'), cp);
     injectCampaign(app);
@@ -219,9 +219,48 @@ describe('QuireApp — cross-device probe wiring (M6a-FS-3)', () => {
     await flush();
     expect(app.crossDeviceProbeMatch).not.toBeNull();
 
-    app.dismissCrossDeviceProbe();
+    // Run #17 (P0 fix): dismiss now routes through the
+    // <start-fresh-confirm-dialog> confirm gate.  The dialog is
+    // mounted as a child of the app; we drive it by clicking the
+    // confirm button.
+    const dismissPromise = app.dismissCrossDeviceProbe();
+    await flush();
+    const dlg = (app.renderRoot.querySelector(
+      'start-fresh-confirm-dialog'
+    ) ?? app.querySelector('start-fresh-confirm-dialog')) as HTMLElement;
+    const confirmBtn = dlg.querySelector(
+      '[data-testid=start-fresh-confirm]'
+    ) as HTMLButtonElement;
+    expect(confirmBtn).not.toBeNull();
+    confirmBtn.click();
+    await dismissPromise;
 
     expect(app.crossDeviceProbeMatch).toBeNull();
+    expect(cp.__pullMock).not.toHaveBeenCalled();
+  });
+
+  it('dismissCrossDeviceProbe CANCEL leaves the match in place', async () => {
+    const cp = makeCloudPush();
+    const app = mountApp(inMemoryFactory(new InMemoryNetwork(), 'HOST'), cp);
+    injectCampaign(app);
+    (app as unknown as { checkResumePrompt(): void }).checkResumePrompt();
+    await flush();
+    await flush();
+    expect(app.crossDeviceProbeMatch).not.toBeNull();
+
+    const dismissPromise = app.dismissCrossDeviceProbe();
+    await flush();
+    const dlg = (app.renderRoot.querySelector(
+      'start-fresh-confirm-dialog'
+    ) ?? app.querySelector('start-fresh-confirm-dialog')) as HTMLElement;
+    const cancelBtn = dlg.querySelector(
+      '[data-testid=start-fresh-cancel]'
+    ) as HTMLButtonElement;
+    cancelBtn.click();
+    await dismissPromise;
+
+    // Match preserved — the DM cancelled out of the confirm.
+    expect(app.crossDeviceProbeMatch).not.toBeNull();
     expect(cp.__pullMock).not.toHaveBeenCalled();
   });
 

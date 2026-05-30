@@ -1,0 +1,191 @@
+# Playtest-readiness — lessons learned
+
+A short, living index of lessons the program has paid for in
+real bugs that escaped expert review.  Each entry names the bug,
+the pattern, the carrier, and the discipline that closes the
+loop.
+
+---
+
+## LL-1 — UX-3 false positive (run #14)
+
+**Bug:** the player-facing "Previously, at the table" recap was
+shipped with a test that forced `appMode = 'session-open'` from
+the test side.  The test passed.  In production, the routing
+path that should have flipped `appMode` automatically didn't
+fire — the player landed in the wrong mode.
+
+**Pattern:** unit-testing the destination state directly,
+bypassing the production routing.  The unit test pins the
+post-state but not the path that produces it.
+
+**Carrier:** test-side mutation of `appMode` instead of driving
+the chain (`applySessionViewChange` reacts to session-view
+change → flips `appMode` based on conditions).
+
+**Discipline:** mock campaigns drive PRODUCTION paths.  No
+test-side `appMode = X` or equivalent state-poking shortcut.
+Mock-10 ships as the carrier (run #15).
+
+---
+
+## LL-2 — Start fresh false positive (run #17)
+
+**Bug:** the resume-prompt "Start fresh" button fires a
+destructive (silently broken) clear with no confirmation:
+
+1. NO confirmation gate — single click discards months of
+   progress.
+2. The clear was a single line (`this.resumePromptDoc = null`)
+   that DIDN'T clear the underlying autosave, the WebRTC peer
+   state, or the chargen drafts.  After "Start fresh," the next
+   reload re-staged the same prompt; clicking Resume restored
+   the prior session including the PC the DM thought they'd
+   discarded and a stale peer entry for another DM.
+
+**Pattern:** "obvious dismissal handler" coverage.  The unit
+test (`quire-app.cross-device-probe.test.ts:213`) pinned exactly
+that `resumePromptDoc = null` line.  It passed.  The production
+user experience was completely broken.  Two v3 consultants —
+adversarial and TTRPG-UX — both signed off PLAYTEST GREEN
+without walking the Start fresh button.
+
+**Carrier:** localStorage `quire.save.<owner>-<repo>` survived
+the dismiss handler; the in-memory `session` controller's
+peer-roster survived because the dismiss handler didn't fire a
+`peer-leave`; the chargen drafts survived because the handler
+didn't touch them.
+
+**Discipline:** every state-clearing button gets an end-to-end
+mock that walks the production path:
+
+1. Click the literal button via `app.dismissResumePrompt()` (or
+   the equivalent production handler — NOT the internal state-
+   clear method).
+2. Drive the confirm modal via the production mount + click,
+   not by injecting a synthetic Promise.
+3. Assert AFTER the production chain settles: the localStorage
+   key is gone; the in-memory state is cleared; the next
+   `startHosting` produces a clean session with no leftover
+   events.
+
+Mock-11 (`src/persistence.simulation-11-start-fresh.test.ts`) is
+the carrier.  Run #17 ships.
+
+---
+
+## LL-3 — Retire dialog "white frame" (run #17 emergency)
+
+**Bug:** the user clicks Retire on a PC.  A "white frame in
+the middle of the screen" appears — the form (textarea + Cancel
++ Retire commit) renders but is HIDDEN behind the dialog
+backdrop, so the user can't click anything to confirm or cancel.
+Every chargen-dm-review modal (review / edit / retire / revise)
+shared the bug; the user just hadn't tried the others in a
+production flow.
+
+**Pattern:** light-DOM `<slot>`-based Lit primitive.  The
+`<quire-modal>` element used `createRenderRoot(): this` (so
+callers' CSS could target it without `::part`), then tried to
+distribute children via `<slot>`.  `<slot>` only works inside
+a shadow root — in light DOM it's an inert element with no
+distribution.  The host's children rendered as SIBLINGS of the
+`<dialog>` rather than INSIDE it, and `showModal()` promoted
+only the empty dialog into the top layer.
+
+**Carrier:** the test environment (happy-dom) does not
+implement `showModal()`'s top-layer semantics; every node was
+reachable via querySelector regardless of whether it would
+actually surface in production.  `chargen-dm-review.test.ts`
+asserted that the textarea + buttons exist somewhere reachable
+from `<quire-modal>` — they did, just as siblings.  The test
+passed; production was broken.
+
+**Discipline:** for every primitive that wraps content in a
+top-layer / popover / portal / shadow-root mechanism, the
+primitive test MUST assert the content is INSIDE the wrapper
+element, not just findable from the host root.  The new
+regression `Run #17 regression: host children land INSIDE the
+<dialog>, not as siblings` pins the dialog-contains-content
+invariant.  The chargen-dm-review retire test pins the same
+invariant end-to-end through the production click path.
+
+The same discipline applies to FUTURE primitives — for the
+Popover API or any future shadow-DOM-themed primitive: assert
+the content's *placement*, not just its existence.
+
+**Cross-pattern with LL-2:** both bugs slipped past the run #16
+PLAYTEST-GREEN consultants for the same reason: a test that
+asserts a sliver of behavior (state field updated; node
+reachable) smaller than what the user sees.  See "The
+cross-cutting lesson" below.
+
+---
+
+## The cross-cutting lesson
+
+LL-1, LL-2, and LL-3 share the same anti-pattern: a small unit
+test that DOES pass but pins a sliver of behavior smaller than
+what the user sees.  The production path between "user clicks
+the button" and "the state the user observes" is bigger than the
+sliver the unit test pins.
+
+### What classes of test would have caught these?
+
+- **End-to-end production-routing tests.**  Mock campaigns at
+  the engine + Lit-app altitude.  The user clicks via the
+  production click handler; the test asserts the final user-
+  visible state, NOT an intermediate state-machine field.
+- **"Empty-state assertion" helpers** that walk every localStorage
+  key + every WebRTC peer table after a clear.  These make the
+  full-clear contract explicit.  Recommended for future
+  state-clearing affordances (e.g. "log out of cloud sync"
+  surfaces in M6a-OAuth).
+
+### Where to add the discipline
+
+- **Before shipping a state-clearing affordance:** write the
+  mock campaign that walks the production path.  No mock?  Open
+  the next-OP and don't ship the feature without it.
+- **Before any consultant pass:** the consultant brief MUST
+  list "walk every state-clearing button end-to-end" as a
+  scoped question.  v3 briefs implicitly assumed someone else
+  had done this — nobody had.
+- **In review playbooks:** add "for every dismiss/clear/discard
+  affordance, the reviewer EITHER produces a mock-campaign-
+  shaped end-to-end assertion OR files an OP for the next
+  reviewer."
+
+---
+
+## Lessons that did NOT need a new entry
+
+- The OP-039 firewall hole (run #9): caught by mock campaign 01,
+  the FIRST mock campaign shipped — the discipline (mock
+  campaigns walk production paths) works, the gap was that we
+  hadn't built mock-09/10/11 yet.
+- The H-1/H-2 cross-campaign leaks (run #16): caught by the v3
+  adversarial consultant walking the same surface that produced
+  v2's findings.  Multi-expert iteration is doing what it's
+  supposed to.
+
+What both LL-1 and LL-2 share that the above don't: the bug
+lives in the UI-handler ↔ persistence-carrier chain, NOT in the
+core engine.  The mock campaigns at the engine layer don't
+exercise this chain.  Mock campaigns at the Lit-app altitude do.
+
+The discipline going forward: mock campaigns SHIFT UP to the Lit
+altitude for any "user clicks button → multi-layer state clear"
+affordance.  Engine-layer mocks stay good for materializer
+contracts, firewall fuzzing, and event-log invariants.
+
+---
+
+## Update cadence
+
+- After every consultant-found bug that escaped the prior
+  pass: add an LL-N entry.
+- After every product-owner-reported bug: same.
+- After every "we shipped X and a week later realized Y": same.
+
+This doc is the carrier for the program's self-correction.

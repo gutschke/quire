@@ -3,9 +3,95 @@
 **Owner:** Playtest-Readiness Program Lead
 **Status:** PLAYTEST GREEN — ready for the first real human session
 **Run that closed the gate:** #16 (2026-05-30)
+**Patches since handoff:** Run #17 (2026-05-30) — see §0 below
 **Companion docs:** `playtest-readiness-plan.md`,
 `status.md`, `../save-restore-program/decisions.md`,
 `../save-restore-program/open-problems.md`
+
+---
+
+## 0. Patches since handoff (run #17)
+
+The product owner ran a dry-run on 2026-05-30 and surfaced two
+P0 playtest blockers.  Both fixed in run #17 before any real
+table sat down.
+
+### P0-1 — "Start fresh" was a misclick away from data loss + didn't actually clear state
+
+- **What was happening:** the resume-prompt "Start fresh"
+  button fired a destructive (silently broken) clear with NO
+  confirmation, and the clear was a single line that only
+  dismissed the staged prompt object — leaving the localStorage
+  autosave, WebRTC peer roster, and chargen drafts intact.  After
+  "Start fresh," the next reload re-staged the same prompt and
+  clicking Resume restored the prior session (including any PC
+  the DM thought they'd discarded and any stale DM-peer roster
+  entries).
+- **What we fixed:**
+  1. Both "Start fresh" affordances (resume prompt + cross-device
+     probe) now open the new `<start-fresh-confirm-dialog>`
+     before doing anything destructive (DEC-037).  Cancel is
+     default-focused; the modal body names what will be lost
+     (event count from the staged autosave) and what will NOT be
+     touched (cloud backups).
+  2. The actual clear is now an orchestrated `startFreshFor-
+     Campaign(...)` that fires `announceLeaveAndExit()` (so other
+     peers see this DM drop off the roster), clears the
+     `quire.save.<owner>-<repo>` localStorage key, wipes chargen
+     drafts for all slots, drops staged prompts + `loadedExtra-
+     Fields`, and resets the cross-device probe guard (DEC-036).
+- **Regression carriers:** mock campaign 11
+  (`src/persistence.simulation-11-start-fresh.test.ts`) walks
+  the production click path through all six clear categories
+  + cross-device "safe" variant.
+- **Where to read more:** DEC-036 + DEC-037 in `../save-
+  restore-program/decisions.md`; diagnosis walkthrough at
+  `start-fresh-diagnosis-2026-05-30.md`.
+
+### P0-2 — Retire dialog was a "white frame in the middle of the screen"
+
+- **What was happening:** clicking Retire on a bound PC opened
+  the dialog but the DM couldn't interact with anything — just
+  a white frame with no visible buttons.  Root cause: the
+  shared `<quire-modal>` primitive rendered `<dialog><slot></
+  slot></dialog>` into LIGHT DOM, but `<slot>` only distributes
+  in shadow DOM.  The host's children (the form + buttons)
+  rendered as SIBLINGS of the empty `<dialog>`.
+  `showModal()` promoted the empty dialog into the top layer;
+  the form stayed in the normal flow, hidden behind the
+  backdrop.  All four chargen-dm-review modals (review / edit
+  / retire / revise) shared the bug.
+- **What we fixed:** rewrote `<quire-modal>` so it programmatically
+  wraps the host's existing (and dynamically-added) children
+  inside a real `<dialog>` element, mirroring the host's `class`
+  onto the dialog so per-region CSS still styles the frame
+  (DEC-038).  Zero caller-site changes required.
+- **Regression carriers:** new assertions in
+  `src/ui/components/quire-modal.test.ts` (host children land
+  INSIDE the `<dialog>`; class is mirrored; dynamic children
+  re-parent) + new chargen-dm-review tests that pin the retire
+  dialog's controls inside the `<dialog>` and the commit click
+  end-to-end.
+
+### Test count
+
+Run #16 PLAYTEST GREEN: 3045 + 2 skipped = 3047 across 154 files.
+Run #17 patches: 3069 + 2 skipped = 3071 across 156 files.
+Delta: **+24 net** (mock-11 + quire-modal regressions + retire
+dialog end-to-end + Start fresh diagnostic + cross-device probe
+revisions).
+
+### What this means for the playtest
+
+Both bugs were blockers — fixed.  The table can sit down.  The
+patches are entirely additive on top of the run #16 GREEN
+state; the rest of the GREEN inventory below stands unchanged.
+The lessons captured in `lessons-learned.md` (LL-2 + new LL-3)
+flag the test gap that allowed both bugs through PLAYTEST GREEN
+in the first place: unit tests that assert a sliver of behavior
+smaller than what the user sees.
+
+---
 
 This is the document a DM, a co-DM, and the human running
 the test table read **before** running session 1.  It exists
