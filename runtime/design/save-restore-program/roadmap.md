@@ -89,7 +89,10 @@ Protection. Specs live in `auth-strategy.md` (drafts 1+2). Self-
 reviewed in `auth-strategy-review.md` (no spawn-sub-agent tool in
 this harness — program lead acted as consultant role).
 
-Layered ship per DEC-008:
+Layered ship per DEC-008 + DEC-016/DEC-022 (re-rank M6c ahead of M6b
+for account-loss durability):
+
+**Updated order: M6a → M6c (B then A) → M6b.**
 
 ### M6a — Drive `drive.appdata` PKCE + ephemeral (FIRST)
 
@@ -144,15 +147,73 @@ Layered ship per DEC-008:
   - Tests: WebCrypto roundtrip, wrong-passphrase rejection,
     revocation-degrade.
 
-### M6c — GitHub Device Flow (LATER)
+### M6c — GitHub destinations (RE-RANKED ahead of M6b per DEC-016)
+
+M6c is a two-arm milestone per the run-#4 human framing
+(github-publish-fork-analysis.md, Phase A):
+
+- **M6c-B (personal backup)** — DM pushes to their own private
+  repo as durable belts-and-suspenders alongside Drive. Closes
+  the account-loss-durability gap (NEW-ADV-3 / OP-017e).
+- **M6c-A (publish-and-fork)** — DM pushes a sanitized seed to
+  a public repo; others fork via GitHub's normal workflow and
+  load into Quire. Verified mechanically possible via
+  `src/persistence.publish-fork.test.ts` (10 tests).
+
+Both arms share the same auth surface (Device Flow + PKCE
+fallback per §A4 of `auth-strategy.md`) and the same
+`SaveDocument` format. Differences are purely in destination
+path + publish-side scrub.
+
+#### M6c-B — Personal backup (FIRST under DEC-016 ordering)
 
 - DoD:
   - Device Flow: show user code + verification URL; poll
     /login/oauth/access_token.
-  - Same SaveDocument format committed to configured repo path
-    (`saves/<campaign-slug>.json`).
+  - Same SaveDocument format (full DM-coord projection)
+    committed to configured repo path (`saves/<campaign-slug>.json`).
   - Public-repo only in v1; private-repo deferred to v1.1 (GitHub
     App registration).
+  - Re-uses Drive M6a's `serializeSessionForViewer` with
+    DM-coord projection (the destination is the DM's own
+    repo — they own everything in the file).
+  - Same pull-rebase-push semantics as Drive (Git's index ref
+    plays the role Drive's revision_id plays).
+
+#### M6c-A — Publish-and-fork seed (SECOND, on same auth surface)
+
+Phase A (`github-publish-fork-analysis.md`) verified that
+mechanical fork-and-cherry-pick works today. M6c-A scope is:
+
+- DoD:
+  - `publishSeedFromSession()` helper in `persistence.ts` that
+    calls `serializeSessionForViewer` with the NON-COORD
+    projection (publish-side firewall = existing player-scope
+    SSOT). NO new firewall list (OP-033).
+  - Publish-side roster scrub: drop `peer-join` / `peer-leave`
+    of historical peers from the published JSON (OP-035, P2
+    cosmetic).
+  - First-publish DM-only acknowledgment dialog (silent-player-
+    firewall-preserved). Sibling to DEC-011 / DEC-020. Closes
+    OP-033.
+  - Publish path: `published-seeds/<slug>.json` by default
+    (config-tunable). Git tag affordance for cherry-pick
+    anchoring (e.g. `seed-end-of-ep02`).
+  - Fork-side discovery: "Load a published seed" workflow (file
+    picker or "Pull from URL").
+  - Regression test: sentinel-fuzz that plants DM-only markers
+    in every DM-only kind + sub-field, asserts no sentinel
+    survives the publish projection.
+  - Truncation-at-publish UX deferred to v1.1 (OP-034, P2 UX).
+    v1 ships "publish the whole log only".
+  - Documentation: README pattern for "publish your campaign
+    for community fork" coordinated with Underleaf's existing
+    content-on-GitHub pattern.
+
+**Phase A finding summary:** No P0/P1 engine-side blockers.
+The work is publish-side helpers + UX. See
+`github-publish-fork-analysis.md` for the full verification
+matrix.
 
 ## M7 — Simulated playtest
 

@@ -42,6 +42,380 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-023 — Threat model: zero attack surface from internet randos; malicious co-players out of scope (2026-05-29)
+
+**Decision:** Codify the human's verbatim product framing as
+the canonical threat model for save/restore + cloud sync (and
+inherited by future cloud-touching milestones):
+
+> Need to be worried about hostile 3rd parties. There should be
+> practically zero attack surface from random malicious parties
+> on the internet at large. **That's an important design goal!**
+> But we aren't really worried about our own players. As long as
+> they can't ACCIDENTALLY disrupt the integrity of the game we are
+> good. If they maliciously try to disrupt the game, that's a
+> social problem that we can deal with in other ways; we don't
+> need a technical solution for a social problem.
+
+Decomposed into three classes:
+
+| Threat class | Mitigation posture |
+|---|---|
+| **Internet randos / external attackers** | **ZERO attack surface goal.** Every external surface (OAuth flow, callback page, cloud-saved format, network endpoints, supply-chain integrity of the shipped client_id) must be hardened. Treat any new external surface as a strong default to "don't add it." |
+| **Accidental disclosure between trusted teammates** | Defend against this (spoiler firewall already does; keep extending it). Map-blob leak (M1), restore-firewall leak (NEW-ADV-1), rebroadcast leak (NEW-ADV-2) — all in scope. |
+| **Malicious co-players** | **OUT OF SCOPE. Don't add technical defenses.** Findings that only matter against a malicious co-player are deprioritized or closed-no-fix. Social problem; social mitigation. |
+
+**Why:** The original program documents conflated all three
+classes. The human's clarification gives the program a clean
+prioritization rule: any finding's severity must be tied to which
+of the three classes it sits under. Items in class 1 are P0/P1
+by default; class 2 follows the existing firewall-class
+prioritization; class 3 is closed-no-fix unless it incidentally
+also helps class 1 or 2.
+
+**Concrete re-classifications under this framing (see
+`open-problems.md` re-triage block 2026-05-29 R4):**
+
+- NEW-ADV-5 / OP-017g (canonical client_id integrity, supply
+  chain) — STAYS P0. An attacker who swaps client_id on
+  Cloudflare = internet rando reaching the DM.
+- NEW-ADV-8 / OP-017 (callback-page CSP + golden-diff) —
+  STAYS P0/P1. Reflected-XSS class; internet randos.
+- NEW-SEC-2 / OP-021 (state nonce intent binding) — STAYS P1.
+  CSRF defense against internet randos.
+- NEW-SEC-7 (M6b KDF cost) — KEEP PBKDF2 ≥600k. The threat is
+  "another process on the user's machine reads IndexedDB" or
+  "attacker has user's hard drive" — a hostile 3rd party with
+  local access IS in scope per class 1.
+- NEW-ADV-6 (M6b passphrase brute-force from co-located
+  adversary with stolen IndexedDB) — STAYS in scope but the
+  realistic adversary is "thief with the laptop", not "malicious
+  co-player." Microcopy honest: "delays a casual snooper, not a
+  determined attacker." The KDF cost itself is fine at PBKDF2
+  ≥600k.
+- ADV-2 / OP-011 (revision_id concurrency races by malicious
+  co-DM) — DOWNGRADED. Malicious co-DM = class 3. But
+  accidental concurrent push between trusted co-DMs IS class 2
+  ("accidentally disrupt") — pull-rebase-push automation stays.
+- ARC-2 / OP-011 (multi-DM merge UX) — same as above.
+  Accidental disruption stays in scope; malicious DM does not.
+- pc-edit trust gap (memory: `project_quire_pc_edit_trust_gap`)
+  — DOWNGRADED-confirmed. Already classified as "tolerated by
+  current threat model"; threat is malicious co-player, which is
+  out of scope.
+- OP-017h (retry-backoff on rate-limit DoS by hostile co-DM) —
+  DOWNGRADED. Hostile co-DM = class 3. Accidental rate-limit
+  (DM scripts a backup loop that wedges) is class 2 but doesn't
+  need exponential backoff — a simple "max 3 retries then
+  surface error" handles it.
+
+**Alternatives:**
+- Continue defending against all three classes uniformly.
+  Rejected: bloats scope, adds friction (TOTP-on-co-DM,
+  attestation-on-bond-consent etc.) that violates the prime
+  directive.
+- Defer the codification ("we'll figure out scope per finding").
+  Rejected: leaves the program without a sharp prioritization
+  rule; expert reviews will keep re-litigating it.
+
+**Tradeoffs:** A malicious co-player could absolutely disrupt
+the table — pc-edit-spam, scratch-note-spam, bond-consent-
+withdraw-loop. Social mitigation only (kick from table). We
+accept this. The locked threat-model memory
+(`project_quire_threat_model`) already named this; DEC-023
+makes it operational for the save/restore + cloud-sync work.
+
+**Revisit if:** A new use case introduces an asymmetric trust
+relationship (e.g. "Quire-as-a-service hosts public matchmaking"
+— then random players ARE class 1, not class 3). Until then,
+the civilized-peer model holds.
+
+---
+
+## DEC-022 — Layered M6 ship sequence is M6a → M6c → M6b (2026-05-29)
+
+**Decision:** Re-rank the M6 layered ship from DEC-008's
+`M6a → M6b → M6c` to `M6a → M6c → M6b`. Account-loss
+durability (NEW-ADV-3 / OP-017e) outweighs cross-session
+ephemerality (the original UX driver for M6b).
+
+**Why:** OP-017e identified `drive.appdata` as structurally
+irrecoverable on Google account death. The cleanest mitigation
+is M6c (GitHub-hosted save, survives the DM's Google account).
+Shipping M6c before M6b means the durability promise is held
+EVEN IF a DM never moves past the M6a "re-auth per session"
+inconvenience.
+
+The UX cost of re-auth-per-session in M6a-only mode is real but
+recoverable (one click + biometric per session). The cost of
+losing a campaign because the DM's Google account died is
+catastrophic and unrecoverable. Order accordingly.
+
+Subsumes DEC-008's `M6a → M6b → M6c` sequence.
+
+**Alternatives:**
+- Keep DEC-008 ordering (M6b before M6c). Rejected per the
+  durability argument above.
+- Ship M6c immediately after M6a as the SECOND surface
+  (skipping M6b entirely). Rejected: M6b is still wanted as a
+  cross-session-persistence option, just not at the cost of
+  account-loss-durability.
+- Land M6c in parallel with M6b. Rejected: serialization gives
+  one durability story at a time, reduces shipping risk.
+
+**Tradeoffs:** Weekly DMs running M6a-only re-auth every
+session for the duration of M6c-then-M6b development.
+Mitigation: M6c can absorb some of M6b's "session persistence"
+value (GitHub PATs / Device Flow tokens last weeks; even though
+that's the same C4 boundary problem in a different jurisdiction).
+
+**Revisit if:** Real DMs polling shows M6a-only is unworkable
+even WITH M6c as the durability story (then promote M6b).
+
+---
+
+## DEC-021 — M6b passphrase KDF: PBKDF2-SHA256 ≥600k + 12-char floor + honest microcopy (2026-05-29)
+
+**Decision:** M6b's passphrase-encrypted refresh_token uses:
+
+- KDF: **PBKDF2-SHA256, ≥600k iterations** (NIST 2023+
+  recommendation; aligns with 1Password 2024 default).
+- Cipher: **AES-GCM-256** (96-bit IV, per-message-fresh).
+- **Passphrase floor: 12 characters** (validated at entry).
+- Per-origin random salt, persisted in IndexedDB alongside the
+  ciphertext.
+- **Microcopy** at passphrase entry: "This passphrase delays a
+  casual snooper, not a determined attacker. Quire encrypts your
+  Google login on this device; anyone with both your laptop and
+  your passphrase can read it." (Final string deferred to M8.)
+
+**Why:** NEW-SEC-7 surfaced the choice between PBKDF2 ≥600k
+(ship-now) and scrypt-via-WASM (security-better at a much
+higher engineering cost). The honest answer is that any browser-
+side KDF protecting a refresh token loses to a determined
+attacker who has both the user's hard drive and time. PBKDF2
+600k delays an opportunistic attacker (laptop thief plinking
+at a few passwords) by minutes-to-hours; that's the realistic
+attack surface in the civilized-peer + zero-attack-from-internet
+model (DEC-023). False-sense-of-security is worse than no
+encryption — the microcopy honesty closes that gap.
+
+**Alternatives:**
+- scrypt or argon2id via WASM. Rejected for v1: ≥2x engineering
+  cost (WASM bundling, fallback paths, integrity), unclear
+  benefit at our threat-model tier.
+- No KDF — store refresh_token unencrypted. Rejected: violates
+  C4 "no creds in browser unencrypted" + the M6b motivation
+  entirely.
+- Higher iteration count (≥1M). Acceptable but exceeds NIST
+  2023 recommendation; revisit when the recommendation moves.
+
+**Tradeoffs:** PBKDF2 ≥600k takes ~300-500ms to derive on a
+2020-era laptop; that's the perceptible passphrase-unlock delay.
+Acceptable for once-per-session; would not be acceptable for
+per-action prompts.
+
+**Revisit if:** scrypt-via-WASM matures into a low-cost-of-
+adoption primitive (then re-evaluate), OR NIST recommendation
+moves past 600k (then bump), OR a real DM reports the unlock
+delay is intrusive (then accept it as the cost or downgrade
+iterations + admit it openly in the microcopy).
+
+---
+
+## DEC-020 — Player-content first-push consent ceremony locked (2026-05-29)
+
+**Decision:** Keep the first-push consent dialog from DEC-011.
+Player content (chat, character drafts, bond notes, intent
+statements) leaving the table to the DM's Google Drive is
+firewall-ethos-relevant; the one-time DM-only acknowledgment
+("You are uploading the full table's content...") is cheap and
+honors Quire's "never tell a player about a thing they didn't
+consent to" framing.
+
+Confirms DEC-011 against the alternative ("skip dialog; rely on
+civilized-peer model entirely"). The dialog is silent-player-
+firewall-preserving (DM is educated; players are NOT notified).
+
+**Why:** DEC-011's logic still holds. A future DM asking "wait,
+players' words go to MY drive?" is a real surface; we should be
+ahead of it. The dialog is also the natural surface for the
+NEW-ADV-4 "what's saved" disclosure (OP-017f).
+
+**Alternatives:** see DEC-011 alternatives.
+
+**Tradeoffs:** see DEC-011 tradeoffs.
+
+**Revisit if:** see DEC-011 revisit.
+
+---
+
+## DEC-019 — M5 recently-played list scopes by sha256(google_sub) post-OAuth (2026-05-29)
+
+**Decision:** Patch the existing M5 recently-played list (commit
+`0ef07c3`) to scope localStorage keys by `sha256(google_sub)`
+once OAuth has run. Pure-local DMs (no OAuth) keep today's
+anonymous per-origin behavior. Two distinct Google users on the
+same browser profile get disjoint lists.
+
+**Why:** OP-026 + NEW-PRV-3 framed the cross-tab leak — M5's
+list lives in `localStorage`, same-origin-shared across all
+tabs / profiles on the same OS user. A DM + their partner
+sharing a laptop become passive observers of each other's
+campaign cadence. Account-hashing closes the leak under class 2
+(accidental disclosure between trusted-but-distinct humans on
+the same machine).
+
+**Why sha256(google_sub) specifically:**
+- `google_sub` is a stable opaque identifier; not the email
+  (which can be re-mapped at the directory level).
+- sha256 is sufficient — we're scoping a UI list, not
+  cryptographically authenticating. No need for HMAC.
+- Truncate to first 16 hex chars for the localStorage key
+  prefix (avoid 64-char key clutter).
+
+**Alternatives:**
+- Don't scope; accept the leak. Rejected per the firewall-
+  ethos read above.
+- Scope by raw email. Rejected: email exposed in the
+  localStorage key view of devtools is more revealing than a
+  hash.
+- Scope by a fresh per-tab UUID. Rejected: defeats the
+  cross-session-resume use case the list serves.
+
+**Tradeoffs:** Two implementation paths (anonymous + account-
+scoped) co-exist. The migration boundary is the first
+successful OAuth login per origin; pre-OAuth entries remain
+visible until the user manually clears them. Acceptable.
+
+**Revisit if:** A DM reports the account-scoped list is
+confusing (then surface a "[Show all entries on this device]"
+toggle from the operational view).
+
+---
+
+## DEC-018 — Cloudflare Worker token-exchange fallback blocks behind explicit DEC (2026-05-29)
+
+**Decision:** Any introduction of a Cloudflare Worker as a
+token-exchange proxy (SEC-3 fallback / OP-019) requires an
+explicit follow-up DEC entry. The Worker is NOT a default
+deployment artifact. The decision is gated on the CORS probe
+outcome (OP-016):
+
+- If `oauth2.googleapis.com/token` accepts PKCE-CORS from our
+  origin: NO Worker. Direct client-side exchange ships.
+- If CORS is blocked: PAUSE. Write a follow-up DEC explicitly
+  authorizing the Worker, covering hosting, no-log policy,
+  reproducible build, disclosure copy in the connect-Drive
+  ceremony, and self-hoster override. Only then build it.
+
+**Why:** A maintainer-run Worker that brokers token exchange
+materially changes the threat model — the maintainer (or
+anyone who compromises the Cloudflare deploy) can observe every
+auth code + verifier and could redeem them. Under DEC-023's
+zero-attack-surface goal for internet randos, the Worker
+becomes a single point of compromise. Avoiding it where
+possible is the right default; introducing it requires
+explicit owner-of-record sign-off.
+
+**Alternatives:**
+- Accept "maintainer-trusted" default and build the Worker
+  proactively. Rejected: the Worker is not needed if CORS is
+  open, and building it speculatively is wasted work + extra
+  surface.
+- Refuse to build the Worker even if CORS blocks (forces
+  self-host-only). Rejected: blocks the canonical hosted
+  experience for users who don't want to self-host.
+
+**Tradeoffs:** If CORS blocks AND we can't authorize the Worker
+within a tight timeline, M6a ship slips. Mitigation: the
+Worker authorization can be drafted in parallel with the CORS
+probe (so we're ready to ship the Worker decision the moment
+the probe forces it).
+
+**Revisit if:** Google reverses the PKCE-CORS policy mid-
+shipping; revisit the probe result.
+
+---
+
+## DEC-017 — Canonical OAuth client_id is runtime-overridable + has a discovery document (2026-05-29)
+
+**Decision:** Confirm DEC-013's spec: ship the canonical
+client_id PLUS three override mechanisms (build-time env, query
+parameter, campaign-manifest field) PLUS a discovery document
+at `/.well-known/quire-oauth.json` from day one.
+
+This is the locked answer to OP-018's incident-response question.
+The alternative — "build-time only with a documented incident-
+response delay" — is rejected because Cloudflare Pages CDN cache
+lag (per `feedback_show_deploy_hash`) means hours of degraded
+state, which is unacceptable for a security-primitive rotation.
+
+**Why:** Two failure modes argue for runtime override:
+1. **Compromise / abuse-throttle.** If the canonical client_id
+   is compromised or rate-limited by Google due to abuse, every
+   DM whose tab is open needs to fetch a new client_id. Without
+   runtime override, that's a redeploy + CDN cache flush; with
+   runtime override + discovery doc, it's a single Cloudflare-
+   KV update propagating through the discovery endpoint.
+2. **Self-hosting.** Self-hosters need their own client_id from
+   day one; the same override mechanism serves both use cases.
+
+The discovery document gives us a graceful-degradation surface
+("client_id unavailable — self-host or wait for fix") instead
+of a silent "Connect Drive does nothing" failure.
+
+**Alternatives:** see DEC-013 alternatives.
+
+**Tradeoffs:** see DEC-013 tradeoffs.
+
+**Revisit if:** see DEC-013 revisit.
+
+---
+
+## DEC-016 — M6c re-ranked ahead of M6b for account-loss durability (2026-05-29)
+
+**Decision:** Re-rank the layered M6 ship so M6c (GitHub-
+hosted save) ships BEFORE M6b (passphrase-encrypted
+refresh_token). Operational order: **M6a → M6c → M6b**.
+
+This is the human's product call on NEW-ADV-3 / OP-017e.
+`drive.appdata` is structurally irrecoverable on Google
+account death; a GitHub-hosted save survives that failure
+mode.
+
+**Why:** See DEC-022 for the full rationale. The cleanest
+mitigation for account-loss-durability is a save destination
+on a different provider — GitHub. M6c was already planned as
+"later"; promote it to "immediately after M6a."
+
+The M6b cross-session-persistence UX gap remains real but is
+now second priority after durability.
+
+**Alternatives:**
+- Keep DEC-008 ordering. Rejected per durability argument
+  (see DEC-022).
+- Mandatory auto-download local copy on each push (OP-017e
+  option 1) as the only durability story. Rejected: still
+  fragile to "DM's machine died too" + adds UX friction every
+  push.
+- Promote `drive.file` to the recoverability path (OP-017e
+  option 2). Rejected: re-introduces the ADV-1 share-link
+  risk (the very thing DEC-009 was meant to close).
+
+**Tradeoffs:** M6b weekly-DM cross-session UX work pushes
+out; some weekly DMs will continue re-auth-per-session under
+M6a longer than they would have under DEC-008's ordering.
+Acceptable trade.
+
+**Revisit if:** Real DMs report the M6a-then-M6c sequence is
+unworkable in practice (e.g. GitHub Device Flow ceremony is
+intolerable at-table for every backup), and durability via
+auto-local-disk-copy is acceptable. Then promote M6b back to
+second slot.
+
+---
+
 ## DEC-015 — Cross-device cloud discovery is pull-on-discovery, never auto-load (2026-05-29)
 
 **Decision:** When a DM lands on a campaign URL with no local

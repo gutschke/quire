@@ -6,9 +6,147 @@ severity, evidence, hypothesis, owner, status.
 Newest at top. When fixed, link to the commit and move to a separate
 "resolved" section at the bottom.
 
+## R4 re-triage block (2026-05-29 under DEC-023 threat framing)
+
+Per DEC-023, three classes drive severity:
+
+1. **Internet randos / external attackers** — zero-attack-surface goal. P0/P1 by default.
+2. **Accidental disclosure between trusted teammates** — keep defending. Firewall-class.
+3. **Malicious co-players** — out of scope. Closed-no-fix unless incidentally helps 1 or 2.
+
+Re-classifications recorded inline below (each affected OP carries
+an [R4: <class>, <verdict>] tag). Summary:
+
+- **STAYS P0/P1 (class 1):** OP-017g (canonical client_id integrity),
+  OP-017 (callback page CSP + golden-diff), OP-018 (client_id
+  incident response), OP-019 (Worker fallback decision), OP-021
+  (state nonce intent binding), OP-020 (two-tab OAuth race),
+  OP-016 (CORS probe), OP-030 (OAuth error PII).
+- **STAYS P1 (class 2):** OP-017b (UX matrix; mid-session OAuth errors
+  with players watching), OP-027 (player-content consent ceremony),
+  OP-026 (M5 cross-tab leak), OP-022 (mid-session 401 detection),
+  OP-023 (account-switch silent rebinding), OP-024 (APP + WebAuthn
+  popup), OP-005 (strip-on-restore destructive warning).
+- **STAYS P2 (class 1+2 mixed, doc/limit):** OP-017e (account-loss
+  durability — addressed by DEC-016/M6c reorder), OP-017f (cleartext
+  disclosure on Drive — doc), OP-031 (drive.appdata verified
+  citation — doc), OP-028 (peerId cross-campaign re-identifier —
+  doc), OP-029 (forensic recovery story — doc), OP-014 (microcopy),
+  OP-015 (popup-blocker), OP-025 (save-format determinism doc).
+- **DOWNGRADED (class 3, malicious co-DM/co-player):**
+  - **OP-017h (retry-backoff for rate-limit DoS by hostile co-DM):**
+    Was P2 framed against malicious co-DM. The realistic class 2
+    risk ("DM accidentally backup-loop wedges Drive quota") is
+    handled by simpler "max 3 retries then surface error." Hostile
+    co-DM is class 3 = out of scope. **DOWNGRADED to P3.** The
+    simpler error-cap is enough.
+  - **OP-011 (multi-DM concurrent push conflict UX):** STAYS but
+    rationale changes — accidental concurrent push between trusted
+    co-DMs is class 2 (in scope per "accidentally disrupt"); the
+    hostile-co-DM angle drops. Pull-rebase-push automation stays
+    at current P3 priority — accidental concurrent push is a small
+    window in real DM workflows.
+- **NEW under R4 framing:**
+  - **OP-032 (NEW):** Honest microcopy for the M6b passphrase
+    floor — surface that the encryption defends against a casual
+    snooper, not a determined attacker. Class 1 (internet randos
+    with local access) requires this honesty. Per DEC-021.
+
 ---
 
-## OP-031 — `drive.appdata` revocation / content-scan semantics need verified citation
+## OP-035 — M6c-A publish-side roster scrub [R4: class 2 UI, P2]
+
+**Severity:** P2 (cosmetic).
+**Evidence:** `github-publish-fork-analysis.md` Q3. Original DM's
+`peer-join` / `peer-leave` events persist into the materialized
+state of a forked campaign — the forking DM's roster shows the
+original DM as "in the roster." Cosmetic; no security impact
+under DEC-023 (class 2 at worst).
+**Hypothesis:** The M6c-A `publishSeedFromSession()` helper drops
+`peer-join` / `peer-leave` events from the original peers ahead
+of writing the published save. Alternative: keep them and add a
+UI tag ("historical participant, not at this table").
+**Owner:** save-restore lead — small publish-side helper.
+**Status:** open. Non-blocking for M6c-A; nice-to-have at ship.
+
+---
+
+## OP-034 — M6c-A publish-time event-range truncation UX [R4: class 2, P2]
+
+**Severity:** P2 (UX).
+**Evidence:** `github-publish-fork-analysis.md` Q2. The
+publish-time UX needs a "pick a seed point" affordance that
+respects per-author causal boundaries. Truncating at an arbitrary
+event index can leave a causal gap (the loaded log applies fine
+but materialized state is missing whatever the omitted event
+would have set).
+**Hypothesis:** Publish UX presents episode boundaries (or the
+last `scene-reveal` event per author) as save-point candidates.
+DM picks one; the helper truncates to the chosen boundary,
+respecting per-author monotonicity.
+**Owner:** save-restore lead + TTRPG-UX for the "save point"
+labeling.
+**Status:** open. Non-blocking — can ship M6c-A with
+"publish-whole-log-only" first and add truncation in v1.1.
+
+---
+
+## OP-033 — M6c-A publish-side scrub helper + consent ceremony [R4: class 1, P1]
+
+**Severity:** P1 (BLOCKS M6c-A ship).
+**Evidence:** `github-publish-fork-analysis.md` Q4. The publish
+seed goes to a PUBLIC GitHub repo. A careless implementation that
+uses the full DM-coord save as the seed would put DM scratch-
+notes, AI prompts, NPC pins, etc. on a world-readable repo —
+internet-rando-readable forever. This is DEC-023 class 1
+(internet randos) since "anyone on GitHub" includes randos.
+**Hypothesis:**
+  1. **Helper:** `publishSeedFromSession()` in `persistence.ts`
+     that calls `serializeSessionForViewer` with the non-coord
+     projection (player-scope strip via existing
+     `PLAYER_SCOPE_STRIP_KINDS` + `PER_KIND_SCRUBBERS`). NO new
+     firewall list — the existing SSOT IS the publish-side
+     firewall.
+  2. **Consent ceremony:** First-publish DM-only acknowledgment
+     dialog (sibling to DEC-011 / DEC-020): "Publishing this
+     seed makes the table's player-visible content (chat,
+     scenes, character drafts the players have submitted) PUBLIC
+     on GitHub. DM-only material (your scratch notes, AI
+     prompts, NPC pins) is stripped before upload. [Acknowledge]"
+  3. **Regression test:** Sentinel-fuzz that plants DM-only
+     markers in every DM-only kind + sub-field, asserts no
+     sentinel survives the publish projection. Reuses the
+     existing `persistence.restore-firewall-fuzz.test.ts`
+     pattern.
+**Owner:** save-restore lead.
+**Status:** open. BLOCKS M6c-A ship. Composes naturally with
+the existing firewall SSOT — small surface, large
+correctness payoff.
+
+---
+
+## OP-032 — M6b passphrase honest-microcopy surface [R4: class 1, P1]
+
+**Severity:** P1 for M6b (NOT blocking M6a).
+**Evidence:** DEC-021 + DEC-023. The M6b passphrase-encrypted
+refresh_token defends against a casual snooper with local
+access; not a determined attacker. The user must understand
+this at passphrase-entry time — otherwise they'll trust the
+encryption more than it deserves, and a determined attacker
+(class 1 with local hard-drive access) succeeds against an
+over-confident user.
+**Hypothesis:** Locked microcopy spec (final string deferred
+to M8): "This passphrase delays a casual snooper, not a
+determined attacker. Quire encrypts your Google login on this
+device; anyone with both your laptop and your passphrase can
+read it." Plus a passphrase-floor validator (≥12 chars).
+**Owner:** save-restore lead + TTRPG-craft for the final
+string at M8.
+**Status:** open. Land with M6b code.
+
+---
+
+## OP-031 — `drive.appdata` revocation / content-scan semantics need verified citation [R4: class 2, P2]
 
 **Severity:** P2 (doc-only).
 **Evidence:** NEW-PRV-9 (privacy consultant 2026-05-29).
@@ -26,7 +164,7 @@ scan campaign content; consider GitHub for dark fiction").
 
 ---
 
-## OP-030 — OAuth error logging may leak email PII
+## OP-030 — OAuth error logging may leak email PII [R4: class 1, P1]
 
 **Severity:** P2 (defense-in-depth).
 **Evidence:** NEW-PRV-8 (privacy consultant 2026-05-29).
@@ -42,7 +180,7 @@ through the logger and asserts no email-shaped string survives.
 
 ---
 
-## OP-029 — Forensic recovery story when DM reports a leak
+## OP-029 — Forensic recovery story when DM reports a leak [R4: class 2, P2 doc]
 
 **Severity:** P2 (documented limitation).
 **Evidence:** NEW-PRV-7 (privacy consultant 2026-05-29).
@@ -59,7 +197,7 @@ adding server-side telemetry (would be a worse privacy trade).
 
 ---
 
-## OP-028 — `peerId` is a stable cross-campaign re-identifier in saved logs
+## OP-028 — `peerId` is a stable cross-campaign re-identifier in saved logs [R4: class 2, P2 doc]
 
 **Severity:** P2 (documented limitation; pseudonymity).
 **Evidence:** NEW-PRV-5 (privacy consultant 2026-05-29).
@@ -78,7 +216,7 @@ lead (doc).
 
 ---
 
-## OP-027 — DM-uploads-players'-content has no consent ceremony [ACCEPT for M6a]
+## OP-027 — DM-uploads-players'-content has no consent ceremony [ACCEPT for M6a] [R4: class 2, P1 — confirmed by DEC-020]
 
 **Severity:** P1 (firewall-ethos gating).
 **Evidence:** NEW-PRV-4 (privacy consultant 2026-05-29).
@@ -99,7 +237,7 @@ lead (gating logic).
 
 ---
 
-## OP-026 — Recently-played list leaks across browser-profile tab-mates [ACCEPT for M5 patch]
+## OP-026 — Recently-played list leaks across browser-profile tab-mates [ACCEPT for M5 patch] [R4: class 2, P1 — confirmed by DEC-019]
 
 **Severity:** P1 (silent cross-tenant disclosure).
 **Evidence:** NEW-PRV-3 (privacy consultant 2026-05-29).
@@ -120,7 +258,7 @@ is a follow-up patch.
 
 ---
 
-## OP-025 — Save-format determinism breaks for git CRLF / large files / player-push path
+## OP-025 — Save-format determinism breaks for git CRLF / large files / player-push path [R4: class 2, P2 doc]
 
 **Severity:** P2.
 **Evidence:** NEW-ARC-1 (security consultant 2026-05-29).
@@ -144,7 +282,7 @@ warning at 1MB / hard refuse at 10MB for the GitHub destination.
 
 ---
 
-## OP-024 — APP + WebAuthn-in-popup may fail silently
+## OP-024 — APP + WebAuthn-in-popup may fail silently [R4: class 1, P1]
 
 **Severity:** P1 (locked-C6 constraint).
 **Evidence:** NEW-SEC-6 (security consultant 2026-05-29).
@@ -164,7 +302,7 @@ OP-015; widening that work covers this too.
 
 ---
 
-## OP-023 — Account-switch in another tab silently rebinds OAuth target
+## OP-023 — Account-switch in another tab silently rebinds OAuth target [R4: class 2, P1]
 
 **Severity:** P1 (silent disclosure surface).
 **Evidence:** NEW-SEC-4 (security consultant 2026-05-29).
@@ -185,7 +323,7 @@ or start a new connection."
 
 ---
 
-## OP-022 — Mid-session consent withdrawal has no graceful detection
+## OP-022 — Mid-session consent withdrawal has no graceful detection [R4: class 2, P1]
 
 **Severity:** P2 (silent-failure surface).
 **Evidence:** NEW-SEC-3 (security consultant 2026-05-29).
@@ -205,7 +343,7 @@ IndexedDB blob too.
 
 ---
 
-## OP-021 — State nonce is not bound to user intent (campaign / action)
+## OP-021 — State nonce is not bound to user intent (campaign / action) [R4: class 1, P1]
 
 **Severity:** P1 (firewall — wrong-campaign-write risk).
 **Evidence:** NEW-SEC-2 (security consultant 2026-05-29).
@@ -228,7 +366,7 @@ spoiler-relevant disclosure for Quire's threat model).
 
 ---
 
-## OP-020 — Two-tab concurrent OAuth race overwrites the flow
+## OP-020 — Two-tab concurrent OAuth race overwrites the flow [R4: class 1, P1]
 
 **Severity:** P1 (silent wrong-data flow).
 **Evidence:** NEW-SEC-1 (security consultant 2026-05-29).
@@ -248,7 +386,20 @@ naturally with OP-021's intent-embedded `state`.
 
 ---
 
-## OP-019 — Cloudflare Worker fallback expands the trust surface invisibly
+## OP-019 — Cloudflare Worker fallback expands the trust surface invisibly [R4: class 1, P1 — confirmed by DEC-018] [RESOLVED 2026-05-29 run #4 — Worker not needed]
+
+**Resolution:** OP-016 probe confirmed CORS is open for the
+token endpoint from `https://quire.pages.dev` (and localhost
+dev). DEC-018's conditional Worker fallback is NOT triggered.
+M6a ships with direct browser-side token exchange. No Worker
+code lands.
+
+If Google reverses the PKCE-CORS policy in the future, re-run
+the probe; if it fails, follow DEC-018 to draft the Worker
+authorization DEC and only then add code.
+
+**Status:** RESOLVED (not-applicable). Probe-as-canary lives in
+`scripts/cors-probe-google-token.mjs`.
 
 **Severity:** P1 (conditional on OP-016 outcome).
 **Evidence:** NEW-ARC-2 (security consultant 2026-05-29) +
@@ -273,7 +424,7 @@ review BEFORE any Worker code.
 
 ---
 
-## OP-018 — Canonical OAuth client_id has no compromise-rotation path
+## OP-018 — Canonical OAuth client_id has no compromise-rotation path [R4: class 1, P1 — confirmed by DEC-017]
 
 **Severity:** P1 (incident response).
 **Evidence:** NEW-SEC-5 (security consultant 2026-05-29).
@@ -296,7 +447,7 @@ land the discovery-document mechanism as M6.1.
 
 ---
 
-## OP-017b — Cloud-sync UX ship-blockers: placement, discovery, error matrix [ACCEPT for M6a]
+## OP-017b — Cloud-sync UX ship-blockers: placement, discovery, error matrix [ACCEPT for M6a] [R4: class 2, P1]
 
 **Severity:** P1 (M6a ship-blocking; spec omissions).
 **Evidence:** NEW-UX-1, NEW-UX-2, NEW-UX-3 (UX consultant
@@ -328,7 +479,7 @@ implementation code.
 
 ---
 
-## OP-017c — Co-DM identity / per-DM `drive.appdata` ownership
+## OP-017c — Co-DM identity / per-DM `drive.appdata` ownership [R4: class 2, P2 doc]
 
 **Severity:** P2 (locked deferral; documented).
 **Evidence:** NEW-UX-4 (UX consultant 2026-05-29).
@@ -345,7 +496,7 @@ Regression: two co-DM peers, different Drive accounts, both push
 
 ---
 
-## OP-017d — M6b passphrase recovery semantics
+## OP-017d — M6b passphrase recovery semantics [R4: class 2, P1 for M6b]
 
 **Severity:** P1 for M6b (not blocking M6a).
 **Evidence:** NEW-UX-7 (UX consultant 2026-05-29).
@@ -363,7 +514,7 @@ before M6b ships. Regression: passphrase-set + "Forgot" click
 
 ---
 
-## OP-017e — Account-loss durability: appdata is structurally irrecoverable
+## OP-017e — Account-loss durability: appdata is structurally irrecoverable [R4: class 2, addressed by DEC-016 (re-rank M6c)]
 
 **Severity:** P2 (documented limitation; re-rank M6c).
 **Evidence:** NEW-ADV-3 (adversarial consultant 2026-05-29).
@@ -384,7 +535,7 @@ point of failure on the DM's Google account.
 
 ---
 
-## OP-017f — Cleartext-on-Drive disclosure (subpoena / breach surface)
+## OP-017f — Cleartext-on-Drive disclosure (subpoena / breach surface) [R4: class 2 + class 1 (subpoena = third-party state actor), P2 doc]
 
 **Severity:** P2 (documented limitation).
 **Evidence:** NEW-ADV-4 (adversarial consultant 2026-05-29).
@@ -407,7 +558,7 @@ as the natural M7+ direction if a user pushes back.
 
 ---
 
-## OP-017g — Canonical client_id integrity (SRI + verified-app fingerprint)
+## OP-017g — Canonical client_id integrity (SRI + verified-app fingerprint) [R4: class 1, P0 — CRITICAL under DEC-023]
 
 **Severity:** P0 (BLOCKS M6a; supply-chain primitive).
 **Evidence:** NEW-ADV-5 (adversarial consultant 2026-05-29).
@@ -430,7 +581,7 @@ save on that account.
 
 ---
 
-## OP-017h — Retry-backoff for `If-Match`-revision-conflict on Drive push
+## OP-017h — Retry-backoff for `If-Match`-revision-conflict on Drive push [R4: class 3 hostile-co-DM, DOWNGRADED to P3]
 
 **Severity:** P2 (rate-limit DoS resilience).
 **Evidence:** NEW-ADV-7 (adversarial consultant 2026-05-29).
@@ -447,7 +598,38 @@ button.
 
 ---
 
-## OP-017 — OAuth callback page is an XSS sink + integrity surface
+## OP-017 — OAuth callback page is an XSS sink + integrity surface [R4: class 1, P0/P1 — CRITICAL under DEC-023] [RESOLVED 2026-05-29 run #4]
+
+**Resolution:** Run #4 ship.
+  - `public/auth/google/callback.html` + `public/auth/google/callback.js`
+    landed with strict callback-specific CSP
+    (`default-src 'none'; script-src 'self'; style-src 'self'
+    'unsafe-inline'; connect-src 'none'; img-src 'none';
+    font-src 'none'; frame-ancestors 'none'; base-uri 'none';
+    form-action 'none'; object-src 'none'`) via
+    `public/_headers` path-scoped rule.
+  - Callback JS validates `window.opener`, parses
+    `URLSearchParams` only, postMessages
+    `{ source: 'quire-oauth', code, state }` with explicit
+    `targetOrigin = window.location.origin` (never `*`),
+    forwards Google's `error` param without
+    `error_description` (closes OP-030 PII leak).
+  - `scripts/golden-diff-callback.test.mjs` runs in
+    `npm test` — 12 assertions: SHA-256 hash pinning for both
+    callback files, no inline event handlers, no inline
+    `<script>` body, no remote URL refs, callback.js validates
+    `window.opener`, callback.js uses explicit targetOrigin
+    (not `*`), `_headers` callback CSP precedes the wildcard,
+    `default-src 'none'` and `connect-src 'none'` enforced.
+  - Future intentional change to the callback page requires
+    updating BOTH the file AND the golden hash constant in
+    the same PR; reviewers MUST call out the hash change.
+  - CSP integration test (`src/test/integration/csp.test.ts`)
+    updated to parse the wildcard `/*` block specifically (so
+    the path-scoped callback CSP doesn't shadow it).
+  - All 2649 tests pass; typecheck + build clean.
+
+**Status:** RESOLVED.
 
 **Severity:** P1 (BLOCKS M6a; security primitive).
 **Evidence:** NEW-ADV-8 (adversarial consultant 2026-05-29).
@@ -471,7 +653,24 @@ Also: ship the CSP header check as a deploy-time test.
 
 ---
 
-## OP-016 — Cross-origin CORS for the token-exchange endpoint is unverified (BLOCKING)
+## OP-016 — Cross-origin CORS for the token-exchange endpoint is unverified (BLOCKING) [R4: class 1 infra; P1 BLOCKING] [RESOLVED 2026-05-29 run #4]
+
+**Resolution:** `scripts/cors-probe-google-token.mjs` (committed
+in run #4) verified `https://oauth2.googleapis.com/token` accepts
+CORS requests from BOTH `https://quire.pages.dev` (production)
+and `http://localhost:5173` (dev). Response shape: 401 +
+JSON-error (`{error, error_description}`) +
+`Access-Control-Allow-Origin: <origin>` header. Preflight
+OPTIONS also passes (`Access-Control-Allow-Methods: POST` etc.).
+
+M6a can ship as designed — direct browser-side token exchange,
+no Worker proxy needed. **DEC-018 (Worker fallback) is NOT
+TRIGGERED.**
+
+Run `npm run cors-probe -- --origin <other-origin>` to verify
+additional origins (e.g. staging) as they come online.
+
+**Status:** RESOLVED. Probe lives in `scripts/cors-probe-google-token.mjs`.
 
 **Severity:** P1 (blocks M6a ship).
 **Evidence:** `auth-strategy-review.md` SEC-3.
@@ -487,7 +686,7 @@ Worker as a token-exchange proxy.
 
 ---
 
-## OP-015 — COOP/COEP headers + popup-blocker fallback for OAuth flow
+## OP-015 — COOP/COEP headers + popup-blocker fallback for OAuth flow [R4: class 2 UX, P2]
 
 **Severity:** P2 (popup-blocker breakage).
 **Evidence:** `auth-strategy-review.md` PRV-1. Aggressive popup-
@@ -501,7 +700,7 @@ fallback when popup is blocked OR communication fails.
 
 ---
 
-## OP-014 — Microcopy for OAuth-flow buttons must read as "leaving Quire"
+## OP-014 — Microcopy for OAuth-flow buttons must read as "leaving Quire" [R4: class 2 UX, P2]
 
 **Severity:** P2 (UX-acceptance gating).
 **Evidence:** `auth-strategy-review.md` UX-1. From the human's
@@ -540,7 +739,7 @@ warning — re-scope this OP to "implement ACL check for opt-in
 
 ---
 
-## OP-011 — Multi-DM concurrent push: conflict UX
+## OP-011 — Multi-DM concurrent push: conflict UX [R4: class 2 accidental-only (hostile co-DM = class 3 OOS), P3]
 
 **Severity:** P3 (rare, multi-DM only).
 **Evidence:** `auth-strategy.md` A7. Two DMs (co-DM and primary)
@@ -621,7 +820,7 @@ Sub-problems now tracked separately:
 
 ---
 
-## OP-005 — Strip-on-restore is destructive, restore UX gives no warning
+## OP-005 — Strip-on-restore is destructive, restore UX gives no warning [R4: class 2, P2]
 
 **Severity:** P2 (data-loss-on-import)
 **Evidence:** Architect finding #3 (`persistence.ts:455-486`). A player's

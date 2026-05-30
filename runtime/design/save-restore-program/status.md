@@ -1,199 +1,209 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 end-of-session 3 (NEW-ADV-1/2 firewall fix + draft-3 auth strategy)
-**Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (BLOCKED on 12 open-problems + OP-016 CORS probe; see ship gates)
-**Latest deploy hash:** 78a4600 (draft-3 docs); preceding code commit a7dedac (NEW-ADV-1/2 firewall fix + 11 new regression tests)
-**Branch:** main (push pending)
+**Last updated:** 2026-05-29 run #4 (DEC-016..023 + Phase A
+GitHub-fork verification + M6a ship-gates OP-016 + OP-017 closed)
+**Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (2 of the 12 ship-gates remaining closed this run; 10 still open before code lands)
+**Latest deploy hash:** (pending push this turn — see commit hash at end)
+**Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-29 session 3 (this session):** Independent consultant
-  pass (4 reports x 9-10 findings each = 33 new findings) folded
-  into the program. NEW-ADV-1/2 (the 5th render-gated-but-restore-
-  not-gated firewall breach + the rebroadcast leak it amplifies)
-  fixed in code: commit `a7dedac`. `projectSaveForViewer` +
-  `defaultRebroadcastFilter` exported from persistence.ts; Peer
-  takes a rebroadcastFilter injection; session-controller wires it.
-  +11 regression tests in `persistence.restore-firewall-fuzz.test.ts`.
-  Remaining 31 findings triaged into 14 new OP entries (OP-017
-  through OP-031) + 6 new decisions (DEC-010 through DEC-015).
-  auth-strategy.md revised to draft 3 with §B + §C + §A1.5 +
-  §A7..§A15 new/revised sections + M6a ship-gate list.
-  Tests: 2629 / 2 skipped (was 2618 / 2 skipped baseline; +11).
-  Typecheck clean, build clean.
-- **2026-05-29 session 2:** M4 restore-drill ship +
-  M5 recently-played list + navigator.storage.persist() request +
-  M6 cloud-sync auth-strategy.md draft 1 + self-review (draft 2)
-  + decisions/open-problems updated. Three pushes pending.
-  +22 tests; all 2618 pass; typecheck clean; build clean.
-- **2026-05-29 session 1:** M0 docs + M1 firewall + M2 tab-close +
-  M3 re-broadcast. 12 new tests; all 2584 pass.
+- **2026-05-29 run #4 (this run):** Human delivered 7 product
+  calls verbatim accepted, plus a new threat-model framing
+  (DEC-023) and a new use case (GitHub-as-publish-and-fork).
+  Logged 8 new decisions (DEC-016 through DEC-023), re-triaged
+  every open problem under DEC-023's three-class framing,
+  verified GitHub publish-and-fork is mechanically possible
+  today (10-test verification matrix), split M6c into M6c-A
+  (publish-and-fork) + M6c-B (personal backup) and re-ranked
+  per DEC-016 / DEC-022 (M6a → M6c → M6b), shipped the OAuth
+  callback page + golden-diff CI (OP-017 BLOCKING closed), ran
+  the CORS probe live and confirmed `oauth2.googleapis.com/token`
+  is CORS-open from quire.pages.dev + localhost (OP-016 +
+  OP-019 BLOCKING closed; Worker fallback not triggered, DEC-018
+  inert by happy path). 12 ship-gates → 10 remaining before
+  M6a code can land. Tests: 2651 (2649 passed + 2 skipped),
+  up from 2629 baseline (+22). Typecheck clean, build clean.
+- **2026-05-29 session 3 (prior run):** Independent consultant
+  pass (4 reports x 9-10 findings = 33 new findings) folded
+  in. NEW-ADV-1/2 fix shipped (commit `a7dedac`). Draft-3
+  auth strategy + 14 new OPs + 6 new decisions
+  (DEC-010..DEC-015).
+- **2026-05-29 session 2:** M4 restore-drill ship + M5
+  recently-played + persist + M6 auth-strategy.md draft 1+2 +
+  self-review.
+- **2026-05-29 session 1:** M0 docs + M1 firewall + M2
+  tab-close + M3 re-broadcast.
 
-## Just shipped this session (3)
+## Just shipped this run (4)
 
-### NEW-ADV-1/2 — Restore + rebroadcast firewall (SHIPPED, commit a7dedac)
+### DEC-016..023 logged in `decisions.md` (8 new decisions)
 
-The 5th breach in the render-gated-but-restore-not-gated firewall
-class (same class as #392/#393/#395 + M1 map-blob) closed. The
-cloud-pull / file-load path now scrubs events through the same
-viewer-scope filter at restore time; the rebroadcast path filters
-events before forwarding via the gossip channel. SSOT reused —
-`PER_KIND_SCRUBBERS` + `PLAYER_SCOPE_STRIP_KINDS` cover save / load
-/ rebroadcast uniformly.
+- **DEC-016 — M6c re-ranked ahead of M6b** (account-loss
+  durability dominates cross-session UX).
+- **DEC-017 — Canonical client_id runtime-overridable +
+  discovery doc** (confirms DEC-013 against build-time-only
+  alternative).
+- **DEC-018 — Worker token-exchange fallback blocks behind
+  explicit DEC** (gated on CORS probe).
+- **DEC-019 — M5 recently-played account-scoped by
+  sha256(google_sub)** post-OAuth.
+- **DEC-020 — Player-content first-push consent ceremony
+  locked** (confirms DEC-011).
+- **DEC-021 — M6b passphrase: PBKDF2-SHA256 ≥600k + 12-char
+  floor + honest microcopy.**
+- **DEC-022 — Layered M6 ship sequence M6a → M6c → M6b**
+  (subsumes DEC-008).
+- **DEC-023 — Threat model verbatim: zero attack surface from
+  internet randos; malicious co-players out of scope** (the
+  load-bearing prioritization rule).
 
-- `persistence.ts:projectSaveForViewer` — restore-side viewer
-  projection (companion to `serializeSessionForViewer`).
-- `persistence.ts:defaultRebroadcastFilter` — rebroadcast classifier.
-- `core/peer.ts` — `rebroadcastFilter` constructor option (default
-  identity for low-level tests, production filter injected at
-  session-controller).
-- `quire-app.loadFromString` — projects the save based on the
-  loading peer's mode (host = full save, guest = scrubbed).
-- `src/persistence.restore-firewall-fuzz.test.ts` — 11 tests.
-  Plants sentinels in every DM-only kind + sub-field; asserts no
-  sentinel survives the restore projection OR the rebroadcast
-  filter OR an end-to-end "alice loads + bob is connected" scenario.
+### `open-problems.md` R4 re-triage
 
-See DEC-010 for the full rationale + map-blob conservative-mask
-trade-off discussion.
+Every open OP tagged with `[R4: <class>, <verdict>]` per
+DEC-023. Summary:
+- 8 OPs stay P0/P1 under class 1 (internet randos).
+- 8 OPs stay P1 under class 2 (accidental disclosure).
+- 8 OPs stay P2 (doc / UI / limitation).
+- 1 OP downgraded to P3 (OP-017h — only matters against
+  malicious co-DM).
+- 1 NEW OP added: OP-032 (M6b passphrase honest microcopy).
 
-### Triage + draft 3 (commit pending)
+### Phase A — GitHub publish-and-fork verification
 
-- `open-problems.md` — 14 new OPs (OP-017 through OP-031) from
-  the 4 consultant reports. OP-013 marked subsumed.
-- `decisions.md` — DEC-010 (NEW-ADV-1/2 closure), DEC-011 (player-
-  content consent), DEC-012 (state-nonce intent binding),
-  DEC-013 (runtime-overridable client_id), DEC-014 (per-DM
-  appdata for co-DM ownership), DEC-015 (pull-on-discovery
-  default).
-- `auth-strategy.md` — draft 3: §B (restore firewall, shipped),
-  §C (privacy posture), §A1 / §A1.5 / §A7 / §A9 / §A10 / §A11 /
-  §A12 / §A13 / §A14 / §A15 new/revised. M6a ship-gate list
-  enumerates the 12 OPs that must close before M6a code lands.
+Verdict: **WORKS TODAY mechanically.** `src/persistence.publish-fork.test.ts`
+ships 10 tests covering the 5 Phase A questions (Q1 clone+load,
+Q2 partial event ranges, Q3 events that don't travel well,
+Q4 publish-side scrub, Q5 repo layout).
 
-### M4 — Restore-drill CI (DONE, commit c3e2707)
+Findings written to `design/save-restore-program/github-publish-fork-analysis.md`.
+3 NEW OPs filed:
+- **OP-033 (P1)** — M6c-A publish-side scrub helper +
+  consent ceremony. Blocks M6c-A ship.
+- **OP-034 (P2)** — M6c-A publish-time event-range
+  truncation UX. Non-blocking; v1.1.
+- **OP-035 (P2)** — M6c-A publish-side roster scrub.
+  Non-blocking cosmetic.
 
-- `src/persistence.restore-drill.test.ts` — 12 tests covering
-  byte-identical roundtrip, 100-event soak convergence across 3 peers,
-  cross-week save→load→continue, sick-DM handoff, branch-divergence
-  merge (both orderings), LWW determinism under concurrent
-  coordinator-claim (closes OP-004), schema sanity.
-- `npm run drill` script for focused local iteration.
-- Drill suite runs in ~140ms — kept in default `npm test`, not
-  promoted to nightly (DEC-006 rationale).
+### Phase B — Roadmap M6c split
 
-### M5-partial — Recently-played + persist (DONE, commit 0ef07c3)
+`roadmap.md` M6c now splits into:
+- **M6c-B (personal backup, ships FIRST under DEC-016).** Full
+  DM-coord projection committed to private repo.
+- **M6c-A (publish-and-fork, ships SECOND on same auth
+  surface).** Sanitized non-coord projection committed to
+  public repo; consumers fork via GitHub.
 
-- `src/controllers/recently-played.ts` — scans `localStorage` for
-  `quire.save.*` keys, returns sorted-most-recent-first.
-  17 tests (FakeStorage; sort, limit, malformed-skip; time-ago
-  granularity from moments to years).
-- `renderRecentlyPlayed()` in quire-app.ts surfaces the list under
-  "No campaign loaded" — silent-player-firewall preserving (stripped
-  saves display identically to DM saves).
-- `AutosaveController.requestPersistentStorage()` fires
-  `navigator.storage.persist()` after the first successful save.
-  Fire-and-forget, tolerant of missing API / throw / rejected
-  promise. 5 tests.
+### M6a ship-gate: OAuth callback page (OP-017 BLOCKING → RESOLVED)
 
-### M6 design — Auth strategy + self-review (commits pending)
+- `public/auth/google/callback.html` + `callback.js` —
+  strict-CSP-friendly static page that postMessages
+  `{source, code, state}` to the opener with explicit
+  `targetOrigin = window.location.origin`. Validates
+  `window.opener` before sending. Filters error responses to
+  drop `error_description` (closes OP-030 PII leak risk).
+- `public/_headers` — path-scoped CSP for
+  `/auth/google/callback*` with
+  `default-src 'none'; script-src 'self'; connect-src 'none'`.
+- `scripts/golden-diff-callback.test.mjs` — 12 assertions
+  enforcing SHA-256 golden hashes, no inline scripts, no
+  remote refs, opener validation, explicit targetOrigin, CSP
+  precedence in `_headers`.
+- `src/test/integration/csp.test.ts` updated to parse the
+  wildcard `/*` block specifically (callback CSP doesn't
+  shadow it).
 
-- `design/save-restore-program/auth-strategy.md` — draft 1 + draft 2
-  with self-review applied.
-- `design/save-restore-program/auth-strategy-review.md` — full
-  issue log (SEC/PRV/ADV/UX/ARC tags + P0/P1/P2 severity + fix
-  proposals). Transparency note: program lead acted as the
-  consultant role since no spawn-sub-agent tool is available in
-  this harness.
-- DEC-008 (layered ship M6a → M6b → M6c).
-- DEC-009 (`drive.appdata` default scope; closes ADV-1 leak path).
-- OP-006 superseded by build-decision; OP-007/008/009/010/012
-  resolved or superseded by draft-2 review; OP-013/014/015/016
-  newly filed.
+### M6a ship-gate: CORS probe (OP-016 BLOCKING → RESOLVED)
+
+- `scripts/cors-probe-google-token.mjs` (run with
+  `npm run cors-probe [-- --origin <origin>]`) verified live
+  against `oauth2.googleapis.com/token`:
+  - Preflight OPTIONS returns
+    `Access-Control-Allow-Origin: <origin>` for
+    `https://quire.pages.dev` AND `http://localhost:5173`.
+  - POST with bogus payload returns
+    `{error, error_description}` + 401 +
+    `Access-Control-Allow-Origin: <origin>`.
+- **Verdict: CORS OPEN.** M6a ships browser-side token
+  exchange. **DEC-018 Worker fallback is NOT triggered;
+  OP-019 closes by happy path.**
 
 ## Up next
 
-### IMMEDIATELY: OP-016 CORS probe (BLOCKING M6a)
+### IMMEDIATELY: 10 remaining M6a ship-gates
 
-Before any M6a code lands, verify `oauth2.googleapis.com/token`
-accepts CORS requests from our origin. Build a tiny dev-only test
-script that hits the endpoint with deliberately bogus payload and
-asserts JSON-error (CORS open) NOT CORS-block. If blocked, add a
-Cloudflare Worker token-exchange proxy.
+Closed this run: OP-017, OP-016, OP-019. Remaining gates per
+`auth-strategy.md` §"Ship layering":
+
+- OP-017b (UX placement / discovery / error matrix).
+- OP-017g (canonical client_id SRI + verified-app fingerprint).
+- OP-018 (runtime-overridable client_id + discovery doc).
+- OP-020 (two-tab OAuth race: per-flow UUID).
+- OP-021 (state-nonce intent binding).
+- OP-022 (mid-session 401 detection).
+- OP-023 (account-switch detection via id_token sub).
+- OP-024 (APP + WebAuthn-in-popup detection + fallback).
+- OP-027 (player-content first-push consent ceremony).
+- OP-030 (OAuth error PII redaction helper).
+
+OP-026 (M5 recently-played account-scoping) is a follow-up
+to M5 alongside M6a, not strictly a gate.
+
+### Then — M6a OAuth code
+
+PKCE flow, state-with-intent (DEC-012), per-flow UUID
+(NEW-SEC-1), id_token sub binding (NEW-SEC-4), Drive REST
+push/pull. Per `auth-strategy.md` draft 3.
+
+### Then — M6c-B (personal backup, DEC-016 priority)
+
+GitHub Device Flow + private-repo push of full
+DM-coord projection.
+
+### Then — M6c-A (publish-and-fork)
+
+Same auth surface as M6c-B + publish-side scrub helper
+(OP-033) + first-publish consent ceremony.
+
+### Then — M6b (passphrase-encrypted refresh_token)
+
+Per DEC-021: PBKDF2-SHA256 ≥600k + AES-GCM-256 +
+12-char passphrase floor + honest microcopy.
 
 ### M5 follow-up (task #429)
 
-Enrich the resume prompt with scene title + PC names + session
-digest headline. Deferred this session — needs design conversation
-around engine-emits-signal vs campaign-authored-copy.
-
-### M6a — Drive `drive.appdata` + PKCE + ephemeral
-
-Implementation kick-off after OP-016 verified. Per
-auth-strategy.md "What's locked": PKCE S256, `drive.appdata`,
-ephemeral in-memory access_token, `crypto.getRandomValues` for
-state + verifier, strict origin validation on postMessage.
-
-### M6b — Passphrase-encrypted refresh_token
-
-Follow-up; requires UX validation of "type your Quire passphrase
-to unlock cloud sync" with a real DM. APP users degrade to M6a.
-
-### M6c — GitHub Device Flow
-
-Same save format, committed to a configured repo path. Public-repo
-only in v1.
+Enrich resume prompt with scene title + PC names + session
+digest headline. Deferred this run.
 
 ### M7 — Simulated playtest
 
 ### M8 — UAT readiness
 
-## Decisions pending the human (SHORT LIST — see at-end-of-turn report)
+## Decisions pending the human (SHORT LIST)
 
-NEW open questions surfaced by the independent consultant pass that
-need a product call before M6a code lands:
+No new pending product calls from this run — the 7 from prior
+run are now logged as DEC-016..022 and the threat-model
+framing as DEC-023.
 
-1. **OP-017e — Account-loss durability.** `drive.appdata` is
-   structurally irrecoverable on Google account death. Three
-   mitigations (auto-download on push / promote `drive.file` /
-   re-rank M6c). Re-ranking M6c ahead of M6b is the cleanest
-   answer; needs your call.
-2. **OP-018 — Canonical client_id incident response.** DEC-013
-   locks runtime-overridable + discovery-doc as the spec. If you
-   want a simpler "build-time only" v1 with a documented
-   incident-response delay, say so.
-3. **OP-019 — Cloudflare Worker fallback (CONDITIONAL).** If
-   OP-016 CORS probe forces the fallback, the Worker becomes a
-   man-in-the-middle that sees every auth code. The spec
-   requires explicit DM disclosure + a no-log policy +
-   reproducible build. Do you want to BLOCK any Worker code
-   behind an explicit decision (current plan), or accept a
-   "maintainer-trusted" default?
-4. **OP-026 — M5 recently-played list account-scoping.** Patch
-   the existing M5 (commit `0ef07c3`) to scope by
-   `sha256(google_sub)` once OAuth runs. Pure-local DMs keep
-   today's behavior. Just confirm this is the right shape.
-5. **OP-027 — Player content consent ceremony.** DEC-011 locks
-   the one-time DM-only acknowledgment dialog ("You are
-   uploading the full table's content..."). If you'd rather
-   skip the dialog and trust the civilized-peer model entirely,
-   say so. Strong recommendation: KEEP the dialog — it's
-   cheap, it honors Quire's firewall ethos, and a future DM
-   asking "wait, players' words go to MY drive?" is a real
-   surface we should be ahead of.
-6. **NEW-SEC-7 M6b KDF cost.** PBKDF2-SHA256 ≥600k iter is the
-   ship-now option; scrypt-via-WASM is the security-better
-   option at a much higher engineering cost. If M6b is "later,"
-   we can defer this — but a bad KDF would be worse than no
-   encryption (false sense of security per the security
-   consultant). Acceptable: M6b lands as PBKDF2-≥600k-iter +
-   ≥12-char passphrase enforcement + explicit "delays a
-   passer-by, not a determined attacker" microcopy?
-7. **Carryover from prior session:**
-   - CORS probe before M6a code (OP-016): want me to ship the
-     probe in the next turn?
-   - Layered ship pacing (DEC-008): still OK?
-   - Drive scope default (DEC-009 `drive.appdata`): still OK?
+Worth surfacing for next run:
+1. **OP-017g — Canonical client_id integrity (SRI + verified-
+   app fingerprint).** P0 BLOCKING under DEC-023 class 1.
+   Engineering work (build-time manifest, runtime
+   verification) needs ops coordination on Cloudflare Pages
+   deploy keys. Should the maintainer ops doc live in
+   `design/save-restore-program/` or in a separate
+   `ops/maintainer.md`?
+2. **OP-018 — Discovery doc location.** `/.well-known/quire-oauth.json`
+   spec'd per DEC-017 but the hosting story is uncovered:
+   served by Cloudflare Pages, by a separate Worker, or by
+   the same static host? Affects the canonical-client-id
+   rotation timeline (CDN cache TTL).
+3. **OP-024 — APP + WebAuthn-in-popup detection.**
+   Implementation needs a real APP-enrolled account to verify
+   the detector. Open question: does the user have an
+   APP-enabled Google account we can test against, or do we
+   need to file a "real-world APP test deferred to UAT"
+   limitation?
 
 ## Health summary
 
@@ -212,13 +222,21 @@ need a product call before M6a code lands:
 - 🟢 Restore-side firewall (NEW-ADV-1) — SHIPPED `a7dedac`.
 - 🟢 Rebroadcast firewall (NEW-ADV-2) — SHIPPED `a7dedac`.
 - 🟢 Honest scope — cloud sync designed (M6 draft 3).
-- 🔴 M6a CORS probe (OP-016) — BLOCKS implementation start.
-- 🔴 M6a callback-page CSP + golden-diff (OP-017) — BLOCKS.
+- 🟢 M6a CORS probe (OP-016) — RESOLVED OPEN (run #4).
+- 🟢 M6a callback-page CSP + golden-diff (OP-017) — SHIPPED (run #4).
+- 🟢 GitHub publish-and-fork verified mechanical (run #4).
+- 🟢 M6c roadmap split (M6c-A + M6c-B) (run #4).
+- 🟢 Threat model framing (DEC-023) load-bearing across program.
 - 🔴 M6a UX placement / discovery / errors (OP-017b) — BLOCKS.
 - 🔴 M6a canonical-id integrity (OP-017g) — BLOCKS.
-- 🔴 M6a state-nonce intent binding (OP-020/021) — BLOCKS.
-- 🔴 M6a token-lifecycle handlers (OP-022/023/024) — BLOCKS.
+- 🔴 M6a runtime-overridable client_id (OP-018) — BLOCKS.
+- 🔴 M6a two-tab race (OP-020) — BLOCKS.
+- 🔴 M6a state-nonce intent binding (OP-021) — BLOCKS.
+- 🔴 M6a mid-session 401 detection (OP-022) — BLOCKS.
+- 🔴 M6a account-switch detection (OP-023) — BLOCKS.
+- 🔴 M6a APP + WebAuthn popup detection (OP-024) — BLOCKS.
 - 🔴 M6a player-content consent (OP-027) — BLOCKS.
+- 🔴 M6a OAuth error PII redaction (OP-030) — BLOCKS.
 - 🔴 M6a Drive auth flow — code pending.
 
 ## Where to find things
@@ -230,4 +248,12 @@ need a product call before M6a code lands:
 - Test plan → `test-strategy.md`
 - UX plan → `ux-strategy.md`
 - Cloud-sync auth → `auth-strategy.md` (+ `auth-strategy-review.md`)
+- GitHub publish-and-fork analysis →
+  `github-publish-fork-analysis.md` (Phase A run #4)
 - Sub-agent transcripts → `simulations/`
+- CORS probe → `scripts/cors-probe-google-token.mjs`
+  (`npm run cors-probe`)
+- OAuth callback page → `public/auth/google/callback.{html,js}`
+  (CSP in `public/_headers`)
+- Callback golden-diff → `scripts/golden-diff-callback.test.mjs`
+- Fork verification → `src/persistence.publish-fork.test.ts`
