@@ -48,17 +48,24 @@ DoD:
 - Care: don't re-broadcast events that came in via sync-response, that would
   break the existing hub-forwarding chain. Probable shape: `applyEvent(event, { propagate: true })`.
 
-## M4 — Restore-drill CI
+## M4 — Restore-drill CI (DONE 2026-05-29)
 
 **Test-QA finding 5 + the in-progress backlog #425.** Critical-path
 assertions live only in e2e, which CI skips by design.
 
-DoD:
-- Nightly job: 1-second deterministic seed → 100-event soak → save → restore → assert
-  byte-identical (modulo `savedAt`) + 0 `unknownKinds` + convergence.
-- Three currently-e2e-only assertions promoted to fast unit tests:
-  cross-week save→load→continue, branch-divergence merge, 100-event soak.
-- A simple `npm run drill` script local devs can run.
+Shipped: `src/persistence.restore-drill.test.ts` — 12 tests covering:
+- ✅ Byte-identical roundtrip (modulo `savedAt`).
+- ✅ 0 `unknownKinds` + 0 rejected on round-trip.
+- ✅ 3-peer 100-event soak convergence.
+- ✅ Cross-week save → load → continue (DM resumes session 2 with
+  full session-1 chat; player2 sees it via gossip).
+- ✅ Sick-DM handoff (different peerId hosts session 2).
+- ✅ Branch-divergence merge — both A-then-B and B-then-A.
+- ✅ LWW determinism under concurrent coord-claim (OP-004 closed).
+- ✅ `npm run drill` script for local fast iteration.
+
+Runs on every `npm test`, not nightly — the in-memory transport makes
+the drill ~140ms wall-clock for all 12 tests.
 
 ## M5 — Discoverability
 
@@ -74,17 +81,21 @@ DoD:
   they just see a fresh-start UI. The DM gets a soft-warn at session-open if
   their own autosave is missing.)
 
-## M6 — Honest scope
+## M6 — Cloud sync auth design (HUMAN MADE THE CALL: build it)
 
-**TTRPG-UX finding 5.** GitHub-push and Drive-sync aren't built. User-facing
-copy implies them anyway.
+**Human decision 2026-05-29:** build cloud sync — DM-initiated, OAuth-
+based, no credentials in the browser, must work under Google Advanced
+Protection. Specs live in `auth-strategy.md` (draft 1 written this
+session). Consultants slated: OAuth/web-security architect + privacy/
+threat reviewer + adversarial save-format reviewer + UX validator.
 
-DoD:
-- Decision: build OR strip. Drive sync is a 1-2 week project at minimum;
-  GitHub-push of the event log is smaller (1-3 days) but has its own threat
-  model questions (does the player's event log push to the DM's repo? whose
-  token?). My recommended default is **strip + park as roadmap**.
-- Whatever the decision, the user-facing copy + this doc set reflect it.
+DoD (revised):
+- `auth-strategy.md` draft 1 written ✅
+- Security consultants review the OAuth flow design.
+- UX expert validates the OAuth-popup-vs-redirect-vs-device-code UX.
+- Decisions logged DEC-007 onward.
+- Implementation only after design lock.
+- User-facing copy + docs reflect the final shape.
 
 ## M7 — Simulated playtest
 

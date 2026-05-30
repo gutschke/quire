@@ -8,21 +8,110 @@ Newest at top. When fixed, link to the commit and move to a separate
 
 ---
 
-## OP-006 — GitHub-push and Drive-sync are implied but not built (HUMAN DECISION REQUIRED)
+## OP-012 — Push UI must warn on shared-link destinations
+
+**Severity:** P2 (firewall — civilized-peer disclosure model).
+**Evidence:** `auth-strategy.md` A6. If a DM pushes their full DM-coord
+save to a Drive file that is shared "Anyone with the link can view",
+the cleartext save is exposed to everyone with the link.
+**Hypothesis:** Before the first push to a destination, query Drive
+for the file's ACL. If anything other than "private to me", surface a
+DM-only warning ("This file is shared with X. Push?"). Re-check on
+ACL changes is best-effort.
+**Owner:** save-restore lead (UX expert routing).
+**Status:** open. Pending UX validation in M6.
+
+---
+
+## OP-011 — Multi-DM concurrent push: conflict UX
+
+**Severity:** P3 (rare, multi-DM only).
+**Evidence:** `auth-strategy.md` A7. Two DMs (co-DM and primary)
+pushing to the same Drive file concurrently.
+**Hypothesis:** Pull-rebase-push semantics using Drive's `revision_id`
+as the optimistic concurrency token. The CRDT merge already exists at
+the event-log layer; the cloud-sync layer just needs the orchestration.
+**Owner:** save-restore lead (architecture routing).
+**Status:** open. Pending architect review in M6.
+
+---
+
+## OP-010 — Cloud file format: full save vs append-only chunks
+
+**Severity:** P2 (architecture choice with downstream UX impact).
+**Evidence:** `auth-strategy.md` A1 / OQ6. Full materialized save is
+simpler but produces large diffs and is lossy under simultaneous
+writes; append-only chunks plays well with branch-divergence but is
+harder to "open in a text editor and read."
+**Hypothesis:** Default to full materialized save (matches current
+`SaveDocument` format; user can grep for content). Defer chunked
+mode if the diffs become a problem.
+**Owner:** save-restore lead (architecture routing).
+**Status:** open. Pending architect input in M6.
+
+---
+
+## OP-009 — Token persistence: re-auth per session vs encrypted refresh-token
+
+**Severity:** P1 (UX vs security trade-off).
+**Evidence:** `auth-strategy.md` A1 / OQ1+OQ2. Strict C4 ("no creds in
+browser") means re-auth every Quire session. The alternative is a
+passphrase-encrypted refresh-token in IndexedDB.
+**Hypothesis:** Start with re-auth-every-session (strict C4). If UX
+expert rules it unacceptable, design the WebCrypto-passphrase variant
+as a follow-up. APP users get re-auth regardless.
+**Owner:** save-restore lead (UX expert + security reviewer).
+**Status:** open. Pending UX validation in M6.
+
+---
+
+## OP-008 — GitHub auth shape: Device Flow vs PKCE; OAuth App vs GitHub App
+
+**Severity:** P2 (architecture choice).
+**Evidence:** `auth-strategy.md` A4 / A5 / OQ4. Device Flow is more
+natural at a TTRPG table (DM uses phone to authenticate); PKCE is
+faster (one popup). Private repos need fine-grained scoping which
+OAuth Apps can't provide (would need a GitHub App).
+**Hypothesis:** Ship Device Flow + public-repo-only in v1. Document
+private-repo as v1.1 follow-up requiring GitHub App registration.
+**Owner:** save-restore lead (UX expert routing).
+**Status:** open. Pending UX validation in M6.
+
+---
+
+## OP-007 — Google Drive OAuth flow under Advanced Protection Program
+
+**Severity:** P1 (locked human constraint — must work under APP).
+**Evidence:** `auth-strategy.md` A3 / OQ10. APP users have stricter
+refresh-token rules and consent UI behavior.
+**Hypothesis:** PKCE + `drive.file` scope is on Google's APP-allowed
+list. Verify with the security reviewer that the proposed flow does
+not trip APP gates (especially around refresh tokens). The strict-C4
+"re-auth every session" path degrades gracefully under APP.
+**Owner:** save-restore lead (security reviewer routing).
+**Status:** open. Pending security review in M6.
+
+---
+
+## OP-006 — GitHub-push and Drive-sync are implied but not built [DECISION 2026-05-29: BUILD]
 
 **Severity:** P1 (honesty / promise-keeping)
-**Evidence:** No code path writes to GitHub for the event log; no Drive
-adapter. UI copy and documentation reference durable-backup paths that
-don't exist.
-**Hypothesis:** Two choices: (a) build GitHub-push for the event log
-(1–3 days) and skip Drive for now; (b) strip the implication and park
-both on a roadmap. Drive sync is a 1–2 week project.
-**Question for human:** Build or strip? Recommended default: **strip
-+ park** — the engineering cost is real and the threat-model questions
-(whose token? whose repo? does a player's event log push to the DM's
-repo?) need design before code.
-**Owner:** save-restore lead (proposal); human (decision).
-**Status:** awaiting decision. M6 milestone.
+**Resolution:** Human made the call: **build cloud sync**. Constraints
+locked: OAuth-based, no credentials in browser, must work under Google
+APP. See `auth-strategy.md` for the draft architecture (draft 1
+written this session, pending security consultants + UX validator).
+
+Sub-problems now tracked separately:
+- OP-007: OAuth flow design (Google Drive PKCE vs APP-compat). [open]
+- OP-008: GitHub auth shape (Device Flow vs PKCE; OAuth App vs GitHub
+  App for private-repo scoping). [open]
+- OP-009: Token persistence — accept "re-auth per session" or build
+  refresh-token + WebCrypto-passphrase encryption? [open, UX-routed]
+- OP-010: Cloud file format — full materialized save vs append-only
+  event-log chunks. [open, architecture]
+- OP-011: Multi-DM concurrent push conflict UX. [open, architecture]
+- OP-012: Push UI must warn on shared-link destinations. [open, UX +
+  adversarial]
 
 ---
 
@@ -41,16 +130,19 @@ Plus offer "merge with your own save" if one exists.
 
 ---
 
-## OP-004 — Coordinator-reclaim has no LWW determinism test under same-millisecond authorship
+## OP-004 — Coordinator-reclaim has no LWW determinism test under same-millisecond authorship [RESOLVED 2026-05-29]
 
 **Severity:** P2 (correctness, low probability)
-**Evidence:** Architect finding #4. `coordinator-reclaim-race.spec.ts`
-doesn't exist; the property is alluded to in the test plan but not pinned.
-**Hypothesis:** Two reclaims authored at the same ts deterministically
-break the tie by peerId (the existing LWW rule). Need a regression test
-to keep this true under refactor.
-**Owner:** save-restore lead (delegate to test-QA agent).
-**Status:** queued for M4 (CI gate work).
+**Resolution:** M4 commit. `persistence.restore-drill.test.ts` now
+includes two LWW-determinism tests:
+1. Concurrent `coordinator-claim` from two peers converges to the same
+   coordinator across cross-replication (the realistic case — two
+   peers each appending without seeing the other first).
+2. The same convergence survives a save → restore byte-roundtrip.
+The original "two events at same ts with same seq" formulation was
+unreachable via the public API (EventLog rejects events whose id
+doesn't match `peerId:seq`); the concurrent-append framing is the
+real-world equivalent.
 
 ---
 

@@ -42,6 +42,69 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-007 — Build cloud sync (M6); strict OAuth + no creds in browser is the floor (2026-05-29)
+
+**Decision:** Build cloud sync per the human's mid-session OP-006 call.
+Locked constraints in `auth-strategy.md`:
+- OAuth-based (PKCE for SPAs; no client_secret in the browser).
+- No long-lived secrets persist unencrypted in localStorage / IndexedDB.
+- Minimum-viable scopes: `drive.file` (Google), `public_repo` v1
+  (GitHub).
+- Must degrade gracefully under Google Advanced Protection Program.
+- DM-initiated, manual push/pull is acceptable (no background daemon).
+- Browser-to-browser sync (WebRTC) remains the live-session default;
+  cloud is the **durability layer** for "all browsers evicted."
+
+**Why:** The human explicitly chose build-over-strip and gave the
+architectural shape ("OAuth ideally, user logs into third party then
+pushes from browser, no credential sharing, scope-minimal, APP-compat").
+This converts OP-006 from a binary-choice question into a design-and-
+ship effort with consultant review as gating.
+
+**Alternatives:**
+- Strip the implication (was the prior recommended-default). Rejected by
+  the human; we now have specific design constraints to work against.
+- Build without security review. Rejected: the constraints are tight
+  enough (no creds, APP, minimum scope) that getting them wrong
+  silently could expose user data in a way that's hard to reverse.
+
+**Tradeoffs:** Real engineering cost (estimated 1-2 weeks per provider).
+Mitigation: design first, ship second. Draft 1 of `auth-strategy.md`
+captures the architecture in writing for consultant review BEFORE any
+code lands.
+
+**Revisit if:** A consultant surfaces a fundamental obstacle (e.g.
+"`drive.file` doesn't actually persist across sessions the way we
+think"). Then re-scope.
+
+---
+
+## DEC-006 — M4 ships drill tests as standard CI, not nightly (2026-05-29)
+
+**Decision:** The M4 restore-drill tests live in
+`src/persistence.restore-drill.test.ts` and run on every `npm test`
+(every CI invocation). NOT moved to a separate nightly job.
+
+**Why:** The original roadmap framed M4 as "nightly job" because the
+e2e versions of these scenarios are slow. The in-memory transport
+makes the unit-test version ~140ms wall-clock for all 12 tests —
+effectively free. Nightly would just add another infra path to
+maintain for no latency win.
+
+**Alternatives:**
+- Separate nightly workflow firing on a schedule. Rejected: pure
+  overhead. `npm test` already runs these.
+- Keep in e2e only. Rejected: CI skips e2e; regressions land silently.
+
+**Tradeoffs:** A devloper running `npm test` pays ~140ms more per run.
+Mitigation: trivial.
+
+**Revisit if:** The drill grows to 100+ tests and wall-clock matters.
+Then split into `test:drill` ↔ `test:fast` and run the drill nightly +
+on tagged commits only.
+
+---
+
 ## DEC-005 — `applyEvent` propagates via the `sync-response` gossip path by default (2026-05-29)
 
 **Decision:** `Peer.applyEvent(event)` now forwards newly-applied
