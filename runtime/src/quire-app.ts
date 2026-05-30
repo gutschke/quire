@@ -179,6 +179,7 @@ import type {
   StartFreshConfirmSpec
 } from './ui/regions/start-fresh-confirm-dialog';
 import type { BackupsCard } from './ui/regions/backups-card';
+import type { ManageSeatRow } from './ui/regions/dm-operational-view';
 import {
   browserDirectoryPicker,
   FsApiCloudPush
@@ -2061,17 +2062,22 @@ export class QuireApp extends LitElement {
         ? this.cloudSyncCampaignIdFor(campaign)
         : '';
     const dm = this.isCoordinator();
+    const manageSeats = dm ? this.buildManageSeatRows() : [];
     return html`<dm-operational-view
       data-testid="dm-operational-view-root"
       ?renderForDm=${dm}
       .campaignId=${campaignId}
       .fsApiCloudPush=${dm ? this.getFsApiCloudPush() : null}
       .requestFsApiConsent=${this.requestFsApiConsent}
+      .manageSeats=${manageSeats}
+      .availableNpcs=${[]}
       @dm-operational-close=${() => this.closeDmOperationalView()}
       @backups-push-request=${(e: Event) =>
         void this.handleBackupsPushRequest(e)}
       @backups-pull-request=${(e: Event) =>
         void this.handleBackupsPullRequest(e)}
+      @pc-revoke-request=${(e: Event) =>
+        void this.handlePcRevokeRequest(e)}
     ></dm-operational-view>`;
   }
 
@@ -4405,6 +4411,167 @@ export class QuireApp extends LitElement {
       ...(payload.scene ? { scene: payload.scene } : {})
     });
     return true;
+  }
+
+  /**
+   * Run #18 (2026-05-30) — emit a `pc-revoke` event per DEC-043.
+   * Coord-only.  The event wipes the PC entirely (seat → `revoked`,
+   * synthesizedPcs entry gone, DM-private per-PC state cleared,
+   * bonds tombstoned).  Distinct from pc-retire / pc-archive which
+   * preserve the PC as a referenced narrative entity.
+   *
+   * `narrativeShape` is DM-only authorial framing (stripped by
+   * `scrubRevoke` on non-coord saves; materializer tolerates absence
+   * via the DEC-030 contract).  `bondTombstoneName` (cap 80) is the
+   * DM-supplied stand-in shown on remaining players' bond lists;
+   * `bondTombstoneNpcId` lets the renderer resolve a reassigned bond
+   * to an existing NPC.
+   *
+   * Returns true on append; false when off-session / non-coord /
+   * payload invalid.
+   */
+  appendPcRevoke(payload: {
+    pcId: string;
+    slot: number;
+    narrativeShape: 'never-arrived' | 'offstage-forever' | 'recast';
+    bondTombstoneName?: string;
+    bondTombstoneNpcId?: string;
+  }): boolean {
+    if (!this.session) return false;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!payload.pcId || payload.pcId.length === 0) return false;
+    if (
+      !Number.isInteger(payload.slot) ||
+      payload.slot < 1 ||
+      payload.slot > 256
+    ) {
+      return false;
+    }
+    if (
+      payload.narrativeShape !== 'never-arrived' &&
+      payload.narrativeShape !== 'offstage-forever' &&
+      payload.narrativeShape !== 'recast'
+    ) {
+      return false;
+    }
+    const trimmedName = payload.bondTombstoneName?.trim() ?? '';
+    const trimmedNpcId = payload.bondTombstoneNpcId?.trim() ?? '';
+    if (trimmedName.length > 80) return false;
+    if (trimmedNpcId.length > 80) return false;
+    this.session.append('pc-revoke', {
+      v: 1,
+      pcId: payload.pcId,
+      slot: payload.slot,
+      narrativeShape: payload.narrativeShape,
+      ...(trimmedName.length > 0
+        ? { bondTombstoneName: trimmedName }
+        : {}),
+      ...(trimmedNpcId.length > 0
+        ? { bondTombstoneNpcId: trimmedNpcId }
+        : {}),
+      ...(v.peerId ? { causedByPeerId: v.peerId } : {})
+    });
+    return true;
+  }
+
+  /**
+   * Run #18 (2026-05-30) — host bridge for the dm-operational-view's
+   * `pc-revoke-request` event (DEC-044).  Maps the UI detail (which
+   * the confirm-dialog produced) to the engine event via
+   * `appendPcRevoke`.  Defense-in-depth gates (coord + active
+   * session) already live inside `appendPcRevoke`; this wrapper just
+   * shapes the payload + logs failure for diagnostic purposes.
+   */
+  private async handlePcRevokeRequest(e: Event): Promise<void> {
+    const detail = (
+      e as CustomEvent<{
+        pcId: string;
+        slot: number;
+        narrativeShape:
+          | 'never-arrived'
+          | 'offstage-forever'
+          | 'recast';
+        bondTombstoneName?: string;
+        bondTombstoneNpcId?: string;
+      }>
+    ).detail;
+    if (!detail) return;
+    this.appendPcRevoke({
+      pcId: detail.pcId,
+      slot: detail.slot,
+      narrativeShape: detail.narrativeShape,
+      ...(detail.bondTombstoneName !== undefined
+        ? { bondTombstoneName: detail.bondTombstoneName }
+        : {}),
+      ...(detail.bondTombstoneNpcId !== undefined
+        ? { bondTombstoneNpcId: detail.bondTombstoneNpcId }
+        : {})
+    });
+  }
+
+  /**
+   * Run #18 (2026-05-30) — projection helper for the dm-operational-
+   * view's "Manage seats" section.  Builds a `ManageSeatRow[]` from
+   * the current sessionView: every slot whose state surfaces in the
+   * "Manage seats" UI gets a row (today the UI renders rows for
+   * every slot regardless of state so the DM can see the full
+   * seat ladder — bound-active rows get destructive affordances,
+   * other rows show an explanatory message).
+   *
+   * Inbound-bond display names: walks `pcBonds[*]` looking for
+   * bonds whose `targetPcId === row.pcId`; the source PC's display
+   * name (resolved via `synthesizedPcs`) is added to the row's
+   * `inboundBondSourceDisplayNames` list.  De-duplicated per source.
+   */
+  private buildManageSeatRows(): readonly ManageSeatRow[] {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return [];
+    const shared = v.shared;
+    const rows: ManageSeatRow[] = [];
+    const slotKeys = Object.keys(shared.pcSlots)
+      .map((k) => Number(k))
+      .filter((n) => Number.isInteger(n) && n >= 1)
+      .sort((a, b) => a - b);
+    for (const slot of slotKeys) {
+      const seat = shared.pcSlots[slot];
+      if (!seat) continue;
+      const pcId =
+        seat.state === 'bound-active' ||
+        seat.state === 'bound-retired' ||
+        seat.state === 'bound-archived'
+          ? seat.pcId
+          : undefined;
+      const displayName = pcId
+        ? (shared.synthesizedPcs[pcId]?.name ?? `PC${slot}`)
+        : 'Open seat';
+      const inboundSources = new Set<string>();
+      if (pcId) {
+        for (const [sourcePcId, bonds] of Object.entries(shared.pcBonds)) {
+          if (sourcePcId === pcId) continue;
+          for (const b of bonds) {
+            if (b.targetPcId === pcId) {
+              inboundSources.add(sourcePcId);
+              break;
+            }
+          }
+        }
+      }
+      const inboundNames: string[] = [];
+      for (const src of inboundSources) {
+        const name = shared.synthesizedPcs[src]?.name ?? src;
+        inboundNames.push(name);
+      }
+      inboundNames.sort();
+      rows.push({
+        slot,
+        state: seat.state as ManageSeatRow['state'],
+        ...(pcId ? { pcId } : {}),
+        pcDisplayName: displayName,
+        inboundBondSourceDisplayNames: inboundNames
+      });
+    }
+    return rows;
   }
 
   /**

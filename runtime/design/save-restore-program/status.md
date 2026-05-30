@@ -1,16 +1,37 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-30 run #16 (PLAYTEST GREEN —
-program-lead final run before playtest 1).  See
-`../playtest-readiness/status.md` for the playtest-readiness
+**Last updated:** 2026-05-30 run #18 (`pc-revoke` engine
+primitive + DM operational view "Manage seats" surface).
+See `../playtest-readiness/status.md` for the playtest-readiness
 status + handoff doc.  This program continues as the
 underlying save/restore mechanism but is no longer the
 active container; the playtest-readiness program governs.
 **Active milestone:** M6a-FS playable release GREEN
 (unchanged from run #12); playtest-readiness program is
-PLAYTEST GREEN per `../playtest-readiness/playtest-handoff.md`.
-**Latest deploy hash:** a75536e (run #16 ship)
+PLAYTEST GREEN per `../playtest-readiness/playtest-handoff.md`;
+run #18 adds `pc-revoke` (DEC-043) + DM operational view
+"Manage seats" surface (DEC-044) without disturbing the GREEN
+baseline.
+**Prior run #17 deploy hash:** 4779a9c
 **Branch:** main
+
+## Run #18 — what shipped
+
+- Engine: `pc-revoke` event + materializer + `revoked`
+  SlotState + scrubber + EVENT_KINDS_PLAYER_VISIBLE entry +
+  16 regression tests (PR1, commit 87d680f).
+- UI: `<pc-revoke-confirm-dialog>` (run-#17 idiom) + DM
+  operational view "Manage seats" section + per-seat
+  collapsible disclosure + host bridge (PR2, this commit).
+- Tests: Mock Campaign 12 (`persistence.simulation-12-revoke-
+  and-recast.test.ts`) — 7 scenarios incl. end-to-end production
+  click path through QuireApp per LL-1/2/3 discipline.
+- Decisions: DEC-039..044 logged in `decisions.md`.
+- Adversarial review: `../playtest-readiness/review-history/
+  adversarial-run18-pc-revoke-2026-05-30.md` — ZERO P0/P1/P2
+  findings; GO for playtest with run #18 included.
+- Bundle: 161.70 KB gzipped main (under 165 KB cap).
+- Tests: 3114 + 2 skipped = 3116 (up from 3071 baseline; +45).
 
 ## Run #13 quick links
 

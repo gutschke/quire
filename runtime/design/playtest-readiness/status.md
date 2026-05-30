@@ -1,12 +1,32 @@
 # Playtest-Readiness Program — Status
 
-**Last updated:** 2026-05-30 run #17 EMERGENCY (TWO P0s —
-Start fresh + retire dialog "white frame")
+**Last updated:** 2026-05-30 run #18 (`pc-revoke` engine
+primitive + DM operational view "Manage seats" surface)
 
-**Status:** **PLAYTEST GREEN re-affirmed after both run-#17
-emergency P0s closed.**  The product owner ran a dry-run on
-2026-05-30 and surfaced two P0s that the v3 consultants signed
-off without catching:
+**Status:** **PLAYTEST GREEN preserved + run #18 ships the
+TTRPG-expert player-removal advisory.**  The product owner
+asked for two related affordances: "clearly wiped out a player
+as if they had never been there" + "keep the PC1 slot in the
+story but completely re-create the character because the player
+is unhappy with how their character worked out".  Run #18
+delivers both via one new coord-only `pc-revoke` event behind
+the run-#17 two-step confirm idiom.
+
+PR1 (engine primitive + materializer + firewall + slot state +
+14 regression tests) shipped in commit `87d680f`.
+
+PR2 (DM operational view "Manage seats" section + per-seat
+collapsible disclosure + `<pc-revoke-confirm-dialog>` + host
+bridge) shipped in THIS commit alongside Mock Campaign 12 +
+six new DECs (DEC-039..044) + the adversarial review report.
+
+**Latest deploy hash:** see end of doc (filled at push time).
+
+**Prior run #17 status (preserved for context):**
+**PLAYTEST GREEN re-affirmed after both run-#17 emergency P0s
+closed.**  The product owner ran a dry-run on 2026-05-30 and
+surfaced two P0s that the v3 consultants signed off without
+catching:
 
 1. The "Start fresh" affordance had no confirmation modal AND
    didn't actually clear local state.  Closed: DEC-036
@@ -50,8 +70,173 @@ closed H-2 + H-1 and documented H-3 deferral as OP-046.
 - WS-G (UI-iteration discipline): mock-10 extended (+2
   scenarios for H-2 + H-1).
 
-**Latest deploy hash:** 4779a9c (run #17 emergency ship)
+**Prior run #17 deploy hash:** 4779a9c (run #17 emergency ship)
 **Branch:** main
+
+---
+
+## Run #18 — what shipped (TTRPG-expert player-removal advisory)
+
+### Phase 1 — `pc-revoke` engine primitive (commit 87d680f)
+
+Shipped before this commit; included for continuity:
+
+- New coord-only event kind `pc-revoke` (DEC-043).  Distinct
+  from `pc-retire` / `pc-archive`: instead of memorializing the
+  PC as a referenced narrative entity, REMOVES the
+  `synthesizedPcs[pcId]` entry, flips the seat to the new
+  `revoked` SlotState (sticky-N preserved), tombstones inbound
+  bonds with a DM-supplied stand-in name (optionally reassigns
+  to an existing NPC), and clears DM-private per-PC state
+  (accidental-cast log, caster-state, threadDebt, pcFoci,
+  pcEdits).
+- `narrativeShape` ('never-arrived' / 'offstage-forever' /
+  'recast') is DM-only authorial framing.  Stripped on non-coord
+  saves by `scrubRevoke` / `REVOKE_DM_ONLY_PAYLOAD_FIELDS`.
+  Materializer tolerates absence per DEC-030 (treats as safe
+  default 'offstage-forever').
+- For recast, the DM follows up with `pc-create` + `pc-slot-
+  bind`: the permissive bind materializer transitions
+  `revoked` → `bound-active` naturally.
+- 16 regression tests in `state.test.ts` covering shapes,
+  firewall tolerance, per-PC state wipe, bond tombstone, proposal
+  clearance, peer.pcId clearance, non-coord rejection, slot
+  consistency, idempotence, retire-flow leftover cleanup, + 2
+  filterForViewer tests.
+- Bundle cap bumped to 165 KB previously (run #17); the new
+  surface keeps the main chunk at ~162 KB gzipped (within cap).
+
+### Phase 2 — DM operational view surface (this commit)
+
+- New `<pc-revoke-confirm-dialog>` Lit region modelled on the
+  run-#17 `<start-fresh-confirm-dialog>` idiom (light DOM,
+  custom backdrop, Escape resolves null, default-focused Cancel).
+  Two variants: `remove-player` (default `offstage-forever`)
+  + `reset-character` (default `recast`).  Dialog body
+  explicitly names the silent-player firewall consent ("Your
+  players won't be told this happened").  10 dialog unit tests.
+- `<dm-operational-view>` gained a "Manage seats" section
+  (DEC-044) above Backups.  Per-seat collapsible disclosure
+  surfaces "Reset character (recast)…" + "Remove player from
+  this seat…" for bound-active seats; non-active seats render
+  an explanatory message instead of destructive buttons.
+  7 new section tests.
+- `<quire-app>` host wiring:
+  - `appendPcRevoke({ pcId, slot, narrativeShape,
+    bondTombstoneName?, bondTombstoneNpcId? })` — coord-only
+    event emitter mirroring `appendPcRetire` shape.
+  - `handlePcRevokeRequest(e)` — bridge from the view's
+    `pc-revoke-request` event to `appendPcRevoke`.
+  - `buildManageSeatRows()` — projection helper walking
+    `sessionView.shared.pcSlots` + `synthesizedPcs` + `pcBonds`
+    to build the `ManageSeatRow[]` props the view consumes.
+  - `manageSeats` + `availableNpcs` (empty for v1 per DEC-040)
+    + `@pc-revoke-request` listener added to
+    `renderDmOperationalView`.
+
+### Phase 3 — Mock Campaign 12 (this commit)
+
+`src/persistence.simulation-12-revoke-and-recast.test.ts` ships
+7 scenarios per LL-1/2/3 sliver-test discipline:
+
+- A1 (never-arrived): wipes PC2 from both DM + player
+  projections; sticky-N preserved; inbound bond tombstone
+  visible in remaining player's view.
+- A2 (chat is ink): pre-revoke chat events survive
+  byte-identical with byline preserved.
+- B1 (recast): same slot, new PC; OLD PC's magic-discovery log
+  is wiped per DEC-041; NEW PC starts clean.
+- B2 (recast bond tombstone): inbound bond reads with the
+  DM-supplied stand-in name.
+- C1 (END-TO-END through QuireApp): mount real Lit element,
+  click through the production path (toggle → remove → flip
+  dialog radio → Confirm), assert ENGINE STATE (not DOM render
+  flags).  Closes the LL-1/2/3 anti-pattern.
+- D1 (firewall): `narrativeShape` + `causedByPeerId` stripped
+  from the player-projected save; pcId + slot + bondTombstone*
+  preserved.
+- E1 (silent-player firewall): no system-inserted chat / toast
+  on the player's filtered log; chat-event count unchanged.
+
+### Phase 4 — DECs landed (this commit)
+
+DEC-039 through DEC-044 added to `../save-restore-program/
+decisions.md`:
+
+- DEC-039 — two SlotStates collapsed to ONE: `revoked` (run-
+  level engineering divergence from expert's recommendation,
+  with rationale).
+- DEC-040 — bond reassignment is existing-NPC only in v1.
+- DEC-041 — `pc-revoke` clears the DM-private magic-discovery
+  log for the pcId.
+- DEC-042 — no `pc-revoke-request` (player-initiated revoke)
+  in v1.
+- DEC-043 — `pc-revoke` engine primitive (the load-bearing
+  decision).
+- DEC-044 — DM operational view surfaces the affordance behind
+  a per-seat "Manage seat ▾" disclosure with two-step confirm.
+
+### Phase 5 — Adversarial review
+
+`review-history/adversarial-run18-pc-revoke-2026-05-30.md`
+confirms firewall + bond + sticky-N invariants hold; ZERO
+P0/P1/P2 findings.  Two P3 follow-ups noted (Manage-seats
+discoverability cue + per-bond tombstone configuration); both
+classified as right-shape-of-future-iteration, NOT playtest
+blockers.  GO for playtest 1 with run #18 included.
+
+### Phase 6 — Test count + bundle
+
+- Tests: **3114 passed + 2 skipped = 3116** (up from run #17
+  baseline 3071; **+45 net this run** — 16 engine + 10 dialog
+  + 7 manage-seats + 7 mock-12 + ~5 fuzz/coverage adjustments).
+- Bundle: main chunk **161.70 KB gzipped** (under 165 KB cap
+  bumped in run #17 commit `aa937de`).
+- Typecheck: clean.  Build: clean.
+
+### Files changed (run #18, both PRs combined)
+
+PR1 (commit 87d680f):
+- `runtime/src/core/state.ts` — pc-revoke materializer + payload
+  validation + bond rewrite + SlotState addition.
+- `runtime/src/core/state.test.ts` — 16 engine regression tests.
+- `runtime/src/persistence.ts` — REVOKE_DM_ONLY_PAYLOAD_FIELDS
+  + scrubRevoke + EVENT_KINDS_PLAYER_VISIBLE entry.
+- `runtime/src/persistence.restore-firewall-fuzz.helpers.ts` —
+  pc-revoke sentinel planter.
+- `runtime/src/ui/components/seat-card.ts` — render the new
+  `revoked` SlotState as "Open seat" in the roster.
+- `runtime/design/playtest-readiness/review-history/ttrpg-
+  expert-player-removal-2026-05-30.md` — the spec.
+
+PR2 (this commit):
+- `runtime/src/ui/regions/pc-revoke-confirm-dialog.ts` (NEW).
+- `runtime/src/ui/regions/pc-revoke-confirm-dialog.test.ts`
+  (NEW; 10 tests).
+- `runtime/src/ui/regions/dm-operational-view.ts` — Manage seats
+  section + dialog mount.
+- `runtime/src/ui/regions/dm-operational-view.test.ts` — 7 new
+  manage-seats tests.
+- `runtime/src/quire-app.ts` — appendPcRevoke +
+  handlePcRevokeRequest + buildManageSeatRows + render wiring.
+- `runtime/src/persistence.simulation-12-revoke-and-recast.test.ts`
+  (NEW; 7 scenarios).
+- `runtime/design/save-restore-program/decisions.md` — DEC-039
+  through DEC-044.
+- `runtime/design/save-restore-program/simulations/mock-campaign-
+  12-revoke-and-recast.md` (NEW).
+- `runtime/design/playtest-readiness/review-history/adversarial-
+  run18-pc-revoke-2026-05-30.md` (NEW).
+- `runtime/design/playtest-readiness/status.md` (this entry).
+- `runtime/design/playtest-readiness/playtest-handoff.md`
+  (Patches §0c added).
+- `runtime/design/save-restore-program/status.md` (run #18 entry).
+
+### GO call
+
+**PLAYTEST GREEN preserved.**  Run #18 surfaces are
+operational-view-only; the Run #16/#17-GREEN play paths are
+untouched.  The adversarial review confirms the firewall holds.
 
 ---
 

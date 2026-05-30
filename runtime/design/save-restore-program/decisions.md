@@ -15,6 +15,352 @@ references the prior. Format:
 
 ---
 
+## DEC-044 — DM operational view surfaces `pc-revoke` behind a per-seat "Manage seat ▾" disclosure (2026-05-30, run #18)
+
+**Decision:** the `pc-revoke` UI affordance lives ONLY in the DM
+operational view (`appMode === 'dm-operational'`), on a per-seat
+collapsible disclosure that surfaces two destructive options for
+bound-active seats:
+
+- **Reset character (recast)…** — `variant === 'reset-character'`,
+  default `narrativeShape === 'recast'` in the dialog.
+- **Remove player from this seat…** — `variant === 'remove-player'`,
+  default `narrativeShape === 'offstage-forever'` (DM can switch
+  to `never-arrived`).
+
+Both routes open `<pc-revoke-confirm-dialog>` (a fresh primitive
+modelled on the run-#17 `<start-fresh-confirm-dialog>` idiom: light
+DOM, custom backdrop, default-focused Cancel, Escape resolves
+null).  The dialog body explicitly names the silent-player
+firewall ("Your players won't be told this happened") so the DM
+consents to the firewall in action.  Bond tombstone configuration
+(stand-in name + optional NPC reassignment) lives in the same
+dialog as a second fieldset.
+
+Confirm dispatches a `pc-revoke-request` CustomEvent up to the
+host (`<quire-app>`), which routes through `handlePcRevokeRequest`
+→ `appendPcRevoke` → engine event.
+
+**Why:** the TTRPG expert advisory locked this placement (Q7):
+- Not chargen-dm-review — the need spans into early sessions, not
+  just pre-chargen.
+- Not the live session-roster header — anything that breaks scene
+  momentum is a UX bug (Riley persona); revoke is between-sessions
+  work.
+- The DM operational view already houses destructive-shaped
+  operations (Start fresh, Disconnect, cloud-push consent) and
+  groups revoke with peers in cognitive shape — *things the DM
+  does to the campaign's shape, not its fiction.*
+
+The two-step confirm gate mirrors DEC-037 (Start fresh) for
+consistency.  Reusing the run-#17 dialog idiom (NOT `<quire-modal>`
+which would re-introduce the LL-3 light-DOM `<slot>` failure mode)
+keeps the surface predictable.
+
+**Alternatives:**
+- Surface revoke from the session-roster header (active play).
+  Rejected per Q7 — scene-momentum hazard.
+- Surface only from chargen-dm-review.  Rejected — bounds the
+  affordance to a pre-chargen window the user explicitly said it
+  needs to outlive.
+- One destructive button with a narrativeShape picker.  Rejected —
+  the `reset-character` vs `remove-player` axis is the DM's mental
+  model (the choice is "which problem am I solving?", not "what
+  narrative framing do I want?"); the destructive button's label
+  should match that mental model directly.
+
+**Tradeoffs:**
+- The launcher chip + Esc-to-close discovery path remains the same
+  as before; no new entrypoint surface.  Run #18 doesn't add an
+  in-app discoverability cue for the new affordance — DM finds it
+  via the operational view, same as backups.  Followup if playtest
+  surfaces a discoverability gap.
+- Per-bond decisions defer to a future iteration: today the
+  dialog applies one tombstone name + one optional NPC
+  reassignment uniformly across all inbound bonds.  Per-bond
+  routing would be a bigger UI; tracked as a follow-up.
+
+**Revisit if:** playtest surfaces (a) DMs missing the affordance
+entirely (discoverability), or (b) DMs needing per-bond tombstone
+choices (per-bond UX).
+
+---
+
+## DEC-043 — `pc-revoke` engine primitive for player removal / PC rebirth (2026-05-30, run #18)
+
+**Decision:** ship `pc-revoke` as a new coord-only event kind,
+distinct from `pc-retire` / `pc-archive`.  Payload shape:
+
+```ts
+interface PcRevokePayload {
+  v: 1;
+  pcId: string;
+  slot: number;
+  narrativeShape?: 'never-arrived' | 'offstage-forever' | 'recast';
+  causedByPeerId?: PeerId;
+  bondTombstoneName?: string;
+  bondTombstoneNpcId?: string;
+}
+```
+
+Materializer (per Q5 expert advisory + DEC-030 firewall-tolerance):
+1. Seat → `revoked` SlotState (sticky-N preserved).
+2. `delete state.synthesizedPcs[pcId]`.
+3. Clear DM-private per-PC state: `pcAccidentalGrants[pcId]`,
+   `casterState[pcId]`, `threadDebt[pcId]`, `pcFoci[pcId]`,
+   `pcEdits[pcId]`.  (DEC-041.)
+4. Outbound bonds (`pcBonds[pcId]`) dropped; outbound proposals
+   (`pcBondProposals[pcId]`) dropped.
+5. Inbound bonds tombstoned with DM-supplied stand-in name + optional
+   NPC id; inbound proposals (un-ratified) dropped.
+6. Retire-flow leftovers (`pcRetireRequests`, `pcRetireRejections`
+   for the pcId) cleared.
+7. `peers[*].pcId === pcId` claims cleared (surgical — DO NOT
+   emit `peer-leave`; the peer may still be a guest after recast).
+
+`narrativeShape` is DM-only authorial framing; stripped from
+non-coord saves by `scrubRevoke` / `REVOKE_DM_ONLY_PAYLOAD_FIELDS`.
+The materializer tolerates absence per DEC-030's contract (treats
+as safe default `offstage-forever` — equivalent player projection
+since all three shapes leave the seat in `revoked`).
+
+For recast, the DM follows up with `pc-create` + `pc-slot-bind`:
+the already-permissive `pc-slot-bind` materializer transitions
+`revoked` → `bound-active` naturally with no extra wiring.
+
+**Why:** the TTRPG expert advisory (Q1 + Q6) locked this as a
+distinct event kind, not a `pc-retire` extension.  `pc-retire`'s
+invariant is *the PC is preserved as a referenced narrative
+entity* (memorialized via `seatMemory` + `inFictionRetireReason`).
+`pc-revoke`'s invariant deliberately violates that — the PC is
+ERASED for the `never-arrived` case (chair empty from the start) +
+the recast case (new PC always was the one in the story).
+Conflating would force the DM to choose between "honest in-
+fiction" (memorial visible) and "actually gone" via copy-overload
+on one event — the conflated-affordance shape the firewall
+punishes.
+
+One atomic event per Q5: composing `pc-archive` + `peer-leave` +
+`pc-create` atomicity-breaks across the firewall (three independent
+materializations produce a brief "Mei is here / Mei is gone / new
+PC arrived" flicker in roster diffs — exactly the leak Q10 warns
+about).  Precedent: `pc-mark-realization` (multi-field batch
+collapsed into one event for the same atomicity reason).
+
+**Alternatives:**
+- Extend `pc-retire` with a `revoked` enum value.  Rejected per
+  the conflated-affordance shape above.
+- Compose `pc-archive` + `peer-leave` + `pc-create`.  Rejected per
+  atomicity-break above.
+- Don't ship anything; tell DMs to manually edit the save file.
+  Rejected per the user's explicit ask + the prime directive (the
+  engine should help the DM tell a clean retold story).
+
+**Tradeoffs:**
+- `narrativeShape` is purely advisory — the player projection looks
+  identical for all three shapes.  Future-proofing: if the DM
+  surface ever wants to render narrative-shape-specific framing on
+  the DM operational view's history, the field is there.
+- `revoked` SlotState is a new top-level state (see DEC-039).
+- Causes a one-time observable change to the player's roster
+  (Q10): the revoked PC's `synthesizedPcs` entry disappears.
+  Acceptable under the civilized-peer threat model; the DM picks
+  the in-fiction explanation in chat.
+
+**Revisit if:** playtest reveals the need for `pc-revoke-request`
+(player-initiated revoke; see DEC-042) or per-bond tombstone
+decisions in the dialog.
+
+---
+
+## DEC-042 — No `pc-revoke-request` (player-initiated revoke) in v1 (2026-05-30, run #18)
+
+**Decision:** the v1 of `pc-revoke` is coord-only.  No
+player-initiated `pc-revoke-request` event exists.
+
+**Why:** TTRPG expert advisory Q5 + open product call 4:
+"Players asking to erase themselves from the story is a table
+conversation, not an engine primitive.  `pc-retire-request`
+covers the common case of 'I'd like my PC to step offstage' —
+revoke is for the harder out-of-game churn cases (vanished
+player, unhappy player → recast) which require DM judgment AND a
+table conversation BEFORE the engine event fires.  Building a
+request flow without that table conversation as the rate-limiter
+risks players normalising 'request a revoke' as a routine
+affordance — bad for the empathy-of-table-design axis."
+
+The user's verbatim ask was about the DM's affordance ("we
+absolutely need the ability to clearly wipe out a player"); they
+did not ask for a player-initiated path.
+
+**Alternatives:**
+- Mirror `pc-retire-request` with a `pc-revoke-request` +
+  `pc-revoke-reject` pair.  Rejected per the empathy-of-table-
+  design rationale above.
+
+**Tradeoffs:**
+- Rare-but-real "I'm uncomfortable with how this turned out"
+  cases require an out-of-band DM ping (chat / DM message / out-
+  of-game conversation).  Acceptable; the alternative (in-engine
+  request affordance) risks normalising the move.
+
+**Revisit if:** playtest surfaces repeated friction around the
+table-conversation handoff (player wants to flag the revoke
+desire without speaking up in front of the table).
+
+---
+
+## DEC-041 — `pc-revoke` clears the DM-private magic-discovery log for the pcId (2026-05-30, run #18)
+
+**Decision:** `applyPcRevokeEvent` deletes `pcAccidentalGrants[pcId]`
++ `casterState[pcId]` + `threadDebt[pcId]` + `pcFoci[pcId]` +
+`pcEdits[pcId]` along with the `synthesizedPcs[pcId]` entry.  The
+new (or absent) PC starts fresh.
+
+**Why:** TTRPG expert advisory Q2 + Q9 Underleaf-specific note +
+open product call 3: "Engine-true answer is yes; table-true
+answer might be the DM wants to keep it as a note for the new PC's
+chargen.  I lean engine-true."  We took the engine-true default.
+
+The magic-discovery accidental-cast log (rules.md:178) is a per-PC
+narrative record of "the PC did magic things they didn't realize
+were magic."  Carrying it over to the recast PC would mean the
+new player is implicitly handed an arc they didn't author —
+contrary to the Player owns voice principle of the chargen
+authorship division.  For `never-arrived` / `offstage-forever` the
+PC entry is gone anyway, so the question is moot.
+
+**Why ALL DM-private per-PC state, not just the magic log:**
+`casterState`, `threadDebt`, `pcFoci`, `pcEdits` are all
+similarly per-PC; leaking any of them across a revoke creates a
+phantom-PC hazard.  Easier to nuke the lot than maintain a
+selective allowlist — and any of these surviving would render
+weirdly on the new PC's sheet.
+
+**Alternatives:**
+- Keep the magic log + clear everything else.  Rejected per the
+  authorship-division rationale above.
+- Keep nothing per-PC + leave it to the DM to re-create on the
+  new PC.  Same as the chosen approach (the new PC starts at
+  zero); the DEC just documents WHICH per-PC structures get
+  cleared.
+
+**Tradeoffs:**
+- If a DM WANTS to preserve a magic-discovery note for the
+  recast PC's chargen, they have to save it out-of-band (DM
+  notes / scratchpad) before the revoke.  Acceptable; this is the
+  rarer case.
+
+**Revisit if:** playtest reveals DMs reaching for the prior magic
+log on recasts frequently enough that the workflow friction
+matters.
+
+---
+
+## DEC-040 — Bond reassignment is existing-NPC only in v1 (no on-the-fly NPC create) (2026-05-30, run #18)
+
+**Decision:** the `<pc-revoke-confirm-dialog>` accepts an
+`availableNpcs` list from the host + lets the DM pick one as the
+bond reassignment target.  The dialog does NOT support on-the-fly
+NPC creation; that lands later via the M4 living-doc workflow.
+
+The host (`<quire-app>`) passes an empty `availableNpcs=[]` today
+because Underleaf's NPC store (`synthesizedNpcs`) is a future
+addition — the dialog falls back to the free-text stand-in name
+input.
+
+**Why:** TTRPG expert advisory open product call 2: "I'd recommend
+existing NPCs only for v1; on-the-fly create can ride the M4
+living-doc workflow later.  Product call about how much chrome
+the dialog needs."  We took the existing-only default.
+
+Building an in-dialog "Create a new NPC named X with backstory Y"
+form would multiply the dialog's footprint + couple it to the
+not-yet-existent NPC authoring surface.  The free-text stand-in
+name covers the immediate need (the bond reads "(former friend)
+Mateo" rather than vanishing or dangling).
+
+**Alternatives:**
+- Inline NPC creation in the dialog.  Rejected per dialog-bloat +
+  scope.
+- No NPC reassignment at all (pure free-text tombstone).  Rejected
+  — when the campaign DOES have NPCs (M4+), reassigning to a real
+  NPC is the highest-craft mitigation per Q3 (bond text drifts
+  smoothly rather than vanishes).
+
+**Tradeoffs:**
+- v1 DMs without an NPC store get only the free-text stand-in
+  name option.  Fine; that's the right shape for the playtest
+  table.
+
+**Revisit if:** M4 lands a living-doc NPC store + the dialog
+should pull from it; or the dialog's chrome should grow to
+include in-line NPC creation.
+
+---
+
+## DEC-039 — Two new SlotStates (`unbound-revoked` + `bound-recast`) collapsed to ONE: `revoked` (2026-05-30, run #18)
+
+**Decision:** the TTRPG expert recommended two new `SlotState`
+values (`unbound-revoked` + `bound-recast`) to avoid a brief
+flicker during the recast handoff.  We collapsed both into a
+single `revoked` state.
+
+**Why (divergence from default):** the recast flow is two events:
+`pc-revoke` (slot → `revoked`) followed immediately by
+`pc-create` + `pc-slot-bind` (slot → `bound-active`).  The two-
+state design would have `pc-revoke` route to `bound-recast` (slot
+holds the OLD pcId as a placeholder during chargen) vs
+`unbound-revoked` (slot empty for vanished-player).
+
+Walking the materializer + sticky-N + bond-rewrite paths
+revealed two facts:
+
+1. **`bound-recast` as a holding state requires the materializer
+   to know which `pc-revoke` is followed by a chargen flow.**
+   That information isn't in the event payload — it's a UI
+   pattern.  Encoding it in the SlotState pushes the UI's
+   "what does the DM intend next?" into the engine, exactly the
+   anti-pattern the playbook warns against.
+
+2. **The flicker the two-state design avoids is observable in
+   ~one render tick** between `pc-revoke` materialization and
+   `pc-slot-bind` materialization for recast.  Both events land
+   atomically in the DM's session log; the player's projection
+   sees the seat in `revoked` for a single frame, then
+   `bound-active` with the new pcId.  In practice the recast
+   flow involves chargen authoring (minutes), so the seat is
+   genuinely in `revoked` for the full chargen duration.  The
+   one-tick atomic-flush flicker concern doesn't apply.
+
+The expert called this "engineering judgment, not TTRPG
+judgment" — exercising that judgment, the simpler single state
+wins.
+
+**Alternatives:**
+- Two SlotStates as the expert recommended.  Rejected per above.
+- Reuse `unbound`.  Rejected — sticky-N requires the slot to be
+  present (so the integer doesn't renumber), and `unbound` would
+  conflate the "never had a player" case (empty seat for an unsold
+  seat) with the "had a player; we wiped them" case (deliberate
+  revoke).  The DM operational view's "Manage seats" surface uses
+  `revoked` to render explanatory text on the row — would be
+  ambiguous if collapsed into `unbound`.
+
+**Tradeoffs:**
+- Single-tick flicker on recast (see above).  Mitigated by
+  chargen duration in practice.
+- The `revoked` state needs its own seat-card rendering ("Open
+  seat") + restoration of the right behavior from the operational
+  view (no destructive affordances for revoked seats; the row
+  shows an explanatory message instead).  Both wired in this run.
+
+**Revisit if:** the flicker becomes user-visible (DMs report
+"Mei flashes back as 'revoked' before the new PC appears"); the
+mitigation would be the two-state design after all.
+
+---
+
 ## DEC-038 — `<quire-modal>` wraps the host's children in a real `<dialog>` (2026-05-30, run #17 emergency)
 
 **Decision:** `<quire-modal>` no longer relies on `<slot>`

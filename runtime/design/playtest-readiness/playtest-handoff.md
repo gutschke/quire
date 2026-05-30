@@ -93,6 +93,114 @@ smaller than what the user sees.
 
 ---
 
+## 0c. Patches since handoff (run #18) — DM player-removal affordance
+
+The product owner asked for two related affordances during the
+between-runs review:
+
+> "We absolutely need the ability to clearly wipe out a player as
+> if they had never been there and start from scratch.  Sometimes,
+> especially during the early phases of the game, that's necessary.
+> It also helps when we want to keep the PC1 slot in the story
+> but completely re-create the character because the player is
+> unhappy with how their character worked out... we don't want to
+> reauthor the entire story, just because some out-of-game changes
+> have to be made.  A little bit of creative retconning by the DM
+> can often fix things, if the game engine allows it."
+
+Run #18 ships both via a single new coord-only engine event
+`pc-revoke` (DEC-043) + a new DM operational view "Manage seats"
+surface (DEC-044) behind the run-#17 two-step confirm idiom.
+
+### What the DM sees
+
+- Open the DM operational view (the same affordance Backups
+  uses).
+- Each bound-active seat gets a "Manage seat ▾ — PC<N>
+  (<Name>)" collapsible row.
+- Expanding the row exposes two destructive options:
+  - **Reset character (recast)…** — for "the player is unhappy
+    with how their character worked out; we want a new PC at
+    the same seat without reauthoring the story."
+  - **Remove player from this seat…** — for "the player
+    vanished / won't continue; the seat should read as
+    'Open seat'."
+- Clicking either option opens the `<pc-revoke-confirm-dialog>`
+  with a sensible default narrative shape, the inbound bond
+  list (if any), and a free-text "stand-in name" input the DM
+  fills in so remaining players see "(former friend) X" instead
+  of a dangling bond.
+- The dialog body explicitly reads: **"Your players won't be
+  told this happened.  Choose the fictional explanation you
+  want to use."**  Default-focused Cancel.
+- Confirm fires the `pc-revoke` event: seat enters `revoked`
+  (sticky-N preserved — slot integer doesn't renumber), PC's
+  `synthesizedPcs` entry is gone, DM-private per-PC state is
+  wiped, inbound bonds carry the tombstone name.
+
+### What's distinct from Retire / Archive
+
+| Situation | Affordance | Player roster shows |
+|---|---|---|
+| PC died/left in fiction; we honor | `pc-retire` (chargen-dm-review path) | "Sora — left after the betrayal" |
+| Stepping out, may return | `pc-archive` (chargen-dm-review path) | "Sora — between chapters" |
+| Player vanished; PC barely existed | `pc-revoke` (never-arrived) | "Open seat" |
+| Player still here, PC didn't work | `pc-revoke` (recast) → new `pc-create` | New PC; no memorial of old |
+| Player vanished mid-arc; PC mattered | `pc-revoke` (offstage-forever) | "Open seat" (no memorial) |
+
+Retire / Archive PRESERVE the PC as a memorialized narrative
+entity.  Revoke ERASES the PC's `synthesizedPcs` entry.  Two
+distinct invariants, two distinct events; the DM picks based on
+the fiction shape.
+
+### What's NOT in scope for v1
+
+- Player-initiated revoke (DEC-042 — table conversation, not
+  an engine primitive).
+- On-the-fly NPC creation from the bond-reassignment selector
+  (DEC-040 — existing NPCs only; v1 host passes empty list, so
+  the DM uses the free-text stand-in name input).
+- Per-bond tombstone configuration (one tombstone name applies
+  to all inbound bonds uniformly; per-bond decisions are a
+  future follow-up if playtest demands it).
+
+### What to watch for during playtest
+
+- **The silent-player firewall**: after a revoke, the remaining
+  players should experience the change as "fiction shifting
+  under them" (a quiet drift) — NOT a system-inserted message.
+  If a player asks "wait, where did Yui go?", the DM picks the
+  in-fiction explanation in chat.  The engine never auto-
+  narrates the disappearance.
+- **Sticky-N**: slot 3 stays slot 3 after a revoke (renders as
+  "Open seat").  The DM can rebind slot 3 to a new PC via the
+  normal `pc-create` + `pc-slot-bind` (no special "recast"
+  workflow — the engine accepts any `pc-slot-bind` into a
+  `revoked` seat).
+- **Recast magic-discovery clear**: the new PC at a recast slot
+  starts at zero accidental casts.  If you'd intended to keep
+  the magic-discovery beat for the new PC, capture it out-of-
+  band (DM notes) BEFORE the revoke (DEC-041).
+
+### Test count
+
+Run #18: 3114 + 2 skipped = 3116 (up from 3071 baseline; +45
+across mock-12 + dialog + manage-seats tests + engine
+regressions).
+
+### Where to read more
+
+- DEC-039..044 in `../save-restore-program/decisions.md`.
+- Mock Campaign 12 doc + test: `../save-restore-program/
+  simulations/mock-campaign-12-revoke-and-recast.md` +
+  `runtime/src/persistence.simulation-12-revoke-and-recast.test.ts`.
+- Adversarial review:
+  `review-history/adversarial-run18-pc-revoke-2026-05-30.md`.
+- TTRPG-expert advisory (the design spec):
+  `review-history/ttrpg-expert-player-removal-2026-05-30.md`.
+
+---
+
 This is the document a DM, a co-DM, and the human running
 the test table read **before** running session 1.  It exists
 to (a) name what the build can be trusted with, (b) name
