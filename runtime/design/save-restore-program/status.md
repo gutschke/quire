@@ -9,7 +9,7 @@ RELEASE STATUS: GREEN**)
 milestone 5 complete.  **The human can flip the maintainer switch
 and deploy to actual players.**  Next: M6a-OAuth resumption
 (separate maintainer gate per `maintainer-ops.md`).
-**Latest deploy hash:** TBD (pending push at end of run #12)
+**Latest deploy hash:** 910603e (run #12 ship — M6a-FS-5)
 **Branch:** main
 
 ## M6a-FS Playable-Release Status: **GREEN**
