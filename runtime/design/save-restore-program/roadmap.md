@@ -8,7 +8,7 @@ then **durability** (data loss windows), then **discoverability + honest scope**
 
 Roadmap published, charter written, expert findings catalogued in this doc set.
 
-## M1 — Firewall: seal known leaks + self-completing tripwire (IN PROGRESS)
+## M1 — Firewall: seal known leaks + self-completing tripwire (DONE 2026-05-29)
 
 **Adversarial findings 1 + 2 + 3 + 4 from the 2026-05-29 review.** Real data
 leaks today through the save path. Highest-impact-per-LOC fix on the board.

@@ -1,33 +1,77 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 (M0 bootstrap + M1 in flight)
-**Active milestone:** M1 — Firewall: seal known leaks + self-completing tripwire
+**Last updated:** 2026-05-29 (M1 shipped)
+**Active milestone:** M2 — Tab-close durability (next)
 
-## In-progress
+## Just shipped
 
-### M1 — Firewall (claimed task #421 + #420)
-Bundling four Adversarial findings into one ship:
-1. `map-blob-add` payload labels for unrevealed blobs leak to non-coord saves. Adding a per-kind scrubber that drops `label` (and any other free-form text fields the payload may carry) when the blob is unrevealed at save time.
-2. `causedByResponseId` survives `pc-create` / `pc-edit` scrubbers. Adding to both registry entries.
-3. Make `PER_KIND_SCRUBBERS` self-completing — a lint that complains when a player-visible kind ships without an explicit `pass` / `scrubber` decision.
-4. Save-path taint fuzz (#420) — companion to `state.firewall-fuzz` over `serializeSessionForViewer`.
+### M1 — Firewall: leaks sealed + self-completing tripwire (DONE)
 
-Tests-first. Expect 4 commits: hostile tests, scrubber additions, self-completing lint, taint fuzz.
+Single commit closed Adversarial findings #1, #2, #3, #4 from the
+2026-05-29 four-expert review:
+
+- **Map-blob payload scrub** — `map-blob-add` and `map-blob-move`
+  events now drop the `label` field when the blob is UNREVEALED at
+  save time. Keep it when revealed (player already saw the label at
+  the table). Reveal-mask precomputed via the new
+  `ScrubContext` hook. Test: `persistence.hostile.test.ts` 4 cases.
+- **`causedByResponseId` scrub** — drops the AI-provenance tracer
+  from `pc-create` + `pc-edit` for non-coord saves. Coord keeps it
+  for audit. Tests: 3 cases.
+- **Self-completing scrubber registry** — `EVENT_KINDS_NO_SCRUB_NEEDED`
+  + lint in `persistence.coverage.test.ts`. Every player-visible kind
+  is now classified explicitly; a new kind without a decision trips
+  CI. Tests: 3 lint cases.
+- **Save-path taint fuzz** — `persistence.firewall-fuzz.test.ts` is
+  the SAVE-STREAM companion to `state.firewall-fuzz.test.ts`. 40
+  seeded scenarios x 4 non-coord viewers x ~12 sentinel-planting
+  payload shapes. 0 sentinels survive. Positive-control test
+  ensures revealed labels survive (catches over-strip).
+
+Tasks #420 and #421 marked complete.
+
+All 2572 vitest tests pass. TypeScript compiles clean.
 
 ## Up next
 
-- **M2 — Tab-close durability.** Probably 1 commit (flush in `visibilitychange === 'hidden'`).
-- **M3 — Restore re-broadcast.** First reproduce the bug; the OP-001 analysis suggests the existing sync-pull may already cover this in some topologies. Need a 3-peer integration test before patching.
+### M2 — Tab-close durability (NEXT)
+
+Architect finding #5 + Test-QA finding #2: the 1.5s autosave debounce
+window is structurally lost on tab-close.
+`AutosaveController.hostDisconnected()` cancels pending saves rather
+than flushing.
+
+Plan:
+1. Add `visibilitychange` listener that triggers `performNow()` when
+   `document.visibilityState === 'hidden'` AND a save is pending.
+2. Keep `hostDisconnected()` cancel-on-route-change semantics (those
+   are legitimate unmounts during navigation; a half-typed save
+   shouldn't fire during a slug change).
+3. Test: synthesized `visibilitychange → hidden` after an unflushed
+   change writes localStorage before the test returns.
+
+### M3 — Restore re-broadcast
+
+Architect finding #1. Will FIRST reproduce in an integration test
+before patching — there's an open question (OP-001) about whether the
+existing sync-pull path already covers some topologies. Don't fix
+what doesn't break.
 
 ## Decisions pending the human
 
-- **OP-006 — Build OR strip GitHub-push + Drive sync.** Recommended default: strip + park as M6 roadmap. Drive sync is 1–2 weeks; the threat-model questions need a design pass first.
+- **OP-006 — Build OR strip GitHub-push + Drive sync.** Recommended
+  default: strip + park as M6 roadmap. The threat-model questions
+  (whose token? whose repo? does a player's event log push to the
+  DM's repo?) need a design pass before code.
 
 ## Health summary
 
 - 🟢 Living docs bootstrapped.
-- 🟡 Real firewall leak (map-blob unrevealed labels) — fix in flight.
-- 🔴 "Any party member can continue" promise — broken, M3 work pending verification.
+- 🟢 Firewall leaks sealed (M1 shipped).
+- 🟢 Self-completing scrubber registry (M1 shipped).
+- 🟢 Save-path taint fuzz (M1 shipped).
+- 🟡 Tab-close durability — M2 next.
+- 🔴 "Any party member can continue" promise — M3 work pending verification.
 - 🔴 Browser-eviction handling — no `navigator.storage.persist()`, M5 work pending.
 - 🟡 e2e-only critical-path coverage — M4 work pending.
 - 🔴 Honest scope — GitHub-push + Drive sync implied but not built. Human decision required.

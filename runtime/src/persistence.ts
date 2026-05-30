@@ -110,17 +110,175 @@ const RETIRE_DM_ONLY_PAYLOAD_FIELDS = ['reason', 'scene'] as const;
  * The registry approach catches the "engineer added a new
  * DM-only-sub-field event kind but forgot the scrub arm" failure
  * class — analogous to the materializer registry in state.ts.
+ *
+ * M1 (2026-05-29 save-restore program, Adversarial #1): scrubbers
+ * are now `(event, ctx) => …` so they can consult cross-event
+ * context.  The current consumer is `map-blob-add` / `map-blob-move`:
+ * the label is only player-safe when the blob is REVEALED at save
+ * time, so the scrubber needs to know the reveal-mask precomputed
+ * from the full log.  Future cross-event scrubs reuse the same hook.
  */
-type EventScrubber = (event: QuireEvent) => QuireEvent | null;
+export interface ScrubContext {
+  /** Set of `${scenePath}\0${blobId}` for blobs currently revealed. */
+  revealedMapBlobs: ReadonlySet<string>;
+}
+
+type EventScrubber = (
+  event: QuireEvent,
+  ctx: ScrubContext
+) => QuireEvent | null;
+
+/**
+ * Common drop-keys for any PC-event payload heading to a non-coord
+ * viewer.  `causedByResponseId` is the AI-provenance indicator (M3c
+ * write-API tracer); it survives the existing field-name scrub
+ * because it's not in `DM_ONLY_CHARACTER_FIELDS` (which gates
+ * character-record edits, not the wrapping event metadata).  Per
+ * Adversarial #2: latent leak today, becomes real the moment a
+ * future logging extension surfaces AI provenance.
+ */
+const PC_EVENT_DM_ONLY_PAYLOAD_FIELDS = ['causedByResponseId'] as const;
+
+function dropPcEventMetadata(payload: Record<string, unknown>): {
+  safe: Record<string, unknown>;
+  touched: boolean;
+} {
+  let touched = false;
+  const safe: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if ((PC_EVENT_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)) {
+      touched = true;
+      continue;
+    }
+    safe[k] = v;
+  }
+  return { safe, touched };
+}
+
+/**
+ * M1 (2026-05-29): compute the set of map blobs that are currently
+ * revealed.  Walks the event log applying the LWW reveal/unreveal
+ * sequence per (scenePath, blobId).  Returns `${scenePath}\0${blobId}`
+ * for every (scene, blob) pair whose final state is REVEALED.
+ *
+ * The map-blob materializer in state.ts is a no-op stub today
+ * (M3a/M6 future work), so we cannot reuse the materialized
+ * `state.mapBlobReveals`.  We re-derive from events here.  The
+ * algorithm mirrors what the materializer will do when it lands.
+ *
+ * Note: `map-blob-remove` does NOT count as a reveal-clear by
+ * itself — the materializer will likely emit both, but defensively
+ * we treat remove as un-reveal here so a removed-then-re-added blob
+ * doesn't accidentally inherit the prior reveal state.
+ */
+function computeRevealedMapBlobs(
+  events: readonly QuireEvent[]
+): Set<string> {
+  const revealed = new Set<string>();
+  for (const event of events) {
+    const p = event.payload as
+      | { scenePath?: unknown; blobId?: unknown; blob?: { id?: unknown } }
+      | null
+      | undefined;
+    if (!p || typeof p !== 'object') continue;
+    const scenePath = typeof p.scenePath === 'string' ? p.scenePath : null;
+    if (!scenePath) continue;
+    const blobId =
+      typeof p.blobId === 'string'
+        ? p.blobId
+        : p.blob && typeof p.blob === 'object' && typeof p.blob.id === 'string'
+          ? p.blob.id
+          : null;
+    if (!blobId) continue;
+    const key = `${scenePath} ${blobId}`;
+    switch (event.kind) {
+      case 'map-blob-reveal':
+        revealed.add(key);
+        break;
+      case 'map-blob-unreveal':
+      case 'map-blob-remove':
+        revealed.delete(key);
+        break;
+      // map-blob-add and map-blob-move don't change reveal state.
+    }
+  }
+  return revealed;
+}
+
+/**
+ * Shared scrubber for `map-blob-add` + `map-blob-move`: when the
+ * blob is REVEALED, the label is the play-audible payload the
+ * player already saw at the table — keep it (so a player who
+ * reloads from save still sees the revealed map content).  When
+ * the blob is UNREVEALED, the label is DM-staging text — drop it.
+ *
+ * The `label` field is the only player-spoiler-shaped field on the
+ * payload today.  Coordinates + id are DM-stage-position data; a
+ * leak of "blob X is at (10, 20)" doesn't carry narrative spoiler
+ * weight comparable to a DM's free-form label string.  If future
+ * payload fields gain spoiler weight (e.g. a `note` field on the
+ * blob), extend `MAP_BLOB_DM_ONLY_PAYLOAD_FIELDS`.
+ */
+const MAP_BLOB_DM_ONLY_PAYLOAD_FIELDS = ['label'] as const;
+
+function scrubMapBlobIfUnrevealed(
+  event: QuireEvent,
+  ctx: ScrubContext
+): QuireEvent | null {
+  const p = event.payload as
+    | { scenePath?: unknown; blob?: Record<string, unknown> }
+    | null
+    | undefined;
+  if (!p || typeof p !== 'object') return event;
+  const scenePath = typeof p.scenePath === 'string' ? p.scenePath : null;
+  if (!scenePath) return event;
+  const blobId =
+    p.blob && typeof p.blob === 'object' && typeof p.blob.id === 'string'
+      ? (p.blob.id as string)
+      : null;
+  if (!blobId) return event;
+  const key = `${scenePath} ${blobId}`;
+  if (ctx.revealedMapBlobs.has(key)) return event;
+  // Strip DM-only fields from `blob`.
+  const blob = p.blob as Record<string, unknown>;
+  let touched = false;
+  const safeBlob: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(blob)) {
+    if (
+      (MAP_BLOB_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)
+    ) {
+      touched = true;
+      continue;
+    }
+    safeBlob[k] = v;
+  }
+  if (!touched) return event;
+  return {
+    ...event,
+    payload: { ...(p as Record<string, unknown>), blob: safeBlob }
+  };
+}
 
 const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // pc-edit: drop entirely when `field` is a DM-only top-level
-  // (per the dotted-field-path check from D-prep-2-A).
+  // (per the dotted-field-path check from D-prep-2-A).  M1
+  // (2026-05-29 Adversarial #2): also strip the wrapper-level
+  // `causedByResponseId` AI-provenance tracer.
   'pc-edit': (event) => {
     const p = event.payload as { field?: unknown } | null | undefined;
     if (isDmOnlyCharacterFieldPath(p?.field)) return null;
-    return event;
+    if (!p || typeof p !== 'object') return event;
+    const { safe, touched } = dropPcEventMetadata(
+      p as unknown as Record<string, unknown>
+    );
+    if (!touched) return event;
+    return { ...event, payload: safe };
   },
+  // M1 (2026-05-29 Adversarial #1): map-blob-add / map-blob-move
+  // labels are DM-staging text until the blob is revealed.  See
+  // `scrubMapBlobIfUnrevealed` for the reveal-mask check.
+  'map-blob-add': scrubMapBlobIfUnrevealed,
+  'map-blob-move': scrubMapBlobIfUnrevealed,
   // focus-grant: strip DM-only sub-fields from the `focus` payload
   // (boundFor + notes per D-prep-2-A).
   'focus-grant': (event) => {
@@ -167,6 +325,8 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // family started on edits and missed creates.  Strip every
   // top-level DM-only character field by name (reuse the SSOT
   // constant from character-loader so the lint stays load-bearing).
+  // M1 (2026-05-29 Adversarial #2): also drop the wrapper-level
+  // `causedByResponseId` AI-provenance tracer.
   'pc-create': (event) => {
     const p = event.payload;
     if (!p || typeof p !== 'object') return event;
@@ -175,6 +335,12 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
     const safe: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(obj)) {
       if ((DM_ONLY_CHARACTER_FIELDS as readonly string[]).includes(k)) {
+        touched = true;
+        continue;
+      }
+      if (
+        (PC_EVENT_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)
+      ) {
         touched = true;
         continue;
       }
@@ -202,11 +368,26 @@ function scrubRetireOrArchive(event: QuireEvent): QuireEvent | null {
   return { ...event, payload: safe };
 }
 
-function scrubEventForPlayer(event: QuireEvent): QuireEvent | null {
+function scrubEventForPlayer(
+  event: QuireEvent,
+  ctx: ScrubContext
+): QuireEvent | null {
   const scrubber = PER_KIND_SCRUBBERS[event.kind];
-  if (scrubber) return scrubber(event);
+  if (scrubber) return scrubber(event, ctx);
   return event;
 }
+
+/**
+ * Test-only export of the scrubber registry kind set.  Used by
+ * `persistence.coverage.test.ts` to enforce that every kind in
+ * `EVENT_KINDS_PLAYER_VISIBLE` that COULD carry DM-only sub-fields
+ * either registers a scrubber here or appears in the explicit
+ * `NO_SCRUB_NEEDED` list (with rationale).  See
+ * `EVENT_KINDS_NO_SCRUB_NEEDED` below.
+ */
+export const PER_KIND_SCRUBBER_KINDS_FOR_TESTS: ReadonlySet<string> = new Set(
+  Object.keys(PER_KIND_SCRUBBERS)
+);
 
 export interface CampaignRef {
   owner: string;
@@ -438,6 +619,80 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * M1 (2026-05-29 save-restore program, Adversarial #3 self-completing
+ * tripwire): every kind in `EVENT_KINDS_PLAYER_VISIBLE` must either
+ * register a scrubber in `PER_KIND_SCRUBBERS` (because its payload
+ * carries DM-only sub-fields) OR appear in this set with an inline
+ * rationale (because its payload is uniformly player-safe).
+ *
+ * The CI lint at `persistence.coverage.test.ts` enforces the
+ * partition: a new player-visible kind is forced to make the
+ * decision EXPLICITLY rather than defaulting to silent-passthrough.
+ * This is the field-level companion to the kind-level lint that
+ * caught the Wave A→B `accidental-grant-log` regression.
+ *
+ * When in doubt, ASK: "if I add this kind's payload verbatim to a
+ * player's autosave JSON they open in a text editor, is any field
+ * (a) free-form DM-typed text, (b) cross-event metadata derived
+ * from DM state, or (c) AI provenance?"  If yes → register a
+ * scrubber.  If every field is structurally player-safe (timestamp,
+ * enum, peer-id, shared coordinator transition) → list here.
+ *
+ * EXPLICIT no-scrub entries (each line has a one-phrase rationale):
+ */
+export const EVENT_KINDS_NO_SCRUB_NEEDED: ReadonlySet<string> = new Set([
+  // Presence/lifecycle — peerId + role transitions, no DM text.
+  'peer-join',
+  'peer-leave',
+  'peer-disconnect',
+  'peer-rename',
+  'coordinator-claim',
+  'coordinator-yield',
+  'coordinator-reclaim',
+  // Scene reveal events — the reveal IS the player-visible payload;
+  // scenePath is already player-visible by definition.
+  'scene-reveal',
+  'scene-unreveal',
+  'scene-reveal-paragraph',
+  'scene-unreveal-paragraph',
+  'broadcast-view',
+  // Chat + dice + notes — payload is player-authored or play-audible.
+  'chat',
+  'dice-roll',
+  'note',
+  // Hand-raise (no payload text beyond peerId).
+  'raise-hand',
+  'lower-hand',
+  // Map-blob lifecycle (non-add/move) — IDs only, no labels.
+  'map-blob-remove',
+  'map-blob-reveal',
+  'map-blob-unreveal',
+  // Seat lifecycle — slot numbers, no DM text.
+  'pc-slot-bind',
+  'seat-add',
+  'seat-remove',
+  'seat-reveal',
+  // Player-initiated retire-request flow.  The note is player-authored
+  // and player-visible by design.
+  'pc-retire-request',
+  'pc-retire-reject',
+  // Chargen pack delivery — player-authored content.
+  'chargen-pack-deliver',
+  'chargen-pack-clear',
+  // #294 seat-memory-edit — text is player-safe by construction
+  // ("shown to all players including any future occupant of seat N").
+  'seat-memory-edit',
+  // PC switch — audit-only, peer-id + scenePath.
+  'pc-switch',
+  // D4 session-digest — player-facing recap by design.
+  'session-digest',
+  // D2 session-open — audit trail (who started the session).
+  'session-open',
+  // D5 bond-remove — coord-authored player-visible signal, no DM text.
+  'bond-remove'
+]);
+
+/**
  * Serialize the session for a non-coordinator viewer.  Drops events
  * whose payloads carry DM-only material — see PLAYER_SCOPE_STRIP_KINDS.
  *
@@ -469,10 +724,17 @@ export function serializeSessionForViewer(
   if (isCoord) {
     filtered = events.slice();
   } else {
+    // M1 (2026-05-29) Adversarial #1: precompute the reveal-mask so
+    // `map-blob-add` / `map-blob-move` scrubbers can keep labels for
+    // REVEALED blobs (player already saw them at the table) and
+    // drop them for UNREVEALED blobs (DM-staging text).
+    const ctx: ScrubContext = {
+      revealedMapBlobs: computeRevealedMapBlobs(events)
+    };
     filtered = [];
     for (const e of events) {
       if (PLAYER_SCOPE_STRIP_KINDS.has(e.kind)) continue;
-      const scrubbed = scrubEventForPlayer(e);
+      const scrubbed = scrubEventForPlayer(e, ctx);
       if (scrubbed !== null) filtered.push(scrubbed);
     }
   }

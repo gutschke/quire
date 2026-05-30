@@ -42,6 +42,40 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-003 — Scrubber gets a precomputed reveal-mask via `ScrubContext` (2026-05-29)
+
+**Decision:** `EventScrubber` signature is now `(event, ctx) => …`
+where `ctx.revealedMapBlobs` is a precomputed `Set` of
+`${scenePath}\0${blobId}` keys for blobs revealed at the end of the log.
+Built once per `serializeSessionForViewer` call.
+
+**Why:** `map-blob-add` / `map-blob-move` need to know whether to keep
+the label, and the answer depends on the FUTURE `map-blob-reveal`
+events in the same log. The materializer for map blobs is a no-op stub
+today (M3a/M6 future), so we can't reuse `state.mapBlobReveals`. The
+context object generalizes for the next cross-event scrub we'll write.
+
+**Alternatives:**
+- Always strip `label` from `map-blob-add`. Rejected: revealed blobs
+  carry their label from the original `map-blob-add` event in the
+  materializer; stripping the label here means revealed blobs would
+  re-materialize with empty labels on the player side, breaking the
+  player-visible-map promise.
+- Two-pass on `serializeSessionForViewer` (compute, then rewrite).
+  Rejected: this IS that approach, but cleaner expressed as a
+  per-scrubber decision rather than a special-case after-pass.
+- Compute reveal-mask lazily inside the scrubber. Rejected: O(n²) for
+  no reason. Precompute once.
+
+**Tradeoffs:** Every scrubber signature is now `(event, ctx)` even when
+unused. Mitigation: existing scrubbers accept a second optional
+parameter naturally.
+
+**Revisit if:** Another cross-event scrub needs a different precomputed
+fact (then add a second field to `ScrubContext`).
+
+---
+
 ## DEC-002 — M1 fixes both Adversarial #1 (map-blob payload) AND #2 (causedByResponseId) in one commit (2026-05-29)
 
 **Decision:** Bundle the two field-granularity scrubber additions into a

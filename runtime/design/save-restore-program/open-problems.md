@@ -54,34 +54,23 @@ to keep this true under refactor.
 
 ---
 
-## OP-003 — `PER_KIND_SCRUBBERS` is hand-maintained
+## OP-003 — `PER_KIND_SCRUBBERS` is hand-maintained [RESOLVED 2026-05-29]
 
 **Severity:** P1 (firewall regression class)
-**Evidence:** Adversarial finding #3. Kind-level classification is
-self-completing via the lint in `persistence.coverage.test.ts:34-58`.
-Field-level scrubbing is not.
-**Hypothesis:** Add a lint that requires every kind in
-`EVENT_KINDS_PLAYER_VISIBLE` whose payload SHAPE could carry DM-only
-sub-fields to either register a scrubber OR add an explicit
-NO-SCRUB-NEEDED tag. The "could carry DM-only sub-fields" predicate is
-the hard part — likely: any kind whose payload includes a free-form
-string field, or a sub-object, OR is the `pc-*` family.
-**Owner:** save-restore lead.
-**Status:** ACTIVE — being addressed in M1 commit.
+**Resolution:** M1 commit landed `EVENT_KINDS_NO_SCRUB_NEEDED` + lint in
+`persistence.coverage.test.ts`. Every player-visible kind must now be in
+exactly one of the two sets. A new player-visible kind without an
+explicit decision trips CI.
 
 ---
 
-## OP-002 — Fuzz coverage is asymmetric
+## OP-002 — Fuzz coverage is asymmetric [RESOLVED 2026-05-29]
 
 **Severity:** P1 (firewall coverage gap)
-**Evidence:** Adversarial finding #4. `state.firewall-fuzz.test.ts`
-taint-fuzzes filterForViewer; the SAVE STREAM
-(`serializeSessionForViewer`) has no equivalent.
-**Hypothesis:** Companion fuzz that generates randomized event logs with
-DM-only payloads sprinkled across known kinds, serializes for a
-non-coord viewer, and asserts no taint string appears in the output JSON.
-**Owner:** save-restore lead.
-**Status:** ACTIVE — being addressed in M1 commit (task #420).
+**Resolution:** M1 commit landed `persistence.firewall-fuzz.test.ts` —
+40 seeded scenarios across 12 payload shapes; 0 sentinels survive the
+non-coord projection; positive-control test ensures revealed labels
+are KEPT.
 
 ---
 

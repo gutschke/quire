@@ -23,7 +23,9 @@
 import { describe, it, expect } from 'vitest';
 import { KNOWN_EVENT_KINDS } from './core/state';
 import {
+  EVENT_KINDS_NO_SCRUB_NEEDED,
   EVENT_KINDS_PLAYER_VISIBLE,
+  PER_KIND_SCRUBBER_KINDS_FOR_TESTS,
   PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS,
   serializeSessionForViewer
 } from './persistence';
@@ -189,6 +191,78 @@ describe('field-granularity firewall classification (Wave D-prep-2-A)', () => {
     for (const f of DM_ONLY_CHARACTER_FIELDS) {
       expect(survivingFields).toContain(f);
     }
+  });
+
+  /**
+   * M1 (2026-05-29 save-restore program, Adversarial #3): the
+   * `PER_KIND_SCRUBBERS` registry is now self-completing.  Every
+   * kind in `EVENT_KINDS_PLAYER_VISIBLE` MUST appear in exactly one
+   * of:
+   *   - `PER_KIND_SCRUBBERS`        (payload has DM-only sub-fields)
+   *   - `EVENT_KINDS_NO_SCRUB_NEEDED` (payload is uniformly safe)
+   *
+   * Adding a new player-visible kind without making this decision
+   * trips the lint.  The fix is to read the new kind's payload
+   * and ask: "if a player Cmd+S's the autosave and opens the JSON
+   * in a text editor, does any field carry DM-typed text, AI
+   * provenance, or cross-event-derived DM state?"  Yes → scrubber.
+   * No → no-scrub-needed list with rationale.
+   *
+   * This catches the regression class that produced the Adversarial
+   * #1 (map-blob label leak) finding — `map-blob-add` was in
+   * `EVENT_KINDS_PLAYER_VISIBLE` for months without a scrubber.
+   */
+  it('every player-visible kind has a scrubber OR is in EVENT_KINDS_NO_SCRUB_NEEDED', () => {
+    const visible = EVENT_KINDS_PLAYER_VISIBLE;
+    const scrubbed = PER_KIND_SCRUBBER_KINDS_FOR_TESTS;
+    const noScrub = EVENT_KINDS_NO_SCRUB_NEEDED;
+    const unclassified: string[] = [];
+    const doubleClassified: string[] = [];
+    for (const kind of visible) {
+      const inScrubbed = scrubbed.has(kind);
+      const inNoScrub = noScrub.has(kind);
+      if (!inScrubbed && !inNoScrub) unclassified.push(kind);
+      if (inScrubbed && inNoScrub) doubleClassified.push(kind);
+    }
+    expect(unclassified, [
+      'New player-visible event kind(s) lack a field-level scrubbing',
+      'classification.  Read the kind\'s payload and add it to EITHER:',
+      '  - PER_KIND_SCRUBBERS in persistence.ts (payload has DM-only',
+      '    sub-fields), OR',
+      '  - EVENT_KINDS_NO_SCRUB_NEEDED with a one-phrase rationale',
+      '    (payload is uniformly player-safe).',
+      `Unclassified: ${unclassified.join(', ')}`
+    ].join(' ')).toEqual([]);
+    expect(doubleClassified, [
+      'Event kind(s) are in BOTH PER_KIND_SCRUBBERS and',
+      'EVENT_KINDS_NO_SCRUB_NEEDED — pick one.',
+      `Double-classified: ${doubleClassified.join(', ')}`
+    ].join(' ')).toEqual([]);
+  });
+
+  it('EVENT_KINDS_NO_SCRUB_NEEDED only contains kinds classified player-visible', () => {
+    // Symmetric guard: a kind in PLAYER_SCOPE_STRIP_KINDS doesn't need
+    // to be in no-scrub-needed (it's stripped entirely first).  Adding
+    // it here is a sign of confused intent.
+    for (const kind of EVENT_KINDS_NO_SCRUB_NEEDED) {
+      expect(
+        EVENT_KINDS_PLAYER_VISIBLE.has(kind),
+        `${kind} is in EVENT_KINDS_NO_SCRUB_NEEDED but not EVENT_KINDS_PLAYER_VISIBLE`
+      ).toBe(true);
+      expect(
+        PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS.has(kind),
+        `${kind} is in EVENT_KINDS_NO_SCRUB_NEEDED AND PLAYER_SCOPE_STRIP_KINDS — pick one`
+      ).toBe(false);
+    }
+  });
+
+  it('regression: map-blob-add is registered as a scrubber (Adversarial #1 fix)', () => {
+    // Pin the M1 fix.  Pre-fix, map-blob-add was player-visible
+    // with no scrubber — staged-but-unrevealed labels leaked to
+    // every player's save.  Test ensures it stays registered.
+    expect(PER_KIND_SCRUBBER_KINDS_FOR_TESTS.has('map-blob-add')).toBe(true);
+    expect(PER_KIND_SCRUBBER_KINDS_FOR_TESTS.has('map-blob-move')).toBe(true);
+    expect(EVENT_KINDS_NO_SCRUB_NEEDED.has('map-blob-add')).toBe(false);
   });
 
   it('focus-grant DM-only payload fields (boundFor, notes) strip; condition + name + domain survive', () => {

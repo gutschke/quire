@@ -400,4 +400,248 @@ describe('serializeSessionForViewer — DM-only event stripping', () => {
     expect(p.reason).toBe('died');
     expect(p.scene).toBe('ep04/secret');
   });
+
+  // M1 (2026-05-29 four-expert review, Adversarial #1): map-blob-add
+  // is correctly classified player-visible (the materializer projects
+  // by reveal-mask, so a player's view of revealed blobs is correct),
+  // but the save writes RAW EVENTS.  A DM-staged but unrevealed blob's
+  // label landed verbatim in every player's autosave pre-fix.
+  it('non-coord viewer save STRIPS map-blob-add label when blob is UNREVEALED', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    // Two staged blobs — one revealed, one DM-private.
+    log.append('map-blob-add', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blob: {
+        id: 'blob-public',
+        label: 'tavern door',
+        x: 10,
+        y: 10
+      }
+    });
+    log.append('map-blob-add', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blob: {
+        id: 'blob-secret',
+        label: 'the Quiet is watching from the alley',
+        x: 20,
+        y: 20
+      }
+    });
+    // Reveal only the public one.
+    log.append('map-blob-reveal', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blobId: 'blob-public'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const adds = doc.events.filter((e) => e.kind === 'map-blob-add') as Array<{
+      payload?: { blob?: Record<string, unknown> };
+    }>;
+    expect(adds).toHaveLength(2);
+    // Public blob keeps its label.
+    const pub = adds.find((e) => e.payload?.blob?.id === 'blob-public');
+    expect(pub?.payload?.blob?.label).toBe('tavern door');
+    // Secret blob's label is scrubbed.
+    const sec = adds.find((e) => e.payload?.blob?.id === 'blob-secret');
+    expect(sec).toBeDefined();
+    expect(sec?.payload?.blob?.label).toBeUndefined();
+    // Direct-grep leak test.
+    const json = stringifySave(doc);
+    expect(json).not.toContain('the Quiet is watching from the alley');
+    // Public label still in JSON (positive control).
+    expect(json).toContain('tavern door');
+  });
+
+  it('non-coord viewer save STRIPS map-blob-add label when blob was revealed then UNREVEALED', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('map-blob-add', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blob: {
+        id: 'blob-flip',
+        label: 'DM-only spoiler text',
+        x: 10,
+        y: 10
+      }
+    });
+    // Briefly revealed then re-hidden.
+    log.append('map-blob-reveal', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blobId: 'blob-flip'
+    });
+    log.append('map-blob-unreveal', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blobId: 'blob-flip'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const json = stringifySave(doc);
+    // Even though the player SAW the label briefly at the table,
+    // hiding it again means the save shouldn't carry it: the
+    // player who reads their JSON in a text editor after the DM
+    // un-revealed sees nothing.  This matches the "DM owns when
+    // material is visible" mental model.
+    expect(json).not.toContain('DM-only spoiler text');
+  });
+
+  it('non-coord viewer save STRIPS map-blob-move label when blob is UNREVEALED', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('map-blob-add', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blob: {
+        id: 'blob-secret',
+        label: 'the betrayer is here',
+        x: 0,
+        y: 0
+      }
+    });
+    log.append('map-blob-move', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blobId: 'blob-secret',
+      // Some emission paths re-broadcast the full blob shape on
+      // move so the materializer can carry-forward the label.
+      // Scrubbing must catch both shapes.
+      blob: {
+        id: 'blob-secret',
+        label: 'the betrayer is here',
+        x: 50,
+        y: 50
+      }
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const json = stringifySave(doc);
+    expect(json).not.toContain('the betrayer is here');
+  });
+
+  it('coord viewer save preserves map-blob-add labels for unrevealed blobs (DM resilience)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('map-blob-add', {
+      v: 1,
+      scenePath: 'ep01/scene-01.md',
+      blob: {
+        id: 'blob-secret',
+        label: 'DM staging text',
+        x: 10,
+        y: 10
+      }
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'alice', // coord viewer
+      'alice'
+    );
+    const add = doc.events.find((e) => e.kind === 'map-blob-add') as
+      | { payload: { blob: Record<string, unknown> } }
+      | undefined;
+    expect(add).toBeDefined();
+    expect(add?.payload.blob.label).toBe('DM staging text');
+  });
+
+  // M1 (2026-05-29 Adversarial #2): causedByResponseId on pc-create
+  // and pc-edit is a "this PC change came from the AI" indicator.
+  // Not a spoiler today, but a future logging extension that
+  // surfaces AI provenance to players would leak the DM's AI usage
+  // pattern.  Same regression-class as the existing scrubber arms.
+  it('non-coord viewer save STRIPS causedByResponseId from pc-create payload', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-create', {
+      v: 1,
+      pcId: 'mei',
+      name: 'Mei',
+      stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+      harm: 0,
+      stress: 0,
+      causedByResponseId: 'resp-ai-12345'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const create = doc.events.find((e) => e.kind === 'pc-create');
+    expect(create).toBeDefined();
+    const p = (create as { payload: Record<string, unknown> }).payload;
+    expect(p.pcId).toBe('mei');
+    expect(p.causedByResponseId).toBeUndefined();
+    const json = stringifySave(doc);
+    expect(json).not.toContain('resp-ai-12345');
+  });
+
+  it('non-coord viewer save STRIPS causedByResponseId from pc-edit payload', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'mei',
+      field: 'harm',
+      value: 2,
+      causedByResponseId: 'resp-ai-67890'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'bob',
+      'alice'
+    );
+    const edit = doc.events.find((e) => e.kind === 'pc-edit');
+    expect(edit).toBeDefined();
+    const p = (edit as { payload: Record<string, unknown> }).payload;
+    // Player-visible fields preserved.
+    expect(p.pcId).toBe('mei');
+    expect(p.field).toBe('harm');
+    expect(p.value).toBe(2);
+    // AI-provenance scrubbed.
+    expect(p.causedByResponseId).toBeUndefined();
+    const json = stringifySave(doc);
+    expect(json).not.toContain('resp-ai-67890');
+  });
+
+  it('coord viewer save preserves causedByResponseId (DM keeps AI-provenance audit)', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-edit', {
+      v: 1,
+      pcId: 'mei',
+      field: 'harm',
+      value: 2,
+      causedByResponseId: 'resp-ai-67890'
+    });
+    const doc = serializeSessionForViewer(
+      log.events(),
+      CAMPAIGN,
+      'alice', // coord viewer
+      'alice'
+    );
+    const edit = doc.events.find((e) => e.kind === 'pc-edit');
+    const p = (edit as { payload: Record<string, unknown> }).payload;
+    expect(p.causedByResponseId).toBe('resp-ai-67890');
+  });
 });
