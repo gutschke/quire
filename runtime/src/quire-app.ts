@@ -1623,6 +1623,23 @@ export class QuireApp extends LitElement {
           details: (e as Error)?.message ?? String(e)
         };
       }
+    } finally {
+      // #419: refresh the bound-character rail after any navigation
+      // that may have transitioned `_appState` into a campaign-having
+      // state.  The session subscriber's earlier refreshBoundCharacter
+      // call may have run while this load was still in flight
+      // (`getCurrentCampaign()` returned undefined → null branch →
+      // cached `|pcId` key).  Without this nudge, the local peer's
+      // rail stays unmounted until the NEXT session event arrives —
+      // and if none does, indefinitely.  refreshBoundCharacter is
+      // idempotent and short-circuits when the binding hasn't
+      // changed, so the extra call is cheap on the success path.
+      // MUST be in `finally` — the success branches `return` early
+      // inside the try block, so a plain post-catch placement is
+      // bypassed.
+      if (!signal.aborted && this.isConnected) {
+        this.refreshBoundCharacter();
+      }
     }
   }
 

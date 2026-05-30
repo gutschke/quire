@@ -126,7 +126,10 @@ test.describe('#407 magic-arc UI — realization moment + tax legibility (real b
       // session subscriber; if the campaign-load is still in-flight
       // when the rename event materializes, `campaign` is null and
       // boundCharacter is left null with no further trigger to re-
-      // hydrate.  Polling here closes the race deterministically.
+      // hydrate.  (The #419 finally-fix in navigateToRoute closes
+      // one class of this, but multiple-shared.campaign-update +
+      // abort sequences still leave residual races; the poll is
+      // belt-and-suspenders for test determinism.)
       await expect
         .poll(
           async () =>

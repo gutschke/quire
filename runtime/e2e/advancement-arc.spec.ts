@@ -102,10 +102,10 @@ test.describe('advancement arc — player rail (real browser)', () => {
         app.session.append('pc-slot-bind', { v: 1, slot: 1, pcId: pc });
       }, PC);
 
-      // Wait for the campaign to finish loading on player-A before the
-      // rename event materializes (see [[boundCharacter race]] in
-      // task #419 — without this, refreshBoundCharacter races the
-      // async campaign-load and leaves boundCharacter null).
+      // Wait for the campaign to finish loading on player-A before
+      // the rename event materializes (the #419 finally-fix closes
+      // one class of the race but multi-update + abort still leaves
+      // residual flake; poll is belt-and-suspenders for determinism).
       await expect
         .poll(
           async () =>
