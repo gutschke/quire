@@ -216,6 +216,18 @@ export function buildLeakyDmCoordSave(seed: number): {
     text: 'bond text (player-visible)',
     dmNotes: secret()
   } as unknown as Record<string, unknown>);
+  // Run #19 (2026-05-30): backstory-refresh-proposal carries one
+  // DM-only sub-field (`triggerSummary`) — must strip via the
+  // per-kind scrubber.  Everything else (proposedBackstory,
+  // baselineHash, initiator) is player-visible by design.
+  log.append('backstory-refresh-proposal', {
+    v: 1,
+    pcId: 'mei',
+    proposedBackstory: 'public refreshed prose (player-visible)',
+    baselineHash: 'a'.repeat(64),
+    initiator: 'dm',
+    triggerSummary: secret()
+  });
   // Unrevealed map-blob: label is DM-staging text.
   log.append('map-blob-add', {
     v: 1,

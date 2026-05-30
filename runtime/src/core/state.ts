@@ -708,6 +708,26 @@ export interface SessionState {
    * `dmOnly: boolean` flag — that's the D-prep-2-A bug class).
    */
   dmClocks: Record<string, DmClock>;
+  /**
+   * Run #19 (2026-05-30) — UX-MH-3 backstory-refresh proposals
+   * pending the bound player's accept/reject decision.  Keyed by
+   * pcId; each entry is the latest proposal (LWW per pcId — a
+   * fresh refresh supersedes the prior pending one).  Player-
+   * visible: the bound player's chargen UI reads from here to
+   * surface the inbox card.  Per R-G the proposal's
+   * `triggerSummary` is the only DM-only sub-field and is
+   * stripped at the persistence boundary.
+   *
+   * Lifecycle:
+   *   - `backstory-refresh-proposal` materializes here.
+   *   - Player accept → emits a `pc-edit` field:backstory with the
+   *     proposed value; the UI clears the local proposal entry on
+   *     accept.  The proposal stays in the event log for audit.
+   *   - Player reject → the UI clears the local entry.  No event
+   *     emitted (per design, no proposal-reject kind is needed —
+   *     a fresh refresh would replace the LWW slot anyway).
+   */
+  backstoryRefreshProposals: Record<string /*pcId*/, BackstoryRefreshProposal>;
 }
 
 /**
@@ -803,6 +823,50 @@ export interface BondProposal {
 }
 
 /**
+ * Run #19 (2026-05-30) — UX-MH-3 backstory-refresh proposal.  The
+ * AI surfaces a proposed surgical-edit to the PC's backstory; the
+ * bound player owns the accept/reject decision per chargen-
+ * authorship-division (player owns voice).  LWW per pcId — a
+ * fresh refresh replaces the prior pending proposal.
+ *
+ * Player-visible fields: `proposedBackstory`, `baselineHash`,
+ * `initiator`, `ts`, `pcId`.  `triggerSummary` is a DM-only
+ * sub-field (optional, DM-initiated path only) describing WHY the
+ * DM kicked off the refresh — stripped at the persistence boundary
+ * via the per-kind scrubber.  The render-side filterForViewer
+ * additionally restricts visibility to the proposal's bound player
+ * (other players don't see Alice's pending refresh card).
+ */
+export interface BackstoryRefreshProposal {
+  /** The PC whose backstory is being refreshed. */
+  pcId: string;
+  /** The proposed new backstory text (player-visible). */
+  proposedBackstory: string;
+  /**
+   * SHA-256 hex of the backstory at refresh-time (when the AI ran).
+   * The player UI compares this against the PC's current backstory
+   * before accepting; if it differs (e.g. concurrent player edit),
+   * the player sees a staleness warning and is offered a re-refresh.
+   */
+  baselineHash: string;
+  /** Who kicked off the refresh.  Player-visible (informational). */
+  initiator: 'player' | 'dm';
+  /** Coord peer that authored the proposal (audit). */
+  proposedByPeerId: PeerId;
+  /** Epoch-ms when the proposal landed. */
+  ts: number;
+  /**
+   * DM-only optional summary of WHY the DM triggered the refresh
+   * (e.g. "pronouns updated", "tag 'outsider' removed").  Stripped
+   * from non-coord projections AND from the per-kind scrubber at
+   * persistence.  Never reaches the player.  The proposal copy on
+   * the player's inbox card comes from a SEPARATE
+   * player-visible synthesis at the UI layer, not from this field.
+   */
+  triggerSummary?: string;
+}
+
+/**
  * D2 (2026-05-26): one session-open ritual marker.  Recorded when
  * the DM clicks "Begin session" in the open-ritual surface.
  * Player-visible per D2-3 (audit trail of WHO opened the session).
@@ -866,7 +930,8 @@ export function emptyState(): SessionState {
     diffProposals: [],
     dmClocks: {},
     pcBonds: {},
-    pcBondProposals: {}
+    pcBondProposals: {},
+    backstoryRefreshProposals: {}
   };
 }
 
@@ -1141,6 +1206,20 @@ export function filterForViewer(
     // Players don't see other PCs' un-ratified bonds (nor their
     // own — proposals are a DM-private holding area).
     pcBondProposals: {},
+    // Run #19 (2026-05-30): backstory-refresh proposals are
+    // player-visible (the bound player owns the accept/reject
+    // decision per chargen-authorship-division), but a player
+    // should only see proposals targeting THEIR OWN bound PC.
+    // For non-coord viewers we keep only entries whose pcId
+    // matches the viewer's bound PC; everyone else's pending
+    // refresh proposals stay invisible.  Coord viewer keeps
+    // the full map (DM may need to see who's pending what for
+    // co-DM continuity).
+    backstoryRefreshProposals: filterBackstoryRefreshProposalsForViewer(
+      state.backstoryRefreshProposals,
+      viewerPeerId,
+      state.peers
+    ),
     // D5 (2026-05-27): per-PC bonds (ratified) pass through to
     // players AT THE ARRAY LEVEL, but each entry's `dmNotes`
     // sub-field is stripped per-entry (per D5-8; mirrors the
@@ -1859,7 +1938,42 @@ export const KNOWN_EVENT_KINDS = new Set([
   // Materializer maintains `state.diffProposals` (DM-only state).
   'proposal-create',
   'proposal-accept',
-  'proposal-reject'
+  'proposal-reject',
+  // Run #19 (2026-05-30) — UX-MH-1 DM-rename-on-behalf-of-player.
+  // `peer-rename` is self-rename only (R2.1 cross-checks the
+  // wire-level peerId against the event author; the materializer
+  // writes `state.peers[event.peerId]`).  The DM cannot author a
+  // `peer-rename` for Alice's seat — they would silently rename
+  // themselves.  `peer-rename-by-coord` is the coord-authored
+  // sibling: coord gate at the materializer; payload carries an
+  // explicit `targetPeerId`; writes `state.peers[targetPeerId]`.
+  // DEC-044.
+  'peer-rename-by-coord',
+  // Run #19 (2026-05-30) — UX-MH-2 PC tag editing.  `pc-edit`'s
+  // LWW-per-field shape has bad merge semantics for arrays
+  // (character-edits.ts:32 documents the deferral); these are the
+  // structured tag ops with explicit add/remove/rename verbs that
+  // converge cleanly under concurrent authoring.  All three are
+  // any-peer-authored, matching the existing `pc-edit` trust gap
+  // (DEC-tracked tolerance).  Player-visible; payloads carry no
+  // DM-only sub-fields.  DEC-045.
+  'pc-tag-add',
+  'pc-tag-remove',
+  // Atomic tag rename — same `pcId`, swap `oldTagText` → `newTagText`
+  // in place.  Prevents the remove-then-add flicker the TTRPG/UX
+  // expert flagged for inline chip rename.
+  'pc-tag-rename',
+  // Run #19 (2026-05-30) — UX-MH-3 AI backstory refresher proposal.
+  // Emitted by `runtime/src/ai/backstory-refresher.ts` when the
+  // DM triggers an AI refresh that would alter a player's
+  // backstory.  Player-visible (the proposal IS the inbox card the
+  // player sees + accepts/rejects); player accept emits a
+  // downstream `pc-edit` with the new backstory.  Payload's
+  // `triggerSummary` is the only DM-only sub-field; everything
+  // else (proposedBackstory + baselineHash + initiator) is
+  // player-visible by design.  See `PER_KIND_SCRUBBERS` in
+  // persistence.ts for the per-kind scrub.  DEC-046.
+  'backstory-refresh-proposal'
 ]);
 
 /**
@@ -2023,6 +2137,64 @@ function applyPeerRenameEvent(state: SessionState, event: QuireEvent): void {
     }
     // else: invalid id, silently dropped (defensive).
   }
+}
+
+/**
+ * Run #19 (2026-05-30) — UX-MH-1 DM-rename-on-behalf-of-player.
+ *
+ * `peer-rename` is self-rename only: the wire-level R2.1 check
+ * (peer.ts:331) rejects share envelopes where `event.peerId !==
+ * from`, and the materializer writes `state.peers[event.peerId]`
+ * (the AUTHOR's own entry).  A DM who emits `peer-rename` for
+ * Alice's seat would silently rename themselves.
+ *
+ * `peer-rename-by-coord` is the explicit coord-authored sibling.
+ * The materializer enforces the coord gate (only coords can write),
+ * resolves the target via the payload's `targetPeerId`, and writes
+ * `state.peers[targetPeerId].name`.  The wire-level R2.1 stays
+ * clean: the DM IS the author.  Per the threat model (accidental
+ * disclosure + outsiders, NOT malicious teammates) the coord gate
+ * is the right authorization layer.
+ *
+ * Payload v: 1 with `{ targetPeerId: string, newDisplayName: string }`.
+ * Both bounded to the same 80-char cap as `peer-rename` for parity.
+ *
+ * Per Adversarial P0 (run-19 review): introduced as a NEW event
+ * kind rather than extending `pc-edit` (display name lives on the
+ * peer, not on the PC) or extending `peer-rename` (would conflate
+ * self-rename with rename-by-coord authorization).
+ */
+const PEER_RENAME_BY_COORD_MAX_NAME = 80;
+
+interface PeerRenameByCoordPayload {
+  v: 1;
+  targetPeerId: PeerId;
+  newDisplayName: string;
+}
+
+function applyPeerRenameByCoordEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord gate: only a peer that has ever held coord may rename
+  // another peer's display name.  Mirrors scene-reveal's authority
+  // check (coordHolders, not coordinator) so a brief-coord can
+  // still author renames after handoff for cross-session continuity.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PeerRenameByCoordPayload>;
+  if (typeof p.targetPeerId !== 'string') return;
+  if (p.targetPeerId.length === 0 || p.targetPeerId.length > 200) return;
+  if (typeof p.newDisplayName !== 'string') return;
+  if (
+    p.newDisplayName.length === 0 ||
+    p.newDisplayName.length > PEER_RENAME_BY_COORD_MAX_NAME
+  ) {
+    return;
+  }
+  const target = state.peers[p.targetPeerId];
+  if (!target) return;
+  target.name = p.newDisplayName;
 }
 
 function applyCoordinatorClaimEvent(
@@ -2695,6 +2867,212 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     marks: startingMarks
   };
   state.synthesizedPcs[p.pcId] = record;
+}
+
+/**
+ * Run #19 (2026-05-30) — UX-MH-2 PC tag ops.
+ *
+ * `pc-edit`'s LWW-per-field write model is wrong for tag arrays:
+ * two peers concurrently editing tags via pc-edit would lose one of
+ * the writes (last writer wins on the whole array).  The structured
+ * `pc-tag-add` / `pc-tag-remove` / `pc-tag-rename` triplet converges
+ * cleanly under concurrent authoring — add is idempotent, remove is
+ * idempotent, rename composes.
+ *
+ * Authorship gate: per the existing pc-edit trust gap (DEC-tracked
+ * tolerance), any peer may author tag ops.  The UI layer in
+ * chargen-dm-review caps the affordance per
+ * `chargen-dm-review.allowed-fields.test.ts` (UI-only enforcement —
+ * the protocol stays universal-write to match pc-edit).
+ *
+ * Tags are stored on `state.synthesizedPcs[pcId].tags`.  The
+ * materializers mutate that array in place (replacing the array
+ * reference to make `===`-style memoization invalidate cleanly).
+ *
+ * Caps: PC_CREATE_MAX_TAGS (5) is the chargen-time upper bound; we
+ * keep the same cap here so post-chargen edits can't push above
+ * the chargen contract.  Tag text capped at PC_CREATE_MAX_TAG_LEN
+ * (80 chars) per parity with chargen.
+ */
+const PC_TAG_TEXT_MAX = PC_CREATE_MAX_TAG_LEN;
+
+interface PcTagAddPayload {
+  v: 1;
+  pcId: string;
+  tagText: string;
+}
+interface PcTagRemovePayload {
+  v: 1;
+  pcId: string;
+  tagText: string;
+}
+interface PcTagRenamePayload {
+  v: 1;
+  pcId: string;
+  oldTagText: string;
+  newTagText: string;
+}
+
+function applyPcTagAddEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcTagAddPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.tagText !== 'string') return;
+  if (p.tagText.length === 0 || p.tagText.length > PC_TAG_TEXT_MAX) return;
+  const pc = state.synthesizedPcs[p.pcId];
+  if (!pc) return;
+  const tags = Array.isArray(pc.tags) ? pc.tags : [];
+  // Idempotent: duplicate adds are no-ops.
+  if (tags.includes(p.tagText)) return;
+  // Cap defense: refuse to push past PC_CREATE_MAX_TAGS.
+  if (tags.length >= PC_CREATE_MAX_TAGS) return;
+  state.synthesizedPcs[p.pcId] = {
+    ...pc,
+    tags: [...tags, p.tagText]
+  };
+}
+
+function applyPcTagRemoveEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcTagRemovePayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.tagText !== 'string') return;
+  if (p.tagText.length === 0 || p.tagText.length > PC_TAG_TEXT_MAX) return;
+  const pc = state.synthesizedPcs[p.pcId];
+  if (!pc) return;
+  const tags = Array.isArray(pc.tags) ? pc.tags : [];
+  const idx = tags.indexOf(p.tagText);
+  if (idx === -1) return; // idempotent
+  const next = tags.slice();
+  next.splice(idx, 1);
+  state.synthesizedPcs[p.pcId] = {
+    ...pc,
+    tags: next
+  };
+}
+
+function applyPcTagRenameEvent(state: SessionState, event: QuireEvent): void {
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcTagRenamePayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.oldTagText !== 'string') return;
+  if (
+    p.oldTagText.length === 0 ||
+    p.oldTagText.length > PC_TAG_TEXT_MAX
+  ) {
+    return;
+  }
+  if (typeof p.newTagText !== 'string') return;
+  if (
+    p.newTagText.length === 0 ||
+    p.newTagText.length > PC_TAG_TEXT_MAX
+  ) {
+    return;
+  }
+  if (p.oldTagText === p.newTagText) return; // no-op
+  const pc = state.synthesizedPcs[p.pcId];
+  if (!pc) return;
+  const tags = Array.isArray(pc.tags) ? pc.tags : [];
+  const idx = tags.indexOf(p.oldTagText);
+  if (idx === -1) return; // old tag not present — replay convergence
+  // Refuse rename that would collide with an existing tag (idempotent
+  // merge: if a concurrent peer already added the same newTagText,
+  // we just remove the old one — preserves set semantics).
+  if (p.newTagText !== p.oldTagText && tags.includes(p.newTagText)) {
+    const next = tags.slice();
+    next.splice(idx, 1);
+    state.synthesizedPcs[p.pcId] = { ...pc, tags: next };
+    return;
+  }
+  const next = tags.slice();
+  next[idx] = p.newTagText;
+  state.synthesizedPcs[p.pcId] = { ...pc, tags: next };
+}
+
+/**
+ * Run #19 (2026-05-30) — UX-MH-3 AI backstory-refresh proposal.
+ *
+ * Materializes a pending proposal into
+ * `state.backstoryRefreshProposals[pcId]` (LWW per pcId — a fresh
+ * proposal replaces the prior pending one).  The bound player's
+ * chargen UI reads from here to surface the inbox card.
+ *
+ * Authoring gate: coord-only (per R-F).  Player-initiated refreshes
+ * go through the player's own pc-edit emit (no proposal event
+ * needed — the player owns voice on their own PC); DM-initiated
+ * refreshes route through this proposal kind so the player owns the
+ * accept gate.
+ *
+ * Per R-G / Adversarial P1 #3 #4: the AI output that becomes
+ * `proposedBackstory` MUST have passed the spoiler-pipeline in
+ * `runtime/src/ai/backstory-refresher.ts` BEFORE this event emits.
+ * The materializer trusts the contract and does not re-scan
+ * (semantic checks belong in the AI call site; the engine's job is
+ * to bound payload size + enforce coord gate).
+ */
+const BACKSTORY_REFRESH_MAX_PROPOSED = PC_CREATE_MAX_BACKSTORY; // 8000
+const BACKSTORY_REFRESH_HASH_MAX = 128; // SHA-256 hex is 64; cap generously
+const BACKSTORY_REFRESH_TRIGGER_SUMMARY_MAX = 400;
+
+interface BackstoryRefreshProposalPayload {
+  v: 1;
+  pcId: string;
+  proposedBackstory: string;
+  baselineHash: string;
+  initiator: 'player' | 'dm';
+  triggerSummary?: string;
+}
+
+function applyBackstoryRefreshProposalEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  // Coord-only authoring gate (R-F).  Player-initiated refreshes
+  // bypass this kind entirely and emit pc-edit directly.
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<BackstoryRefreshProposalPayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.proposedBackstory !== 'string') return;
+  if (
+    p.proposedBackstory.length === 0 ||
+    p.proposedBackstory.length > BACKSTORY_REFRESH_MAX_PROPOSED
+  ) {
+    return;
+  }
+  if (typeof p.baselineHash !== 'string') return;
+  if (
+    p.baselineHash.length === 0 ||
+    p.baselineHash.length > BACKSTORY_REFRESH_HASH_MAX
+  ) {
+    return;
+  }
+  if (p.initiator !== 'player' && p.initiator !== 'dm') return;
+  if (p.triggerSummary !== undefined) {
+    if (typeof p.triggerSummary !== 'string') return;
+    if (p.triggerSummary.length > BACKSTORY_REFRESH_TRIGGER_SUMMARY_MAX) {
+      return;
+    }
+  }
+  // Refuse proposals targeting a PC that doesn't exist (replay
+  // convergence: if the PC was revoked between event author + apply,
+  // we drop silently — the player has no PC to accept against).
+  if (!state.synthesizedPcs[p.pcId]) return;
+  const proposal: BackstoryRefreshProposal = {
+    pcId: p.pcId,
+    proposedBackstory: p.proposedBackstory,
+    baselineHash: p.baselineHash,
+    initiator: p.initiator,
+    proposedByPeerId: event.peerId,
+    ts: event.ts
+  };
+  if (p.triggerSummary !== undefined) {
+    proposal.triggerSummary = p.triggerSummary;
+  }
+  state.backstoryRefreshProposals = {
+    ...state.backstoryRefreshProposals,
+    [p.pcId]: proposal
+  };
 }
 
 function applyPcSlotBindEvent(state: SessionState, event: QuireEvent): void {
@@ -3940,6 +4318,46 @@ function stripBondDmNotesPerEntry(
   return out;
 }
 
+/**
+ * Run #19 (2026-05-30) — filter `backstoryRefreshProposals` for a
+ * player viewer.  Each player sees ONLY proposals targeting THE PC
+ * THEIR OWN peer is bound to (peers[viewerPeerId].pcId).  Co-DM
+ * viewers — anyone in coordHolders — bypass this filter via the
+ * coord-passthrough in filterForViewer; this helper is only invoked
+ * for non-coord viewers and additionally strips the DM-only
+ * `triggerSummary` sub-field (defense-in-depth alongside the
+ * per-kind scrubber at the persistence boundary).
+ *
+ * Why per-viewer instead of "drop entirely from non-coord views":
+ * the proposal IS the inbox-card material the bound player must
+ * see in order to accept/reject.  Per chargen-authorship-division,
+ * the player owns voice; an empty player view would silently
+ * trap the proposal in coord-only state.
+ */
+function filterBackstoryRefreshProposalsForViewer(
+  proposals: Record<string, BackstoryRefreshProposal>,
+  viewerPeerId: PeerId,
+  peers: Record<PeerId, PeerPresence>
+): Record<string, BackstoryRefreshProposal> {
+  const out: Record<string, BackstoryRefreshProposal> = {};
+  const viewerBoundPcId = peers[viewerPeerId]?.pcId;
+  if (viewerBoundPcId === undefined) return out;
+  for (const [pcId, proposal] of Object.entries(proposals)) {
+    if (pcId !== viewerBoundPcId) continue;
+    // Defense-in-depth: drop `triggerSummary` even though the
+    // persistence-layer scrubber also drops it.  Belt + suspenders
+    // for the render path.
+    if (proposal.triggerSummary === undefined) {
+      out[pcId] = proposal;
+    } else {
+      const { triggerSummary: _omit, ...safe } = proposal;
+      void _omit;
+      out[pcId] = safe as BackstoryRefreshProposal;
+    }
+  }
+  return out;
+}
+
 interface BondProposePayload {
   v: 1;
   id: string;
@@ -4557,7 +4975,15 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   // D5 (2026-05-27): per-PC bonds lifecycle.
   'bond-propose': applyBondProposeEvent,
   'bond-ratify': applyBondRatifyEvent,
-  'bond-remove': applyBondRemoveEvent
+  'bond-remove': applyBondRemoveEvent,
+  // Run #19 (2026-05-30) — UX-MH-1 DM-rename-on-behalf-of-player.
+  'peer-rename-by-coord': applyPeerRenameByCoordEvent,
+  // Run #19 (2026-05-30) — UX-MH-2 PC tag ops.
+  'pc-tag-add': applyPcTagAddEvent,
+  'pc-tag-remove': applyPcTagRemoveEvent,
+  'pc-tag-rename': applyPcTagRenameEvent,
+  // Run #19 (2026-05-30) — UX-MH-3 AI backstory-refresh proposal.
+  'backstory-refresh-proposal': applyBackstoryRefreshProposalEvent
 };
 
 /**

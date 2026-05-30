@@ -167,6 +167,14 @@ export class DmOperationalView extends LitElement {
   availableNpcs: readonly { id: string; name: string }[] = [];
 
   /**
+   * Run #19 (2026-05-30) — UX-MH-4 "Reset all panel widths".  Host
+   * wires this to `splitterController.resetAll()`.  When null, the
+   * button is disabled.
+   */
+  @property({ attribute: false })
+  onResetLayout: (() => void) | null = null;
+
+  /**
    * Run #18 — track which seat row is currently expanded for
    * "Manage seat ▾".  Multiple seats may be expanded; using a
    * Set so the DM can compare two seats side-by-side.
@@ -239,9 +247,37 @@ export class DmOperationalView extends LitElement {
       </p>
       ${this.renderManageSeatsSection()}
       ${this.renderBackupsSection()}
+      ${this.renderLayoutSection()}
       <pc-revoke-confirm-dialog
         data-testid="dm-operational-pc-revoke-dialog"
       ></pc-revoke-confirm-dialog>
+    </section>`;
+  }
+
+  /**
+   * Run #19 (2026-05-30) — UX-MH-4 "Reset all panel widths" escape
+   * valve per visual designer R-H open call #2.  Lives in the
+   * operational view's destructive-actions area alongside other
+   * DM-only resets.  Per-handle double-click covers the common
+   * path; this is the minor backup for "I hosed both panels."
+   */
+  private renderLayoutSection(): TemplateResult {
+    return html`<section class="dm-operational-section dm-operational-layout">
+      <h3>Layout</h3>
+      <p class="muted">
+        Splitter handles to either side of the Stage let you resize
+        the Rail and Aside.  Double-click a handle to reset just
+        that side; press the button below to reset both at once.
+      </p>
+      <button
+        type="button"
+        class="dm-operational-destructive"
+        data-testid="dm-operational-reset-panel-widths"
+        @click=${() => this.onResetLayout?.()}
+        ?disabled=${!this.onResetLayout}
+      >
+        Reset all panel widths
+      </button>
     </section>`;
   }
 

@@ -66,7 +66,13 @@ const DIALOGS_TO_PROBE: Array<{
     },
     backdropClass: 'cloud-consent-backdrop',
     dialogClass: 'cloud-consent-dialog'
-  }
+  },
+  // Run #19 (2026-05-30, R-J): pc-revoke dialog probe per synthesis
+  // doc lives in `pc-revoke-dialog-visibility.spec.ts` — that
+  // dialog is a child of <dm-operational-view> which is gated on
+  // appMode; the bare probe pattern here would fail because the
+  // dialog isn't in the DOM at page-load time.  Kept as a comment
+  // here so future maintainers see the cross-reference.
 ];
 
 async function probeDialog(

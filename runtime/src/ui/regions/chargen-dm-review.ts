@@ -254,6 +254,17 @@ export class ChargenDmReview extends LitElement {
   @property({ attribute: false })
   displayNameLookup: DisplayNameLookup | null = null;
 
+  /**
+   * Run #19 (2026-05-30) — UX-MH-1 player-name-beside-PC-name.
+   * Resolve a pcId to the controlling peer's display name (or null
+   * when no peer is bound).  Per Adversarial P1 MH-1-B the lookup
+   * is ALWAYS resolved through LIVE state — the host MUST rebuild
+   * it from the current snapshot per render so a seat rebind
+   * surfaces immediately.  See `ui/player-name-lookup.ts`.
+   */
+  @property({ attribute: false })
+  playerNameLookup: ((pcId: string) => string | null) | null = null;
+
   /** CC-24 accept gate.  Host wires to controller.acceptSlot. */
   @property({ attribute: false }) onAccept: AcceptCallback | null = null;
 
@@ -1864,6 +1875,7 @@ export class ChargenDmReview extends LitElement {
               accepted
             )}</span>
           </div>
+          ${this.renderPlayerNameLine(slot)}
           ${this.renderTagChips(r.tags, slot)}
           ${this.renderStatGrid(r.stats, slot)}
           ${this.renderSkillChips(r.skillMastery, slot)}
@@ -2200,6 +2212,30 @@ export class ChargenDmReview extends LitElement {
    * cancels.  Accepted slots are display-only (post-accept edits
    * live in Wave 3 with a different visibility model).
    */
+  /**
+   * Run #19 (2026-05-30) — UX-MH-1: surface "Player: Alice" beside the
+   * PC name in every chargen-dm-review row.  Per R-B the chargen
+   * surface uses a two-line stack (PC name above, player name below
+   * in a muted weight); per Adversarial P1 MH-1-B the player name
+   * is resolved through LIVE state on each render.
+   *
+   * Renders nothing when `playerNameLookup` is unwired or the seat
+   * has no controller (open seat / revoked).
+   */
+  private renderPlayerNameLine(slot: number): TemplateResult | typeof nothing {
+    if (!this.playerNameLookup) return nothing;
+    const seat = this.pcSlots[slot];
+    if (!seat || !seat.pcId) return nothing;
+    const playerName = this.playerNameLookup(seat.pcId);
+    if (!playerName) return nothing;
+    return html`<div
+      class="chargen-dm-review-player-name"
+      aria-label="Player display name"
+    >
+      Player: ${playerName}
+    </div>`;
+  }
+
   private renderHeaderField(
     slot: number,
     field: 'name' | 'pronouns',

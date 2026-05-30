@@ -462,6 +462,27 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
     }
     if (!touched) return event;
     return { ...event, payload: safe };
+  },
+  // Run #19 (2026-05-30) — UX-MH-3 backstory-refresh-proposal.
+  // The event is player-visible (the player sees the inbox card),
+  // but the payload's `triggerSummary` is the DM's authorial
+  // why-it-changed prose — strict DM-only per R-G.  The other
+  // payload fields (`v`, `pcId`, `proposedBackstory`, `baselineHash`,
+  // `initiator`) are uniformly player-safe by design.
+  //
+  // Same rename-firewall defense as pc-edit + bond-ratify + pc-create:
+  // scan known field-name keys for a DM-only string value and drop
+  // the event on match (DEC-031 §1 contract-level prohibition is the
+  // primary defense; this is defense-in-depth).
+  'backstory-refresh-proposal': (event) => {
+    const p = event.payload;
+    if (!p || typeof p !== 'object') return event;
+    const obj = p as Record<string, unknown>;
+    if (payloadFieldNameKeyNamesDmField(obj)) return null;
+    if (!('triggerSummary' in obj)) return event;
+    const { triggerSummary: _omit, ...safe } = obj;
+    void _omit;
+    return { ...event, payload: safe };
   }
 };
 
@@ -691,6 +712,10 @@ const PLAYER_SCOPE_STRIP_KINDS: ReadonlySet<string> = new Set([
   // Players don't see other players' (or their own) un-ratified
   // bonds — proposals are a holding area for DM ratification.
   'bond-propose'
+  // NOTE Run #19: the 5 new event kinds (peer-rename-by-coord,
+  // pc-tag-add/remove/rename, backstory-refresh-proposal) are ALL
+  // player-visible — see EVENT_KINDS_PLAYER_VISIBLE for the
+  // rationale per kind.  No additions here.
 ]);
 
 /**
@@ -806,7 +831,28 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
   // bond-remove is coord-only authored but player-visible (a
   // bond going away is a story signal).
   'bond-ratify',
-  'bond-remove'
+  'bond-remove',
+  // Run #19 (2026-05-30) — UX-MH-1 DM-rename-on-behalf-of-player.
+  // Display names are already player-visible via the chat byline
+  // pattern; the coord-authored rename surface doesn't change the
+  // visibility class.  Payload carries no DM-only sub-fields
+  // (`targetPeerId` + `newDisplayName`); listed in
+  // EVENT_KINDS_NO_SCRUB_NEEDED below.
+  'peer-rename-by-coord',
+  // Run #19 (2026-05-30) — UX-MH-2 PC tag ops.  Tags themselves
+  // are uniformly player-visible per `character-loader.test.ts:
+  // 402-418` (the chargen contract surfaces tags to everyone).
+  // Payloads carry no DM-only sub-fields; listed in
+  // EVENT_KINDS_NO_SCRUB_NEEDED below.
+  'pc-tag-add',
+  'pc-tag-remove',
+  'pc-tag-rename',
+  // Run #19 (2026-05-30) — UX-MH-3 AI backstory-refresh proposal.
+  // Player-visible because the bound player MUST see the proposal
+  // in order to accept/reject (per chargen-authorship-division,
+  // player owns voice).  Payload has one DM-only sub-field
+  // (`triggerSummary`) — registered in PER_KIND_SCRUBBERS below.
+  'backstory-refresh-proposal'
 ]);
 
 /**
@@ -880,7 +926,18 @@ export const EVENT_KINDS_NO_SCRUB_NEEDED: ReadonlySet<string> = new Set([
   // D2 session-open — audit trail (who started the session).
   'session-open',
   // D5 bond-remove — coord-authored player-visible signal, no DM text.
-  'bond-remove'
+  'bond-remove',
+  // Run #19 (2026-05-30) — UX-MH-1 peer-rename-by-coord.  Payload
+  // is `targetPeerId` (opaque peer id) + `newDisplayName` (player-
+  // visible by the same contract as `peer-rename`'s `name`).  No
+  // DM-only sub-fields.
+  'peer-rename-by-coord',
+  // Run #19 (2026-05-30) — UX-MH-2 PC tag ops.  Payload is
+  // `pcId` + tag text (player-visible by character-loader
+  // contract).  No DM-only sub-fields.
+  'pc-tag-add',
+  'pc-tag-remove',
+  'pc-tag-rename'
 ]);
 
 /**

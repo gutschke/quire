@@ -15,6 +15,172 @@ references the prior. Format:
 
 ---
 
+## DEC-049 — `backstory-refresh-proposal` is a separate event kind, NOT a `pc-edit` rider (2026-05-30, run #19)
+
+**Decision:** introduce `backstory-refresh-proposal` as a NEW
+player-visible event kind with a coord-only authoring gate.  The
+materializer stores the latest proposal under
+`state.backstoryRefreshProposals[pcId]` (LWW per pcId).  Player
+accept emits a downstream `pc-edit field:backstory`; reject is a
+local clear (no event needed — a fresh refresh would overwrite the
+LWW slot anyway).
+
+**Why:** the proposal lifecycle is a distinct state machine from
+`pc-edit` (pending → accepted-and-replaced-by-pc-edit OR rejected →
+gone).  Stuffing it into `pc-edit` would conflate "DM proposes" with
+"player accepts" — bad firewall classification (the AI output goes
+on the wire BEFORE player consent) and bad authoring-division (the
+proposal is the inbox card the player owns).
+
+**Alternatives:**
+- Reuse `pc-edit field:backstoryProposal`.  Rejected: doesn't fit
+  pc-edit's LWW-overlay semantics; the proposal needs a clear
+  consent gate, not an overlay.
+- Use the D1-D `proposal-*` lifecycle.  Rejected: D1-D is the
+  NPC-side living-doc workflow with a DIFFERENT consent owner (DM
+  accepts the AI's proposal).  Here the player owns the consent.
+
+**Tradeoffs:** one more event kind; one more entry in every
+firewall classification SSOT.  Mitigated by the classification CI
+lint catching missing entries automatically.
+
+**Revisit if:** a future flow needs the same player-owned-consent
+shape for a different PC field (then promote to a generic
+`pc-proposal-by-coord` kind with a `field` discriminator).
+
+---
+
+## DEC-048 — `backstory-refresh-proposal.triggerSummary` is DM-only; stripped by per-kind scrubber + render-side filter (2026-05-30, run #19)
+
+**Decision:** the optional `triggerSummary` sub-field on
+`backstory-refresh-proposal` is DM-only authorial framing ("DM
+removed the `outsider` tag because the Quiet rejected Sora").  It is
+stripped by both:
+1. the per-kind scrubber in `persistence.ts:PER_KIND_SCRUBBERS`
+   (the wire-level defense, mirrors `bond-ratify`'s `dmNotes` strip)
+2. the render-side `filterBackstoryRefreshProposalsForViewer` helper
+   (defense-in-depth — same shape as the `pcBonds` per-entry
+   `dmNotes` strip in `filterForViewer`).
+
+**Why:** Adversarial P1 #4 (run #19 review) — defense in depth.
+Putting DM-private framing into the prompt invites echoing into AI
+output (which the spoiler-pipeline then catches), but the proposal
+event ITSELF rebroadcasts to player peers; if `triggerSummary` rode
+the wire unscrubbed it would land in the player's autosave
+verbatim.  Two layers of strip means a future regression on one
+still hits the other.
+
+**Alternatives:**
+- Make `triggerSummary` player-visible.  Rejected: violates silent-
+  player-firewall (DM's "why" is structurally DM-private).
+- Drop the field entirely.  Rejected: DM benefits from the audit
+  trail of why each refresh was kicked off (for co-DM continuity).
+
+**Tradeoffs:** two firewall layers cost a tiny amount of compute
+per scrub.  Negligible at session scale.
+
+**Revisit if:** the field grows past 400 chars or starts carrying
+structured DM-only data (then promote it to a stronger schema).
+
+---
+
+## DEC-047 — Tag rename is an atomic event kind (`pc-tag-rename`), not remove+add (2026-05-30, run #19)
+
+**Decision:** `pc-tag-rename` is a single event with payload
+`{ pcId, oldTagText, newTagText }`.  The materializer swaps the tag
+in place.  The UI emits ONE event for an inline-chip rename.
+
+**Why:** TTRPG/UX expert's adversarial corner #8 — a chip rename
+implemented as remove-then-add produces a one-render flicker where
+the tag visibly vanishes from the list before reappearing under a
+different name.  At 60fps that's <17ms and rarely visible, but the
+firewall fuzz + cross-device propagation can stretch it to >100ms
+on a slow link, surfacing the flicker.  An atomic event eliminates
+the half-state.
+
+**Alternatives:**
+- Two-event rename (remove + add).  Rejected per the flicker.
+- Three-payload rename (`pc-tag-edit { pcId, fromIdx, toText }`).
+  Rejected: the index is unstable across concurrent peers' views
+  (sort drifts).  Text-based identity is the cleaner contract.
+
+**Tradeoffs:** one more event kind; one more materializer; one
+more entry in the firewall classification SSOTs.  Same tax as the
+add/remove pair.
+
+**Revisit if:** the merge-on-collision policy (rename → existing
+tag drops old + keeps existing) surprises a player (escalate to
+TTRPG/UX expert for guidance).
+
+---
+
+## DEC-046 — `pc-tag-add` / `pc-tag-remove` are SEPARATE event kinds (not pc-edit array overlay) (2026-05-30, run #19)
+
+**Decision:** tag edits are authored via the explicit
+`pc-tag-add` / `pc-tag-remove` / `pc-tag-rename` triplet (see
+DEC-047).  `pc-edit` continues to exclude `tags` per the
+`character-edits.ts:32` deferral comment ("LWW on the whole array
+works mechanically but has bad merge semantics when two peers edit
+concurrently — need add/remove ops").
+
+**Why:** structured add/remove/rename verbs converge cleanly under
+concurrent authoring; LWW on the whole array would lose writes when
+two DMs edit tags simultaneously.  This is the exact failure class
+the `character-edits.ts` author flagged.
+
+**Alternatives:**
+- Extend pc-edit with array-merge semantics.  Rejected: complicates
+  the LWW-per-field invariant pc-edit relies on; the structured
+  events are cleaner.
+- Defer to a future "rich character edit" model.  Rejected: blocks
+  UX-MH-2 indefinitely; the cost of one new event family is small.
+
+**Tradeoffs:** UI emits one event per tag change vs one bundled
+pc-edit; observable as a multi-step projection ("DM adds two tags
++ pronouns" = 3 events serialized).  Acknowledged as a known
+minor (per Adversarial P2 MH-2-C); future `pc-edit-bundle` atomic
+kind would close it.
+
+**Revisit if:** the multi-step projection surfaces as a player-
+visible bug.  Then add `pc-edit-bundle` parallel to
+`pc-mark-realization`.
+
+---
+
+## DEC-045 — `peer-rename-by-coord` is a NEW event kind for DM-rename-on-behalf-of-player (2026-05-30, run #19)
+
+**Decision:** introduce `peer-rename-by-coord` with payload
+`{ targetPeerId, newDisplayName }`.  Coord-only authoring gate at
+the materializer; the materializer writes
+`state.peers[targetPeerId].name` (NOT `state.peers[event.peerId]`).
+
+**Why:** Adversarial P0 (run #19) — the planning lead's "DM
+authors `peer-rename` for Alice's seat" plan was INERT.
+`peer-rename`'s materializer writes the AUTHOR's own entry, and the
+wire-level R2.1 check (`event.peerId !== from` → reject) prevents
+the DM from forging an event whose `peerId` says "alice".  Net
+effect: the DM silently renames themselves.  A NEW event kind makes
+the authorization explicit at both the firewall layer (per-kind
+classification) and the materializer layer (coord gate +
+`targetPeerId` argument).
+
+**Alternatives:**
+- Extend `peer-rename` with an optional `targetPeerId`.  Rejected:
+  conflates self-rename (no authorization) with coord-rename (full
+  authorization); easy to forget the gate on a future read site.
+- Extend `pc-edit` with `playerDisplayName` field.  Rejected: the
+  display name lives on the peer presence, not on the PC.  The
+  human follows the human; the PC follows the seat.
+
+**Tradeoffs:** one more event kind, one more materializer, one
+more entry in the firewall classification SSOTs.  Mitigated by the
+classification CI lint catching missing entries automatically.
+
+**Revisit if:** the cross-peer-write authority needs to expand
+beyond coord (e.g. table-mods can rename in a future).
+
+---
+
 ## DEC-044 — DM operational view surfaces `pc-revoke` behind a per-seat "Manage seat ▾" disclosure (2026-05-30, run #18)
 
 **Decision:** the `pc-revoke` UI affordance lives ONLY in the DM

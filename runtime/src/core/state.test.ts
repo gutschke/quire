@@ -992,7 +992,10 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // bond-remove → 59.
     // Run #18 (2026-05-30): added pc-revoke (DEC-043, TTRPG-expert
     // player-removal advisory) → 60.
-    expect(KNOWN_EVENT_KINDS.size).toBe(60);
+    // Run #19 (2026-05-30): added peer-rename-by-coord (UX-MH-1) +
+    // pc-tag-add + pc-tag-remove + pc-tag-rename (UX-MH-2) +
+    // backstory-refresh-proposal (UX-MH-3) → 65.
+    expect(KNOWN_EVENT_KINDS.size).toBe(65);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {

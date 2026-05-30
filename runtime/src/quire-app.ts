@@ -23,6 +23,8 @@ import './ui/regions/dm-roster-strip';
 // wrap or open mode.  See `./ui/regions/wrap-mode-chunk.ts` for
 // the barrel.  Type-only imports stay static (zero runtime cost).
 import type { WrapStep } from './ui/regions/wrap-stepper';
+import { buildPlayerNameLookup } from './ui/player-name-lookup';
+import { SplitterController } from './ui/shell/splitter-controller';
 import type { DiffProposalView } from './ui/regions/diff-review-stage';
 import type { CarryoverPcCard } from './ui/regions/session-open-stage';
 import './ui/regions/clock-strip';
@@ -1050,6 +1052,28 @@ export class QuireApp extends LitElement {
   sessionFactory: TransportFactory = createPeerjsFactoryFromUrl();
   private session: SessionController | null = null;
   private unsubscribeSession: (() => void) | null = null;
+  /**
+   * Run #19 (2026-05-30) — UX-MH-4 splitter controller.  Mounted on
+   * the `<quire-shell>` element in firstUpdated().  Drives
+   * `--rail-w` + `--aside-w` CSS variables via drag / keyboard /
+   * reset, persists per-campaign in localStorage.  See
+   * `ui/shell/splitter-controller.ts`.
+   */
+  private splitterController: SplitterController | null = null;
+  /** Pointer-move + pointer-up handlers bound to this instance so we
+   *  can remove them in disconnectedCallback. */
+  private splitterPointerMove = (e: PointerEvent): void => {
+    this.splitterController?.handlePointerMove(e);
+  };
+  private splitterPointerUp = (e: PointerEvent): void => {
+    void e;
+    // Find the currently dragging handle (data-dragging="true") so
+    // we pass it back for the data-dragging attribute clean-up.
+    const handle = this.querySelector<HTMLButtonElement>(
+      'button.region-splitter[data-dragging]'
+    );
+    this.splitterController?.endDrag(handle ?? undefined);
+  };
 
   /**
    * INV-EXTRA-LOOP (run #14): forward-compat passthrough storage.  When
@@ -1459,11 +1483,66 @@ export class QuireApp extends LitElement {
     }
   };
 
+  /**
+   * Run #19 (2026-05-30) — UX-MH-4: wire the splitter controller on
+   * first updated().  Done here rather than connectedCallback so the
+   * `<quire-shell>` element + its slotted handles are present in
+   * the DOM.  Re-loaded on campaign change via the session-change
+   * subscription so per-campaign persistence kicks in.
+   */
+  override firstUpdated(): void {
+    const shell = this.querySelector<HTMLElement>('quire-shell');
+    if (!shell) return;
+    this.splitterController = new SplitterController({
+      host: shell,
+      getCampaignSlug: () => {
+        const slug = this.currentCampaignSlugForPersistence();
+        return slug.length > 0 ? slug : null;
+      }
+    });
+    this.splitterController.loadForCurrentCampaign();
+    // Wire the handles (slotted children of the shell).  Each handle
+    // gets pointer + keyboard + double-click listeners.
+    const handles = this.querySelectorAll<HTMLButtonElement>(
+      'button.region-splitter'
+    );
+    for (const handle of Array.from(handles)) {
+      const axis =
+        handle.dataset.axis === 'aside' ? ('aside' as const) : ('rail' as const);
+      handle.addEventListener('pointerdown', (e: PointerEvent) => {
+        this.splitterController?.beginDrag(axis, e, handle);
+      });
+      handle.addEventListener('keydown', (e: KeyboardEvent) => {
+        this.splitterController?.handleKeydown(axis, e);
+      });
+      handle.addEventListener('dblclick', () => {
+        this.splitterController?.resetAxis(axis);
+      });
+      handle.addEventListener('blur', () => {
+        this.splitterController?.endDrag(handle);
+      });
+    }
+    window.addEventListener('pointermove', this.splitterPointerMove);
+    window.addEventListener('pointerup', this.splitterPointerUp);
+    window.addEventListener('pointercancel', this.splitterPointerUp);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        const dragging = this.querySelector<HTMLButtonElement>(
+          'button.region-splitter[data-dragging]'
+        );
+        this.splitterController?.endDrag(dragging ?? undefined);
+      }
+    });
+  }
+
   override disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('popstate', this.popstateHandler);
     window.removeEventListener('beforeunload', this.beforeUnloadHandler);
     window.removeEventListener('keydown', this.hotkeyHandler);
+    window.removeEventListener('pointermove', this.splitterPointerMove);
+    window.removeEventListener('pointerup', this.splitterPointerUp);
+    window.removeEventListener('pointercancel', this.splitterPointerUp);
     this.abortController?.abort();
     this.unsubscribeSession?.();
     this.unsubscribeSession = null;
@@ -1841,6 +1920,36 @@ export class QuireApp extends LitElement {
     return html`
       <quire-shell>
         <quire-topbar slot="topbar">${this.renderSessionBar()}</quire-topbar>
+        <!-- Run #19 (2026-05-30) UX-MH-4: splitter handles.  Per LL-3
+             (d5d1a9c lesson) these MUST be slotted children of the
+             shell so the browser distributes + lays them out within
+             the grid template's splitR / splitA columns.  The
+             splitter controller is attached on first updated() and
+             wires drag / keyboard / reset to the host's CSS vars. -->
+        <button
+          slot="splitter-rail"
+          class="region-splitter region-splitter-rail"
+          data-axis="rail"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize rail"
+          aria-valuemin="240"
+          aria-valuemax="480"
+          tabindex="0"
+          title="Drag to resize. Double-click to reset."
+        ></button>
+        <button
+          slot="splitter-aside"
+          class="region-splitter region-splitter-aside"
+          data-axis="aside"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize aside"
+          aria-valuemin="280"
+          aria-valuemax="560"
+          tabindex="0"
+          title="Drag to resize. Double-click to reset."
+        ></button>
         <quire-rail slot="rail">${dmRail ? dmRail : this.renderBoundCharacterRail()}</quire-rail>
         <quire-stage slot="stage">${this.renderRevealBanner()}${this.renderBody()}</quire-stage>
         <!-- Wave A5 (2026-05-26): Aside ordering per ui.md spec.
@@ -2078,6 +2187,7 @@ export class QuireApp extends LitElement {
       .requestFsApiConsent=${this.requestFsApiConsent}
       .manageSeats=${manageSeats}
       .availableNpcs=${[]}
+      .onResetLayout=${() => this.splitterController?.resetAll()}
       @dm-operational-close=${() => this.closeDmOperationalView()}
       @backups-push-request=${(e: Event) =>
         void this.handleBackupsPushRequest(e)}
@@ -3141,6 +3251,24 @@ export class QuireApp extends LitElement {
     return containsSpoilerTokens(combined, tokens);
   }
 
+  /**
+   * Run #19 (2026-05-30) — UX-MH-1: build a lookup that resolves a
+   * pcId to the controlling peer's display name through LIVE state
+   * (per Adversarial P1 MH-1-B — never cache).  The lookup is built
+   * fresh on each render so seat-rebind events surface the new
+   * player name immediately.  Returns a stub when the session view
+   * isn't active (chargen-dm-review's renderPlayerNameLine
+   * tolerates `null`).
+   */
+  private buildPlayerNameLookup(): (pcId: string) => string | null {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return () => null;
+    return buildPlayerNameLookup(
+      v.filteredShared.pcSlots as Record<number, { pcId?: string; controllerPeerId?: string }>,
+      v.filteredShared.peers
+    );
+  }
+
   private resolvePcDisplayLabel(pcId: string): string {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return '(unknown PC)';
@@ -3350,6 +3478,7 @@ export class QuireApp extends LitElement {
         .pendingBondCounts=${this.pendingBondCountsByPcId()}
         .displayNameLookup=${(pcId: string) =>
           this.chargen.displayNameForBound(pcId)}
+        .playerNameLookup=${this.buildPlayerNameLookup()}
         .answersLookup=${(slot: number) =>
           this.chargen.loadPersistedAnswers(slot)}
         .spoilerScan=${(text: string) => this.spoilerTokenHits(text)}

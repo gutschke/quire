@@ -1595,6 +1595,44 @@ export const quireAppStyles = css`
       color: light-dark(#92400e, #fcd34d);
       margin-top: 0.2rem;
     }
+    /* Run #19 UX-MH-1: player-name beneath the PC name (two-line stack
+       per TTRPG/UX expert R-B).  Muted weight so the play-loop
+       eye-scan still keys on the PC name; player name is the
+       contextual anchor below. */
+    .chargen-dm-review-player-name {
+      font-size: 0.85rem;
+      color: light-dark(#475569, #94a3b8);
+      margin-top: 0.1rem;
+    }
+    /* Run #19 UX-MH-4: splitter handles inside the shell's
+       splitter-rail / splitter-aside slot.  6 px hit-target, 1 px
+       hairline rule painted as an inset shadow so the box never
+       resizes (drag math would skew on hover); 2 px accent rule on
+       hover/focus/drag.  Cursor + tab-stop so keyboard users can
+       reach the handles per the visual designer A11y spec. */
+    button.region-splitter {
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      margin: 0;
+      cursor: col-resize;
+      box-shadow: inset 1px 0 0 0
+        light-dark(rgba(15, 23, 42, 0.12), rgba(226, 232, 240, 0.12));
+      transition: box-shadow var(--motion-hover);
+      touch-action: none; /* avoid scroll-snap interference on touch */
+    }
+    button.region-splitter:hover,
+    button.region-splitter:focus-visible,
+    button.region-splitter[data-dragging] {
+      box-shadow: inset 2px 0 0 0 var(--accent-teal);
+      outline: none;
+    }
+    /* Reset-all-panel-widths affordance lives in the DM operational
+       view's destructive-actions area (per visual designer R-H open
+       call #2).  The button reuses the existing destructive-action
+       button styling — no per-button CSS needed here. */
     .chargen-dm-review-synth-accepted {
       margin-top: 0.2rem;
       font-style: italic;
