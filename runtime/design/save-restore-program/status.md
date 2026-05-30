@@ -1,17 +1,62 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-30 run #10 (cross-device probe SHIPPED;
-mock campaigns 04 + 05 ran; OP-041 + OP-042 filed as P2 — neither
-blocks playable release)
-**Active milestone:** M6a-FS-3 SHIPPED / playable-release-plan.md
-milestone 3 complete.  Next: M6a-FS-4 (game-mechanic edges +
-simulation 06).
-**Latest deploy hash:** 3de5696 (run #10 ship — M6a-FS-3)
+**Last updated:** 2026-05-30 run #11 (game-mechanic edges audit +
+mock campaign 06 SHIPPED; OP-043 P1 + OP-044 P3 filed; OP-043
+queued as M6a-FS-5 first work — not a release blocker per the
+DM-happy-path definition, but real player-side visible hit)
+**Active milestone:** M6a-FS-4 SHIPPED / playable-release-plan.md
+milestone 4 complete.  Next: M6a-FS-5 (OP-043 fix + simulation 07
++ pre-release sweep).
+**Latest deploy hash:** (TBD this push — update post-push)
 **Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-30 run #10 (this run):** M6a-FS-3 SHIPPED.
+- **2026-05-30 run #11 (this run):** M6a-FS-4 SHIPPED.
+
+  - **Mock campaign 06 (game-mechanic edges) SHIPPED** at
+    `src/persistence.simulation-06-game-mechanic-edges.test.ts`.
+    8 tests, all pass.  Doc at `design/save-restore-program/
+    simulations/mock-campaign-06-game-mechanic-edges.md`.
+    Scenarios exercised:
+      - Harm to max (4) + save/restore + render (FINDING-C ok).
+      - Stress to max (4) + save/restore + clamp (ok).
+      - Advancement to cap (8) + cap-reached chip + survive
+        round-trip (FINDING-A surfaced — engine permits >8;
+        UI render gate self-protects).
+      - Bond drafts cap (3) — packChargen rejects 4+ (FINDING-D ok).
+      - 10 focus-grants + DM-only sub-field strip on player
+        save (FINDING-E ok — D-prep-2-A scrubber works at scale).
+      - PC retire mid-session + firewall (FINDING-F payload
+        scrub ok at the SAVE LAYER; FINDING-B BUG surfaced at
+        the MATERIALIZE LAYER — see OP-043).
+      - Co-DM yield with half-completed scene reveal +
+        save/restore (FINDING-G ok — partial reveal mask
+        survives both DM and player projections).
+  - **OP-043 (NEW P1):** pc-retire player-save round-trip fails
+    to materialize retired seat.  Player tab restored from
+    localStorage (or cross-device probe load as non-coord)
+    sees retired PC as `bound-active` after restore — the
+    firewall strips `reason`, the materializer requires it,
+    event is silently dropped.  Same SHAPE as OP-040.  Live-
+    play sync-response path unaffected (OP-039 strips by kind
+    not sub-field).  Real player-side hit; queued as the FIRST
+    item to ship in M6a-FS-5 (run #12).  Does NOT block
+    playable release per the DM-happy-path definition.
+  - **OP-044 (NEW P3):** Engine permits `advancements` value
+    above ADVANCEMENT_CAP (8).  UI render gate self-protects
+    (cap-reached chip uses `>= 8`).  Three-line clamp fix;
+    defensive only.  Post-release polish.
+  - **OP-040 / OP-041 / OP-042 triage call** documented in
+    `playable-release-plan.md` (new "OP triage table" section).
+    Recommendation: ship OP-043 (mandatory) + OP-041 + OP-044
+    in M6a-FS-5; OP-040 + OP-042 ship post-release.
+
+  Tests: 2946 + 2 skipped = 2948 (up from 2940 baseline, +8 new
+  this run; +77 net since M6a-FS started).  Typecheck clean.
+  Build clean (645KB main chunk).  No credentials in diff.
+
+- **2026-05-30 run #10 (prior run):** M6a-FS-3 SHIPPED.
 
   - **Cross-device probe (§FS.11) SHIPPED.**
     `src/controllers/cross-device-probe.ts` (10 unit tests) is
@@ -846,6 +891,9 @@ Still pending (carry-over):
 - 🟢 Mock campaign 05 (cloud push during active play) — SHIPPED (run #10 — 6 tests; surfaced OP-041 + OP-042).
 - 🟡 OP-041 (first-push silently overwrites orphan save) — FILED (run #10, P2 — does NOT block playable release; mitigated by §FS.11 probe).
 - 🟡 OP-042 (consent dialog interleaves with concurrent host actions) — FILED (run #10, P2 — does NOT block playable release; today requires deliberate dual-intent).
+- 🟢 Mock campaign 06 (game-mechanic edges) — SHIPPED (run #11 — 8 tests; surfaced OP-043 + OP-044).
+- 🟡 OP-043 (pc-retire player-save round-trip fails to materialize) — FILED (run #11, P1 — does NOT block playable release per DM-happy-path definition; M6a-FS-5 priority).
+- 🟡 OP-044 (engine permits `advancements` > 8) — FILED (run #11, P3 — UI render gate self-protects; post-release polish).
 - 🟡 M6a-OAuth cloud-push.ts (DM-facing orchestration) — AFTER M6a-FS host wiring.
 - 🟡 M6a-OAuth per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
 - 🟡 M6a-OAuth mid-session 401 detection (OP-022) — lands with cloud-push.ts.

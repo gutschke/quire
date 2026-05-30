@@ -234,26 +234,65 @@ No credentials in diff.
   invariant in ux-strategy.md before any future auto-opening
   dialog work lands.
 
-### M6a-FS-4 (run #11)
+### M6a-FS-4 (run #11) [SHIPPED]
 
 **Game-mechanic edges + simulation 06.**
 
-- Mock campaign 06: edge cases — push harm to max, stress to max,
-  advancement to cap, bond limit, focus-grant limit.  Save/restore
-  round-trip at each edge.
-- Any UI escapes / typography blowouts on edge values.
-- Findings → file or fix.
+All shipped:
+- Mock campaign 06: harm-to-max, stress-to-max, advancement-cap,
+  bond-draft cap, many-foci save/restore, pc-retire firewall,
+  co-DM yield with half-completed scene reveal.  8 tests, all
+  pass.  Doc at `simulations/mock-campaign-06-game-mechanic-
+  edges.md`.
+
+Tests: 2946 + 2 skipped = 2948 (up from 2940 baseline, +8 new
+this run).  Typecheck clean.  Build clean.  No credentials.
+
+**Findings (NEW, filed):**
+
+- **OP-043 (P1)** — pc-retire player-save round-trip fails to
+  materialize retired seat.  The DM-coord save path is fine; the
+  player-side load path (localStorage autosave restore, cross-
+  device probe load as non-coord) shows the retired PC as
+  `bound-active` after restore.  Same SHAPE as OP-040 (firewall
+  strips a sub-field the materializer requires).  Real player-
+  side hit — a tab closed+reopened during/after a retire session
+  shows wrong state.
+
+- **OP-044 (P3)** — Engine permits `advancements` value above
+  ADVANCEMENT_CAP (8).  Render gate self-protects (the carryover
+  card uses `>= 8` to flip to cap-reached chip).  Latent.  Three-
+  line clamp fix; defensive only.
+
+### Known issues (M6a-FS-4 finds)
+
+- **OP-043 (P1):** see above.  M6a-FS-5 priority (first item to
+  ship).  Does NOT block release per the definition (DM happy
+  path works), BUT the player-side hit is real and visible —
+  schedule for FIX before flipping the "playable released" flag.
+
+- **OP-044 (P3):** post-release polish (low priority).
 
 ### M6a-FS-5 (run #12)
 
-**Network partition + simulation 07 + cleanup.**
+**Pre-release sweep + OP-043 fix + simulation 07 + cleanup.**
 
-- Mock campaign 07: peer goes offline mid-session, comes back
-  with diverged log.  Merge is deterministic AND firewall-correct.
-- Final pre-release sweep: every OP filed by mock campaigns
-  triaged.
-- Status / roadmap update — flip M6a-FS state to "playable
-  released" in `status.md` health summary.
+Three pieces, in priority order:
+
+1. **Fix OP-043** (FIRST, P1).  Tolerate `p.reason === undefined`
+   in `applyPcRetireOrArchiveEvent` — materialize the seat into
+   `bound-retired` with `retireReason` absent.  Mirror for
+   `pc-archive` (same materializer).  Regression test in
+   `state.test.ts` covering both paths.  Mock-campaign-06 test
+   updated to expect the fixed behavior.
+
+2. **Mock campaign 07 (network partition).**  Peer goes offline
+   mid-session, comes back with diverged log.  Merge is
+   deterministic + firewall-correct.
+
+3. **Pre-release OP sweep + ship/defer call for OP-040 / OP-041 /
+   OP-042 / OP-044** (the four other open OPs — see "OP triage
+   table" below).
 
 ### M6a-FS-6 (run #13, contingency)
 
@@ -262,6 +301,20 @@ and needs a dedicated fix run.**
 
 Reasonable expectation: 5-6 runs to playable release.  This is a
 best-case if mock campaigns don't surface major arch reworks.
+
+## OP triage table (M6a-FS-4 close)
+
+| OP | Severity | Ship pre-release (M6a-FS-5)? | Rationale |
+|---|---|---|---|
+| OP-040 | P2 firewall/continuity | NO — post-release | Workflow workaround exists (DM re-marks realization).  Same shape as OP-043; batch in a follow-up "firewall-vs-materializer tolerance" sweep. |
+| OP-041 | P2 data-loss | OPTIONAL — ship if time | Probe + cloud-sync version history close the typical path.  Pre-release polish; not blocker. |
+| OP-042 | P2 UX surprise | NO — post-release | Today's interleave requires deliberate dual-intent.  Defer until auto-open path lands. |
+| OP-043 | P1 visible-broken-state | **YES — M6a-FS-5 priority** | Player tab restored from localStorage shows wrong PC state on retired seats.  Real-world hit.  Fix is small (tolerate missing `reason` in materializer). |
+| OP-044 | P3 latent | OPTIONAL — ship if time | UI render gate self-protects.  Three-line clamp fix; defensive. |
+
+Recommended M6a-FS-5 scope: ship OP-043 (mandatory) + OP-041 +
+OP-044 (low-effort, defensive).  OP-040 + OP-042 ship post-
+release.
 
 ## Mock-campaign methodology
 

@@ -151,10 +151,18 @@ playable release:
   authorship) + 05 (cloud push during active play).
   SHIPPED 2026-05-30 run #10.  Surfaced OP-041 + OP-042
   (both P2 — neither blocks playable release).
-- 🟡 **M6a-FS-4 (run #11)** — game-mechanic edges +
-  mock campaign 06.
-- 🟡 **M6a-FS-5 (run #12)** — network partition +
-  mock campaign 07 + final pre-release sweep.
+- ✅ **M6a-FS-4 (run #11)** — game-mechanic edges +
+  mock campaign 06.  SHIPPED 2026-05-30 run #11.  Surfaced
+  OP-043 (P1, pc-retire player-save round-trip fails to
+  materialize retired seat) + OP-044 (P3, latent
+  advancement-cap-not-clamped).  Neither blocks playable
+  release per the DM-happy-path definition; OP-043 is queued
+  as the FIRST item in M6a-FS-5.
+- 🟡 **M6a-FS-5 (run #12)** — OP-043 fix + network partition +
+  mock campaign 07 + final pre-release sweep.  Scope per
+  the "OP triage table" in `playable-release-plan.md`:
+  OP-043 mandatory, OP-041 + OP-044 if time, OP-040 + OP-042
+  post-release.
 - 🟡 **M6a-FS-6 (run #13, contingency)** — reserved for
   any P0/P1 finding that needs a dedicated fix run.
 

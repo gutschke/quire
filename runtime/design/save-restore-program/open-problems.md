@@ -54,6 +54,106 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
+## OP-044 — Engine permits `advancements` value above ADVANCEMENT_CAP (8) [mock-campaign-06 finding] [R4: class 3 / class 2 latent, P3]
+
+**Severity:** P3 (latent; render gate self-protects).
+**Evidence:** Mock campaign 06 (run #11 — game-mechanic edges)
+FINDING-A.  `applyCharacterEdits` clamps `harm` + `stress` to
+their HARM_MAX / STRESS_MAX caps but treats `advancements` +
+`marks` as floor-only (`Math.max(0, Math.floor(value))`).  A
+pc-edit with `advancements: 9` lands as 9 in the effective
+record.
+**Why P3:** The render layer is self-protecting — the session-
+open-stage carryover card uses `if (c.advancements >= 8) →
+cap-reached chip` (session-open-stage.ts:266-269), so even at
+9+ the chip still triggers and the "Advancement taken" button
+disappears.  No realistic UI path emits an over-cap pc-edit
+today.  Future AI-write paths or a hostile peer (class 3 =
+out of scope) could push the value arbitrarily.
+**Hypothesis:** Add `clamped = clamp(value, 0, ADVANCEMENT_CAP)`
+to the `advancements` branch in `character-edits.ts`.  Mirror
+for `marks` (cap at 5 per rules.md:149 advancement-mark count).
+Three-line fix; defensive only.
+**Owner:** save/restore program lead.
+**Status:** OPEN.  P3 polish, M6a-FS-5 cleanup or M7.  Does NOT
+block playable release.
+
+---
+
+## OP-043 — pc-retire player-save round-trip fails to materialize retired seat [mock-campaign-06 finding] [R4: class 2 gameplay-continuity, P1]
+
+**Severity:** P1 (class 2 — visible-broken-state gameplay
+continuity, NOT a firewall leak).
+This is the SAME shape as OP-040: the firewall correctly strips
+DM-only sub-fields from a player save, but the materializer is
+strict about the field's presence and silently drops the event.
+The retired-tile renders WRONG state (`bound-active`) to the
+player after restore — a visible regression from what the player
+saw at the table.
+**Evidence:** Mock campaign 06 (run #11) FINDING-B.
+`core/state.ts:applyPcRetireOrArchiveEvent` (lines 2961-2968)
+requires `p.reason` to be one of four enum values.  The
+player-save firewall (`persistence.ts:RETIRE_DM_ONLY_PAYLOAD_FIELDS`,
+the B-1 BLOCKER fix) strips `reason` from non-coord projections.
+Result: when a player restores their autosave OR loads a save
+via `projectSaveForViewer(doc, viewerIsCoord:false)`, the
+pc-retire event materializer rejects, leaving the seat as
+`bound-active`.
+
+**Surfaces (in likelihood-of-real-hit order):**
+1. **Player tab restored from localStorage autosave.** Most
+   likely real-world hit: a player closes their tab during/after
+   a session where someone retired; opens later; their
+   localStorage autosave projects through `loadFromString` with
+   `viewerIsCoord = false`; pc-retire is dropped; the retired PC
+   appears as still active in the player's view.
+2. **Cross-device probe load as non-coord (§FS.11).**  If a
+   guest joining a session uses the probe (rare; the probe is a
+   DM affordance today), the same bug fires.
+3. **Player export → fresh device import.**  Same shape.
+
+**Live-play path is UNAFFECTED:**
+- DM-coord save → DM-load: full save, `reason` preserved, works.
+- Live sync-response: `defaultSyncResponseFilter` strips by KIND
+  not sub-field per OP-039 fix; pc-retire payload survives intact
+  for joining peers.  A player reconnecting to a live session
+  rebuilds the retired seat correctly.
+
+**Hypothesis (fix paths, in priority order):**
+1. **Materializer tolerates missing `reason`** (PREFERRED).
+   Treat `p.reason === undefined` as a benign signal — the event
+   landed from a player projection.  Materialize the seat into
+   `bound-retired` with `retireReason` absent.  Render uses
+   `inFictionRetireReason` (player-safe), so the result is
+   visually correct.  Same shape as the B-1 BLOCKER design intent:
+   strip DM-only sub-fields without breaking seat state.  Tight
+   diff at `applyPcRetireOrArchiveEvent`.
+2. **Move `reason` out of `RETIRE_DM_ONLY_PAYLOAD_FIELDS`** —
+   wrong direction; leaks the enum to player saves.  Rejected.
+3. **Synthesize `pc-retire-presence` companion event** that
+   omits `reason` — heavy; new event kind, two materializers,
+   classification dance.  Avoid.
+
+**Path 1 is the natural fix.**  Same fix shape that
+`scrubMapBlobIfUnrevealed` uses (keep the event, drop the
+sub-field, materializer is tolerant).  Engine accepting partial
+payloads from the firewall is the SSOT-correct design.
+
+**Release-blocker call:** Does NOT block playable release per
+`playable-release-plan.md` definition (DM happy path is the
+defined release bar; players are secondary save/restore users
+because they reconnect via live WebRTC sync).  BUT: this is the
+first P1 mock-campaign finding, and the player-side hit is
+real-world (a tab restored from localStorage with a retired seat
+WILL show the wrong state).  Stack-ranked as the FIRST item to
+ship in M6a-FS-5 (run #12 cleanup) before the playable release
+push.
+
+**Owner:** save/restore program lead.
+**Status:** OPEN.  Filed P1.  M6a-FS-5 priority.
+
+---
+
 ## OP-042 — Consent dialog can interleave with concurrent host actions during active play [mock-campaign-05 finding] [R4: class 2 UX-surprise, P2]
 
 **Severity:** P2 (class 2 — UX surprise, not corruption).
