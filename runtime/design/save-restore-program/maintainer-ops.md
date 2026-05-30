@@ -310,6 +310,146 @@ aren't available in the program lead's environment.
 
 ---
 
+## 8.5. M6a-FS — File System Access API path (NEW, DEC-028)
+
+The **M6a-FS** path requires NO maintainer setup.  Unlike
+M6a-OAuth (which is gated on the maintainer registering a
+verified Google OAuth app), M6a-FS works the moment the code
+is deployed:
+
+- **No OAuth client_id to register.**  Quire never speaks to
+  Google / Dropbox / OneDrive / iCloud.
+- **No Cloudflare proxy / Worker.**  No network hop the
+  maintainer has to host.
+- **No verified-app review delay.**  The browser's
+  `showDirectoryPicker` permission dialog is the consent
+  surface; no third party sits in the trust chain.
+
+Both M6a paths can be live simultaneously:
+
+| Path | Maintainer prerequisite | End-user requirement |
+|---|---|---|
+| **M6a-FS** | NONE.  Just deploy. | Chromium desktop browser + desktop sync client (Drive Desktop / Dropbox / OneDrive / iCloud Drive). |
+| **M6a-OAuth** | Register verified Google OAuth app + flip `GOOGLE.status` from `'placeholder'` to `'verified'` (see §3b). | Any browser that supports OAuth popups, including mobile + Safari + Firefox. |
+
+End-user-side, the `<backups-card>` surface auto-feature-detects
+and renders the right copy:
+
+- API present + desktop → "Connect a folder" affordance.
+- Safari → "Try Chrome or Edge on your desktop." copy.
+- Firefox → same.
+- Mobile → "not available on mobile devices" copy.
+
+### Flipping M6a-FS live
+
+M6a-FS goes live with any deploy that includes the run #7 code
++ the `<backups-card>` integration into the eventual operational
+view.  **No external registration required.**  Same deploy
+pipeline as any other Quire change.
+
+### File-naming convention (so users can find the file by hand)
+
+Save files in the DM's chosen folder follow this convention:
+
+`<campaign-slug>.quire-save.json`
+
+The slug is derived from the campaign id:
+
+- Lowercased.
+- Anything not `[a-z0-9._-]` is replaced with `-`.
+- Runs of `-` collapse to a single `-`.
+- Leading/trailing `-` trimmed.
+- Truncated to 64 chars; falls back to `campaign` if empty.
+
+Examples:
+
+- `gutschke/underleaf@main` → `gutschke-underleaf-main.quire-save.json`
+- `Owner/Repo@v1.0` → `owner-repo-v1.0.quire-save.json`
+
+If a user needs to find their save file without using Quire —
+e.g. for a "rescue this campaign" recovery — the file is at the
+top level of whichever folder the DM picked, with this name.
+
+### Multi-campaign layout
+
+ONE folder, file-per-campaign.  A DM who picks `Google
+Drive/Quire/` once and connects two campaigns to it ends up
+with both saves in that folder:
+
+```
+Google Drive/Quire/
+├── underleaf.quire-save.json
+├── test-campaign.quire-save.json
+```
+
+Quire keeps a separate handle record per campaign in IndexedDB
+(per-campaign accounting for "last pushed when" + conflict
+detection baseline), even though the handles structurally
+point to the same folder.
+
+### Permission lifecycle (user-visible behavior)
+
+The browser does NOT auto-grant write access on tab reload —
+privacy defense by design.  Behavior the DM will observe:
+
+1. First connect: pick a folder; permission granted for this
+   session.
+2. Tab closes; user reopens; Quire still has the handle but
+   permission has rolled back.
+3. First push of the new session: Quire surfaces a "Reconnect
+   folder" prompt; click triggers the browser's permission
+   dialog.
+4. Grant: subsequent pushes go through silently within the
+   session.
+
+This is browser-enforced and applies on EVERY new tab.  We
+cannot silently auto-push on tab open.  Documented for the
+maintainer so user reports of "Quire kept asking me to
+reconnect the folder" are recognized as expected behavior, not
+a bug.
+
+### Conflict-detection behavior
+
+Before each push, Quire reads the file's current
+`lastModified`.  If it's newer than what Quire last observed,
+the file was modified externally — typically the desktop sync
+client pulled a newer copy from cloud (another device wrote
+first).
+
+User-visible: Quire surfaces "Another device updated this
+campaign's backup.  Pull first, then push."  No data is
+overwritten on the conflict path.
+
+The CRDT merge layer in `persistence.ts` handles the actual
+reconciliation; this is the same machinery the M4 restore
+drill exercises.
+
+### Disconnect semantics
+
+- **DM clicks Disconnect** → Quire forgets the folder handle
+  and withdraws the consent acknowledgment.  Does NOT delete
+  the file from the folder; the DM can recover it via their
+  file browser.
+- **User revokes permission in browser settings** → next
+  Quire-side probe returns 'denied'; the UI surfaces a
+  reconnect prompt.
+
+Stronger "Disconnect → Erase" semantics (delete the save file
+on disconnect) are deferred per OP-029.
+
+### What this section does NOT cover
+
+- Choosing a folder location that's actually inside a sync
+  tool's watched tree — that's the DM's problem.  Quire
+  cannot verify which tool watches which folder.
+- Coordinating co-DM-shared folders — each co-DM connects
+  their own folder per DEC-014.  The CRDT merge handles
+  divergence at restore time.
+- Mobile devices — out of scope per DEC-028; mobile DMs use
+  M6a-OAuth instead (when available).
+
+---
+
 ## 9. Standing instructions
 
 Per the M6a program lead's standing instructions:

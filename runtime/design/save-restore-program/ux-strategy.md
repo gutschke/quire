@@ -213,6 +213,48 @@ Backups
   OP-029 forensic-recovery hook) and the OAuth token-revoke
   best-effort path (§A9.1).
 
+### Placement B's M6a-FS variant (NEW, DEC-028 run #7)
+
+The Backups section under M6a-FS renders the same shape with
+two changes:
+
+**Affordance (when never connected, FS-API path):**
+
+```
+Backups
+  Local autosave:  ✓  saved 47 seconds ago
+  My folder:          not connected       [Connect a folder]
+```
+
+**Affordance (when connected and current, FS-API path):**
+
+```
+Backups
+  Local autosave:  ✓  saved 47 seconds ago
+  My folder:       ✓  pushed 12 minutes ago — Google Drive/Quire/
+                      [Push now]  [Pull]  [Disconnect]
+```
+
+- The second line names the FOLDER, not an account email.
+  There's no Google account to surface — Quire doesn't know
+  which cloud provider (if any) is watching the folder.  The
+  DM is responsible for that mapping in their own head.
+- "Disconnect" wires to `withdrawAcknowledgment` (same
+  OP-029 hook as OAuth) and `fs-api-cloud-push.disconnectFolder`
+  (drops the IndexedDB handle record).
+- On Safari / Firefox / mobile (per §FS.1 verdict): render a
+  placeholder "Cloud backup isn't available in this browser
+  yet — OAuth Drive sync is in development for Safari, Firefox,
+  and mobile."  The Connect button does not render.
+
+The same `<backups-card>` element renders BOTH the FS-API
+shape (when `cloudPush.isAvailable()` is true) and the
+"unavailable" shape (when false) per the §FS.1 verdict.  Once
+M6a-OAuth ships, the card grows a parallel "My Drive" line
+sitting alongside "My folder" — multi-destination rendering
+is the natural extension (consent ledger is already
+per-destination per DEC-020).
+
 ### Placement C — Recently-played row (DEFERRED to a follow-up)
 
 The consultant's third surface — a "cloud backup attached" badge
@@ -300,6 +342,33 @@ One Drive REST call to list files in `drive.appdata` with a
 `drive-api.listAppdata` helper (§§ Piece 2 below).  Budget:
 single HTTP round trip, ~200ms p50 against a warm token.  Falls
 within the page-render budget.
+
+### Probe shape — M6a-FS variant (NEW, DEC-028 run #7)
+
+Under M6a-FS the cross-device probe is fundamentally
+DIFFERENT.  There is no global Drive REST endpoint to query;
+the folder handle is per-origin per-device.  So:
+
+- IF a folder IS connected on THIS device (handle present in
+  IndexedDB): the probe is `fs-api-cloud-push.listSavesInFolder({campaignId})`
+  — enumerate `.quire-save.json` files in the folder.  If a
+  matching file exists, surface the `[Load it] [Start fresh]`
+  prompt with the file's `lastModifiedMs`.  Local cost; no
+  network.
+- IF NO folder is connected on this device: surface the
+  existing "no local state" UI plus a one-line
+  `[Connect a folder to look for backups]` affordance.
+  Click → consent ceremony → folder picker → listSavesInFolder
+  → surface result.
+
+The probe does NOT cross devices.  A DM on a fresh laptop has
+to re-pick their sync-watched folder before Quire can see
+prior backups — but once they do, the file is sitting there
+from any previous device that pushed.
+
+If both M6a-FS and M6a-OAuth are connected for the same
+campaign, M6a-FS's `listSavesInFolder` runs first (no network
+round-trip).  Drive REST is fallback / cross-validation only.
 
 The probe response is one of:
 

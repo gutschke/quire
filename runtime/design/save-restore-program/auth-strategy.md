@@ -738,5 +738,317 @@ URL-bar history.
 
 ---
 
-**End of draft 3.** Open questions that still need human
-judgment are surfaced at end-of-turn (see status.md).
+## §FS Non-OAuth path: File System Access API (NEW run #7, DEC-028)
+
+The File System Access API path (M6a-FS) gives the DM cloud
+durability with ZERO Quire-side infrastructure: no OAuth, no
+client_id, no Cloudflare proxy, no Google project, no
+maintainer-app registration.  The DM picks a folder; Quire
+writes the save file there; the user's existing desktop sync
+client (Google Drive Desktop, Dropbox, OneDrive, iCloud Drive,
+…) uploads it to whichever cloud the DM already pays for.
+
+This section is the §A-depth specification for M6a-FS, sibling
+to §A1-A15 which spec the OAuth Drive path.
+
+### §FS.1 Feature detection (`src/auth/fs-api-availability.ts`)
+
+The structural test: `typeof window.showDirectoryPicker ===
+'function'`.  Anything else falls back to a typed verdict:
+
+| Verdict | Detection | UI surface |
+|---|---|---|
+| `{available: true}` | API present + not mobile | render M6a-FS surfaces |
+| `{available: false, reason: 'safari'}` | Safari UA + API missing | "isn't available in Safari yet" copy |
+| `{available: false, reason: 'firefox'}` | Firefox UA + API missing | "isn't available in Firefox yet" copy |
+| `{available: false, reason: 'mobile'}` | Android/iPhone/iPad UA | "not available on mobile" copy |
+| `{available: false, reason: 'no-api'}` | API missing, unknown UA | "isn't available in this browser yet" copy |
+
+Mobile wins over Safari/Firefox in the verdict because the
+OS-level sync model (Drive Desktop / Dropbox client) is the
+load-bearing prerequisite and isn't running on phones.
+UA-sniff is best-effort; if it misclassifies a niche browser,
+the verdict downgrades gracefully to `'no-api'`.
+
+The verdict carries a stable `reason` field so the
+operational-view "Backups" card can render the right "try X
+instead" message — not because we want to enumerate every
+browser but because the DM deserves to know whether to switch
+browsers (Safari → Chrome) or wait for OAuth Drive (mobile).
+
+### §FS.2 Handle persistence (`src/auth/fs-api-handle-store.ts`)
+
+Folder handles obtained from `showDirectoryPicker` are
+structured-cloneable.  Browsers persist them across tab close
+AND browser restart when stored in IndexedDB — and ONLY
+IndexedDB.  `localStorage` can't hold them; `sessionStorage`
+discards them at tab close.  Without IndexedDB persistence the
+DM re-picks the folder every session — kills the value.
+
+Schema: one object store `handles` keyed on `campaignId`.
+Each record carries:
+- The folder handle (live object — never JSON-stringified).
+- `displayName` (the folder name at connect time).
+- `connectedAt`, `lastPushedAt` (staleness chip data).
+- `lastObservedModifiedMs` (conflict-detection baseline).
+
+Multi-campaign layout: ONE folder, file-per-campaign.  The DM
+picks (e.g.) `Google Drive/Quire/` once and connects multiple
+campaigns to the same handle; each campaign's record has its
+own accounting.  See §FS.4 for the file-naming convention.
+
+### §FS.3 Permission lifecycle
+
+Even with the handle persisted, the browser does NOT
+automatically re-grant write access on tab reload — privacy
+defense by design.  The lifecycle:
+
+1. First call: `showDirectoryPicker` — user picks; permission
+   is granted for THIS tab.
+2. Store the handle in IndexedDB.
+3. Tab closes; user reopens; we read the handle.  Permission
+   has rolled back to `'prompt'` (sometimes `'denied'` if the
+   user revoked it in browser settings).
+4. Before each write, we call
+   `handle.queryPermission({mode: 'readwrite'})`.
+   - `'granted'` → proceed.
+   - `'prompt'` → require a user gesture next; on click, call
+     `requestPermission({mode: 'readwrite'})`.
+   - `'denied'` → render "Reconnect folder"; click triggers
+     the request path; if still denied, surface "Your browser
+     is blocking this folder — pick a new folder or reset the
+     permission in settings."
+
+Two implications:
+
+- **We CANNOT silently auto-push in the background after a
+  fresh tab open.**  The first push of a session requires a
+  deliberate click.  Same UX shape as the OAuth "Sign in to
+  push" click — the click IS the consent.
+- **Revoked vs never-granted is structurally
+  indistinguishable** once permission rolls back.  Callers
+  treat them the same: surface the reconnect chip, request on
+  the next gesture.
+
+### §FS.4 File-naming convention
+
+`<campaign-slug>.quire-save.json` at the top level of the
+chosen folder.  Examples:
+
+- Campaign id `gutschke/underleaf@main` → `gutschke-underleaf-main.quire-save.json`
+- Campaign id `weird/test@v1.0` → `weird-test-v1.0.quire-save.json`
+
+Sanitization rules (`sanitizeCampaignSlug` in
+`fs-api-cloud-push.ts`):
+
+1. Lowercase.
+2. Replace anything that's NOT `[a-z0-9._-]` with `-`.
+3. Collapse runs of `-` into a single `-`.
+4. Trim leading/trailing `-`.
+5. Truncate to 64 chars.
+6. Fall back to `campaign` if the result is empty.
+
+Documented in `maintainer-ops.md` so users hunting for the
+file by hand (or in the desktop sync client's web UI) know
+the naming convention.
+
+### §FS.5 Conflict handling (read-before-write)
+
+Before each push: read the file's current `lastModified`.  If
+it's newer than `lastObservedModifiedMs` from the previous
+push or pull, the file was modified externally — desktop sync
+pulled a newer copy from cloud (another device wrote first).
+Surface `{ok: false, reason: 'conflict'}` so the caller shows
+a "Pull, merge, then push" prompt, analogous to §A7's
+pull-rebase-push for OAuth Drive.
+
+The runtime's existing CRDT merge handles the actual
+reconciliation (LWW, sum-of-clock ordering); the FS-API layer
+detects the conflict and bails before clobbering.
+
+### §FS.6 Consent ledger reuse (`cloud-push-consent.ts`)
+
+The save is the full DM-coord projection (every player's
+content, including chat / character drafts / bond notes).
+Players didn't directly authorize "my words leaving the
+table for the DM's folder."  Per DEC-011 + DEC-020, the
+one-time per-campaign DM-only acknowledgment ceremony applies.
+
+Run #7 adds `'fs-api'` to `ConsentDestination` union.  Per
+DEC-020 each destination is a SEPARATE custody transfer:
+acknowledging FS-API does NOT acknowledge Drive-appdata or
+GitHub.  A separate copy spec (`DEFAULT_CONSENT_COPY_FS_API`)
+adapts the wording — the destination is "YOUR folder" rather
+than "YOUR Drive," and the body clarifies that Quire does
+NOT speak to any cloud provider directly (the OS-level sync
+tool is the one talking to the cloud, not us).
+
+Silent-player firewall preserved: the dialog is DM-only;
+players are NOT notified.
+
+### §FS.7 Threat model (DEC-023 walk)
+
+**Class 1 — Internet randos / external attackers — ZERO surface goal.**
+
+The FS-API path has NO network surface.  The folder handle is
+per-origin; no other site can reach it (browser's same-origin
+policy on FileSystemDirectoryHandle).  We never expose the
+handle to anything we don't control.
+
+- **No token to steal.**  M6a-OAuth's access_token,
+  refresh_token, id_token are all N/A on this path — no
+  OAuth flow, no tokens.
+- **No third-party data flow we authorize.**  Quire writes to
+  the folder.  The desktop sync client (a process the user
+  installed before we ever existed) does the upload.  We
+  authorize NOTHING on the user's behalf with any cloud
+  provider.
+- **Supply-chain attack surface is `showDirectoryPicker` itself.**
+  An attacker who compromised the Quire bundle could request
+  a folder picker pointed at a sensitive directory and read
+  its contents.  Mitigations: the bundle is on Cloudflare
+  Pages (same trust boundary as the OAuth callback golden-diff
+  — DEC-025); the user-gesture requirement prevents drive-by
+  picker pops; the folder-pick is a deliberate user choice
+  with visible OS-level dialog.  Compromise scope == compromise
+  scope for OAuth Drive but DIFFERENT (the attacker would
+  exfiltrate locally rather than authorize a cloud read).
+- **CDN-cache rotation lag (DEC-025) is N/A.**  No discovery
+  doc to invalidate; the bundle change is the change.
+
+**Class 2 — Accidental disclosure between trusted teammates.**
+
+Same firewall ethos as M6a-OAuth:
+
+- The save IS the DM-coord projection (full event log, DM-only
+  events included).  Restore-side firewall §B applies if a
+  player ever loads the file — `projectSaveForViewer` strips
+  before applying.
+- DEC-009's `drive.appdata` "no share-link UI" rationale is
+  N/A — there's no Drive UI to accidentally share from.  BUT
+  the DM CAN share the folder via their OS file manager (drag
+  to a shared Dropbox folder, change Drive permissions to
+  "Anyone with link can view," etc.).  This is the same
+  attack surface as M6a-OAuth + `drive.file`.  The
+  player-content consent ceremony (DEC-011 / OP-027 / §FS.6
+  above) covers the disclosure from the DM's awareness side;
+  the technical defense (file lives in DM's folder, players
+  don't see it) is the same as Drive's.
+- The first-push consent ceremony triggers on first push to a
+  folder per campaign (the `hasAcknowledged` check inside
+  `connectFolder` enforces this — no consent → no connect).
+
+**Class 3 — Malicious co-players.**  Out of scope per DEC-023.
+
+### §FS.8 Disconnect / revocation
+
+Two paths:
+
+1. **DM clicks "Disconnect" in the Backups card.**
+   `disconnectFolder` drops the handle record from IndexedDB
+   and calls `withdrawAcknowledgment` on the consent ledger.
+   Future pushes for this campaign go back through the connect
+   ceremony.  DOES NOT delete the save file from the folder —
+   the DM can still open it via their file browser.
+2. **User revokes permission in browser settings.**  Next
+   `queryPermission` returns `'denied'`; the card surfaces
+   the reconnect path.  If `requestPermission` returns
+   `'denied'`, the card surfaces "pick a new folder" — the
+   handle is structurally still in IndexedDB but Quire can't
+   use it.
+
+Stronger "Disconnect → Erase" semantics (delete the save file
+on disconnect, per OP-029) are out of M6a-FS scope.
+
+### §FS.9 What §A* sections from M6a-OAuth carry over vs. are N/A
+
+| §A subsection | M6a-FS status |
+|---|---|
+| §A1 OAuth flow state | N/A — no OAuth |
+| §A1.5 popup fallback | N/A — no popup |
+| §A2 Drive scope | N/A — no scope; `readwrite` is folder-level |
+| §A3 Advanced Protection | N/A — no Google auth |
+| §A4 GitHub Device Flow | N/A — M6c surface |
+| §A6 Save format | SAME — `stringifySave` output unchanged |
+| §A7 callback page | N/A — no callback |
+| §A8 client_id | N/A — no OAuth client |
+| §A9 token lifecycle | N/A — no tokens |
+| §A10 supply-chain | PARTIAL — bundle integrity matters (DEC-025), no `client_id` to pin |
+| §A11 error UX matrix | INSPIRES — §FS analog covers `permission-revoked`, `conflict`, `cancelled` (see backups-card error chip) |
+| §A12 cross-device pull | DIFFERENT — `listSavesInFolder` reads the connected folder rather than a Drive REST list |
+| §A13 first-push consent | SHARED — same ledger, destination `'fs-api'`, DEFAULT_CONSENT_COPY_FS_API |
+| §A14 co-DM identity | SAME structural model — each co-DM connects their OWN folder; M6c-B GitHub remains the canonical shared backup |
+| §A15 account-loss durability | DIFFERENT — folder lives on the DM's disk; if the desktop sync client is connected to multi-cloud, durability inherits from the sync tool, NOT from any account Quire knows about |
+| §B restore-side firewall | UNCHANGED — same `projectSaveForViewer` runs on load |
+| §C cross-tab privacy | INHERITS — recently-played list scope is unchanged |
+
+### §FS.10 Co-existence with M6a-OAuth
+
+Once M6a-OAuth ships, a DM can have both connected for the
+same campaign — folder + Drive — as parallel destinations.
+The backups-card surface today renders ONE card; multi-
+destination rendering is a UX decision deferred until
+M6a-OAuth is live.  Engine-side: the consent ledger is
+already per-destination (DEC-020), so the data model is
+ready.
+
+### §FS.11 Cross-device handoff (§A11 / DEC-015 analog)
+
+The OAuth path's §A11 probe (one `listAppdata` call with
+campaign-id filter) becomes, on M6a-FS:
+
+- IF a folder is connected on THIS device → call
+  `listSavesInFolder`; if a matching `.quire-save.json`
+  exists, surface the §A11 `[Load it] [Start fresh]`
+  prompt.
+- IF NO folder is connected on this device → surface the
+  existing "no local state" UI plus a `[Connect a folder
+  to look for backups]` affordance.
+
+Importantly: the FS-API can't probe ACROSS DEVICES (the
+folder handle is per-origin per-device).  The DM has to
+re-connect the folder on the new device first — but once
+they do, the saved file is there waiting.
+
+### §FS.12 Tests
+
+Engine tests (run #7 ship):
+
+- `fs-api-availability.test.ts` — 16 tests: API present /
+  missing × {Chrome, Edge, Safari, Firefox, mobile} matrix +
+  Chromium-Safari-token exclusion + SSR fallback.
+- `fs-api-handle-store.test.ts` — 19 tests: in-memory
+  round-trip + multi-campaign independence + permission
+  lifecycle (granted / prompt / denied / revoked /
+  re-granted) + defensive paths (queryPermission throws,
+  requestPermission throws).
+- `fs-api-cloud-push.test.ts` — 37 tests: feature gate +
+  connect happy path + consent gate + permission denied +
+  push (new file + overwrite + conflict) + pull (happy /
+  not-found / not-connected) + list (filter to suffix) +
+  disconnect (handle drop + consent withdrawal + file
+  preserved) + multi-campaign file layout + permission
+  lifecycle through the orchestrator + getConnectedFolderState.
+- `cloud-push-consent.test.ts` — extended with 8 new tests
+  covering the `'fs-api'` destination round-trip, sibling
+  independence from `'google-drive-appdata'`, and the
+  `DEFAULT_CONSENT_COPY_FS_API` semantic spec.
+
+UI tests (run #7 ship):
+
+- `backups-card.test.ts` — 19 tests: DM gate + feature gate
+  (all four unavailable reasons) + disconnected state + connect
+  happy path + consent cancel → no state change + push event
+  dispatch + applyPushResult success/conflict/permission-revoked
+  → chip + disconnect → chip success.
+
+The picker call itself (`showDirectoryPicker`) is
+Playwright-untestable (requires a real user gesture + native
+dialog).  We stub it at the `FsApiCloudPush.picker`
+dependency boundary.
+
+---
+
+**End of draft 3 + §FS run #7 addendum.** Open questions that
+still need human judgment are surfaced at end-of-turn (see
+status.md).

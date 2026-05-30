@@ -90,11 +90,49 @@ reviewed in `auth-strategy-review.md` (no spawn-sub-agent tool in
 this harness — program lead acted as consultant role).
 
 Layered ship per DEC-008 + DEC-016/DEC-022 (re-rank M6c ahead of M6b
-for account-loss durability):
+for account-loss durability) + DEC-028 (M6a-FS ships AHEAD of
+M6a-OAuth):
 
-**Updated order: M6a → M6c (B then A) → M6b.**
+**Updated order: M6a-FS → M6a-OAuth → M6c (B then A) → M6b.**
 
-### M6a — Drive `drive.appdata` PKCE + ephemeral (FIRST)
+### M6a-FS — File System Access API path (NEW, FIRST per DEC-028)
+
+Zero-infrastructure cloud sync: the DM picks an OS-level
+folder; Quire writes the save file there; the user's existing
+desktop sync client (Drive Desktop / Dropbox / OneDrive /
+iCloud Drive) uploads it.  NO Quire-side OAuth, NO client_id,
+NO Cloudflare proxy, NO maintainer-app registration.
+
+Sibling to M6a-OAuth (which stays valuable for mobile, Safari,
+Firefox, and DMs without a desktop sync client).  See DEC-028
+for the rationale on shipping FS first.
+
+Engine layer SHIPPED 2026-05-29 run #7:
+- ✅ `src/auth/fs-api-availability.ts` (16 tests).
+- ✅ `src/auth/fs-api-handle-store.ts` (19 tests).
+- ✅ `src/auth/fs-api-cloud-push.ts` (37 tests).
+- ✅ `cloud-push-consent.ts` extended with `'fs-api'`
+  destination + `DEFAULT_CONSENT_COPY_FS_API` (8 new tests).
+
+UI layer SHIPPED partially 2026-05-29 run #7:
+- ✅ `src/ui/regions/backups-card.ts` (19 tests).
+- 🟡 Host integration into `quire-app.ts` (DM-only
+  operational view section) — DEFERRED to run #8.  The
+  region is a self-contained Lit element with a narrow
+  props surface; integration is a separate concern.
+- 🟡 Session-digest chip surface (§A10 placement A) —
+  DEFERRED to run #8.  Lands as a follow-up after the
+  operational-view section is wired.
+
+Browser support: Chromium desktop only (Chrome, Edge, Opera,
+Brave, Arc, …).  Safari / Firefox / mobile fall through to the
+"OAuth Drive coming soon" placeholder per §FS.1 feature-detection
+verdict.
+
+### M6a-OAuth — Drive `drive.appdata` PKCE + ephemeral (SECOND)
+
+Runs after M6a-FS, gated on the maintainer's verified Google
+OAuth app registration (see `maintainer-ops.md`).
 
 - BLOCKED ON (gate expanded by independent consultant pass — see
   draft-3 `auth-strategy.md` "M6a ship gates"):

@@ -42,6 +42,114 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-028 — M6a-FS (File System Access API) ships ahead of M6a-OAuth (2026-05-29)
+
+**Decision:** Split M6a into TWO parallel paths and ship the
+File-System-Access-API path FIRST:
+
+- **M6a-FS (NEW, ships FIRST).**  The DM picks an OS-level
+  folder via `window.showDirectoryPicker`; Quire writes the
+  save file there; the user's desktop sync client (Google
+  Drive Desktop / Dropbox / OneDrive / iCloud Drive) handles
+  cloud upload.  ZERO maintainer infrastructure — no OAuth
+  client_id, no Cloudflare proxy, no Google project
+  registration.  Provider-agnostic.
+
+- **M6a-OAuth (the work scaffolded in run #6).**  Drive REST
+  via OAuth PKCE.  Stays valid and stays GATED on the
+  maintainer's verified-OAuth-app registration.  Ships
+  AFTER M6a-FS — it's the right answer for mobile, Safari,
+  Firefox, and DMs without a desktop sync client.
+
+The verbatim product input from the human:
+
+> a google cloud project is acceptable, but it would be even
+> better if a dm could sync to their consumer google drive
+> without requiring a google project. much lower barrier to
+> entry that way
+
+The clarifying observation: even the *maintainer-side* OAuth
+app registration is a setup cost we can avoid for a meaningful
+portion of users.  The File System Access API removes that
+cost entirely — the DM picks the folder (which can be inside
+ANY sync tool's watched tree); Quire writes; the user's
+existing desktop sync client uploads.
+
+**Why this ordering is right:**
+
+1. **Lowest barrier to entry actually ships first.**  M6a-OAuth
+   is currently blocked on a maintainer task (register the
+   verified Google OAuth app + flip `GOOGLE.status` from
+   `'placeholder'` to `'verified'`).  Until that happens, every
+   M6a-OAuth surface is in a "Cloud sync is not yet available"
+   state.  M6a-FS has NO such gate — the maintainer flips it
+   live with a code change + a deploy, not an external
+   registration.  Shipping M6a-FS first means END-USERS get
+   cloud durability TODAY (modulo Chromium-desktop browser
+   support) regardless of maintainer-side timing.
+2. **Provider-agnostic by construction.**  M6a-OAuth ties
+   durability to Google Drive specifically.  M6a-FS works for
+   any cloud the DM already pays for (Drive, Dropbox,
+   OneDrive, iCloud, …) without Quire knowing or caring.
+   Honors the prime directive: the DM uses the tool they
+   already have, not the tool we picked for them.
+3. **Threat-model wins.**  Under DEC-023, internet-rando
+   surface area must be minimized.  M6a-FS has NO network
+   surface — no token to steal, no third-party flow we
+   authorize.  Folder handles are per-origin; no other site
+   can reach them.  The DM's existing desktop sync client is
+   the trust boundary, not anything Quire ships.
+4. **Engine layer survives the ordering swap.**  Run #6's
+   OAuth orchestrator + Drive client + consent ledger are
+   unaffected.  M6a-FS is a sibling path that REUSES the
+   consent ledger (destination `'fs-api'` added in run #7)
+   without reusing the OAuth pieces.
+
+**Trade-offs (already discussed with the human, accepted):**
+
+- **Chromium desktop only.**  Safari and Firefox don't ship
+  the API yet; mobile platforms gate it off.  Feature
+  detection (`fs-api-availability.ts`) surfaces the right
+  "try Chrome on desktop / wait for OAuth Drive" copy per
+  reason (safari / firefox / mobile / no-api).
+- **Requires DM has a desktop sync client installed.**  Quire
+  can't verify this; we trust the DM to pick a folder that's
+  actually synced if they want cloud durability.  The consent
+  copy spells this out ("If that folder is watched by Google
+  Drive Desktop, Dropbox, …").
+- **Mobile = no path here at all.**  Mobile DMs wait for
+  M6a-OAuth.
+
+**Alternatives:**
+
+- Ship M6a-OAuth first, then M6a-FS as a follow-up.  Rejected:
+  per the durability-for-end-users argument above, M6a-FS
+  removes a maintainer-side gate, which means it actually
+  reaches users sooner.
+- Ship M6a-OAuth only and skip M6a-FS.  Rejected per the
+  human's product call.  Even with OAuth working, the
+  "register a Google project" cost is non-zero, and the
+  FS-API path captures users who already pay for Dropbox or
+  iCloud and don't want Drive.
+- Ship M6a-FS only and drop M6a-OAuth.  Rejected: Safari,
+  Firefox, and mobile users need a path; OAuth Drive is that
+  path.
+
+**Tradeoffs:** Two parallel implementations to maintain.
+Mitigated by sharing the consent ledger surface (single
+ceremony) + same `SaveDocument` format on both sides + the
+backups-card region rendering either backend's status (when
+both eventually ship, the card can render "Folder + Drive"
+side-by-side or pick one per user preference; that UX
+decision is M6a-OAuth-completion-tier).
+
+**Revisit if:** Safari or Firefox ships the File System Access
+API (then drop the "wait for OAuth Drive" alternative copy on
+those browsers).  Or if a real DM workflow surfaces a need we
+can't meet via either path (then re-scope).
+
+---
+
 ## DEC-027 — M6a cloud-sync placement: session-digest primary + DM operational view secondary (2026-05-29)
 
 **Decision:** The "Back up to my Drive" affordance lives on

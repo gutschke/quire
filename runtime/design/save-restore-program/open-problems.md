@@ -54,6 +54,64 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
+## OP-038 — M6a-FS host integration: wire `<backups-card>` into the DM operational view [run #7 follow-up]
+
+**Severity:** P1 for shipping M6a-FS end-to-end.
+**Evidence:** Run #7 shipped the engine layer (`fs-api-*.ts`) +
+the `<backups-card>` Lit region.  The card is self-contained
+with a narrow props surface (cloudPush, campaignId,
+renderForDm, requestConsent) but is NOT yet embedded in
+`quire-app.ts`.  Without the embed it has no path to render in
+production.
+**Hypothesis:** The DM-only operational view spec'd in
+`ux-strategy.md §A10 placement B` doesn't exist as a discrete
+render path in `quire-app.ts` yet — the section's "always-
+rendered when the surface is open" assumes a surface that is
+itself pending.  Two options for the embed:
+  (a) Add a new DM-only "Backups" section to the existing
+      campaign render path (renderCampaign / renderEpisode)
+      guarded on isCoordinator().  Cheapest path; ships
+      M6a-FS user-visible without inventing the operational
+      view.
+  (b) Stand up the operational view as a discrete surface (its
+      own hotkey, its own render branch), then embed
+      `<backups-card>` inside it.  Aligns with the longer-
+      term `ux-strategy.md` arch but is a bigger lift.
+**Owner:** save/restore program lead, next run.
+**Status:** OPEN.  Recommended scope for run #8: pick (a) for
+M6a-FS ship-readiness; (b) is its own milestone.
+
+## OP-037 — M6a-FS session-digest chip surface [run #7 follow-up]
+
+**Severity:** P2.
+**Evidence:** `ux-strategy.md §A10 placement A` specs the
+session-digest chip as the PRIMARY just-in-time surface for
+backup discovery.  Run #7 shipped the discovery (placement B)
+surface only.
+**Hypothesis:** The session-digest UI already exists
+(`src/ui/regions/session-digest.ts`); adding the backup chip
+is a localized edit + a host wiring.  Deferred to run #8
+alongside OP-038 because both share the host-integration
+work.
+**Owner:** save/restore program lead, next run.
+**Status:** OPEN.
+
+## OP-036 — M6a-FS push event handler in host [run #7 follow-up]
+
+**Severity:** P1 for shipping M6a-FS end-to-end.
+**Evidence:** `<backups-card>` dispatches `backups-push-request`
+when the DM clicks "Push now."  The host must listen, build a
+fresh save document via `serializeSession` / `stringifySave`
+(the canonical save path), call
+`fsApiCloudPush.pushCampaignToFolder({campaignId, body})`, and
+hand the result back to the card via `applyPushResult`.  The
+card's tests cover the event dispatch + the apply-result chip
+rendering; the host-side wiring is the missing piece.
+**Hypothesis:** Same host-integration work as OP-038; ships
+together.
+**Owner:** save/restore program lead, next run.
+**Status:** OPEN.
+
 ## OP-035 — M6c-A publish-side roster scrub [R4: class 2 UI, P2]
 
 **Severity:** P2 (cosmetic).
