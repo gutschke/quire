@@ -58,7 +58,12 @@ import { customElement, property } from 'lit/decorators.js';
  * typing; callers pass their `Seat` directly.
  */
 export interface SeatCardSeat {
-  state: 'unbound' | 'bound-active' | 'bound-retired' | 'bound-archived';
+  state:
+    | 'unbound'
+    | 'bound-active'
+    | 'bound-retired'
+    | 'bound-archived'
+    | 'revoked';
   pcId?: string;
   inFictionRetireReason?: string;
   /**

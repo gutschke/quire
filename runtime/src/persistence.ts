@@ -99,6 +99,41 @@ const FOCUS_DM_ONLY_PAYLOAD_FIELDS = ['boundFor', 'notes'] as const;
 const RETIRE_DM_ONLY_PAYLOAD_FIELDS = ['reason', 'scene'] as const;
 
 /**
+ * Run #18 (2026-05-30) — `pc-revoke` (DEC-043, TTRPG-expert player-
+ * removal advisory).  The seat-revoke event itself is player-visible
+ * (the seat entering the `revoked` SlotState is the surface the
+ * player sees and Quire can't pretend the seat tile wasn't there
+ * last session — per the expert's Q10 leak-discussion).  But the
+ * payload carries DM-only authorial framing that MUST be stripped:
+ *
+ *   - `narrativeShape` — the DM's authorial choice
+ *     ('never-arrived' / 'offstage-forever' / 'recast').  The
+ *     materializer tolerates absence per DEC-030 (treats as a safe
+ *     'offstage-forever' default whose seat-projection is identical
+ *     to the other shapes).
+ *   - `causedByPeerId` — DM-side audit of who instigated the revoke.
+ *   - `bondTombstoneName` — DM-chosen stand-in name for inbound
+ *     bonds.  This IS the renderable text on the remaining player's
+ *     sheet, BUT it's a player-safe-by-construction string ("DM
+ *     chose what to surface in fiction") — the renderer projects it
+ *     through the bond entry's `tombstone` field which DOES flow to
+ *     non-coord viewers.  Keeping the field in the player save so
+ *     the rebroadcast / replay paths reproduce the same name; the
+ *     materializer applies it to inbound bonds.  Cap-bounded; no
+ *     spoiler-shape on the wire.
+ *   - `bondTombstoneNpcId` — same treatment as bondTombstoneName.
+ *
+ * Fields stripped: `narrativeShape`, `causedByPeerId`.  Preserves
+ * `v`, `pcId`, `slot`, `bondTombstoneName`, `bondTombstoneNpcId` so
+ * the materializer can reproduce the seat transition + bond
+ * tombstones identically across the firewall.
+ */
+const REVOKE_DM_ONLY_PAYLOAD_FIELDS = [
+  'narrativeShape',
+  'causedByPeerId'
+] as const;
+
+/**
  * D5-1 (2026-05-27 holistic-review Adversarial recommendation):
  * `scrubEventForPlayer` converted to a registry as the 4th arm
  * (bond-ratify) joins.  Each kind that carries a DM-only
@@ -358,6 +393,11 @@ const PER_KIND_SCRUBBERS: Record<string, EventScrubber> = {
   // (D4-cleanup-4 / B-1 BLOCKER fix).
   'pc-retire': scrubRetireOrArchive,
   'pc-archive': scrubRetireOrArchive,
+  // pc-revoke (Run #18, DEC-043): strip DM-private `narrativeShape`
+  // + `causedByPeerId`.  Bond tombstone name / npc id stay on the
+  // wire (player-safe by construction).  See
+  // `REVOKE_DM_ONLY_PAYLOAD_FIELDS` doc-comment for the rationale.
+  'pc-revoke': scrubRevoke,
   // bond-ratify (D5-9): strip the optional DM-only `dmNotes`
   // sub-field from the payload.  Player save keeps the bond text
   // (the player-visible part) but never the dmNotes.
@@ -433,6 +473,27 @@ function scrubRetireOrArchive(event: QuireEvent): QuireEvent | null {
   const safe: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     if ((RETIRE_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)) {
+      touched = true;
+      continue;
+    }
+    safe[k] = v;
+  }
+  if (!touched) return event;
+  return { ...event, payload: safe };
+}
+
+/**
+ * Run #18 (2026-05-30) — `pc-revoke` scrubber.  Same shape as
+ * `scrubRetireOrArchive` but keyed on `REVOKE_DM_ONLY_PAYLOAD_FIELDS`.
+ */
+function scrubRevoke(event: QuireEvent): QuireEvent | null {
+  const p = event.payload;
+  if (!p || typeof p !== 'object') return event;
+  const obj = p as Record<string, unknown>;
+  let touched = false;
+  const safe: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if ((REVOKE_DM_ONLY_PAYLOAD_FIELDS as readonly string[]).includes(k)) {
       touched = true;
       continue;
     }
@@ -710,6 +771,13 @@ export const EVENT_KINDS_PLAYER_VISIBLE: ReadonlySet<string> = new Set([
   'seat-reveal',
   'pc-retire',
   'pc-archive',
+  // Run #18 (2026-05-30): pc-revoke (DEC-043).  Player-visible at the
+  // SEAT-TRANSITION level (the seat enters the new `revoked`
+  // SlotState; the synthesized PC entry is gone in both projections
+  // — players who rendered the PC tile last session stop rendering
+  // it).  DM-only sub-fields (`narrativeShape`, `causedByPeerId`)
+  // are stripped by the per-kind scrubber `scrubRevoke`.
+  'pc-revoke',
   'pc-switch',
   // P-R11 retire-request flow: player-initiated request + DM
   // accept/reject.  Both carry player-visible text.

@@ -990,7 +990,9 @@ describe('KNOWN_EVENT_KINDS (P0-5 — M1 additions)', () => {
     // dm-clock-delete → 56.
     // D5 (2026-05-27): added bond-propose + bond-ratify +
     // bond-remove → 59.
-    expect(KNOWN_EVENT_KINDS.size).toBe(59);
+    // Run #18 (2026-05-30): added pc-revoke (DEC-043, TTRPG-expert
+    // player-removal advisory) → 60.
+    expect(KNOWN_EVENT_KINDS.size).toBe(60);
   });
 
   it('M1-registered kinds materialize as no-ops at M1 (materializers ship in M3a/M3b/etc.)', () => {
@@ -3364,6 +3366,451 @@ describe('materialize — pc-retire / pc-archive (Phase B-prime)', () => {
     });
     const state = materialize(log.events());
     expect(state.pcSlots[1]?.inFictionRetireReason).toBe('first reason');
+  });
+});
+
+// =====================================================================
+// Run #18 (2026-05-30) — pc-revoke (DEC-043, TTRPG-expert player-
+// removal advisory).  The user request: "clearly wipe out a player as
+// if they had never been there and start from scratch."  Engine
+// invariants: seat enters new `revoked` SlotState (sticky-N preserved);
+// `synthesizedPcs[pcId]` deleted; DM-private per-PC state cleared;
+// inbound bonds tombstoned with DM-supplied stand-in name; outbound
+// bonds dropped; pcRetireRequests/Rejections cleared; peers[*].pcId
+// claims cleared.  Three narrativeShape values give DM authorial
+// choice but project identically through the player firewall.
+// =====================================================================
+// Run #18 (2026-05-30): pc-create payload helper used by both
+// describe blocks below (materialize + filterForViewer for pc-revoke).
+// Uses the real schema (str/dex/... stats, ≥3 tags, non-empty backstory).
+// See PcCreatePayload in state.ts.
+function pcRevokeTestPcCreate(
+  pcId: string,
+  name: string
+): Record<string, unknown> {
+  return {
+    v: 1,
+    pcId,
+    name,
+    pronouns: 'they/them',
+    tags: ['a', 'b', 'c'],
+    stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 },
+    skills: [],
+    backstory: 'A test character.'
+  };
+}
+
+describe('materialize — pc-revoke (DEC-043 player removal / PC rebirth)', () => {
+  const pcCreate = pcRevokeTestPcCreate;
+  function setupRevocable(): EventLog {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    return log;
+  }
+
+  it('never-arrived: removes synthesized PC + transitions seat to revoked', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'never-arrived'
+    });
+    const state = materialize(log.events());
+    // STATE: seat transitions to revoked (the user-visible SlotState).
+    expect(state.pcSlots[1]?.state).toBe('revoked');
+    // PLACEMENT: synthesized PC entry is gone (no future render of Mei).
+    expect(state.synthesizedPcs['mei']).toBeUndefined();
+    // STATE: seat no longer carries pcId / controllerPeerId / memorial.
+    expect(state.pcSlots[1]?.pcId).toBeUndefined();
+    expect(state.pcSlots[1]?.controllerPeerId).toBeUndefined();
+    expect(state.pcSlots[1]?.inFictionRetireReason).toBeUndefined();
+    expect(state.pcSlots[1]?.seatMemory).toBeUndefined();
+  });
+
+  it('offstage-forever: same seat + synthesized-PC effect as never-arrived', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'offstage-forever'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('revoked');
+    expect(state.synthesizedPcs['mei']).toBeUndefined();
+  });
+
+  it('recast: same seat + synthesized-PC effect; new pc-slot-bind transitions seat back to bound-active', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'recast'
+    });
+    // Recast follow-up: DM creates the new PC + binds it to the same slot.
+    log.append('pc-create', pcCreate('rin', 'Rin'));
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'rin' });
+    const state = materialize(log.events());
+    // STATE: the seat is now bound-active to the NEW pc.
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.pcSlots[1]?.pcId).toBe('rin');
+    // STATE: the old PC entry remains gone.
+    expect(state.synthesizedPcs['mei']).toBeUndefined();
+    // STATE: the new PC entry is present.
+    expect(state.synthesizedPcs['rin']).toBeDefined();
+  });
+
+  it('DEC-030: tolerates absent narrativeShape (firewall-stripped) — seat still revokes', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1
+      // narrativeShape intentionally omitted — simulates non-coord
+      // restore where scrubRevoke stripped the DM-only field.
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('revoked');
+    expect(state.synthesizedPcs['mei']).toBeUndefined();
+  });
+
+  it('clears DM-private per-PC state: accidental-cast log + caster-state + threadDebt + pcFoci + pcEdits', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    // Seed the DM-private per-PC state so the revoke has something to clear.
+    log.append('accidental-grant-log', {
+      v: 1,
+      pcId: 'mei',
+      note: 'felt warm to her touch'
+    });
+    log.append('pc-mark-realization', { v: 1, pcId: 'mei', taxSessions: 3 });
+    log.append('thread-debt-set', { v: 1, pcId: 'mei', level: 'noticed' });
+    log.append('focus-grant', {
+      v: 1,
+      pcId: 'mei',
+      focus: { name: 'pattern-sense', domain: 'perception' }
+    });
+    // PLACEMENT: pre-revoke, each DM-private field is present.
+    const before = materialize(log.events());
+    expect(before.pcAccidentalGrants['mei']).toBeDefined();
+    expect(before.threadDebt['mei']).toBe('noticed');
+    expect(before.pcFoci['mei']).toBeDefined();
+    // pcEdits gains entries via pc-mark-realization.
+    expect(before.pcEdits['mei']).toBeDefined();
+    // Now revoke.
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'recast'
+    });
+    const after = materialize(log.events());
+    // PLACEMENT: every DM-private per-PC field is gone.
+    expect(after.pcAccidentalGrants['mei']).toBeUndefined();
+    expect(after.casterState['mei']).toBeUndefined();
+    expect(after.threadDebt['mei']).toBeUndefined();
+    expect(after.pcFoci['mei']).toBeUndefined();
+    expect(after.pcEdits['mei']).toBeUndefined();
+  });
+
+  it('bond tombstone: inbound bonds get tombstone field with DM-supplied stand-in name; outbound bonds dropped', () => {
+    const log = setupRevocable();
+    // Set up a second seat for PC-B (kasumi).
+    log.append('seat-add', { v: 1, slot: 2 });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'kasumi' });
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-create', pcCreate('kasumi', 'Kasumi'));
+    // Bond: kasumi -> mei ("I trust her to hold my line.").
+    log.append('bond-propose', {
+      v: 1,
+      id: 'b-k-to-m',
+      pcId: 'kasumi',
+      targetPcId: 'mei',
+      text: 'I trust her to hold my line.'
+    });
+    log.append('bond-ratify', {
+      v: 1,
+      id: 'b-k-to-m',
+      pcId: 'kasumi'
+    });
+    // Bond: mei -> kasumi (outbound from the revoke target).
+    log.append('bond-propose', {
+      v: 1,
+      id: 'b-m-to-k',
+      pcId: 'mei',
+      targetPcId: 'kasumi',
+      text: "I'd take a knife for her."
+    });
+    log.append('bond-ratify', {
+      v: 1,
+      id: 'b-m-to-k',
+      pcId: 'mei'
+    });
+    // Revoke mei with a DM-supplied tombstone stand-in name.
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'offstage-forever',
+      bondTombstoneName: 'Mateo'
+    });
+    const state = materialize(log.events());
+    // PLACEMENT: kasumi's bond to mei now carries the tombstone with
+    // the DM-chosen stand-in name.  targetPcId stays (audit trail);
+    // the renderer reads tombstone.name to display "(former friend)
+    // Mateo" instead of looking up the deleted synthesizedPcs[mei].
+    const kasumiBonds = state.pcBonds['kasumi'] ?? [];
+    expect(kasumiBonds).toHaveLength(1);
+    expect(kasumiBonds[0].targetPcId).toBe('mei'); // history preserved
+    expect(kasumiBonds[0].tombstone?.name).toBe('Mateo');
+    // PLACEMENT: mei's outbound bonds are dropped (the source PC is gone).
+    expect(state.pcBonds['mei']).toBeUndefined();
+  });
+
+  it('bond tombstone: default stand-in name when DM omits bondTombstoneName', () => {
+    const log = setupRevocable();
+    log.append('seat-add', { v: 1, slot: 2 });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'kasumi' });
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-create', pcCreate('kasumi', 'Kasumi'));
+    log.append('bond-propose', {
+      v: 1,
+      id: 'b-k-to-m',
+      pcId: 'kasumi',
+      targetPcId: 'mei',
+      text: 'I trust her.'
+    });
+    log.append('bond-ratify', { v: 1, id: 'b-k-to-m', pcId: 'kasumi' });
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'never-arrived'
+    });
+    const state = materialize(log.events());
+    const kasumiBonds = state.pcBonds['kasumi'] ?? [];
+    expect(kasumiBonds[0].tombstone?.name).toBe('a former friend');
+  });
+
+  it('bond tombstone with NPC reassignment: tombstone carries targetNpcId', () => {
+    const log = setupRevocable();
+    log.append('seat-add', { v: 1, slot: 2 });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'kasumi' });
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-create', pcCreate('kasumi', 'Kasumi'));
+    log.append('bond-propose', {
+      v: 1,
+      id: 'b-k-to-m',
+      pcId: 'kasumi',
+      targetPcId: 'mei',
+      text: 'I trust her.'
+    });
+    log.append('bond-ratify', { v: 1, id: 'b-k-to-m', pcId: 'kasumi' });
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'offstage-forever',
+      bondTombstoneName: 'Mateo',
+      bondTombstoneNpcId: 'mateo'
+    });
+    const state = materialize(log.events());
+    const kasumiBonds = state.pcBonds['kasumi'] ?? [];
+    expect(kasumiBonds[0].tombstone?.name).toBe('Mateo');
+    expect(kasumiBonds[0].tombstone?.targetNpcId).toBe('mateo');
+  });
+
+  it('clears pending bond proposals targeting the revoked PC', () => {
+    const log = setupRevocable();
+    log.append('seat-add', { v: 1, slot: 2 });
+    log.append('pc-slot-bind', { v: 1, slot: 2, pcId: 'kasumi' });
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-create', pcCreate('kasumi', 'Kasumi'));
+    // Un-ratified proposal from kasumi targeting mei.
+    log.append('bond-propose', {
+      v: 1,
+      id: 'b-prop',
+      pcId: 'kasumi',
+      targetPcId: 'mei',
+      text: 'pending'
+    });
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'never-arrived'
+    });
+    const state = materialize(log.events());
+    // PLACEMENT: kasumi's pending proposal targeting mei is gone.
+    const kasumiProposals = state.pcBondProposals['kasumi'] ?? [];
+    expect(kasumiProposals).toHaveLength(0);
+  });
+
+  it('clears peers[*].pcId for any peer that claimed the revoked PC', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', {});
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    // Bob joins as a player.
+    const logBob = new EventLog('bob');
+    logBob.append('peer-join', { name: 'Bob' });
+    log.apply(logBob.events()[0]);
+    // Bob self-renames to claim mei (the peer-rename `pcId` path).
+    const logBobBind = new EventLog('bob');
+    logBobBind.append('peer-join', { name: 'Bob' });
+    logBobBind.append('peer-rename', { pcId: 'mei' });
+    log.apply(logBobBind.events()[1]);
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    // STATE: bob's pcId is set pre-revoke (control assertion).
+    const beforeRevoke = materialize(log.events());
+    expect(beforeRevoke.peers['bob']?.pcId).toBe('mei');
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'offstage-forever'
+    });
+    const state = materialize(log.events());
+    // STATE: bob's peer entry still exists; its pcId field is cleared.
+    expect(state.peers['bob']).toBeDefined();
+    expect(state.peers['bob']?.pcId).toBeUndefined();
+  });
+
+  it('non-coord revoke is silently dropped', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    // Bob (non-coord) tries to revoke mei.  Synthesize as a foreign
+    // event by appending to a non-coord log + applying externally.
+    const malicious = new EventLog('bob');
+    malicious.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'recast'
+    });
+    log.apply(malicious.events()[0]);
+    const state = materialize(log.events());
+    // STATE: seat stays bound-active; mei's record survives.
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.synthesizedPcs['mei']).toBeDefined();
+  });
+
+  it('refuses when slot disagrees with the seat the pcId is bound to (consistency guard)', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    // mei is bound to slot 1; payload claims slot 9.
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 9,
+      narrativeShape: 'offstage-forever'
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('bound-active');
+    expect(state.synthesizedPcs['mei']).toBeDefined();
+  });
+
+  it('idempotent: re-emitting the same revoke is a no-op', () => {
+    const log = setupRevocable();
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'recast'
+    });
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'never-arrived' // different shape; should no-op
+    });
+    const state = materialize(log.events());
+    expect(state.pcSlots[1]?.state).toBe('revoked');
+  });
+
+  it('clears pcRetireRequests + pcRetireRejections for the revoked PC', () => {
+    const log = setupRevocable();
+    // Bob (player) joins + claims mei.
+    const bobJoin = new EventLog('bob');
+    bobJoin.append('peer-join', { name: 'Bob' });
+    log.apply(bobJoin.events()[0]);
+    const bobBind = new EventLog('bob');
+    bobBind.append('peer-join', { name: 'Bob' });
+    bobBind.append('peer-rename', { pcId: 'mei' });
+    log.apply(bobBind.events()[1]);
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    // Mei's player asked to retire her; DM hasn't answered.
+    const playerLog = new EventLog('bob');
+    playerLog.append('peer-join', { name: 'Bob' });
+    playerLog.append('peer-rename', { pcId: 'mei' });
+    playerLog.append('pc-retire-request', {
+      v: 1,
+      pcId: 'mei',
+      inFictionReason: 'I want out',
+      reason: 'departed'
+    });
+    log.apply(playerLog.events()[2]);
+    expect(materialize(log.events()).pcRetireRequests).toHaveLength(1);
+    // DM revokes instead.
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'offstage-forever'
+    });
+    const state = materialize(log.events());
+    expect(state.pcRetireRequests).toHaveLength(0);
+    expect(state.pcRetireRejections).toHaveLength(0);
+  });
+});
+
+describe('filterForViewer — pc-revoke firewall (DEC-043)', () => {
+  const pcCreate = pcRevokeTestPcCreate;
+  function setup(): EventLog {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('peer-join', {});
+    const bobLog = new EventLog('bob');
+    bobLog.append('peer-join', {});
+    log.apply(bobLog.events()[0]);
+    log.append('seat-add', { v: 1, slot: 1 });
+    log.append('pc-slot-bind', { v: 1, slot: 1, pcId: 'mei' });
+    log.append('pc-create', pcCreate('mei', 'Mei'));
+    log.append('pc-revoke', {
+      v: 1,
+      pcId: 'mei',
+      slot: 1,
+      narrativeShape: 'recast'
+    });
+    return log;
+  }
+
+  it('player projection: seat enters revoked + synthesizedPcs entry is gone', () => {
+    const log = setup();
+    const shared = materialize(log.events());
+    const viewerProjection = filterForViewer(shared, 'bob');
+    // STATE: from the player's vantage, the seat is in revoked state.
+    expect(viewerProjection.pcSlots[1]?.state).toBe('revoked');
+    // PLACEMENT: the synthesized PC entry is gone in the player view too.
+    expect(viewerProjection.synthesizedPcs['mei']).toBeUndefined();
+  });
+
+  it('coord projection: same — revoked seat + no synthesizedPc (DM also sees the wipe)', () => {
+    const log = setup();
+    const shared = materialize(log.events());
+    const dmProjection = filterForViewer(shared, 'alice');
+    expect(dmProjection.pcSlots[1]?.state).toBe('revoked');
+    expect(dmProjection.synthesizedPcs['mei']).toBeUndefined();
   });
 });
 

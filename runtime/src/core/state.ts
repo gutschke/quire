@@ -149,12 +149,23 @@ export interface CasterState {
  *                     "potentially returnable."  UI surfaces in the
  *                     Archive browser.  Slot stays sticky to this PC;
  *                     restoring binds the PC into a NEW seat (N+1).
+ *   - `revoked`     — DM revoked the seat (player vanished, or the
+ *                     player + DM agreed to recast in the same slot).
+ *                     Distinct from retire/archive: the PC entry is
+ *                     REMOVED (no memorial, no in-fiction reason
+ *                     surfaced).  Sticky-N preserved (slot integer
+ *                     reserved so replays + future binds use the
+ *                     next integer for the new PC).  Run #18 / DEC-043.
+ *                     The seat may transition `revoked → bound-active`
+ *                     via `pc-slot-bind` for the recast scenario
+ *                     (new pcId; the old pcId never returns).
  */
 export type SlotState =
   | 'unbound'
   | 'bound-active'
   | 'bound-retired'
-  | 'bound-archived';
+  | 'bound-archived'
+  | 'revoked';
 
 /**
  * Reason a PC retired.  DM-private — stripped from player-bound
@@ -744,6 +755,26 @@ export interface BondEntry {
   ratifiedByPeerId: PeerId;
   /** Epoch-ms when the ratify landed. */
   ts: number;
+  /**
+   * Run #18 (2026-05-30) — bond tombstone for `pc-revoke` (DEC-043).
+   * Present when the original target PC was revoked (per-bond DM
+   * handling at revoke time).  The renderer treats a tombstoned bond
+   * as pointing to a former friend rather than looking up
+   * `synthesizedPcs[targetPcId]` (the original PC entry is gone).
+   *
+   * `name` is the DM-chosen stand-in (NPC name or "(former friend)").
+   * Player-safe by construction (the DM chose what to surface in
+   * fiction; the original PC name may or may not appear).
+   *
+   * `targetNpcId` is an optional reassignment to an existing NPC
+   * — the bond now points to that NPC.  When set, the renderer
+   * MAY resolve via the NPC store; when absent the tombstone is a
+   * pure stand-in (no further linkage).
+   */
+  tombstone?: {
+    name: string;
+    targetNpcId?: string;
+  };
 }
 
 /**
@@ -1733,6 +1764,17 @@ export const KNOWN_EVENT_KINDS = new Set([
   'seat-remove',
   'pc-retire',
   'pc-archive',
+  // Run #18 (2026-05-30) — `pc-revoke` per DEC-043 + TTRPG-expert
+  // advisory `review-history/ttrpg-expert-player-removal-2026-
+  // 05-30.md`.  Coord-only.  Removes the seat's PC entry without a
+  // memorial (distinct from retire/archive); the seat enters the
+  // new `revoked` SlotState.  `narrativeShape` is a DM-only authorial
+  // choice: 'never-arrived' (player vanished) / 'offstage-forever'
+  // (mid-fiction departure, no honor-the-character UX) / 'recast'
+  // (out-of-game retcon — same slot, new pcId follows via pc-create
+  // + pc-slot-bind).  Stripped from non-coord saves at the per-kind
+  // scrubber.
+  'pc-revoke',
   // P-R7 (2026-05-25): audit-only event for player-rail name-row
   // switcher.  Recorded alongside the state-changing peer-rename so
   // post-session attribution can answer "who controlled which PC
@@ -3060,6 +3102,254 @@ function applyPcRetireOrArchiveEvent(
 }
 
 /**
+ * Run #18 (2026-05-30) — `pc-revoke`: DM editing the fiction's ledger
+ * of who was ever at the table.  Distinct from `pc-retire` /
+ * `pc-archive` (which preserve the PC as a referenced narrative
+ * entity).  Removes `synthesizedPcs[pcId]`, transitions the seat
+ * to the new `revoked` SlotState (sticky-N preserved), tombstones
+ * bond references per DM choice, and clears DM-private per-PC
+ * state (accidental-cast log, caster-state, threadDebt, pcEdits,
+ * pcFoci, pcAccidentalGrants).
+ *
+ * Three narrative shapes (per TTRPG-expert advisory):
+ *   - `never-arrived`   — player vanished pre-fiction; treat the
+ *                         seat as never having been at the table.
+ *   - `offstage-forever`— player vanished mid-fiction; the seat
+ *                         is gone with no memorial (vs `pc-retire`
+ *                         which DOES memorialize).
+ *   - `recast`          — out-of-game retcon: same player, new PC.
+ *                         DM follows up with `pc-create` + `pc-slot-
+ *                         bind` to bind the replacement.
+ *
+ * `narrativeShape` is DM-only authorial framing (stripped from
+ * non-coord saves at the per-kind scrubber).  The materializer
+ * tolerates `narrativeShape === undefined` per the DEC-030 contract
+ * (firewall-stripped → safe default 'offstage-forever' — equivalent
+ * effect from the player's projection since all three shapes leave
+ * the seat in `revoked` and the PC entry deleted).
+ *
+ * Bond handling (DEC-040 + expert Q3):
+ *   - Outbound bonds (FROM the revoked PC): always dropped.  The
+ *     PC entry is gone; the bond has no source to render under.
+ *   - Inbound bonds (TO the revoked PC): tombstoned with a DM-
+ *     supplied stand-in name (`bondTombstoneName`), optionally
+ *     reassigned to an existing NPC (`bondTombstoneNpcId`).  The
+ *     tombstone field on the BondEntry lets the renderer show
+ *     "(former friend) Mateo" instead of looking up the deleted
+ *     `synthesizedPcs[revokedPcId]`.
+ *   - Outbound/inbound proposals (un-ratified) are also cleared.
+ *
+ * Magic-discovery log clear (DEC-041): `pcAccidentalGrants[pcId]`,
+ * `casterState[pcId]`, `threadDebt[pcId]`, `pcFoci[pcId]`,
+ * `pcEdits[pcId]` all dropped.  Underleaf-specific per rules.md:
+ * a revoked PC has no DM-private narrative state worth retaining.
+ *
+ * Per-flow audit (`causedByPeerId`): optional DM-private record of
+ * which peer instigated the revoke (typically the controlling
+ * player's peerId for vanished-player; the DM's own for recast).
+ * Stripped from non-coord saves.
+ *
+ * Idempotent: re-emitting the same revoke is a no-op (the seat is
+ * already revoked + the synthesized PC is already gone).
+ */
+type PcRevokeNarrativeShape =
+  | 'never-arrived'
+  | 'offstage-forever'
+  | 'recast';
+
+interface PcRevokePayload {
+  v: 1;
+  /** The PC entity being revoked.  Sticky-N for this slot. */
+  pcId: string;
+  /** Slot the PC was bound to.  Cross-checked against state.pcSlots. */
+  slot: number;
+  /**
+   * DM-only authorial framing.  Stripped from non-coord saves; the
+   * materializer treats absence as 'offstage-forever' (safe default
+   * per DEC-030's "materializer tolerates scrubbed sub-fields"
+   * contract).
+   */
+  narrativeShape?: PcRevokeNarrativeShape;
+  /** DM-only audit: which peer instigated the revoke.  Optional. */
+  causedByPeerId?: PeerId;
+  /**
+   * Inbound bond handling: when set, every bond targeting the
+   * revoked PC gets a `tombstone.name` of this string (cap 80,
+   * mirrors the chargen targetPlaceholder cap).  When absent the
+   * materializer uses a generic stand-in ("a former friend").
+   */
+  bondTombstoneName?: string;
+  /**
+   * Optional NPC id to reassign the bond's target to (in addition
+   * to the tombstone name).  When set, the renderer MAY resolve
+   * the bond to the NPC; when absent the tombstone is a pure
+   * stand-in name.  ≤ 80 chars; same id shape as character ids.
+   */
+  bondTombstoneNpcId?: string;
+}
+
+const PC_REVOKE_TOMBSTONE_NAME_MAX = 80;
+const PC_REVOKE_NPC_ID_MAX = 80;
+const PC_REVOKE_DEFAULT_TOMBSTONE_NAME = 'a former friend';
+
+function applyPcRevokeEvent(
+  state: SessionState,
+  event: QuireEvent
+): void {
+  if (!state.coordHolders.has(event.peerId)) return;
+  if (!isPayloadV1(event.payload)) return;
+  const p = event.payload as Partial<PcRevokePayload>;
+  if (!isCharacterId(p.pcId)) return;
+  if (typeof p.slot !== 'number') return;
+  if (!Number.isFinite(p.slot) || !Number.isInteger(p.slot)) return;
+  if (p.slot < 1) return;
+  // narrativeShape: tolerate absence (DEC-030 firewall-stripped
+  // contract) — treat as 'offstage-forever' for the safe default.
+  // When present, validate enum strictly.
+  if (p.narrativeShape !== undefined) {
+    if (
+      p.narrativeShape !== 'never-arrived' &&
+      p.narrativeShape !== 'offstage-forever' &&
+      p.narrativeShape !== 'recast'
+    ) {
+      return;
+    }
+  }
+  // bondTombstoneName: optional; bounded.
+  if (p.bondTombstoneName !== undefined) {
+    if (typeof p.bondTombstoneName !== 'string') return;
+    if (p.bondTombstoneName.length === 0) return;
+    if (p.bondTombstoneName.length > PC_REVOKE_TOMBSTONE_NAME_MAX) return;
+  }
+  // bondTombstoneNpcId: optional; bounded.
+  if (p.bondTombstoneNpcId !== undefined) {
+    if (typeof p.bondTombstoneNpcId !== 'string') return;
+    if (p.bondTombstoneNpcId.length === 0) return;
+    if (p.bondTombstoneNpcId.length > PC_REVOKE_NPC_ID_MAX) return;
+  }
+  // causedByPeerId: optional; bounded (loose validation — peer ids
+  // are opaque short strings; the field is DM-only audit metadata
+  // and never load-bears on render).
+  if (p.causedByPeerId !== undefined) {
+    if (typeof p.causedByPeerId !== 'string') return;
+    if (p.causedByPeerId.length === 0) return;
+    if (p.causedByPeerId.length > 200) return;
+  }
+
+  // Find the seat the pcId is bound to.  Cross-check against the
+  // payload's slot — refuse if they disagree (consistency guard;
+  // a hostile / corrupted event shouldn't be able to revoke an
+  // arbitrary seat by quoting the wrong pcId).
+  let targetSlot: number | undefined;
+  for (const [slotStr, seat] of Object.entries(state.pcSlots)) {
+    if (seat.pcId === p.pcId) {
+      targetSlot = Number(slotStr);
+      break;
+    }
+  }
+  if (targetSlot === undefined) {
+    // No seat for this pcId today.  This can happen on replay if a
+    // prior `pc-revoke` already wiped the seat — idempotent no-op.
+    return;
+  }
+  if (targetSlot !== p.slot) return;
+  const prior = state.pcSlots[targetSlot];
+  if (prior.state === 'revoked') return; // idempotent
+
+  // Tombstone name for inbound bonds.
+  const tombstoneName =
+    p.bondTombstoneName ?? PC_REVOKE_DEFAULT_TOMBSTONE_NAME;
+
+  // 1. Seat → 'revoked' (sticky-N preserved; the slot integer stays
+  //    bound but with no live PC + no controller + no memorial).
+  state.pcSlots[targetSlot] = {
+    state: 'revoked'
+    // No pcId, no controllerPeerId, no seatMemory, no
+    // inFictionRetireReason.  The slot reads as "the seat that was
+    // revoked" — the DM authored fictional explanation lives in
+    // chat / narrative, NOT on the seat.
+  };
+
+  // 2. Delete the synthesized PC entry.
+  delete state.synthesizedPcs[p.pcId];
+
+  // 3. Clear DM-private per-PC state.  Magic-discovery accidental-
+  //    cast log, caster-state, thread-debt rung, foci, pc-edits all
+  //    keyed on pcId.  Per DEC-041: the new (or absent) PC starts
+  //    fresh.  Per the expert's Q2 + Q9 Underleaf-specific note.
+  delete state.pcAccidentalGrants[p.pcId];
+  delete state.casterState[p.pcId];
+  delete state.threadDebt[p.pcId];
+  delete state.pcFoci[p.pcId];
+  delete state.pcEdits[p.pcId];
+
+  // 4. Bond handling.
+  //    Outbound bonds (FROM revoked PC): drop entirely.
+  //    Inbound bonds (TO revoked PC): tombstone with DM-supplied name.
+  //    Proposals (un-ratified): drop on both sides.
+  delete state.pcBonds[p.pcId];
+  delete state.pcBondProposals[p.pcId];
+  const nextBonds: Record<string, BondEntry[]> = {};
+  for (const [sourcePcId, bonds] of Object.entries(state.pcBonds)) {
+    const rewritten: BondEntry[] = [];
+    for (const b of bonds) {
+      if (b.targetPcId !== p.pcId) {
+        rewritten.push(b);
+        continue;
+      }
+      const tombstoned: BondEntry = {
+        ...b,
+        tombstone: {
+          name: tombstoneName,
+          ...(p.bondTombstoneNpcId !== undefined
+            ? { targetNpcId: p.bondTombstoneNpcId }
+            : {})
+        }
+      };
+      rewritten.push(tombstoned);
+    }
+    nextBonds[sourcePcId] = rewritten;
+  }
+  state.pcBonds = nextBonds;
+  // Drop inbound proposals too — un-ratified drafts to a revoked
+  // PC are stale; let the source player re-author if needed.
+  const nextProposals: Record<string, BondProposal[]> = {};
+  for (const [sourcePcId, proposals] of Object.entries(
+    state.pcBondProposals
+  )) {
+    const kept = proposals.filter((pr) => pr.targetPcId !== p.pcId);
+    nextProposals[sourcePcId] = kept;
+  }
+  state.pcBondProposals = nextProposals;
+
+  // 5. Clear any retire-flow leftovers for the pcId so the player's
+  //    UI doesn't show a stale "declined" pip alongside the revoked
+  //    seat.  Same shape as pc-retire's filter at line 3054.
+  state.pcRetireRequests = state.pcRetireRequests.filter(
+    (r) => r.pcId !== p.pcId
+  );
+  state.pcRetireRejections = state.pcRetireRejections.filter(
+    (r) => r.pcId !== p.pcId
+  );
+
+  // 6. Clear `peers[*].pcId` claims for this pcId so the player's
+  //    presence chip stops pointing at the gone-PC.  Do NOT emit
+  //    `peer-leave` — the peer (if still connected) may still be a
+  //    guest, and we want them to be able to re-claim a new PC after
+  //    the recast `pc-slot-bind` lands.
+  for (const peerId of Object.keys(state.peers)) {
+    const presence = state.peers[peerId];
+    if (presence.pcId === p.pcId) {
+      // Surgical clear of the pcId field; leave the rest of the
+      // presence record intact.
+      const { pcId: _omit, ...rest } = presence;
+      void _omit;
+      state.peers[peerId] = rest as PeerPresence;
+    }
+  }
+}
+
+/**
  * #294 (2026-05-26): edit the player-safe "seat memory" on a
  * retired or archived seat.  Coord-only.  Refuses silently when
  * the seat doesn't exist or isn't in a terminal state — the
@@ -4222,6 +4512,8 @@ const MATERIALIZERS: Record<string, EventApplier> = {
   'seat-remove': applySeatRemoveEvent,
   'pc-retire': applyPcRetireOrArchiveEvent,
   'pc-archive': applyPcRetireOrArchiveEvent,
+  // Run #18 (2026-05-30) — DEC-043 pc-revoke materializer.
+  'pc-revoke': applyPcRevokeEvent,
   'map-blob-add': applyMapBlobEvent,
   'map-blob-move': applyMapBlobEvent,
   'map-blob-remove': applyMapBlobEvent,

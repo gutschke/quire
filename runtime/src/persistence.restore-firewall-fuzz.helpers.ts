@@ -195,6 +195,19 @@ export function buildLeakyDmCoordSave(seed: number): {
     reason: secret(),
     scene: secret()
   });
+  // Run #18 (2026-05-30): pc-revoke (DEC-043).  The seat transition
+  // + bondTombstoneName are player-safe by construction (player sees
+  // the seat enter the revoked SlotState).  `narrativeShape` carries
+  // the DM authorial choice and `causedByPeerId` is DM-side audit;
+  // both must strip from the non-coord projection per scrubRevoke.
+  log.append('pc-revoke', {
+    v: 1,
+    pcId: 'mei',
+    slot: 1,
+    narrativeShape: secret() as unknown as string,
+    causedByPeerId: secret() as unknown as string,
+    bondTombstoneName: 'a former friend' // player-safe
+  });
   log.append('bond-ratify', {
     v: 1,
     bondId: 'br1',
