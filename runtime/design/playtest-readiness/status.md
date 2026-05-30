@@ -20,7 +20,8 @@ collapsible disclosure + `<pc-revoke-confirm-dialog>` + host
 bridge) shipped in THIS commit alongside Mock Campaign 12 +
 six new DECs (DEC-039..044) + the adversarial review report.
 
-**Latest deploy hash:** see end of doc (filled at push time).
+**Latest deploy hash:** 9d98ca6 (run #18 PR2 ship) — pending
+the docs SHA-pin follow-up commit.
 
 **Prior run #17 status (preserved for context):**
 **PLAYTEST GREEN re-affirmed after both run-#17 emergency P0s
