@@ -74,13 +74,32 @@ export type StateChangeHandler = (state: SessionState) => void;
  */
 export type RebroadcastFilter = (event: QuireEvent) => QuireEvent | null;
 
+/**
+ * OP-039 (2026-05-29 save-restore program, mock campaign 01 finding):
+ * sync-response firewall filter.  Same shape as `RebroadcastFilter`
+ * but applied at a different seam (sync-request → sync-response,
+ * the catch-up channel for a joining peer).  Production wiring uses
+ * a narrower default that drops only whole-kind DM-only events so
+ * partial-DM-only events (e.g. `pc-edit knowsTheyCanCast` for the
+ * joining player's OWN PC) still reach the receiver, who runs the
+ * full viewer-context firewall via `filterForViewer` at render.
+ *
+ * Injected separately so the two surfaces can evolve independently;
+ * default in this file is identity for the same backward-compat
+ * reason as `RebroadcastFilter`.  Session-controller wires the real
+ * defaults via `defaultSyncResponseFilter`.
+ */
+export type SyncResponseFilter = (event: QuireEvent) => QuireEvent | null;
+
 const IDENTITY_REBROADCAST_FILTER: RebroadcastFilter = (event) => event;
+const IDENTITY_SYNC_RESPONSE_FILTER: SyncResponseFilter = (event) => event;
 
 export class Peer {
   private readonly log: EventLog;
   private readonly stateListeners = new Set<StateChangeHandler>();
   private readonly unsubscribes: Unsubscribe[] = [];
   private readonly rebroadcastFilter: RebroadcastFilter;
+  private readonly syncResponseFilter: SyncResponseFilter;
   /**
    * #412 (E-PERF): memoize the materialize fold, keyed on the log
    * revision.  `state()` is called redundantly within a single logical
@@ -96,11 +115,16 @@ export class Peer {
   constructor(
     public readonly peerId: PeerId,
     private readonly transport: Transport,
-    options: { rebroadcastFilter?: RebroadcastFilter } = {}
+    options: {
+      rebroadcastFilter?: RebroadcastFilter;
+      syncResponseFilter?: SyncResponseFilter;
+    } = {}
   ) {
     this.log = new EventLog(peerId);
     this.rebroadcastFilter =
       options.rebroadcastFilter ?? IDENTITY_REBROADCAST_FILTER;
+    this.syncResponseFilter =
+      options.syncResponseFilter ?? IDENTITY_SYNC_RESPONSE_FILTER;
 
     this.unsubscribes.push(
       transport.onMessage((from, payload) => this.handleMessage(from, payload))
@@ -329,10 +353,38 @@ export class Peer {
       }
       case 'sync-request': {
         const events = this.log.since(payload.clock);
-        if (events.length > 0) {
+        // OP-039 (2026-05-29 save-restore program, mock campaign 01
+        // finding): the sync-response path is a sister firewall
+        // surface to `forwardShareToOthers`.  A peer holding
+        // DM-only events (loaded from a coord save while in a
+        // non-coord role, or temporarily caching them while
+        // coordinator) MUST NOT relay them to a joining peer.
+        // Without this filter the joining peer's raw event log
+        // carries DM scratch-notes / pins / etc. — invisible at
+        // render time (filterForViewer) and at save time
+        // (serializeSessionForViewer) but devtools-visible and a
+        // hole in the firewall SSOT.
+        //
+        // Narrower than `rebroadcastFilter` by design: production
+        // wires `defaultSyncResponseFilter`, which drops whole-
+        // kind DM-only events (PLAYER_SCOPE_STRIP_KINDS) but does
+        // NOT run per-field scrubbers.  Sync-response is a fresh
+        // peer's ONLY catch-up channel for events that happened
+        // before they connected; partial-DM-only events (e.g.
+        // `pc-edit knowsTheyCanCast` for the joining player's OWN
+        // PC) must survive so filterForViewer on the receiver can
+        // do the per-viewer projection with full context.  See
+        // `persistence.ts:defaultSyncResponseFilter` for the
+        // architectural rationale.
+        const filtered: QuireEvent[] = [];
+        for (const event of events) {
+          const result = this.syncResponseFilter(event);
+          if (result !== null) filtered.push(result);
+        }
+        if (filtered.length > 0) {
           this.transport.send(from, {
             kind: 'sync-response',
-            events
+            events: filtered
           } satisfies SyncResponseMessage);
         }
         break;

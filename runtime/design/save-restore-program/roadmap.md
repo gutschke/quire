@@ -129,9 +129,8 @@ UI host integration SHIPPED 2026-05-29 run #8 (DEC-029):
   `handleBackupsPullRequest` in `quire-app.ts` close
   OP-036 + OP-038.
 - ✅ "Operational view…" launcher chip on the DM Aside.
-- 🟡 Session-digest chip surface (§A10 placement A) —
-  scheduled for M6a-FS-2 (next run) per playable-
-  release-plan.md.
+- ✅ Session-digest chip surface (§A10 placement A) —
+  SHIPPED 2026-05-30 run #9 (OP-037 close).
 
 Per `playable-release-plan.md` (run #8 NEW), M6a-FS work
 is now broken into the following sub-milestones leading to
@@ -140,10 +139,13 @@ playable release:
 - ✅ **M6a-FS-1 (run #8)** — DM operational view +
   consent dialog + host handlers + flagship mock campaign
   01.  SHIPPED.
-- 🟡 **M6a-FS-2 (run #9)** — session-digest chip
+- ✅ **M6a-FS-2 (run #9)** — session-digest chip
   (OP-037) + reconnect-on-permission-revoked button +
   fix OP-039 (sync-response firewall) + mock campaigns
   02 (magic discovery arc) + 03 (co-DM transitions).
+  SHIPPED 2026-05-30 run #9.  Surfaced OP-040 (P2,
+  pc-mark-realization stripped on sync-response) — does
+  NOT block playable release; fix path TBD at M7+.
 - 🟡 **M6a-FS-3 (run #10)** — cross-device probe
   (§FS.11) + mock campaigns 04 (chargen spoiler
   authorship) + 05 (cloud push during active play).

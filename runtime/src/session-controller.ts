@@ -19,7 +19,10 @@ import type { QuireEvent } from './core/event-log';
 import type { Transport, Unsubscribe } from './core/transport';
 import type { SessionState as SharedState } from './core/state';
 import { emptyState, filterForViewer, KNOWN_EVENT_KINDS } from './core/state';
-import { defaultRebroadcastFilter } from './persistence';
+import {
+  defaultRebroadcastFilter,
+  defaultSyncResponseFilter
+} from './persistence';
 
 export type SessionMode = 'solo' | 'host' | 'guest';
 export type SessionStatus = 'idle' | 'connecting' | 'active' | 'error';
@@ -422,7 +425,8 @@ export class SessionController {
     // DM-coord cloud save (NEW-ADV-1) or otherwise holds DM-only
     // events in its log relays them to other peers.
     this.peer = new Peer(transport.peerId, transport, {
-      rebroadcastFilter: defaultRebroadcastFilter
+      rebroadcastFilter: defaultRebroadcastFilter,
+      syncResponseFilter: defaultSyncResponseFilter
     });
     this.unsubscribes.push(this.peer.onStateChange(() => this.notify()));
     this.unsubscribes.push(transport.onPeerConnect(() => this.notify()));

@@ -2505,6 +2505,10 @@ export class QuireApp extends LitElement {
                     )
                 : null
             }
+            ?showBackupChip=${isCoord && this.isBackupChipAvailable()}
+            @session-digest-open-operational-view=${() => {
+              this.appMode = 'dm-operational';
+            }}
           ></session-digest>`
         : nothing}
       ${this.wrapStep === 'diff-review' ? this.renderDiffReviewPane() : nothing}
@@ -3777,6 +3781,28 @@ export class QuireApp extends LitElement {
           });
     }
     return this._fsApiCloudPush;
+  }
+
+  /**
+   * OP-037 (run #9, M6a-FS-2): gate for the session-digest backup
+   * chip surface (`ux-strategy.md §A10-A`).  The chip surfaces only
+   * if the browser supports the File System Access API path
+   * (Chrome/Edge/Brave/Arc/Opera on desktop today; M6a-OAuth lights
+   * up the parallel Drive path later, at which point the chip will
+   * be available wherever EITHER destination works).  Suppresses the
+   * chip on Safari/Firefox/mobile — those see only the player-
+   * facing digest copy with no chip noise, since they can't use the
+   * feature anyway.  M8 / TTRPG-craft owns the final mobile/other-
+   * browser copy decision.
+   */
+  private isBackupChipAvailable(): boolean {
+    try {
+      return this.getFsApiCloudPush().getAvailabilityVerdict().available;
+    } catch {
+      // Defense in depth: if the cloud-push module fails to init
+      // (test environments without IndexedDB, etc.), no chip.
+      return false;
+    }
   }
 
   /**

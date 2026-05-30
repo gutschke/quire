@@ -1,20 +1,95 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 run #8 (DEC-029 logged — agreed
-with human's option (b); shipped DM operational view as
-discrete `appMode` surface + `<backups-card>` wired via
-`<dm-operational-view>` + `<cloud-push-consent-dialog>`;
-host event handlers for push/pull live; mock campaign 01
-ran and surfaced OP-039)
-**Active milestone:** M6a-FS-1 / playable-release-plan.md milestone 1
-(DM operational view live; flagship mock campaign passes; next
-run = session-digest chip + reconnect button + simulations 02-03)
-**Latest deploy hash:** 4a546af (run #8 docs); host integration + simulation at f2ab369
+**Last updated:** 2026-05-29 run #9 (OP-039 fixed + session-digest
+chip + reconnect button shipped; mock campaigns 02 + 03 ran;
+surfaced OP-040 as a load-bearing P2 classification tension —
+deferred, not blocking playable release)
+**Active milestone:** M6a-FS-2 SHIPPED / playable-release-plan.md
+milestone 2 complete.  Next: M6a-FS-3 (cross-device probe +
+simulations 04-05).
+**Latest deploy hash:** (will record after push)
 **Branch:** main
 
 ## Session log (most recent first)
 
-- **2026-05-29 run #8 (this run):** Human escalated M6a-FS to
+- **2026-05-30 run #9 (this run):** M6a-FS-2 SHIPPED.
+
+  - **OP-039 RESOLVED:** `defaultSyncResponseFilter` shipped in
+    `persistence.ts` — drops PLAYER_SCOPE_STRIP_KINDS events on
+    sync-response without running per-field scrubbers (narrower
+    than rebroadcastFilter by design — sync-response is the
+    joining peer's only catch-up channel for partial-DM-field
+    events).  Wired into `Peer` via new `syncResponseFilter`
+    option (separate from `rebroadcastFilter` so the two surfaces
+    can evolve independently).  Session-controller passes the
+    real default.  3 regression tests in
+    `persistence.restore-firewall-fuzz.test.ts`: peer holding
+    scratch-note drops it on sync-response; exhaustive — every
+    PLAYER_SCOPE_STRIP_KINDS event dropped; identity preserved
+    when no DM-only events present.  Pre-fix tests fail; post-fix
+    tests pass — load-bearing fix verified.
+  - **OP-037 RESOLVED:** session-digest backup chip surface
+    shipped per `ux-strategy.md §A10-A`.
+    `<session-digest>` gains a `showBackupChip` property; when
+    true AND viewer is DM AND no draft is in flight AND no
+    generation in progress, appends a "Back up tonight's
+    session?" chip.  Click dispatches `session-digest-open-
+    operational-view` (bubbles + composed); host sets `appMode
+    = 'dm-operational'`.  5 unit tests.  Host wires chip
+    availability via new `isBackupChipAvailable()` →
+    `FsApiCloudPush.getAvailabilityVerdict().available`.
+  - **Reconnect-on-permission-revoked SHIPPED:** `<backups-card>`
+    hoists `permission-revoked` into its own ChipState (distinct
+    from generic error so the renderer can append a `[Reconnect]`
+    button).  Click calls `requestPermissionForCampaign`.
+    Success → chip = success ("Folder reconnected.  Click Push to
+    back up.").  Denied → chip stays permission-revoked + button
+    remains (DM can retry).  not-connected → chip = error.
+    4 new unit tests cover all branches.  1 existing test
+    updated to reflect the new chip-state data-attribute
+    (`data-state=permission-revoked` instead of `error`).
+  - **Mock campaign 02 (magic discovery arc) SHIPPED** at
+    `src/persistence.simulation-02-magic-discovery-arc.test.ts`.
+    2 tests, both pass.  Doc at
+    `design/save-restore-program/simulations/mock-campaign-02-
+    magic-discovery-arc.md`.  Drives the full pre-Realization
+    → Realization → save → restore → tax-release arc with two
+    players + DM.  **Surfaced FINDING-A → OP-040** (see below):
+    the OP-039 firewall strips `pc-mark-realization` on
+    sync-response, which is correct for the firewall but
+    blocks a player who joins fresh post-realization from
+    seeing their own cast capability.  Mitigation in production:
+    workflow workaround (re-mark realization for late-joiner is
+    idempotent on visible state).  Architectural review may
+    pick path 1 (reclassify pc-mark-realization out of
+    PLAYER_SCOPE_STRIP_KINDS) during M7+.  Does NOT block
+    playable release.  Test file documents the FINDING-A
+    behavior in-line via assertions so future changes flag the
+    classification.
+  - **Mock campaign 03 (co-DM transitions) SHIPPED** at
+    `src/persistence.simulation-03-co-dm-transitions.test.ts`.
+    3 tests, all pass.  Doc at
+    `design/save-restore-program/simulations/mock-campaign-03-
+    co-dm-transitions.md`.  Drives primary DM → co-DM reclaim
+    mid-session with two players present.  No new findings.
+    Confirms:
+      - Both DMs' saves restore to the same final state (DEC-014
+        per-DM-drive ownership; saves are interchangeable
+        because the event log is the canonical state).
+      - The OP-039 firewall holds across the co-DM transition +
+        save/restore boundary.
+      - Players' filtered state shows neither DM's scratch-note
+        at any point.
+  - **OP-040 FILED (NEW)** — load-bearing P2 classification
+    tension surfaced by mock campaign 02.  See
+    `open-problems.md` for the three fix paths + rationale.
+
+  Tests: 2913 + 2 skipped = 2915 (up from 2898 baseline, +17 new
+  in this run; +44 net since M6a-FS started).  Typecheck clean.
+  Build clean (641KB main chunk, on par with prior runs).  No
+  credentials in diff.
+
+- **2026-05-29 run #8 (prior run):** Human escalated M6a-FS to
   "get this code ready for a playable release," conditional on
   the lead engineer agreeing with option (b) over (a) from run #7
   OP-038.  Lead engineer agreed (DEC-029); option (b) is the
@@ -701,8 +776,12 @@ Still pending (carry-over):
 - 🟢 M6a-FS DM operational view surface (DEC-029) — SHIPPED (run #8).
 - 🟢 M6a-FS consent dialog component — SHIPPED (run #8).
 - 🟢 Mock campaign 01 (flagship cross-session cloud loop) — SHIPPED (run #8).
-- 🟡 OP-039 (sync-response carries DM-only events) — FILED (run #8); fix in M6a-FS-2.
-- 🟡 OP-037 — session-digest chip surface — NEXT (M6a-FS-2 / run #9).
+- 🟢 OP-039 (sync-response carries DM-only events) — RESOLVED (run #9 — `defaultSyncResponseFilter` + Peer wiring + 3 regression tests).
+- 🟢 OP-037 — session-digest chip surface — SHIPPED (run #9 — `<session-digest>` + 5 tests).
+- 🟢 Reconnect-on-permission-revoked button — SHIPPED (run #9 — new ChipState + handler + 4 tests).
+- 🟢 Mock campaign 02 (magic discovery arc) — SHIPPED (run #9 — 2 tests; surfaced OP-040).
+- 🟢 Mock campaign 03 (co-DM transitions) — SHIPPED (run #9 — 3 tests; no new findings).
+- 🟡 OP-040 (pc-mark-realization stripped from sync-response) — FILED (run #9, P2 — does NOT block playable release).
 - 🟡 M6a-OAuth cloud-push.ts (DM-facing orchestration) — AFTER M6a-FS host wiring.
 - 🟡 M6a-OAuth per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
 - 🟡 M6a-OAuth mid-session 401 detection (OP-022) — lands with cloud-push.ts.

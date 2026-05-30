@@ -54,7 +54,75 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
-## OP-039 — `sync-request → sync-response` carries DM-only events unfiltered [mock-campaign-01 finding] [R4: class 2, P2]
+## OP-040 — pc-mark-realization survives the OP-039 sync-response strip; player joining mid-tax sees no cast capability [mock-campaign-02 finding] [R4: class 2 gameplay-continuity, P2]
+
+**Severity:** P2 (class 2 — gameplay continuity, NOT a firewall leak).
+This is the OPPOSITE shape from the leak class — a player who SHOULD
+see their own player-visible state (knowsTheyCanCast + tax.active
+overlay on their own PC) doesn't get it because the underlying event
+is classified DM-only and stripped by the OP-039 firewall during
+sync-response catch-up.
+**Evidence:** Mock campaign 02 (run #9 — magic discovery arc through
+save/restore) surfaced this.  `pc-mark-realization` is in
+`PLAYER_SCOPE_STRIP_KINDS` (rationale: the existence of "DM marked
+Mei realized at time T" is DM-private bookkeeping per Wave D-prep-2
+review).  OP-039's filter drops the event from sync-response.  In a
+LIVE play scenario, this is fine — `share` envelope delivers the
+event to all peers, including the PC owner; filterForViewer at
+render keeps `knowsTheyCanCast` + `tax.active` for the owner.  In a
+SAVE/RESTORE-then-rejoin scenario where the player JOINS AFTER the
+realization was already authored, sync-response is the only catch-up
+channel, and the filter drops pc-mark-realization → materializer
+never fires → pcEdits[mei] is empty → filterForViewer projects
+nothing → player's sheet shows no cast capability.
+**Hypothesis (fix paths, deferred):**
+  1. **Reclassify pc-mark-realization OUT of PLAYER_SCOPE_STRIP_KINDS**
+     — let the event flow through; rely on filterForViewer's
+     per-viewer projection to hide it from non-owner players (the
+     same model pc-edit uses).  Risk: event-existence-vs-effect
+     classification rule needs a explicit review.
+  2. **DM workflow:** surface a "re-mark realization for late-
+     joiner" affordance in the DM operational view when a peer
+     joins fresh post-realization.  Idempotent on the visible
+     state.
+  3. **Per-PC "snapshot" event** that the joining peer applies
+     to fast-forward their own player-visible state.  Heavier.
+**Mitigation in production:** the broken case is narrow — the
+realization is normally a moment players WITNESS at the table.
+A player who was online for the realization → her in-memory state
+has it → her session-end state hands off correctly across cookie
++ recently-played + DM-coord-save chain.  The pure "join fresh
+mid-tax" workflow is rare and recoverable (DM re-marks).
+**Owner:** save/restore lead → escalate to engine architect for
+classification decision.
+**Status:** OPEN.  Filed P2 — does NOT block playable release
+(workflow workaround exists).  Architectural review may pick path 1
+during M7+ if the workaround proves friction-y.
+
+---
+
+## OP-039 — `sync-request → sync-response` carries DM-only events unfiltered [mock-campaign-01 finding] [R4: class 2, P2] [RESOLVED 2026-05-29 run #9]
+
+**Resolution (run #9):** `defaultSyncResponseFilter` shipped in
+`src/persistence.ts` — drops `PLAYER_SCOPE_STRIP_KINDS` events but
+deliberately does NOT run per-field scrubbers (the joining peer's
+filterForViewer + serializeSessionForViewer have viewer context the
+gossip seam lacks).  Wired into `Peer` via new
+`syncResponseFilter` option (separate from `rebroadcastFilter` so
+the two surfaces can evolve independently).  Session-controller
+passes the default; `IDENTITY_SYNC_RESPONSE_FILTER` is the default
+for bare-Peer tests.  Three regression tests in
+`persistence.restore-firewall-fuzz.test.ts` cover:
+  1. Peer holding scratch-note drops it on sync-response.
+  2. Exhaustive: every PLAYER_SCOPE_STRIP_KINDS event dropped.
+  3. Identity behavior preserved when no DM-only events present.
+
+OP-040 (above) was surfaced as a load-bearing side-effect of the
+fix and tracked separately.
+
+**Status:** RESOLVED.
+
+
 
 **Severity:** P2 (class 2 — accidental disclosure between trusted
 peers).  Not a play-time leak (filterForViewer hides DM events at
@@ -125,7 +193,29 @@ itself pending.  Two options for the embed:
 **Status:** OPEN.  Recommended scope for run #8: pick (a) for
 M6a-FS ship-readiness; (b) is its own milestone.
 
-## OP-037 — M6a-FS session-digest chip surface [run #7 follow-up]
+## OP-037 — M6a-FS session-digest chip surface [run #7 follow-up] [RESOLVED 2026-05-29 run #9]
+
+**Resolution (run #9):** Shipped the session-digest backup chip
+per `ux-strategy.md §A10-A`.  Implementation:
+- `<session-digest>` gains a `showBackupChip` property (defaults
+  false for safety on existing tests).  When true AND viewer is
+  DM AND no draft is in flight AND no generation in progress,
+  appends a "Back up tonight's session?" chip with an "Open
+  backups…" button.
+- Click dispatches `session-digest-open-operational-view`
+  (bubbles + composed).  Host listens, sets `appMode =
+  'dm-operational'`.
+- Defense-in-depth: player viewer (no onGenerate/onSave) never
+  sees the chip; host-controlled flag suppresses it for
+  non-Chromium browsers via `isBackupChipAvailable()` →
+  `getAvailabilityVerdict().available`.
+- Chip is suppressed during mid-edit (don't yank the DM out).
+
+5 new unit tests in `src/ui/regions/session-digest.test.ts`
+cover: player viewer (no chip), host opt-out, chip render,
+chip click → event bubble, chip suppression mid-draft.
+
+**Status:** RESOLVED.
 
 **Severity:** P2.
 **Evidence:** `ux-strategy.md §A10 placement A` specs the
@@ -138,7 +228,6 @@ is a localized edit + a host wiring.  Deferred to run #8
 alongside OP-038 because both share the host-integration
 work.
 **Owner:** save/restore program lead, next run.
-**Status:** OPEN.
 
 ## OP-036 — M6a-FS push event handler in host [run #7 follow-up] [RESOLVED 2026-05-29 run #8 — `handleBackupsPushRequest` + `handleBackupsPullRequest` shipped in `quire-app.ts`]
 

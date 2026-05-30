@@ -81,7 +81,12 @@ type ChipState =
   | { kind: 'idle' }
   | { kind: 'busy'; message: string }
   | { kind: 'success'; message: string }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string }
+  // M6a-FS-2 (run #9): permission-revoked is a recoverable error
+  // class that needs a [Reconnect] button distinct from the
+  // generic error chip.  Drives renderChip() to add the
+  // affordance.
+  | { kind: 'permission-revoked'; message: string };
 
 @customElement('backups-card')
 export class BackupsCard extends LitElement {
@@ -290,19 +295,80 @@ export class BackupsCard extends LitElement {
   private renderChip(): TemplateResult | typeof nothing {
     if (this.chipState.kind === 'idle') return nothing;
     const cls =
-      this.chipState.kind === 'error'
+      this.chipState.kind === 'error' ||
+      this.chipState.kind === 'permission-revoked'
         ? 'backups-card-chip-error'
         : this.chipState.kind === 'success'
           ? 'backups-card-chip-success'
           : 'backups-card-chip-busy';
-    return html`<p
+    return html`<div
       class="backups-card-chip ${cls}"
       data-testid="backups-chip"
       data-state=${this.chipState.kind}
       role="status"
     >
-      ${this.chipState.message}
-    </p>`;
+      <p>${this.chipState.message}</p>
+      ${this.chipState.kind === 'permission-revoked'
+        ? html`<button
+            type="button"
+            class="backups-card-reconnect"
+            data-testid="backups-reconnect"
+            @click=${() => void this.handleReconnectClick()}
+          >
+            Reconnect
+          </button>`
+        : nothing}
+    </div>`;
+  }
+
+  /**
+   * M6a-FS-2 (run #9, OP-037 sibling): reconnect-on-permission-
+   * revoked.  Production browsers expire write permission between
+   * sessions (Chrome's "transient" permission lifetime).  Pre-fix,
+   * the DM saw "Click Reconnect" copy but had no actual reconnect
+   * affordance — they had to disconnect + re-connect a folder,
+   * losing handle continuity.
+   *
+   * `requestPermissionForCampaign` calls `requestWritePermission`
+   * on the existing stored handle.  Per the FS API spec it MUST be
+   * called from within a user-gesture handler.  This click is the
+   * gesture.
+   *
+   * Success → push retry is left to the DM (they re-click Push).
+   * The simpler one-action-per-state pattern from `ux-strategy.md
+   * §A12 principle 2` argues against auto-retrying push as part of
+   * reconnect; a "Reconnect → success → Push now appears" rhythm
+   * is more legible.
+   */
+  private async handleReconnectClick(): Promise<void> {
+    if (!this.cloudPush || !this.campaignId) return;
+    this.chipState = { kind: 'busy', message: 'Asking for permission…' };
+    const result = await this.cloudPush.requestPermissionForCampaign({
+      campaignId: this.campaignId
+    });
+    if (result.ok) {
+      this.chipState = {
+        kind: 'success',
+        message: 'Folder reconnected.  Click Push to back up.'
+      };
+      await this.refresh();
+    } else if (result.reason === 'not-connected') {
+      this.chipState = {
+        kind: 'error',
+        message:
+          'No folder to reconnect.  Pick a folder via Connect.'
+      };
+      await this.refresh();
+    } else {
+      // 'denied' — browser blocked the gesture, OR the DM clicked
+      // Cancel.  Keep the permission-revoked state so the chip
+      // surfaces the Reconnect button again.
+      this.chipState = {
+        kind: 'permission-revoked',
+        message:
+          "Your browser still hasn't confirmed folder access.  Click Reconnect to try again."
+      };
+    }
   }
 
   // -----------------------------------------------------------
@@ -388,6 +454,16 @@ export class BackupsCard extends LitElement {
         message: `Pushed ${result.bytesWritten} bytes to ${result.fileName}`
       };
       void this.refresh();
+    } else if (result.reason === 'permission-revoked') {
+      // M6a-FS-2 (run #9): hoist permission-revoked into its own
+      // chip state so renderChip() can surface a [Reconnect]
+      // button.  The reason itself isn't recoverable by retrying
+      // push — the browser dropped write permission and we need a
+      // fresh user gesture to re-grant it.
+      this.chipState = {
+        kind: 'permission-revoked',
+        message: this.pushErrorMessage(result.reason)
+      };
     } else {
       this.chipState = {
         kind: 'error',

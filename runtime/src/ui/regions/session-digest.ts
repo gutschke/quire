@@ -83,6 +83,26 @@ export class SessionDigest extends LitElement {
   @property({ attribute: false })
   onSave: SaveDigestCallback | null = null;
 
+  /**
+   * OP-037 (run #9, M6a-FS-2): session-digest backup chip surface
+   * per `ux-strategy.md §A10-A`.  When the digest renders for the
+   * DM (canCoord === true), append a single chip
+   * "Back up tonight's session?" that opens the DM operational
+   * view.  Set this prop to `true` on the host side to enable;
+   * the host gates feature availability + DM-role and the digest
+   * only displays if both conditions hold.  Defaults to false so
+   * existing component tests don't see the chip.
+   *
+   * Wiring: the chip dispatches `session-digest-open-operational-
+   * view` (bubbles + composed) which the host handles by setting
+   * `appMode = 'dm-operational'`.  The chip is rendered both BEFORE
+   * the editor (high-affordance, end-of-session moment) and is
+   * suppressed if the DM is currently editing a draft (avoid
+   * pulling them out of mid-edit).
+   */
+  @property({ attribute: false })
+  showBackupChip: boolean = false;
+
   /** Inline draft state — drafts live local until Save. */
   @state() private draft: string = '';
   @state() private generating: boolean = false;
@@ -103,7 +123,52 @@ export class SessionDigest extends LitElement {
       </header>
       ${this.renderPriorDigests()}
       ${canCoord ? this.renderEditor(hasDraft) : nothing}
+      ${canCoord && this.showBackupChip && !hasDraft && !this.generating
+        ? this.renderBackupChip()
+        : nothing}
     </section>`;
+  }
+
+  /**
+   * OP-037 (run #9, M6a-FS-2): the backup-chip surface.
+   *
+   * Renders ONLY when:
+   * - The viewer is the DM (canCoord).
+   * - showBackupChip is true (host has decided feature is
+   *   available — DM role + browser supports FS API or other
+   *   future backup destination).
+   * - The DM is NOT currently editing a draft (don't yank them
+   *   out of mid-edit).
+   * - No generation in progress.
+   *
+   * Dispatches `session-digest-open-operational-view` (bubbles +
+   * composed) when clicked.  Host listens, sets appMode.
+   */
+  private renderBackupChip(): TemplateResult {
+    return html`<div
+      class="session-digest-backup-chip"
+      data-testid="session-digest-backup-chip"
+    >
+      <p class="muted session-digest-backup-blurb">
+        Back up tonight's session?
+      </p>
+      <button
+        type="button"
+        class="session-digest-backup-action"
+        @click=${() => this.dispatchOpenOperationalView()}
+      >
+        Open backups…
+      </button>
+    </div>`;
+  }
+
+  private dispatchOpenOperationalView(): void {
+    this.dispatchEvent(
+      new CustomEvent('session-digest-open-operational-view', {
+        bubbles: true,
+        composed: true
+      })
+    );
   }
 
   private renderPriorDigests(): TemplateResult | typeof nothing {

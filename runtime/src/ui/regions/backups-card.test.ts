@@ -468,8 +468,94 @@ describe('<backups-card> — connected actions emit events', () => {
     el.applyPushResult({ ok: false, reason: 'permission-revoked' });
     await el.updateComplete;
     const chip = el.querySelector('[data-testid="backups-chip"]');
-    expect(chip?.getAttribute('data-state')).toBe('error');
+    // M6a-FS-2 (run #9): permission-revoked is now its own
+    // chip state, distinct from generic error, because it
+    // surfaces a [Reconnect] button.
+    expect(chip?.getAttribute('data-state')).toBe('permission-revoked');
     expect(chip?.textContent).toMatch(/Reconnect|confirm folder/i);
+  });
+});
+
+// M6a-FS-2 (run #9): Reconnect-on-permission-revoked surface.
+describe('<backups-card> — reconnect-on-permission-revoked (M6a-FS-2)', () => {
+  // Helper that puts the card in the permission-revoked state and
+  // returns it.  Mirrors the connect-happy-path setup.
+  async function withConnectedThenRevoked(): Promise<{
+    el: BackupsCard;
+    cp: FsApiCloudPush;
+    dir: ReturnType<typeof makeMockDirectory>;
+  }> {
+    const dir = makeMockDirectory();
+    const { cp } = buildCloudPush({ picker: async () => dir.handle });
+    const el = mount();
+    el.cloudPush = cp;
+    el.campaignId = CAMPAIGN_A;
+    el.renderForDm = true;
+    el.requestConsent = async () => true;
+    await el.refresh();
+    await el.updateComplete;
+    (el.querySelector('[data-testid="backups-connect"]') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    el.applyPushResult({ ok: false, reason: 'permission-revoked' });
+    await el.updateComplete;
+    return { el, cp, dir };
+  }
+
+  it('renders a [Reconnect] button next to the chip in permission-revoked state', async () => {
+    const { el } = await withConnectedThenRevoked();
+    const reconnect = el.querySelector('[data-testid="backups-reconnect"]');
+    expect(reconnect).not.toBeNull();
+    expect(reconnect?.textContent).toMatch(/Reconnect/);
+  });
+
+  it('Reconnect click calls requestPermissionForCampaign and surfaces success on grant', async () => {
+    const { el, dir } = await withConnectedThenRevoked();
+    // The mock-directory's permission state defaults to granted —
+    // requestWritePermission(handle) resolves ok.  Click the
+    // reconnect button.
+    void dir;
+    (el.querySelector('[data-testid="backups-reconnect"]') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    const chip = el.querySelector('[data-testid="backups-chip"]');
+    expect(chip?.getAttribute('data-state')).toBe('success');
+    expect(chip?.textContent).toMatch(/reconnected|push to back up/i);
+    // Reconnect button is gone after success (no longer permission-revoked).
+    expect(el.querySelector('[data-testid="backups-reconnect"]')).toBeNull();
+  });
+
+  it('Reconnect click surfaces not-connected if handle was disconnected externally', async () => {
+    const { el, cp } = await withConnectedThenRevoked();
+    // Simulate the handle disappearing — disconnect the folder
+    // out-of-band, then click Reconnect.
+    await cp.disconnectFolder({ campaignId: CAMPAIGN_A });
+    (el.querySelector('[data-testid="backups-reconnect"]') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    const chip = el.querySelector('[data-testid="backups-chip"]');
+    expect(chip?.getAttribute('data-state')).toBe('error');
+    expect(chip?.textContent).toMatch(/no folder|pick a folder/i);
+  });
+
+  it('Reconnect click on denied permission keeps the chip in permission-revoked state', async () => {
+    const { el, dir } = await withConnectedThenRevoked();
+    // Connection landed.  Flip the mock to deny — both
+    // queryPermission AND requestPermission, since the mock's
+    // closure-captured permission isn't reassignable mid-test.
+    dir.handle.queryPermission = async () => 'prompt';
+    dir.handle.requestPermission = async () => 'denied';
+    (el.querySelector('[data-testid="backups-reconnect"]') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+    const chip = el.querySelector('[data-testid="backups-chip"]');
+    expect(chip?.getAttribute('data-state')).toBe('permission-revoked');
+    // Reconnect button is still there so the DM can retry.
+    expect(el.querySelector('[data-testid="backups-reconnect"]')).not.toBeNull();
   });
 });
 

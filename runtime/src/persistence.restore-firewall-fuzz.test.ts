@@ -44,6 +44,7 @@ import {
 } from './persistence.restore-firewall-fuzz.helpers';
 import {
   defaultRebroadcastFilter,
+  defaultSyncResponseFilter,
   projectSaveForViewer,
   stringifySave,
   serializeSessionForViewer,
@@ -52,7 +53,8 @@ import {
 
 function makePeer(id: string, net: InMemoryNetwork): Peer {
   return new Peer(id, new InMemoryTransport(id, net), {
-    rebroadcastFilter: defaultRebroadcastFilter
+    rebroadcastFilter: defaultRebroadcastFilter,
+    syncResponseFilter: defaultSyncResponseFilter
   });
 }
 
@@ -280,6 +282,131 @@ describe('NEW-ADV-2 — defaultRebroadcastFilter drops DM-only events on hub-for
         `helper desync: planted secret=${s} not found in raw save JSON`
       ).toBe(true);
     }
+  });
+});
+
+describe('OP-039 — sync-request → sync-response firewall (sister of NEW-ADV-2)', () => {
+  // Background: when a fresh peer joins a session, it sends a
+  // sync-request with its current vector clock; every connected peer
+  // responds with `log.since(clock)`.  Pre-fix, the responding peer
+  // shipped its events RAW — no rebroadcastFilter applied — so a peer
+  // holding DM-only events (loaded from a coord save while in a
+  // non-coord role, OR temporarily caching them while acting as
+  // coordinator) would leak them into the joining peer's event log.
+  // Render-layer firewall (filterForViewer) and save-layer firewall
+  // (serializeSessionForViewer) both hold; the hole was the joining
+  // peer's RAW event log — devtools-visible only — but a class-2
+  // firewall hole regardless.  The fix: wrap log.since(...) results
+  // through the same rebroadcastFilter the forwardShareToOthers path
+  // uses.
+  //
+  // This regression test exercises the sync-request handler directly:
+  // a peer holding DM-only events MUST NOT leak them when responding
+  // to sync-requests from a joining peer.
+
+  it('peer holding DM-only events drops them on sync-response', () => {
+    // Scenario: alice acts as coord and appends a DM-only event
+    // (scratch-note).  Bob then joins the session.  Bob's
+    // initial sync-request hits alice's sync-request handler.
+    // Alice MUST NOT ship the scratch-note event back to bob.
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    // alice is the coord (first peer in).
+    alice.append('chat', { text: 'public chat A' });
+    alice.append('scratch-note', {
+      v: 1,
+      id: 'note-1',
+      text: 'OP_039_SENTINEL'
+    });
+    alice.append('chat', { text: 'public chat B' });
+
+    // Bob joins.  In-memory transport delivers the connect notif
+    // synchronously, triggering bob's onPeerConnect →
+    // requestSync(alice).  Alice handles the sync-request and
+    // ships sync-response.
+    const bob = makePeer('bob', net);
+
+    // Bob should see alice's chat events but NOT the scratch-note.
+    const bobEvents = bob.events();
+    const bobJson = JSON.stringify(bobEvents);
+    expect(
+      bobJson.includes('OP_039_SENTINEL'),
+      `LEAK (OP-039): scratch-note sentinel reached bob's event log ` +
+        `via alice's sync-response — fix regressed`
+    ).toBe(false);
+
+    // And no PLAYER_SCOPE_STRIP_KINDS event at all.
+    for (const ev of bobEvents) {
+      expect(
+        PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS.has(ev.kind),
+        `LEAK (OP-039): kind=${ev.kind} (id=${ev.id}) reached bob's ` +
+          `log via alice's sync-response — must have been filtered`
+      ).toBe(false);
+    }
+
+    // Sanity: bob DID get the public chat — sync-response works,
+    // just filtered.
+    expect(bob.state().chat.map((c) => c.text)).toContain('public chat A');
+    expect(bob.state().chat.map((c) => c.text)).toContain('public chat B');
+  });
+
+  it('every PLAYER_SCOPE_STRIP_KINDS event is dropped on sync-response', () => {
+    // Exhaustive: for every DM-only kind in the SSOT, alice plants
+    // an event of that kind in her log, then bob joins.  None of
+    // those kinds may appear in bob's resulting event log.
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    // One innocuous event so bob has something legit to receive.
+    alice.append('chat', { text: 'hello' });
+    // Bypass the controller — plant raw DM-only events directly
+    // into alice's log via applyEvent({propagate:false}) so the
+    // share path doesn't pre-filter them.  Then bob joins and
+    // alice's sync-response handler is the surface under test.
+    let seq = 100;
+    for (const kind of PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS) {
+      seq += 1;
+      const synth: QuireEvent = {
+        id: `alice:${seq}`,
+        peerId: 'alice',
+        ts: seq,
+        seq,
+        clock: { alice: seq },
+        kind,
+        payload: { v: 1, sentinel: `OP_039_${kind}` }
+      };
+      alice.applyEvent(synth, { propagate: false });
+    }
+
+    const bob = makePeer('bob', net);
+
+    const bobEvents = bob.events();
+    for (const ev of bobEvents) {
+      expect(
+        PLAYER_SCOPE_STRIP_KINDS_FOR_TESTS.has(ev.kind),
+        `LEAK (OP-039): kind=${ev.kind} (id=${ev.id}) reached bob's ` +
+          `log via sync-response`
+      ).toBe(false);
+    }
+
+    // Bob still gets the public chat.
+    expect(bob.state().chat.map((c) => c.text)).toContain('hello');
+  });
+
+  it('sync-response is identity when no DM-only events present (no regression on the happy path)', () => {
+    const net = new InMemoryNetwork();
+    const alice = makePeer('alice', net);
+    alice.append('chat', { text: 'A1' });
+    alice.append('chat', { text: 'A2' });
+    alice.append('chat', { text: 'A3' });
+
+    const bob = makePeer('bob', net);
+
+    // Bob should see all three chats.
+    expect(bob.state().chat.map((c) => c.text)).toEqual(['A1', 'A2', 'A3']);
+    // And the event count matches (one chat per event + alice's
+    // implicit peer-join, which is itself a player-visible event).
+    const chatEvents = bob.events().filter((e) => e.kind === 'chat');
+    expect(chatEvents.length).toBe(3);
   });
 });
 

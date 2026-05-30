@@ -858,6 +858,54 @@ export function defaultRebroadcastFilter(
 }
 
 /**
+ * OP-039 (2026-05-29 save-restore program, mock campaign 01
+ * finding): sync-response firewall — the sister surface to
+ * `defaultRebroadcastFilter` for the `sync-request → sync-response`
+ * catch-up path.
+ *
+ * When a fresh peer joins an existing session, every connected peer
+ * responds to its sync-request with `log.since(clock)` — every
+ * event in the responder's log the joiner hasn't seen.  Pre-fix,
+ * these events were shipped RAW.  A peer holding DM-only events
+ * (e.g. the DM herself, having appended scratch-notes during play)
+ * would leak them into the joining peer's RAW event log.  Render-
+ * layer firewall (`filterForViewer`) and save-layer firewall
+ * (`serializeSessionForViewer`) both hold; the hole is the joining
+ * peer's raw log on disk / in devtools.
+ *
+ * Why this filter is NARROWER than `defaultRebroadcastFilter`:
+ * the rebroadcast path runs at hub-forward time, when a peer who
+ * received a SHARE relays it to other peers; at that point every
+ * legitimate recipient has either already received the share
+ * directly OR is connected and will receive a future share.  The
+ * sync-response path is different — it is the JOINING peer's only
+ * catch-up channel for events that happened before they connected.
+ * If we drop a `pc-edit` event scrubbed to null by the per-field
+ * scrubber (e.g. `pc-edit knowsTheyCanCast=true` for the joining
+ * player's OWN PC), the joining peer permanently loses that
+ * player-visible state.  Their render-layer firewall has the
+ * viewer context (boundCharacter, role) the rebroadcast filter
+ * lacks, so it's the right defense surface for partial-DM-only
+ * events.
+ *
+ * Therefore: drop only WHOLE-KIND DM-only events
+ * (`PLAYER_SCOPE_STRIP_KINDS`).  Let everything else through; let
+ * the receiver's `filterForViewer` + `serializeSessionForViewer`
+ * handle per-field strip with full viewer context.
+ *
+ * For the SSOT alignment: this function shares
+ * `PLAYER_SCOPE_STRIP_KINDS` with `defaultRebroadcastFilter` and
+ * `projectSaveForViewer` — same source of truth, narrower
+ * application.
+ */
+export function defaultSyncResponseFilter(
+  event: QuireEvent
+): QuireEvent | null {
+  if (PLAYER_SCOPE_STRIP_KINDS.has(event.kind)) return null;
+  return event;
+}
+
+/**
  * Produce a deterministic JSON string for the save document.  Keys
  * sorted alphabetically at every depth; events ordered by causal
  * sort (which they already are if they came from EventLog.events()).

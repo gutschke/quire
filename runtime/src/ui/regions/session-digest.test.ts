@@ -230,6 +230,106 @@ describe('<session-digest> (D4)', () => {
     expect(el.querySelector('.session-digest-draft')).not.toBeNull();
   });
 
+  // OP-037 (run #9, M6a-FS-2): session-digest backup chip surface.
+  describe('OP-037 — backup chip (§A10-A primary surface)', () => {
+    it('does NOT render the chip for the player viewer (defense in depth)', async () => {
+      const el = mount();
+      // Player viewer: callbacks null even with showBackupChip=true.
+      el.showBackupChip = true;
+      await el.updateComplete;
+      expect(
+        el.querySelector('[data-testid="session-digest-backup-chip"]')
+      ).toBeNull();
+    });
+
+    it('does NOT render the chip when host opts out (showBackupChip=false)', async () => {
+      const el = mount();
+      el.onGenerate = async () => ({
+        ok: true,
+        markdown: 'draft',
+        responseId: 'r-1'
+      });
+      el.onSave = () => true;
+      el.showBackupChip = false;
+      await el.updateComplete;
+      expect(
+        el.querySelector('[data-testid="session-digest-backup-chip"]')
+      ).toBeNull();
+    });
+
+    it('renders the chip for the DM when showBackupChip=true + no draft', async () => {
+      const el = mount();
+      el.onGenerate = async () => ({
+        ok: true,
+        markdown: 'draft',
+        responseId: 'r-1'
+      });
+      el.onSave = () => true;
+      el.showBackupChip = true;
+      await el.updateComplete;
+      const chip = el.querySelector(
+        '[data-testid="session-digest-backup-chip"]'
+      );
+      expect(chip).not.toBeNull();
+      expect(chip?.textContent).toMatch(/Back up tonight/);
+      expect(chip?.querySelector('button')).not.toBeNull();
+    });
+
+    it('chip click dispatches session-digest-open-operational-view (bubbles + composed)', async () => {
+      const el = mount();
+      el.onGenerate = async () => ({
+        ok: true,
+        markdown: 'draft',
+        responseId: 'r-1'
+      });
+      el.onSave = () => true;
+      el.showBackupChip = true;
+      await el.updateComplete;
+      let bubbled = false;
+      document.body.addEventListener(
+        'session-digest-open-operational-view',
+        () => {
+          bubbled = true;
+        },
+        { once: true }
+      );
+      (
+        el.querySelector('.session-digest-backup-action') as HTMLButtonElement
+      ).click();
+      expect(bubbled).toBe(true);
+    });
+
+    it('chip is suppressed while the DM is mid-edit on a draft (no yank-out)', async () => {
+      const el = mount();
+      el.onGenerate = async () => ({
+        ok: true,
+        markdown: 'In-progress draft body',
+        responseId: 'r-1'
+      });
+      el.onSave = () => true;
+      el.showBackupChip = true;
+      await el.updateComplete;
+      // Pre-Generate: chip is up.
+      expect(
+        el.querySelector('[data-testid="session-digest-backup-chip"]')
+      ).not.toBeNull();
+      // Generate → draft appears.
+      (
+        el.querySelector('.session-digest-generate') as HTMLButtonElement
+      ).click();
+      for (let i = 0; i < 5; i++) {
+        await el.updateComplete;
+        if (el.querySelector('.session-digest-draft')) break;
+        await Promise.resolve();
+      }
+      // Chip is gone while a draft is open.
+      expect(el.querySelector('.session-digest-draft')).not.toBeNull();
+      expect(
+        el.querySelector('[data-testid="session-digest-backup-chip"]')
+      ).toBeNull();
+    });
+  });
+
   it('priorDigests appearing after Save does not clobber a fresh in-progress draft', async () => {
     // Reactive test: simulate the parent re-rendering with the
     // newly-saved digest in priorDigests right after Save.  The

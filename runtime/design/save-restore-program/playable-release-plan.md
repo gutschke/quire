@@ -54,14 +54,14 @@ Every row in `ux-strategy.md §A12` has working UI:
 | `feature-unavailable` | `getAvailabilityVerdict().available === false` | unavailable card with reason-specific copy ✓ run #7 |
 | `cancelled` (picker dismissed) | `connectFolder` → `reason: 'cancelled'` | "No folder picked" chip ✓ run #7 |
 | `permission-denied` | `requestWritePermission` → false | "Your browser blocked write access" ✓ run #7 |
-| `permission-revoked` (mid-session) | `pushCampaignToFolder` → `reason: 'permission-revoked'` | "Click Reconnect" chip ✓ run #7 (needs Reconnect button — TODO) |
+| `permission-revoked` (mid-session) | `pushCampaignToFolder` → `reason: 'permission-revoked'` | "Click Reconnect" chip + [Reconnect] button ✓ run #9 |
 | `conflict` (external write) | `pushCampaignToFolder` → `reason: 'conflict'` | "Pull first, then push" chip ✓ run #7 |
 | `write-failure` | `pushCampaignToFolder` → `reason: 'write-failure'` | "Couldn't write to folder" chip ✓ run #7 |
 | `not-connected` | `pushCampaignToFolder` → `reason: 'not-connected'` | "Connect a folder first" chip ✓ run #7 |
 
 Open gap from the run #7 review: the "permission-revoked" chip
 needs an actual `[Reconnect]` button that calls
-`requestPermissionForCampaign`.  Adding that is part of this run.
+`requestPermissionForCampaign`.  Shipped in run #9.
 
 ### Bug bar
 
@@ -137,22 +137,43 @@ to two if scope grows.
   itself (gate, render, embed presence).
 - End-of-run docs + push.
 
-### M6a-FS-2 (run #9)
+### M6a-FS-2 (run #9) [SHIPPED]
 
-**Session-digest chip + Reconnect button + simulations 02-03.**
+**Session-digest chip + Reconnect button + simulations 02-03 +
+OP-039 fix.**
 
-- Session-digest chip wires (OP-037 close).  When the digest
-  renders for the DM, append a "Back up tonight's session?" chip
-  that opens the operational view.
-- `<backups-card>` reconnect button when push fails with
-  `permission-revoked` — calls `requestPermissionForCampaign`,
-  re-tries push.
-- Mock campaign 02: magic-discovery-arc save / restore /
-  continue — verifies the firewall holds across the arc beats.
-- Mock campaign 03: co-DM transition mid-session — verifies the
-  operational view renders correctly on both peers; only the
-  current coordinator's push has the full DM-coord projection.
-- Findings → file or fix.
+All shipped:
+- OP-039 fix: `defaultSyncResponseFilter` wired through
+  `Peer.syncResponseFilter`.  Drops PLAYER_SCOPE_STRIP_KINDS
+  events on sync-response without running per-field scrubbers
+  (narrower than rebroadcastFilter by design — sync-response is
+  the joining peer's only catch-up channel for partial-DM
+  fields).  3 regression tests.
+- OP-037 close: session-digest backup chip.  Renders for DM only,
+  suppressed mid-edit, dispatches `session-digest-open-operational-
+  view` to open the operational view.  5 unit tests.
+- Reconnect-on-permission-revoked button.  `<backups-card>`
+  hoists `permission-revoked` into its own chip state with a
+  `[Reconnect]` button that calls `requestPermissionForCampaign`.
+  4 unit tests including denied-permission state preservation.
+- Mock campaign 02: magic-discovery-arc through save/restore.  2
+  tests pass.  Surfaced FINDING-A → OP-040 (load-bearing P2
+  classification tension — see below).
+- Mock campaign 03: co-DM transitions.  3 tests pass.  No new
+  findings.
+
+Tests: 2913 + 2 skipped = 2915 (up from 2898 baseline; +17 new).
+
+### Known issues (M6a-FS-2 finds)
+
+- **OP-040 (P2):** OP-039 firewall strips `pc-mark-realization` on
+  sync-response, blocking a player who joins fresh post-realization
+  from seeing their own cast capability.  Live-play workflow
+  unaffected (the realization is normally witnessed at the table).
+  DM workflow workaround: re-mark realization for late-joiner
+  (idempotent on the visible state).  Architectural review
+  may pick the OP-040 "reclassify out of PLAYER_SCOPE_STRIP_KINDS"
+  fix during M7+ if friction-y.  Does NOT block playable release.
 
 ### M6a-FS-3 (run #10)
 
