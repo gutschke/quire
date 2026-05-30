@@ -42,6 +42,116 @@ collapse into a single `runtime/design/save-restore.md` post-mortem).
 
 ---
 
+## DEC-029 — DM operational view ships as a discrete surface (option (b)) (2026-05-29)
+
+**Decision:** M6a-FS host integration (OP-038) embeds the
+`<backups-card>` element inside a **discrete DM operational
+view surface**, NOT as a card inline in the existing
+`renderCampaign` / `renderEpisode` flow.
+
+Implementation shape:
+
+- New `appMode` value `'dm-operational'` joins the existing
+  modal-overlay vocabulary (`session-wrap-marks`,
+  `session-open`).  Coordinator-only.  Esc closes back to
+  `in-session`.
+- Launcher: a small chip on the DM Aside ("Operational view…")
+  parallel to "Wrap session…".  No new chrome on the player
+  cockpit.
+- The operational view renders Backups (M6a-FS today; M6a-OAuth
+  joins as a sibling line later) + leaves room for future
+  engineering-reality surfaces (eviction status, local autosave
+  health, account-mismatch chip, etc.) per `ux-strategy.md`
+  locked principle 3.
+- The session-digest chip surface (placement A) remains the
+  just-in-time discovery path — orthogonal to the operational
+  view.  Both can ship without blocking each other.
+
+The human's verbatim product input:
+
+> (b) sounds like the better design from a future proofing
+> point of view. if the lead engineer agrees, let them drive
+> the process including full implementation, qa, end-to-end
+> testing and a mock campaign that is targeted to find subtle
+> holes and bugs in our game.  get this code ready for a
+> playable release
+
+The lead engineer (program lead) agrees with (b).  Reasoning:
+
+1. **Locked principle 3 already specified this shape.**
+   `ux-strategy.md` "DM gets the operational view" was
+   written BEFORE M6a-FS landed.  Option (a) would have
+   collapsed the operational view into the play cockpit,
+   contradicting the doc set the program has been writing
+   toward.
+2. **Future surfaces will land here.**  Local autosave
+   status, manual save, eviction stats, account-mismatch
+   chip (NEW-SEC-4), browser-storage health — all want a
+   single hidden surface.  Inlining them as cards next to
+   play content would violate the prime directive.
+3. **The cost of (b) is small.**  `appMode` already
+   supports modal full-page overlays (`session-wrap-marks`,
+   `session-open`).  Adding `dm-operational` follows the
+   established pattern; the diff is a new branch in
+   `renderBody`, a launcher chip, and a hotkey listener
+   for escape.
+4. **Silent-player firewall is cleaner.**  A discrete
+   `appMode === 'dm-operational'` branch with
+   `if (!isCoordinator()) return nothing` is one short-
+   circuit.  An inline card has more code paths (it would
+   need to be conditionally rendered in EVERY render
+   branch where it might appear) and more regression
+   surface.
+5. **Discoverability is not lost.**  §A10 placement A
+   (session-digest chip) is the just-in-time entry; the
+   operational view doesn't need to be discoverable from
+   cold.  The operational view's job is "I want to
+   administer right now" — DMs who think "where's my
+   backup state?" need a stable place to look, not a chip
+   that appears only at session-close.
+
+**Why this happens THIS run (not deferred):** The human
+escalated M6a-FS to "ready for playable release" — that
+requires the user-visible path being live + tested.
+Picking (b) and shipping it now means subsequent runs
+spend their budget on bug-hunting (mock campaigns) and
+mainline polish, not on architectural rework.
+
+**Alternatives:**
+
+- **(a) Inline card.**  Cheapest path to ship M6a-FS user-
+  visible; ~1 ship-day of work.  Rejected per the
+  arguments above.  Would have to be reworked when
+  M6a-OAuth lands (and again when manual-save / eviction
+  surfaces want a home).
+- **Defer the surface decision and ship as a hidden
+  query-string-toggle.**  Rejected: the operational view
+  is the user-visible consumer of run #7's engine layer;
+  hiding it behind a query flag means the engine layer
+  has no production exercise path.
+- **Stand up the operational view AND add an inline chip
+  for "Backup is connected, last push 12m ago".**  Maybe
+  later.  Today: don't multiply surfaces until we know the
+  inline chip is needed.  §A10 placement A (session-digest)
+  already covers the just-in-time recall.
+
+**Tradeoffs:** Slightly larger run #8 diff (~150 LOC for
+the operational view surface + launcher + hotkey + tests)
+vs. ~30 LOC for option (a)'s inline card.  Acceptable:
+the deferred-cost of reworking (a) later exceeds today's
+extra LOC.  Also: an additional `appMode` value is one
+more state machine branch to keep covered — already-
+tested pattern; not new surface area.
+
+**Revisit if:** Real DM usage shows the operational view
+is too hidden (then promote a static "Backup status"
+glyph somewhere always-visible on the DM Aside that
+launches the view), OR the operational view grows past
+3 sections and needs its own internal navigation
+(promote to a multi-tab surface).
+
+---
+
 ## DEC-028 — M6a-FS (File System Access API) ships ahead of M6a-OAuth (2026-05-29)
 
 **Decision:** Split M6a into TWO parallel paths and ship the

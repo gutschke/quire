@@ -1,16 +1,95 @@
 # Save/Restore Program — Status
 
-**Last updated:** 2026-05-29 run #7 (DEC-028 split M6a into
-M6a-FS [NEW, ships first] + M6a-OAuth [run #6 work]; M6a-FS
-engine layer + `<backups-card>` Lit region SHIPPED with 99
-new tests; host integration deferred to run #8)
-**Active milestone:** M6a-FS — File System Access API path
-(engine layer + UI region complete; host wiring into
-`quire-app.ts` deferred to run #8 per OP-036 / OP-038)
-**Latest deploy hash:** 292258e (run #7 docs); engine + UI at 3fc0659
+**Last updated:** 2026-05-29 run #8 (DEC-029 logged — agreed
+with human's option (b); shipped DM operational view as
+discrete `appMode` surface + `<backups-card>` wired via
+`<dm-operational-view>` + `<cloud-push-consent-dialog>`;
+host event handlers for push/pull live; mock campaign 01
+ran and surfaced OP-039)
+**Active milestone:** M6a-FS-1 / playable-release-plan.md milestone 1
+(DM operational view live; flagship mock campaign passes; next
+run = session-digest chip + reconnect button + simulations 02-03)
+**Latest deploy hash:** (recorded by closing commit below)
 **Branch:** main
 
 ## Session log (most recent first)
+
+- **2026-05-29 run #8 (this run):** Human escalated M6a-FS to
+  "get this code ready for a playable release," conditional on
+  the lead engineer agreeing with option (b) over (a) from run #7
+  OP-038.  Lead engineer agreed (DEC-029); option (b) is the
+  right design.  Shipped:
+
+  - **DEC-029** logged — discrete DM operational view surface
+    aligns with `ux-strategy.md` locked principle 3; future
+    engineering-reality surfaces (eviction status, account
+    mismatch, manual save) will live in the same hidden surface.
+  - **playable-release-plan.md** (NEW) — defines the bar for
+    "ready for a playable release," milestone breakdown per
+    run, mock-campaign methodology, QA gates, and out-of-scope
+    list.  Estimated 5-6 runs to playable (this run + 4-5
+    more).
+  - **`appMode = 'dm-operational'`** added to
+    `src/ui/modes/mode-state.ts` (8 modes total).
+    `renderBody` branches into `renderDmOperationalView`.
+    Launcher chip lives on the DM Aside next to "Wrap
+    session…" / "Open session…".  Escape closes the view.
+  - **`<dm-operational-view>` Lit region** (`src/ui/regions/
+    dm-operational-view.ts`) + 7 tests.  Hosts
+    `<backups-card>` today; future surfaces compose alongside.
+    Silent-player firewall: player-side render fires a
+    "DM is checking the table's gear" placeholder (no
+    leakage of WHAT the DM is doing).  Defense-in-depth via
+    `renderForDm` short-circuit.
+  - **`<cloud-push-consent-dialog>` Lit region**
+    (`src/ui/regions/cloud-push-consent-dialog.ts`) + 11
+    tests.  Renders `ConsentDialogCopySpec` (M6a-FS today;
+    M6a-OAuth + GitHub will reuse with their own specs).
+    Escape / backdrop / cancel all resolve false.
+    Disconnected pending promise resolves false to avoid
+    hung callers.
+  - **Host event handlers in `quire-app.ts`**:
+    `handleBackupsPushRequest` (builds save via
+    `serializeSession` + `stringifySave`, calls
+    `pushCampaignToFolder`, hands result to card);
+    `handleBackupsPullRequest` (calls
+    `pullCampaignFromFolder`, parses, applies via
+    `loadFromString` so restore-firewall + auto-reclaim
+    invariants are preserved).  Both route the result back
+    to the card via `applyPushResult`.  OP-036 closed.
+  - **Lazy `FsApiCloudPush` field** with
+    `fsApiCloudPushFactory` test seam.  Production wires
+    `browserDirectoryPicker` + `browserIndexedDbFsApiHandleStorage`
+    + `browserLocalStorageConsentStorage`.
+  - **Consent dialog mounted at app root** (outside
+    `<quire-shell>` slots so the backdrop spans the full
+    viewport).  Host-owned; the operational view's
+    `requestConsent` arrow function locates the dialog via
+    `querySelector` and calls `dlg.open(DEFAULT_CONSENT_COPY_FS_API)`.
+  - **OP-036 + OP-037 + OP-038 status updates** (OP-036 +
+    OP-038 closed; OP-037 still open — session-digest chip
+    is M6a-FS-2 work).
+  - **Mock campaign 01 (flagship cross-session cloud loop)**
+    SHIPPED at `src/persistence.simulation-01-cloud-loop.
+    test.ts` (3 tests, all passing) + descriptive doc at
+    `design/save-restore-program/simulations/mock-campaign-
+    01-cross-session-cloud-loop.md`.  Drives the engine
+    layer + real `FsApiCloudPush` orchestrator + an
+    in-memory mock of the directory handle through the full
+    play → push → close → reopen → pull → continue loop.
+  - **FINDING-01 / OP-039 (NEW):** mock campaign 01 surfaced
+    a sister-of-NEW-ADV-2 firewall hole.
+    `sync-request → log.since() → sync-response` ships raw
+    events to the requester WITHOUT applying
+    `defaultRebroadcastFilter`.  Render-layer firewall AND
+    save-layer firewall both hold; the hole is the raw
+    event log on the joining player's peer (devtools-
+    visible only).  Filed P2 (class 2); not a playable-
+    release blocker; one-line fix scheduled for M6a-FS-2.
+
+  Tests: 2896 + 2 skipped = 2898 (up from 2877 baseline,
+  +21).  Typecheck clean.  Build clean (640KB main chunk).
+  No credentials in diff.
 
 - **2026-05-29 run #7 (this run):** Human raised barrier-to-
   entry bar.  Verbatim: *"a google cloud project is acceptable,
@@ -618,7 +697,12 @@ Still pending (carry-over):
 - 🟢 M6a-FS cloud-push orchestrator (`fs-api-cloud-push.ts`) — SHIPPED (run #7).
 - 🟢 M6a-FS consent ledger extension (`'fs-api'` destination) — SHIPPED (run #7).
 - 🟢 M6a-FS UI region (`<backups-card>`) — SHIPPED (run #7).
-- 🟡 M6a-FS host integration (OP-036/037/038) — NEXT (run #8).
+- 🟢 M6a-FS host integration (OP-036/OP-038) — SHIPPED (run #8).
+- 🟢 M6a-FS DM operational view surface (DEC-029) — SHIPPED (run #8).
+- 🟢 M6a-FS consent dialog component — SHIPPED (run #8).
+- 🟢 Mock campaign 01 (flagship cross-session cloud loop) — SHIPPED (run #8).
+- 🟡 OP-039 (sync-response carries DM-only events) — FILED (run #8); fix in M6a-FS-2.
+- 🟡 OP-037 — session-digest chip surface — NEXT (M6a-FS-2 / run #9).
 - 🟡 M6a-OAuth cloud-push.ts (DM-facing orchestration) — AFTER M6a-FS host wiring.
 - 🟡 M6a-OAuth per-flow UUID listener wiring (OP-020) — lands with cloud-push.ts.
 - 🟡 M6a-OAuth mid-session 401 detection (OP-022) — lands with cloud-push.ts.
@@ -670,4 +754,17 @@ Still pending (carry-over):
   `src/auth/fs-api-cloud-push.ts` (+ test file)
 - **M6a-FS Backups card UI region (run #7 NEW)** →
   `src/ui/regions/backups-card.ts` (+ test file)
+- **M6a-FS DM operational view (run #8 NEW)** →
+  `src/ui/regions/dm-operational-view.ts` (+ test file)
+- **Consent dialog component (run #8 NEW)** →
+  `src/ui/regions/cloud-push-consent-dialog.ts` (+ test file)
+- **M6a-FS host integration (run #8 NEW)** →
+  `src/quire-app.ts` (`renderDmOperationalView` +
+  `handleBackupsPushRequest` + `handleBackupsPullRequest` +
+  `requestFsApiConsent` + `getFsApiCloudPush` lazy field)
+- **Playable-release plan (run #8 NEW)** →
+  `playable-release-plan.md`
+- **Mock campaign methodology / simulations (run #8 NEW)** →
+  `simulations/` (mock-campaign-NN-<theme>.md +
+  `src/persistence.simulation-NN-*.test.ts`)
 - Fork verification → `src/persistence.publish-fork.test.ts`

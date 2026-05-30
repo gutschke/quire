@@ -1,0 +1,360 @@
+# M6a-FS Playable Release Plan
+
+**Owner:** save/restore program lead
+**Created:** 2026-05-29 (run #8)
+**Status:** in execution
+**Supersedes (in part):** the open-ended "M6a host integration" framing
+in `status.md` run #7
+
+This plan defines what "playable release" means for the
+File-System-Access-API cloud backup feature and lays out the path to
+get there. It exists because the human escalated M6a-FS from "ship the
+host integration when convenient" to "get this code ready for a
+playable release" (verbatim, run #8 mandate).
+
+## Definition of "playable release"
+
+A returning DM running Chrome / Edge / Brave / Arc / Opera on desktop
+can do this loop end-to-end without engineering help:
+
+1. Open a campaign URL.  Play a session normally.
+2. At session-close (or any time via the DM operational view), pick
+   "Connect a folder" → pick a folder inside their Drive Desktop /
+   Dropbox / OneDrive / iCloud Drive tree → ack the consent dialog.
+3. Click "Push now."  Wait ~1s.  See "Pushed N bytes to
+   `<campaign-slug>.quire-save.json`."
+4. Close the browser.
+5. Next week, open the campaign URL on the same machine.  Click
+   "Pull."  Continue playing where they left off.
+6. Optional: open on a SECOND machine where the sync tool has the
+   folder mirrored.  Connect the same folder.  Pull.  Continue.
+
+That's the spine.  Around it:
+
+### Required user-visible surfaces
+
+- **Operational view (DEC-029).**  Discrete DM-only surface, modal-
+  overlay on top of play.  Reachable from a launcher chip on the DM
+  Aside.  Hosts the `<backups-card>` element today; will host more
+  engineering-reality surfaces later.
+- **Session-digest chip (OP-037).**  Just-in-time discovery surface
+  per §A10-A.  At session-close, the DM sees a single chip:
+  "Back up tonight's session?" → opens the operational view.
+  Required for discovery; the operational view alone is too hidden.
+- **Cross-device probe (§A11 / §FS.11).**  On cold-load with empty
+  localStorage AND a connected folder, surface `[Load it] [Start
+  fresh]` — never auto-load.
+
+### Required error UX coverage
+
+Every row in `ux-strategy.md §A12` has working UI:
+
+| Error | Engine signal | UI surface |
+|---|---|---|
+| `feature-unavailable` | `getAvailabilityVerdict().available === false` | unavailable card with reason-specific copy ✓ run #7 |
+| `cancelled` (picker dismissed) | `connectFolder` → `reason: 'cancelled'` | "No folder picked" chip ✓ run #7 |
+| `permission-denied` | `requestWritePermission` → false | "Your browser blocked write access" ✓ run #7 |
+| `permission-revoked` (mid-session) | `pushCampaignToFolder` → `reason: 'permission-revoked'` | "Click Reconnect" chip ✓ run #7 (needs Reconnect button — TODO) |
+| `conflict` (external write) | `pushCampaignToFolder` → `reason: 'conflict'` | "Pull first, then push" chip ✓ run #7 |
+| `write-failure` | `pushCampaignToFolder` → `reason: 'write-failure'` | "Couldn't write to folder" chip ✓ run #7 |
+| `not-connected` | `pushCampaignToFolder` → `reason: 'not-connected'` | "Connect a folder first" chip ✓ run #7 |
+
+Open gap from the run #7 review: the "permission-revoked" chip
+needs an actual `[Reconnect]` button that calls
+`requestPermissionForCampaign`.  Adding that is part of this run.
+
+### Bug bar
+
+- **NO P0 / firewall-leaking bugs.**  Restore-firewall fuzz still
+  passes.  Save-side fuzz still passes.  M4 restore-drill still
+  passes.  Mock-campaign cross-firewall assertions pass.
+- **NO P1 / data-loss bugs in the documented happy path.**  Push
+  succeeds; pull restores byte-identical; close-and-reopen continues.
+- **P2 / UX warts may ship with a documented work-around** — but
+  must be filed in `open-problems.md` with a target-fix-by milestone.
+- **Honest copy.**  Each error message is a single primary action
+  per §A12 principle 2; no engineering jargon leaks into player-
+  visible surfaces (n/a since this surface is DM-only, but the
+  principle protects future composition).
+
+### Documentation requirements
+
+- `status.md` reflects ship state at the end of every run.
+- `maintainer-ops.md §8.5` (run #7 ship) accurately describes how to
+  flip M6a-FS live and what gets reported by users — already done.
+- `playable-release-plan.md` (this doc) tracks what's left.
+- `simulations/mock-campaign-NN-<theme>.md` — one per mock campaign
+  with findings logged into `open-problems.md`.
+- README-level user-facing copy is NOT a release blocker — the
+  feature ships as "Cloud backup (Chromium desktop preview)."
+  Final copy is M8 / TTRPG-craft.
+
+## What's IN scope for playable release
+
+- M6a-FS engine (run #7 ship) + host wiring (run #8+).
+- DM operational view as a discrete surface (DEC-029).
+- Session-digest chip (OP-037).
+- Cross-device probe on cold-load (§FS.11).
+- Consent dialog wiring (DEFAULT_CONSENT_COPY_FS_API).
+- Reconnect-on-permission-revoked button.
+- Mock-campaign simulations + their findings either fixed or
+  filed-with-target.
+
+## What's OUT of scope for playable release
+
+- M6a-OAuth (Drive REST) — separately gated on maintainer's
+  verified Google OAuth app registration.  Lands AFTER M6a-FS
+  reaches playable.
+- M6c-A / M6c-B (GitHub publish-and-fork / personal backup) —
+  separate milestone.
+- M6b (passphrase-encrypted refresh_token) — separate milestone.
+- Final TTRPG-craft copy (M8).
+- Mobile / Safari / Firefox path (covered by M6a-OAuth, not
+  M6a-FS).
+
+## Milestone breakdown (per run granularity)
+
+Run-by-run plan.  Each milestone is one engineering run; can stretch
+to two if scope grows.
+
+### M6a-FS-1 (run #8 — this run)
+
+**Scaffold the DM operational view + wire backups-card.**
+
+- DEC-029 logged ✓.
+- Playable-release-plan.md written ✓.
+- New `appMode = 'dm-operational'`.
+- Launcher chip on DM Aside.
+- `renderBody` branch for `'dm-operational'`.
+- Render `<backups-card>` inside it.
+- Wire `backups-push-request` and `backups-pull-request` host
+  handlers (OP-036 close).
+- Wire `requestConsent` callback — Lit dialog component reading
+  `DEFAULT_CONSENT_COPY_FS_API`.
+- Mock campaign 01 (the flagship cross-session save/restore loop).
+- Tests: unit on the new dialog + integration on the host event
+  handlers + a happy-path integration on the operational view
+  itself (gate, render, embed presence).
+- End-of-run docs + push.
+
+### M6a-FS-2 (run #9)
+
+**Session-digest chip + Reconnect button + simulations 02-03.**
+
+- Session-digest chip wires (OP-037 close).  When the digest
+  renders for the DM, append a "Back up tonight's session?" chip
+  that opens the operational view.
+- `<backups-card>` reconnect button when push fails with
+  `permission-revoked` — calls `requestPermissionForCampaign`,
+  re-tries push.
+- Mock campaign 02: magic-discovery-arc save / restore /
+  continue — verifies the firewall holds across the arc beats.
+- Mock campaign 03: co-DM transition mid-session — verifies the
+  operational view renders correctly on both peers; only the
+  current coordinator's push has the full DM-coord projection.
+- Findings → file or fix.
+
+### M6a-FS-3 (run #10)
+
+**Cross-device probe + simulations 04-05.**
+
+- §FS.11 probe wired into the campaign-landing render path.  On
+  empty local state + connected folder, surface `[Load it]
+  [Start fresh]`.
+- Mock campaign 04: chargen spoiler-authorship — player writes
+  "I'm the prophesied one" in their backstory; campaign has
+  prophecy as a DM-only arc.  Verify silent-player firewall
+  holds + DM sees amber chip.
+- Mock campaign 05: cloud-folder push during active play (the
+  race-condition probe).
+- Findings → file or fix.
+
+### M6a-FS-4 (run #11)
+
+**Game-mechanic edges + simulation 06.**
+
+- Mock campaign 06: edge cases — push harm to max, stress to max,
+  advancement to cap, bond limit, focus-grant limit.  Save/restore
+  round-trip at each edge.
+- Any UI escapes / typography blowouts on edge values.
+- Findings → file or fix.
+
+### M6a-FS-5 (run #12)
+
+**Network partition + simulation 07 + cleanup.**
+
+- Mock campaign 07: peer goes offline mid-session, comes back
+  with diverged log.  Merge is deterministic AND firewall-correct.
+- Final pre-release sweep: every OP filed by mock campaigns
+  triaged.
+- Status / roadmap update — flip M6a-FS state to "playable
+  released" in `status.md` health summary.
+
+### M6a-FS-6 (run #13, contingency)
+
+**Reserved for any P0/P1 finding from runs 11-12 that's load-bearing
+and needs a dedicated fix run.**
+
+Reasonable expectation: 5-6 runs to playable release.  This is a
+best-case if mock campaigns don't surface major arch reworks.
+
+## Mock-campaign methodology
+
+### Format
+
+Each mock campaign is one file in
+`design/save-restore-program/simulations/mock-campaign-NN-<theme>.md`
+with sections:
+
+```
+# Mock Campaign NN — <theme>
+
+## Scenario brief
+<3-4 sentences setting up the table, PCs, and the system slice
+this campaign exercises>
+
+## Driving approach
+<code-level simulation via in-memory transport> OR
+<Playwright e2e with N peers> OR <hybrid>
+
+## Per-turn script
+<DM action / player A action / player B action / expected system
+response — beat by beat>
+
+## Findings
+<bullets, severity-tagged.  Each finding is either:
+- FIXED inline (link to commit) — for 1-line obvious fixes
+- FILED as OP-NNN in open-problems.md — for load-bearing issues
+- ACCEPTED as a known issue — documented here + in OP file
+>
+```
+
+### Driving approaches
+
+The program lead has no sub-agent to "play" the campaign.  The lead
+walks the script:
+
+- **Code-level simulation (default for save/restore loops).**  Drive
+  the runtime via the same in-memory transport the existing
+  `restore-drill.test.ts` uses.  Each beat advances the test fixture;
+  invariants are asserted between beats; the test file IS the
+  simulation transcript.  Use this when the campaign is about
+  state-machine correctness.
+
+- **Playwright e2e (for UX/timing-sensitive paths).**  Multi-peer
+  session.  Capture screenshots at decision points.  Use when the
+  campaign exercises real rendering or real browser dialogs
+  (window.showDirectoryPicker, native consent, etc.).  Note:
+  `showDirectoryPicker` requires a user gesture; not Playwright-
+  testable — those campaigns drive the engine layer directly.
+
+- **Hybrid.**  Code-level simulation for the spine, Playwright
+  screenshot at the decision points the human will eyeball.
+
+### Coverage targets
+
+Per the run #8 mandate, the mock campaigns target the following.
+Each is at least one campaign:
+
+1. **Magic discovery arc** (accidental → realization → tax
+   progression).  Player A realizes; player B sees nothing.  Save
+   mid-arc, restore, continue.  Firewall held?  Realization moment
+   fires on the right player?
+2. **Co-DM transitions.**  Primary DM yields mid-session; what does
+   each save contain?  Player projection consistent?  Autosave from
+   the right peer?
+3. **Spoiler authorship at chargen.**  Player writes prophesied-one
+   backstory; campaign has prophecy as DM-only.  Silent-player
+   firewall holds?  DM amber chip?
+4. **Network partition.**  Peer offline mid-session, returns with
+   diverged log.  Merge deterministic + firewall-correct.
+5. **Save / restore / continue across sessions.**  The flagship
+   loop.  Tonight, close, next week, continue.
+6. **Game-mechanic edges.**  Max harm / max stress / advancement
+   cap / bond limit / focus-grant limit.  UI doesn't break at
+   edges.
+7. **Cloud-folder push during active play.**  DM pushes mid-
+   session; does autosave conflict?  Does the push race with
+   materialization?
+
+Run #8 lands campaign 5 (the flagship).  Runs #9-12 land the rest.
+
+### Bug-fix discipline (from run #8 mandate)
+
+- **1-line obvious fix that's clearly correct:** fix inline,
+  commit, push, link from the mock-campaign findings section.
+- **Load-bearing (firewall-adjacent, race condition, state
+  machine):** STOP.  File in `open-problems.md`.  Decide if it
+  blocks playable release or ships as a known issue.  Document
+  here.
+- **UX issue:** file in `open-problems.md` and stack-rank
+  against the M6a-FS user-facing milestone.
+
+## QA gates
+
+- **Unit tests:** Every new module has a test file colocated;
+  fail-fast on `npm test`.
+- **Integration tests:** Host event handlers + dialog roundtrip
+  + operational-view embed are covered.
+- **M4 restore-drill:** 12 tests must still pass on every push.
+- **Save-side firewall fuzz:** must still pass on every push.
+- **Restore-side firewall fuzz:** must still pass on every push.
+- **Simulation tests (NEW):** mock-campaign simulations that
+  are code-level drive the runtime through the script and
+  assert invariants between beats.  These live in
+  `src/persistence.simulation-*.test.ts` (one file per
+  simulation) and run with the rest of the test suite.
+- **Type-check + build:** clean on every push.
+- **Cred audit:** no credentials in diff, end-of-run.
+- **Playwright e2e:** runs separately (CI skips by design);
+  the simulation tests are the in-suite proxy.
+
+## Deploy contract
+
+- Every run ends with a push to `main`.  The Cloudflare Pages
+  deploy is the user-visible artifact.
+- The end-of-run report includes the short-SHA for the human to
+  verify against the deployed bundle.
+- Until `maintainer-ops.md §8.5` flips M6a-FS "live," the feature
+  is shipped behind no flag — it's gated only by browser support
+  (the `<backups-card>` self-renders the unavailable state on
+  Safari / Firefox / mobile).  Playable release means the
+  Chromium-desktop DM sees the live feature once they enter the
+  operational view.
+
+## Known-issue tracker
+
+Filed during this run:
+
+- (none yet — will fill as mock campaign 01 runs)
+
+## Risks
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| Operational-view appMode breaks existing modal-overlay tests | low | medium | unit tests on the new branch; full test suite on every push |
+| `<backups-card>` renders inside a Lit shadow tree that breaks the slot mechanic | low | low | the card uses `createRenderRoot: () => this` (light DOM); embeds inside the existing Aside stack without shadow boundaries |
+| Mock campaign 01 surfaces a firewall regression we didn't see in fuzz | medium | high | mock campaigns ARE the fuzz hardening; any finding is a P0 that delays release |
+| Real DM Drive Desktop sync lag → push appears successful but file isn't synced for minutes | medium | low | Quire does not own this; "the folder is the trust boundary, not Quire" framing documented |
+| Permission-revoked between sessions (browser cleared site data) | medium | medium | reconnect button in M6a-FS-2; until then, the chip copy is the surface |
+
+## Where this plan can flex
+
+- Mock campaigns can interleave with shipping work.  The
+  human's mandate said simulations DRIVE the work — if campaign
+  01 finds a P0, run #8 fixes it before the operational view
+  is wired.
+- The "session-digest chip" milestone can shuffle if a
+  simulation surfaces something more urgent.
+- M6a-FS-6 contingency run can absorb 1-2 simulation findings.
+- If mock campaigns surface NO P0/P1 findings through run 11,
+  M6a-FS-5 may collapse into M6a-FS-4 — release one run early.
+
+## Out-of-scope-but-tracked
+
+- **Once M6a-FS reaches playable:** M6a-OAuth picks up where run
+  #6 left off.  Adds the parallel "My Drive" line to the same
+  operational view (DEC-029 specified this composability).
+- **M6c / M6b** ship per the existing DEC-022 / DEC-016 ordering.
+- **M7 simulated playtest** subsumes the mock-campaign methodology;
+  the simulations files become the M7 deliverable.

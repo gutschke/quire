@@ -54,7 +54,51 @@ an [R4: <class>, <verdict>] tag). Summary:
 
 ---
 
-## OP-038 — M6a-FS host integration: wire `<backups-card>` into the DM operational view [run #7 follow-up]
+## OP-039 — `sync-request → sync-response` carries DM-only events unfiltered [mock-campaign-01 finding] [R4: class 2, P2]
+
+**Severity:** P2 (class 2 — accidental disclosure between trusted
+peers).  Not a play-time leak (filterForViewer hides DM events at
+render time AND serializeSessionForViewer strips them from the
+player's autosave), but it is a sister to NEW-ADV-2 — the same
+firewall class that DEC-010 closed for `applyEvent → forwardShareToOthers`
+is NOT closed for the `sync-request → sync-response` path.
+**Evidence:** Mock campaign 01 (run #8 — flagship cross-session
+cloud loop) initially asserted "after restore + a new player joins,
+the player's RAW event log does NOT contain `scratch-note`."  It
+failed.  Tracing: `Peer.handleMessage` `sync-request` case calls
+`this.log.since(payload.clock)` and ships the full list of events
+to the requester via a direct `transport.send(from, {kind:
+'sync-response', events})` (`src/core/peer.ts:330-338`).  No
+`rebroadcastFilter` is applied — only the `forwardShareToOthers`
+helper carries the filter.  A fresh player who joins a session
+where the DM has already done `append('scratch-note', …)` receives
+the scratch-note events into their event log via sync-response.
+**Render-layer mitigation (already in place):** `filterForViewer`
+zeros out `scratchNotes`, `pinnedNpcs`, etc. for non-coord viewers
+— so the rendered UI is clean.  `serializeSessionForViewer`
+(autosave / manual save) also strips DM-only events — so the
+player's autosave is clean.
+**Hypothesis:** The firewall hole is the player's raw event log
+on a peer that joined an active session.  In practice this is
+visible only to a developer-tools inspection of the running tab
+or a future feature that exposes the raw log.  Tolerated under the
+existing threat model (DEC-023 class 2 — civilized peers).  Fix
+would be to wrap the `sync-response` build with
+`this.rebroadcastFilter` on the responding side OR teach the
+`sync-request` handler to do `log.since(...).map(filter)`
+before responding.  Either fix is small but firewall-adjacent —
+covered by the same SSOT (PLAYER_SCOPE_STRIP_KINDS).
+**Owner:** save/restore program lead.
+**Status:** OPEN.  Filed as P2 — does NOT block playable
+release per `playable-release-plan.md` (the render firewall + the
+save firewall both hold; the hole is the raw log in tab memory).
+The fix is a one-line wrap in the `sync-request` handler.
+Schedule for M6a-FS-2 (next run) alongside the session-digest
+chip work — same surface; same review attention.
+
+---
+
+## OP-038 — M6a-FS host integration: wire `<backups-card>` into the DM operational view [run #7 follow-up] [RESOLVED 2026-05-29 run #8 — option (b) shipped per DEC-029]
 
 **Severity:** P1 for shipping M6a-FS end-to-end.
 **Evidence:** Run #7 shipped the engine layer (`fs-api-*.ts`) +
@@ -96,7 +140,7 @@ work.
 **Owner:** save/restore program lead, next run.
 **Status:** OPEN.
 
-## OP-036 — M6a-FS push event handler in host [run #7 follow-up]
+## OP-036 — M6a-FS push event handler in host [run #7 follow-up] [RESOLVED 2026-05-29 run #8 — `handleBackupsPushRequest` + `handleBackupsPullRequest` shipped in `quire-app.ts`]
 
 **Severity:** P1 for shipping M6a-FS end-to-end.
 **Evidence:** `<backups-card>` dispatches `backups-push-request`

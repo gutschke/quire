@@ -116,13 +116,43 @@ Engine layer SHIPPED 2026-05-29 run #7:
 
 UI layer SHIPPED partially 2026-05-29 run #7:
 - ✅ `src/ui/regions/backups-card.ts` (19 tests).
-- 🟡 Host integration into `quire-app.ts` (DM-only
-  operational view section) — DEFERRED to run #8.  The
-  region is a self-contained Lit element with a narrow
-  props surface; integration is a separate concern.
+
+UI host integration SHIPPED 2026-05-29 run #8 (DEC-029):
+- ✅ `appMode = 'dm-operational'` added.
+- ✅ `<dm-operational-view>` Lit region (7 tests) hosts
+  `<backups-card>`; player-side fallback "DM is checking the
+  table's gear" preserves silent-player firewall.
+- ✅ `<cloud-push-consent-dialog>` Lit region (11 tests)
+  renders `ConsentDialogCopySpec` with Esc/backdrop/cancel
+  resolving false.
+- ✅ Host event handlers `handleBackupsPushRequest` +
+  `handleBackupsPullRequest` in `quire-app.ts` close
+  OP-036 + OP-038.
+- ✅ "Operational view…" launcher chip on the DM Aside.
 - 🟡 Session-digest chip surface (§A10 placement A) —
-  DEFERRED to run #8.  Lands as a follow-up after the
-  operational-view section is wired.
+  scheduled for M6a-FS-2 (next run) per playable-
+  release-plan.md.
+
+Per `playable-release-plan.md` (run #8 NEW), M6a-FS work
+is now broken into the following sub-milestones leading to
+playable release:
+
+- ✅ **M6a-FS-1 (run #8)** — DM operational view +
+  consent dialog + host handlers + flagship mock campaign
+  01.  SHIPPED.
+- 🟡 **M6a-FS-2 (run #9)** — session-digest chip
+  (OP-037) + reconnect-on-permission-revoked button +
+  fix OP-039 (sync-response firewall) + mock campaigns
+  02 (magic discovery arc) + 03 (co-DM transitions).
+- 🟡 **M6a-FS-3 (run #10)** — cross-device probe
+  (§FS.11) + mock campaigns 04 (chargen spoiler
+  authorship) + 05 (cloud push during active play).
+- 🟡 **M6a-FS-4 (run #11)** — game-mechanic edges +
+  mock campaign 06.
+- 🟡 **M6a-FS-5 (run #12)** — network partition +
+  mock campaign 07 + final pre-release sweep.
+- 🟡 **M6a-FS-6 (run #13, contingency)** — reserved for
+  any P0/P1 finding that needs a dedicated fix run.
 
 Browser support: Chromium desktop only (Chrome, Edge, Opera,
 Brave, Arc, …).  Safari / Firefox / mobile fall through to the
