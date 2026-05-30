@@ -3,7 +3,7 @@
 **Last updated:** 2026-05-29 run #4 (DEC-016..023 + Phase A
 GitHub-fork verification + M6a ship-gates OP-016 + OP-017 closed)
 **Active milestone:** M6a — Drive `drive.appdata` PKCE + ephemeral access_token (2 of the 12 ship-gates remaining closed this run; 10 still open before code lands)
-**Latest deploy hash:** (pending push this turn — see commit hash at end)
+**Latest deploy hash:** a5de364 (docs), preceding a78d109 (code)
 **Branch:** main
 
 ## Session log (most recent first)
