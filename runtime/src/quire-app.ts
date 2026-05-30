@@ -162,6 +162,7 @@ import {
   serializeSessionForViewer,
   stringifySave,
   parseSaveDocument,
+  projectSaveForViewer,
   type SaveDocument,
   type LoadResult
 } from './persistence';
@@ -6830,6 +6831,18 @@ export class QuireApp extends LitElement {
    * Parse + apply a save document from a JSON string.  Returns the
    * LoadResult on success or null on parse failure (with the error
    * surfaced in loadStatus).
+   *
+   * NEW-ADV-1 (2026-05-29 save-restore program, independent
+   * adversarial review): the LOADING peer's coord status determines
+   * the projection.  A host load auto-reclaims (see
+   * `autoReclaimAfterLoad`), so a host can safely accept the full
+   * DM-coord save — they ARE the coord on the very next event.
+   * A guest load does NOT auto-reclaim; they're going to materialize
+   * as a player.  Pre-fix, the raw DM-only events from a coord
+   * save landed verbatim in the loading guest's event log, then
+   * propagated via the M3 `applyEvent` rebroadcast (DEC-005) to
+   * every connected peer.  Closes the firewall against a returning
+   * ex-DM who pulls their cloud save while joined as a player.
    */
   loadFromString(json: string): LoadResult | null {
     const parsed = parseSaveDocument(json);
@@ -6849,11 +6862,26 @@ export class QuireApp extends LitElement {
       this.loadStatus = { kind: 'error', message: campaignMismatch };
       return null;
     }
-    const { applied, unknownKinds } = this.applyLoadedEvents(parsed.doc.events);
+    // NEW-ADV-1: project the save through the LOADING peer's
+    // viewer-scope filter before applying.  Host mode = will reclaim
+    // coord on next tick, so the full save is safe; guest mode =
+    // staying a player, must strip DM-only events.  The projection
+    // is a NO-OP for host loads, preserving today's byte-identical
+    // roundtrip property for the DM's own save → load workflow.
+    const viewerIsCoord = this.sessionView.mode === 'host';
+    const projected = projectSaveForViewer(parsed.doc, viewerIsCoord);
+    const { applied, unknownKinds } = this.applyLoadedEvents(projected.events);
     this.autoReclaimAfterLoad();
     const result: LoadResult = {
       applied,
-      duplicates: parsed.doc.events.length - applied,
+      // "everything in the projected save that didn't newly apply" =
+      // duplicate (already had it).  NEW-ADV-1 projection may drop
+      // DM-only events for a guest loader; the dropped events were
+      // never destined for the guest's log so they shouldn't count
+      // as duplicates either.  Subtract `applied` from the
+      // PROJECTED count, not the raw save count, so the banner
+      // stays honest.
+      duplicates: projected.events.length - applied,
       rejected: 0,
       unknownKinds,
       errors: []

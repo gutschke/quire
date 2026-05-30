@@ -19,6 +19,7 @@ import type { QuireEvent } from './core/event-log';
 import type { Transport, Unsubscribe } from './core/transport';
 import type { SessionState as SharedState } from './core/state';
 import { emptyState, filterForViewer, KNOWN_EVENT_KINDS } from './core/state';
+import { defaultRebroadcastFilter } from './persistence';
 
 export type SessionMode = 'solo' | 'host' | 'guest';
 export type SessionStatus = 'idle' | 'connecting' | 'active' | 'error';
@@ -412,7 +413,17 @@ export class SessionController {
 
   private attachPeer(transport: Transport): void {
     this.transport = transport;
-    this.peer = new Peer(transport.peerId, transport);
+    // NEW-ADV-2 (2026-05-29 save-restore program): wire the
+    // rebroadcast firewall filter so any event we forward to other
+    // peers — via applyEvent propagation OR via hub-forward sync-
+    // response — is first classified through the SAME
+    // PER_KIND_SCRUBBERS registry that the save-side projection
+    // uses.  Closes the leak path where a peer who pulled a
+    // DM-coord cloud save (NEW-ADV-1) or otherwise holds DM-only
+    // events in its log relays them to other peers.
+    this.peer = new Peer(transport.peerId, transport, {
+      rebroadcastFilter: defaultRebroadcastFilter
+    });
     this.unsubscribes.push(this.peer.onStateChange(() => this.notify()));
     this.unsubscribes.push(transport.onPeerConnect(() => this.notify()));
     this.unsubscribes.push(

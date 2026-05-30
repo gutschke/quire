@@ -57,10 +57,30 @@ function isProtocolMessage(value: unknown): value is ProtocolMessage {
 
 export type StateChangeHandler = (state: SessionState) => void;
 
+/**
+ * NEW-ADV-2 (2026-05-29 save-restore program, independent
+ * adversarial review): rebroadcast firewall filter.  Returns the
+ * (possibly scrubbed) event to forward, or `null` to drop entirely.
+ * See `persistence.ts:defaultRebroadcastFilter` for the production
+ * wiring and `defaultRebroadcastFilter` doc for the rationale.
+ *
+ * Injected (rather than imported) so the `core/` layer doesn't
+ * depend on `persistence.ts`.  Default in this file is identity
+ * (preserves prior behavior for tests that build a bare Peer
+ * without a wired-up controller — the default is unsafe in
+ * production but matches the pre-NEW-ADV-2 state so existing tests
+ * that don't care about DM-only events keep passing).  The
+ * session-controller / quire-app wiring MUST pass a real filter.
+ */
+export type RebroadcastFilter = (event: QuireEvent) => QuireEvent | null;
+
+const IDENTITY_REBROADCAST_FILTER: RebroadcastFilter = (event) => event;
+
 export class Peer {
   private readonly log: EventLog;
   private readonly stateListeners = new Set<StateChangeHandler>();
   private readonly unsubscribes: Unsubscribe[] = [];
+  private readonly rebroadcastFilter: RebroadcastFilter;
   /**
    * #412 (E-PERF): memoize the materialize fold, keyed on the log
    * revision.  `state()` is called redundantly within a single logical
@@ -75,9 +95,12 @@ export class Peer {
 
   constructor(
     public readonly peerId: PeerId,
-    private readonly transport: Transport
+    private readonly transport: Transport,
+    options: { rebroadcastFilter?: RebroadcastFilter } = {}
   ) {
     this.log = new EventLog(peerId);
+    this.rebroadcastFilter =
+      options.rebroadcastFilter ?? IDENTITY_REBROADCAST_FILTER;
 
     this.unsubscribes.push(
       transport.onMessage((from, payload) => this.handleMessage(from, payload))
@@ -226,15 +249,39 @@ export class Peer {
    * — required in hub topologies (PeerJS) where the originating
    * guest's broadcast only reached us.  See peer.hub-forward.test.ts
    * for the F-MAJOR finding that prompted this.
+   *
+   * NEW-ADV-2 (2026-05-29 save-restore program): every forwarded
+   * event passes through the rebroadcast firewall filter first.
+   * DM-only kinds are dropped (a peer holding restored DM material
+   * MUST NOT relay it).  Player-visible-with-DM-subfields events
+   * are field-scrubbed via the same `PER_KIND_SCRUBBERS` registry
+   * the save-side filter uses.  This is defense in depth: today's
+   * `share` authenticity check + save-side projection mean such
+   * events shouldn't be in our log unless we loaded them from a
+   * coord save while in a non-coord role; this filter is the
+   * second line of defense at the gossip boundary.
+   *
+   * Why filter on EVERY hub-forward (not just applyEvent-originated):
+   * the same DM-only-event-in-our-log condition can be reached via
+   * a peer who joined mid-handoff with a buggy or hostile save.
+   * We don't trust our own log to be free of DM-only events when
+   * deciding what to send to others.  The author who legitimately
+   * holds DM-only events still broadcasts them via `share`
+   * (`transport.send('broadcast', ...)`) at original-author time,
+   * which reaches every peer directly — hub-forward is for
+   * relaying events authored by other peers, where this filter
+   * has zero legitimate cost.
    */
   private forwardShareToOthers(originalSender: PeerId, event: QuireEvent): void {
     const others = this.transport
       .connectedPeers()
       .filter((p) => p !== originalSender);
     if (others.length === 0) return;
+    const filtered = this.rebroadcastFilter(event);
+    if (filtered === null) return;
     const msg: SyncResponseMessage = {
       kind: 'sync-response',
-      events: [event]
+      events: [filtered]
     };
     for (const other of others) {
       this.transport.send(other, msg);

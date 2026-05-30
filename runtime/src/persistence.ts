@@ -748,6 +748,116 @@ export function serializeSessionForViewer(
 }
 
 /**
+ * NEW-ADV-1 (2026-05-29 save-restore program, independent
+ * adversarial review): the restore-as-player path.
+ *
+ * `serializeSessionForViewer` answers "what does THIS viewer's save
+ * look like?" at SAVE TIME, keyed on who's currently coord.  The
+ * symmetric question — "I'm loading someone else's save; what's
+ * safe for ME to see?" — was unmodeled before the independent
+ * review.  The scenario: a DM saves their coord-projection to Drive
+ * appdata, then comes back next week as a PLAYER in someone else's
+ * session, then clicks "Pull from my Drive."  Pre-fix, the raw
+ * DM-only events from the save land in the loading peer's
+ * event log AND get rebroadcast via the M3 `applyEvent` propagation
+ * (DEC-005) to every connected peer — same accidental-disclosure
+ * class as #392/#393/#395 + the M1 map-blob leak.
+ *
+ * `projectSaveForViewer` runs the SAME viewer-scope filter that
+ * `serializeSessionForViewer` applies at save time, but on the way
+ * IN rather than out.  Callers pass `viewerIsCoord = true` when the
+ * loading peer is about to be (or is already) the session's
+ * coordinator (the host-load auto-reclaim path); pass `false` when
+ * the loader is a guest who will materialize as a player.
+ *
+ * When `viewerIsCoord` is true, returns the save unchanged.  When
+ * false, returns a NEW SaveDocument whose `events` have been
+ * scrubbed identically to a player's autosave: DM-only kinds
+ * dropped, partially-DM-only payloads field-stripped via the
+ * shared `PER_KIND_SCRUBBERS` registry.
+ *
+ * Side note on `savedByPeerId`: the field records who AUTHORED the
+ * save (not who's loading it).  We keep it intact so audit / debug
+ * tooling can still say "this save was authored by peer X."  The
+ * sensitive payloads have already been removed by the time it
+ * reaches the loading peer's log.
+ */
+export function projectSaveForViewer(
+  doc: SaveDocument,
+  viewerIsCoord: boolean
+): SaveDocument {
+  if (viewerIsCoord) return doc;
+  const ctx: ScrubContext = {
+    revealedMapBlobs: computeRevealedMapBlobs(doc.events)
+  };
+  const filtered: QuireEvent[] = [];
+  for (const e of doc.events) {
+    if (PLAYER_SCOPE_STRIP_KINDS.has(e.kind)) continue;
+    const scrubbed = scrubEventForPlayer(e, ctx);
+    if (scrubbed !== null) filtered.push(scrubbed);
+  }
+  return { ...doc, events: filtered };
+}
+
+/**
+ * NEW-ADV-2 (2026-05-29 save-restore program, independent
+ * adversarial review): the rebroadcast-after-restore path.
+ *
+ * DEC-005 made `Peer.applyEvent({propagate:true})` forward newly-
+ * applied events to connected peers via the sync-response gossip
+ * path.  The defense it landed (the R2.1 impersonation cross-check
+ * is exempt for sync-response) is correct for the M3 broadcast-
+ * after-restore goal — but it is structurally a firewall hole:
+ * if the loading peer's event log contains DM-only events (because
+ * the load was projected as full-coord, or because a future bug
+ * leaves a non-coord peer holding DM material), the rebroadcast
+ * pushes those events to every connected peer.
+ *
+ * `defaultRebroadcastFilter` runs at the seam between `applyEvent`
+ * and `forwardShareToOthers`: every event the peer is about to
+ * broadcast to others is first classified.  DM-only-kind events
+ * are DROPPED (return null).  Player-visible-with-DM-subfields
+ * events are scrubbed via `PER_KIND_SCRUBBERS`.  This is the same
+ * registry the save-side filter uses; the SSOT keeps the
+ * classification load-bearing across both surfaces.
+ *
+ * The filter takes only the event itself (not a viewer context)
+ * because rebroadcast is many-to-many.  Send the strictest
+ * projection that's safe for any potential receiver.  Coord-to-
+ * coord co-DM sync of DM-only events still works through `append`
+ * (which uses the `share` envelope subject to the R2.1
+ * impersonation defense; only the AUTHOR can author).  `applyEvent`
+ * is for restore + relay, not for fanning out new DM material.
+ *
+ * Note on map-blob payloads: at rebroadcast time we don't have the
+ * full log context the save-time `serializeSessionForViewer` uses
+ * to compute the reveal-mask.  Without that, the map-blob scrubber
+ * conservatively assumes the blob is UNREVEALED (drops the label).
+ * The receiving peer will, on its own log, see the matching
+ * `map-blob-reveal` event later in causal order and re-materialize
+ * the player-visible state correctly — but the label text itself
+ * is owner-side.  Concrete cost: a player who receives a
+ * rebroadcast `map-blob-add` for a not-yet-revealed blob will see
+ * it appear on their map without a label until the reveal fires.
+ * Acceptable; the alternative (sending the label and trusting the
+ * receiver to strip on render) is the exact class of regression
+ * NEW-ADV-2 catches.
+ */
+const REBROADCAST_SCRUB_CONTEXT: ScrubContext = {
+  // Empty reveal-mask = treat every map-blob as unrevealed.  See
+  // the function doc above for why this is the safe conservative
+  // choice at rebroadcast time.
+  revealedMapBlobs: new Set<string>()
+};
+
+export function defaultRebroadcastFilter(
+  event: QuireEvent
+): QuireEvent | null {
+  if (PLAYER_SCOPE_STRIP_KINDS.has(event.kind)) return null;
+  return scrubEventForPlayer(event, REBROADCAST_SCRUB_CONTEXT);
+}
+
+/**
  * Produce a deterministic JSON string for the save document.  Keys
  * sorted alphabetically at every depth; events ordered by causal
  * sort (which they already are if they came from EventLog.events()).
