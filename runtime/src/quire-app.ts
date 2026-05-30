@@ -1852,29 +1852,36 @@ export class QuireApp extends LitElement {
              ai-panel (Aside-bottom per ui.md L196). -->
         <quire-aside slot="aside">${dmAside}${this.renderRosterPanel()}${this.renderChatPanel()}${this.renderAiPanel()}${this.renderChatSpoilerLintModal()}</quire-aside>
         <quire-dock slot="dock">${this.renderDmScratch()}${this.renderVersionBadge()}</quire-dock>
-        <!-- Wave C1 (2026-05-26): hotkey overlay.  Self-contained;
-             owns the "?" global keydown listener.  No prop wiring
-             needed.  Topbar "?" chip dispatches a custom event the
-             overlay listens for. -->
-        <quire-help-overlay></quire-help-overlay>
-        <!-- DEC-029 (run #8): host-owned cloud-push consent dialog.
-             Lazy-rendered: shows nothing until open(spec) is
-             called.  Shared by M6a-FS today; M6a-OAuth + GitHub
-             paths will reuse it with their own copy specs.  Lives
-             OUTSIDE quire-shell slots so the modal backdrop spans
-             the full viewport. -->
-        <cloud-push-consent-dialog
-          data-testid="cloud-push-consent-dialog-root"
-        ></cloud-push-consent-dialog>
-        <!-- Run #17 (Start fresh P0 fix): two-step confirmation
-             modal for "Start fresh."  Host-owned; mounted at root
-             so the modal backdrop spans the viewport.  Gated by
-             the same DM-only conditional as the prompts that
-             invoke it (resume-prompt + cross-device probe). -->
-        <start-fresh-confirm-dialog
-          data-testid="start-fresh-confirm-dialog-root"
-        ></start-fresh-confirm-dialog>
       </quire-shell>
+      <!-- Overlays / confirm-dialogs MUST be siblings of <quire-shell>,
+           not children.  <quire-shell> only declares named slots
+           (topbar/rail/stage/aside/dock); unslotted light-DOM children
+           are present in the DOM tree but the browser does NOT lay
+           them out (the trace shows them with rect 0x0).  As children
+           of <quire-shell>, the cloud-consent / start-fresh / pc-
+           revoke confirm-dialogs all rendered invisibly even though
+           their open() succeeded.  As siblings (here), they live
+           directly in QuireApp's shadow root where position: fixed
+           escapes to the viewport correctly. -->
+      <!-- Wave C1 (2026-05-26): hotkey overlay.  Self-contained;
+           owns the "?" global keydown listener.  No prop wiring
+           needed.  Topbar "?" chip dispatches a custom event the
+           overlay listens for. -->
+      <quire-help-overlay></quire-help-overlay>
+      <!-- DEC-029 (run #8): host-owned cloud-push consent dialog.
+           Lazy-rendered: shows nothing until open(spec) is
+           called.  Shared by M6a-FS today; M6a-OAuth + GitHub
+           paths will reuse it with their own copy specs. -->
+      <cloud-push-consent-dialog
+        data-testid="cloud-push-consent-dialog-root"
+      ></cloud-push-consent-dialog>
+      <!-- Run #17 (Start fresh P0 fix): two-step confirmation
+           modal for "Start fresh."  Gated by the same DM-only
+           conditional as the prompts that invoke it (resume-
+           prompt + cross-device probe). -->
+      <start-fresh-confirm-dialog
+        data-testid="start-fresh-confirm-dialog-root"
+      ></start-fresh-confirm-dialog>
     `;
   }
 
