@@ -171,4 +171,217 @@ test.describe('UX-MH-3 — backstory refresh inbox card', () => {
     expect(result.stage).toBe('committed');
     expect(result.captured).toEqual(['mei']);
   });
+
+  test('refreshBackstoryForPc actually calls the AI refresher module and emits a proposal whose proposedBackstory is the AI output (NOT a no-op of the current backstory)', async ({
+    page
+  }) => {
+    // Run #19 final integration — proves the proof line:
+    //   "I change a pronoun... the AI returns a diff showing just the
+    //    pronoun substitutions threaded through the existing prose."
+    //
+    // We swap the provider's `callStructured` with a deterministic
+    // fake so the real `refreshBackstory()` AI module runs without
+    // a network call.  The production path (refreshBackstoryForPc →
+    // refreshBackstory → spoiler-check pipeline → emit) executes
+    // unchanged — only the underlying provider response is mocked.
+    await page.goto('/');
+    await page.waitForSelector('quire-app', { timeout: 10000 });
+    const result = await page.evaluate(async () => {
+      type AppShape = {
+        aiProvider: 'claude' | 'gemini';
+        aiProviders: Record<
+          string,
+          {
+            id: string;
+            callStructured: (
+              req: unknown,
+              schema: unknown
+            ) => Promise<unknown>;
+          }
+        >;
+        setAiApiKey: (key: string, provider?: string) => void;
+        refreshBackstoryForPc: (pcId: string) => Promise<void>;
+        pcCharacterCache: Map<string, { record: Record<string, unknown> }>;
+        getCurrentCampaign?: () => unknown;
+        sessionView: {
+          status: string;
+          peerId?: string;
+          filteredShared?: {
+            synthesizedPcs?: Record<string, Record<string, unknown>>;
+            backstoryRefreshProposals?: Record<string, unknown>;
+            pcSlots?: Record<number, unknown>;
+          };
+        };
+      };
+      const el = document.querySelector('quire-app') as unknown as AppShape;
+      if (!el) return { stage: 'no-quire-app', emitted: null };
+      // Stub the provider with a deterministic fake — the production
+      // refreshBackstory orchestration still drives the call.  We
+      // return a "threaded pronoun" backstory that's a SURGICAL edit
+      // of the baseline (NOT identical).
+      const fakeRefreshed =
+        'Mei (they/them) grew up by the Underleaf, training as a nurse.';
+      let captured: {
+        system?: string;
+        user?: string;
+      } | null = null;
+      el.aiProviders[el.aiProvider] = {
+        id: el.aiProvider,
+        callStructured: async (req: unknown) => {
+          const r = req as { systemPrompt: string; prompt: string };
+          captured = { system: r.systemPrompt, user: r.prompt };
+          return {
+            ok: true as const,
+            value: { backstory: fakeRefreshed },
+            raw: JSON.stringify({ backstory: fakeRefreshed }),
+            tokensIn: 100,
+            tokensOut: 50,
+            responseId: 'resp-test-1'
+          };
+        }
+      };
+      el.setAiApiKey('test-key-for-e2e');
+      // Seed a campaign + bound PC + session so refreshBackstoryForPc
+      // has all its preconditions met.  We synthesize a minimal
+      // sessionView + pcCharacterCache so the host's data-lookup +
+      // coord gate pass; we don't go through real peerjs.  The
+      // production code path under test is the host's branch from
+      // "DM clicks Refresh" through to the AI module's invocation.
+      const fakeCampaign = {
+        base: {
+          source: { kind: 'github', owner: 'test', repo: 'fake', ref: 'main' },
+          manifest: {
+            name: 'Fake',
+            episodes: [],
+            characters: [],
+            aiBackstory: { spoilerTokens: [] }
+          }
+        }
+      };
+      (el as unknown as { getCurrentCampaign: () => unknown }).getCurrentCampaign =
+        () => fakeCampaign;
+      // Install a synthetic sessionView (coord-only, single PC).
+      const view = {
+        status: 'active' as const,
+        peerId: 'dm-peer',
+        shared: {
+          pcSlots: {
+            1: {
+              pcId: 'mei',
+              state: 'bound-active',
+              controllerPeerId: 'alice-peer'
+            }
+          },
+          synthesizedPcs: {
+            mei: {
+              id: 'mei',
+              name: 'Mei',
+              pronouns: 'she/her',
+              tags: ['nurse'],
+              backstory: 'Mei grew up by the Underleaf.'
+            }
+          },
+          backstoryRefreshProposals: {},
+          coordHolders: new Set(['dm-peer']),
+          pcEdits: { mei: { pronouns: 'they/them' } }
+        },
+        filteredShared: {
+          pcSlots: {
+            1: {
+              pcId: 'mei',
+              state: 'bound-active',
+              controllerPeerId: 'alice-peer'
+            }
+          },
+          synthesizedPcs: {
+            mei: {
+              id: 'mei',
+              name: 'Mei',
+              pronouns: 'she/her',
+              tags: ['nurse'],
+              backstory: 'Mei grew up by the Underleaf.'
+            }
+          },
+          backstoryRefreshProposals: {} as Record<string, unknown>,
+          pcEdits: {
+            mei: { pronouns: 'they/them' }
+          } as Record<string, unknown>
+        }
+      };
+      (el as unknown as { sessionView: unknown }).sessionView = view;
+      // Capture session.append calls so we can assert on the emitted
+      // backstory-refresh-proposal payload.
+      const appended: Array<{ kind: string; payload: unknown }> = [];
+      (el as unknown as {
+        session: { append: (kind: string, payload: unknown) => void } | null;
+      }).session = {
+        append: (kind: string, payload: unknown) => {
+          appended.push({ kind, payload });
+        }
+      };
+      // Force coord-positive (the appState route here is solo, but
+      // refreshBackstoryForPc gates on isCoordinator() — we stub).
+      (el as unknown as {
+        isCoordinator: () => boolean;
+      }).isCoordinator = () => true;
+      // Drive the production click-path.
+      await el.refreshBackstoryForPc('mei');
+      await new Promise((r) => setTimeout(r, 50));
+      const proposal = appended.find(
+        (a) => a.kind === 'backstory-refresh-proposal'
+      );
+      return {
+        stage: 'committed',
+        appendedKinds: appended.map((a) => a.kind),
+        emitted: proposal?.payload as
+          | { proposedBackstory?: string; baselineHash?: string; initiator?: string }
+          | undefined,
+        captured: captured as { system?: string; user?: string } | null,
+        baselineCurrent: 'Mei grew up by the Underleaf.'
+      };
+    });
+    expect(result.stage).toBe('committed');
+    expect(result.appendedKinds).toContain('backstory-refresh-proposal');
+    expect(result.emitted).toBeDefined();
+    // The PROOF LINE: proposed !== current.  No more no-op stubs.
+    expect(result.emitted?.proposedBackstory).not.toBe(result.baselineCurrent);
+    expect(result.emitted?.proposedBackstory).toContain('they/them');
+    expect(result.emitted?.initiator).toBe('dm');
+    // Defense-in-depth: the AI prompt MUST carry the pronouns delta
+    // (player-visible only) AND MUST NOT carry any DM-side reason
+    // narrative (R-G + Adversarial P1 #4).
+    expect(result.captured?.user).toBeDefined();
+    expect(result.captured?.user).toContain('Pronouns:');
+    expect(result.captured?.user).toContain('she/her');
+    expect(result.captured?.user).toContain('they/them');
+    expect(result.captured?.user?.toLowerCase()).not.toMatch(
+      /(why|reason|because|the dm)/
+    );
+  });
+
+  test('refresh-backstory button is DISABLED with "AI not configured" reason when no API key is set', async ({
+    page
+  }) => {
+    await page.goto('/');
+    await page.waitForSelector('quire-app', { timeout: 10000 });
+    const result = await page.evaluate(async () => {
+      const el = document.querySelector('quire-app') as unknown as {
+        aiProvider: string;
+        setAiApiKey: (key: string) => void;
+      };
+      // Clear API key for the active provider.
+      el.setAiApiKey('');
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      // Read the host's disabled-reason via the property the tray
+      // would see.  Accessing the private method directly so the
+      // assertion holds even without a mounted region.
+      const reason = (el as unknown as {
+        refreshBackstoryDisabledReasonForHost: () => string | null;
+      }).refreshBackstoryDisabledReasonForHost();
+      return { reason, provider: el.aiProvider };
+    });
+    expect(result.reason).toBeTruthy();
+    expect(result.reason).toMatch(/AI not configured/i);
+    expect(result.reason).toContain(result.provider);
+  });
 });

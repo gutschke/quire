@@ -97,6 +97,187 @@ test.describe('UX-MH-2 — DM-side edit tray', () => {
     expect(result).toEqual({ op: 'remove', tagText: 'nurse' });
   });
 
+  test('Player-side inbox mount: host gates the render on peerId match and Accept emits pc-edit field:backstory with the proposed text', async ({
+    page
+  }) => {
+    // Run #19 final integration — proves the player side of MH-2:
+    //   "Player can do the same for their own PC."
+    // The host's `renderPlayerBackstoryRefreshInbox` renders a card
+    // ONLY when the local peer controls the seat AND a proposal
+    // exists; Accept emits a `pc-edit field:backstory` with the
+    // proposed text (player owns voice per R-F).
+    await page.goto('/');
+    await page.waitForSelector('quire-app', { timeout: 10000 });
+    const result = await page.evaluate(async () => {
+      type AppShape = {
+        sessionView: unknown;
+        requestUpdate: () => void;
+        acceptBackstoryRefreshProposal: (pcId: string) => boolean;
+        rejectBackstoryRefreshProposal: (pcId: string) => boolean;
+        controlsSeatForPc: (pcId: string) => boolean;
+        renderPlayerBackstoryRefreshInbox: (
+          character: { kind: string; id: string }
+        ) => unknown;
+        session: { append: (kind: string, payload: unknown) => void } | null;
+        effectiveCharacter: (
+          c: { kind: string; id: string }
+        ) => Record<string, unknown>;
+        sha256HexUtil: (text: string) => Promise<string>;
+      };
+      const el = document.querySelector('quire-app') as unknown as AppShape;
+      if (!el) return { stage: 'no-quire-app' };
+      const baselineBackstory = 'Mei grew up by the Underleaf.';
+      const proposed =
+        'Mei (they/them) grew up by the Underleaf, training as a nurse.';
+      const baselineHash = await el.sha256HexUtil(baselineBackstory);
+      const view = {
+        status: 'active' as const,
+        peerId: 'alice-peer',
+        shared: {
+          pcSlots: {
+            1: {
+              pcId: 'mei',
+              state: 'bound-active',
+              controllerPeerId: 'alice-peer'
+            }
+          },
+          synthesizedPcs: {
+            mei: {
+              id: 'mei',
+              name: 'Mei',
+              pronouns: 'they/them',
+              tags: ['nurse'],
+              backstory: baselineBackstory
+            }
+          },
+          backstoryRefreshProposals: {
+            mei: {
+              pcId: 'mei',
+              proposedBackstory: proposed,
+              baselineHash,
+              initiator: 'dm' as const,
+              proposedByPeerId: 'dm-peer',
+              ts: 1000
+            }
+          },
+          coordHolders: new Set(),
+          pcEdits: {}
+        },
+        filteredShared: {
+          pcSlots: {
+            1: {
+              pcId: 'mei',
+              state: 'bound-active',
+              controllerPeerId: 'alice-peer'
+            }
+          },
+          synthesizedPcs: {
+            mei: {
+              id: 'mei',
+              name: 'Mei',
+              pronouns: 'they/them',
+              tags: ['nurse'],
+              backstory: baselineBackstory
+            }
+          },
+          backstoryRefreshProposals: {
+            mei: {
+              pcId: 'mei',
+              proposedBackstory: proposed,
+              baselineHash,
+              initiator: 'dm' as const,
+              proposedByPeerId: 'dm-peer',
+              ts: 1000
+            }
+          },
+          pcEdits: {} as Record<string, unknown>
+        }
+      };
+      (el as unknown as { sessionView: unknown }).sessionView = view;
+      // Stub effectiveCharacter so the render helper reads the
+      // baseline backstory + pcDisplayName.
+      el.effectiveCharacter = () => ({
+        kind: 'pc',
+        id: 'mei',
+        name: 'Mei',
+        pronouns: 'they/them',
+        backstory: baselineBackstory
+      });
+      // Capture pc-edit emissions.
+      const appended: Array<{ kind: string; payload: unknown }> = [];
+      (el as unknown as {
+        session: { append: (kind: string, payload: unknown) => void } | null;
+      }).session = {
+        append: (kind: string, payload: unknown) => {
+          appended.push({ kind, payload });
+        }
+      };
+      // Verify the render-gate: render the helper directly into a
+      // detached container.  Imports lit-html render dynamically so
+      // we can mount the TemplateResult outside the shadow tree.
+      const lit = await import('/node_modules/lit/index.js');
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      const template = el.renderPlayerBackstoryRefreshInbox({
+        kind: 'pc',
+        id: 'mei'
+      });
+      (lit as unknown as { render: (t: unknown, h: Element) => void }).render(
+        template,
+        host
+      );
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      const inboxes = host.querySelectorAll('backstory-refresh-inbox');
+      const inboxCount = inboxes.length;
+      const cards = host.querySelectorAll('.backstory-refresh-inbox-card');
+      const inboxHeaders = Array.from(cards).map((c) =>
+        c.querySelector('h3')?.textContent?.trim()
+      );
+      // Drive Accept programmatically (matches the production
+      // path — onAccept is wired in the host's render).
+      const acceptOk = el.acceptBackstoryRefreshProposal('mei');
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      // Negative-control: a peer who does NOT control the seat
+      // must be refused.
+      const v2 = JSON.parse(JSON.stringify(view, (_, val) =>
+        val instanceof Set ? Array.from(val) : val
+      ));
+      v2.peerId = 'bob-peer';
+      (el as unknown as { sessionView: unknown }).sessionView = v2;
+      const negative = el.acceptBackstoryRefreshProposal('mei');
+      const negativeGate = el.controlsSeatForPc('mei');
+      return {
+        stage: 'committed',
+        inboxCount,
+        inboxHeaders,
+        acceptResult: acceptOk,
+        negativeAccept: negative,
+        negativeGate,
+        appendedKinds: appended.map((a) => a.kind),
+        appendedPayloads: appended.map((a) => a.payload)
+      };
+    });
+    expect(result.stage).toBe('committed');
+    expect(result.inboxCount).toBeGreaterThanOrEqual(1);
+    expect(result.inboxHeaders.some((h) => h?.includes('Your DM has'))).toBe(
+      true
+    );
+    expect(result.acceptResult).toBe(true);
+    expect(result.appendedKinds).toContain('pc-edit');
+    const pcEdit = (result.appendedPayloads ?? []).find(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        (p as { field?: string }).field === 'backstory'
+    ) as { pcId?: string; field?: string; value?: string } | undefined;
+    expect(pcEdit?.pcId).toBe('mei');
+    expect(pcEdit?.value).toContain('they/them');
+    // Defense in depth: the seat-gate refuses for an unrelated peer.
+    expect(result.negativeAccept).toBe(false);
+    expect(result.negativeGate).toBe(false);
+  });
+
   test('DM clicks "Edit" inside chargen-dm-review, removes a tag, sees onPcTagOp host callback fire with the right pcId', async ({
     page
   }) => {

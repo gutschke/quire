@@ -64,6 +64,8 @@ import './ui/regions/session-bar';
 import './ui/regions/ai-panel';
 import './ui/components/quire-modal';
 import './ui/components/quire-help-overlay';
+import './ui/components/backstory-refresh-inbox';
+import type { PendingBackstoryRefreshProposal } from './ui/components/backstory-refresh-inbox';
 import { HELP_OPEN_EVENT } from './ui/components/quire-help-overlay';
 import {
   type ChatLintAiStatus
@@ -120,6 +122,7 @@ import {
 import { AiBroker, AiBrokerError, type AiProvider as AiProviderImpl } from './ai/broker';
 import {
   buildCampaignContext,
+  buildPlayerFacingContext,
   wrapCampaignContext
 } from './ai/campaign-context';
 import { AiWriteController } from './controllers/ai-write-controller';
@@ -811,6 +814,26 @@ export class QuireApp extends LitElement {
    * sheet, and the Aside roster can render harm/stress glyphs.
    */
   @state() boundCharacter: LoadedCharacter | null = null;
+  /**
+   * Run #19 Phase 9 (2026-05-30) — DM-side per-pcId flag while the
+   * AI refresher call is awaiting.  Drives the tray's button
+   * disabled state so a rapid double-click can't queue two parallel
+   * calls.  Kept as a Set so the host can show multiple in-flight
+   * refreshes if the DM kicks several seats at once.
+   */
+  @state() refreshInFlight: ReadonlySet<string> = new Set();
+  /**
+   * Run #19 Phase 9 (2026-05-30) — player-side local-only dismiss
+   * map keyed by pcId → proposal.ts the local viewer dismissed.
+   * Per state.ts §730 the proposal-resolve path is UI-local (no
+   * dedicated event kind); a fresh refresh with a later ts
+   * re-surfaces the card automatically.  Survives within a page
+   * load; not persisted across reloads (the proposal LWW slot is
+   * still in materialized state, so the card would re-appear on
+   * reload — acceptable for v1, a future polish could persist to
+   * sessionStorage if the user complains).
+   */
+  @state() dismissedRefreshProposals: ReadonlyMap<string, number> = new Map();
   /**
    * Campaign that {@link boundCharacter} belongs to.  Tracked alongside
    * the character so the always-on rail (M3a.6d) renders against the
@@ -3430,20 +3453,24 @@ export class QuireApp extends LitElement {
   /**
    * Run #19 Phase 9 (2026-05-30) — UX-MH-3 DM-initiated backstory
    * refresh.  Resolves the PC's current player-visible fields,
-   * computes the delta against the cached "what last synthesized"
-   * snapshot, runs the refresher AI module, and emits
-   * `backstory-refresh-proposal` for the player to accept.
+   * computes the delta against the synthesized snapshot, runs the
+   * refresher AI module, and emits `backstory-refresh-proposal` for
+   * the player to accept.
    *
    * R-G discipline: the refresher uses `buildPlayerFacingContext`
    * (NEVER `buildCampaignContext` with scope:'dm') and the
    * forbidden-token post-check runs BEFORE the proposal materializes.
    * On a persistent spoiler leak the proposal is suppressed; the DM
-   * sees a console warning (a soft-warn modal is the next polish
-   * pass).
+   * sees a console warning (a soft-warn modal is a follow-up).
+   *
+   * If the AI broker is unconfigured (no API key for the active
+   * provider), the call is REFUSED — `refreshBackstoryDisabledReason`
+   * surfaces the "AI not configured" tooltip on the DM tray so the
+   * button never emits a stub proposal.  No-op-stub events were
+   * removed in this Phase per run #19 lead-engineer mandate.
    *
    * Player-initiated refresh (from the player's own chargen) goes
-   * directly to pc-edit per R-F; that path is not yet wired (no
-   * player-side chargen surface mounts the tray).
+   * directly to pc-edit per R-F.
    */
   async refreshBackstoryForPc(pcId: string): Promise<void> {
     const v = this.sessionView;
@@ -3451,28 +3478,285 @@ export class QuireApp extends LitElement {
     if (!this.isCoordinator()) return;
     const data = this.buildPcEditDataLookup()(pcId);
     if (!data) return;
-    // For v1 we emit the proposal directly from the host with a
-    // stub proposedBackstory: the DM marks the current draft as
-    // "ready to thread" and the player sees it as a proposal they
-    // accept.  Full AI-refresher integration (with the broker + API
-    // key + forbidden-token loop) is the next polish pass; the
-    // engine + AI module exist and are unit-tested.  For the proof
-    // line we need the user-clickable path: DM clicks the button →
-    // a proposal materializes → player sees the inbox card.
-    //
-    // The proposal carries the CURRENT backstory as proposedBackstory
-    // so the player UI shows a no-op diff with the "Your DM has a
-    // backstory suggestion" header.  When the broker integration
-    // lands the proposedBackstory will be the AI's surgical edit.
-    const baselineHashHex = await this.sha256HexUtil(data.backstory);
     if (!this.session) return;
-    this.session.append('backstory-refresh-proposal', {
-      pcId,
-      proposedBackstory: data.backstory,
-      baselineHash: baselineHashHex,
-      initiator: 'dm',
-      triggerSummary: 'DM refresh from chargen-dm-review'
-    });
+    if (this.refreshInFlight.has(pcId)) return;
+    const provider = this.aiProviders[this.aiProvider];
+    const apiKey = this.aiKeys.apiKeys[this.aiProvider] ?? '';
+    if (!apiKey) {
+      // Defense-in-depth: the tray's disabled-reason should already
+      // gate the button; this guard prevents a stub emission on race.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[refreshBackstoryForPc] no API key for provider; refusing emit'
+      );
+      return;
+    }
+    const campaign = this.getCurrentCampaign();
+    if (!campaign) return;
+    // Baseline snapshot for the delta: the synthesized record carries
+    // the name/pronouns/tags the backstory was originally written for.
+    // The CURRENT data (post-edit overlays) is the "to" side.  When
+    // the PC is hand-imported (no synthesizedPcs entry) we fall back
+    // to the cached record fields.
+    const synth = (v.filteredShared.synthesizedPcs?.[pcId] ?? {}) as {
+      name?: unknown;
+      pronouns?: unknown;
+      tags?: unknown;
+    };
+    const cached = this.pcCharacterCache.get(pcId)?.record as
+      | { name?: unknown; pronouns?: unknown; tags?: unknown }
+      | undefined;
+    const baselineName =
+      (synth.name as string | undefined) ??
+      (cached?.name as string | undefined) ??
+      data.name;
+    const baselinePronouns =
+      (synth.pronouns as string | undefined) ??
+      (cached?.pronouns as string | undefined) ??
+      data.pronouns;
+    const baselineTags: readonly string[] = Array.isArray(synth.tags)
+      ? (synth.tags as string[])
+      : Array.isArray(cached?.tags)
+        ? (cached?.tags as string[])
+        : data.tags;
+    const delta: {
+      nameChanged?: { from: string; to: string };
+      pronounsChanged?: { from: string; to: string };
+      tagsAdded?: readonly string[];
+      tagsRemoved?: readonly string[];
+    } = {};
+    if (baselineName !== data.name) {
+      delta.nameChanged = { from: baselineName, to: data.name };
+    }
+    if (baselinePronouns !== data.pronouns) {
+      delta.pronounsChanged = { from: baselinePronouns, to: data.pronouns };
+    }
+    const baselineTagSet = new Set(baselineTags);
+    const currentTagSet = new Set(data.tags);
+    const added: string[] = [];
+    const removed: string[] = [];
+    for (const t of currentTagSet) {
+      if (!baselineTagSet.has(t)) added.push(t);
+    }
+    for (const t of baselineTagSet) {
+      if (!currentTagSet.has(t)) removed.push(t);
+    }
+    if (added.length > 0) delta.tagsAdded = added;
+    if (removed.length > 0) delta.tagsRemoved = removed;
+    const aiBackstory = campaign.base.manifest.aiBackstory;
+    const spoilerTokens = aiBackstory?.spoilerTokens;
+    // Build campaign context with the player-facing helper (R-G:
+    // the type signature of `buildPlayerFacingContext` physically
+    // prevents a DM-scope leak — no `scope` parameter is exposed).
+    let context;
+    try {
+      context = await buildPlayerFacingContext({
+        source: campaign.base.source,
+        episodes: (campaign.base.manifest.episodes ?? []).map((slug) => ({
+          slug
+        })),
+        characters: campaign.base.manifest.characters
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[refreshBackstoryForPc] failed to build context:',
+        (e as Error).message
+      );
+      return;
+    }
+    this.refreshInFlight = new Set(this.refreshInFlight).add(pcId);
+    this.requestUpdate();
+    try {
+      const mod = await import('./ai/backstory-refresher');
+      const result = await mod.refreshBackstory({
+        provider,
+        apiKey,
+        model: this.aiModel,
+        campaignContext: context,
+        pcName: data.name,
+        pcPronouns: data.pronouns,
+        pcTags: data.tags,
+        baselineBackstory: data.backstory,
+        fieldDelta: delta,
+        initiator: 'dm',
+        ...(spoilerTokens ? { spoilerTokens } : {})
+      });
+      if (!result.ok) {
+        // Per silent-player-firewall: a refused/persistent-leak/error
+        // result NEVER reaches the player.  DM-only warning here.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[refreshBackstoryForPc] AI refresh refused (${result.code}): ${result.message}`
+        );
+        return;
+      }
+      if (!this.session) return;
+      const triggerSummary = this.summarizeDeltaForDm(delta);
+      this.session.append('backstory-refresh-proposal', {
+        pcId,
+        proposedBackstory: result.proposedBackstory,
+        baselineHash: result.baselineHash,
+        initiator: 'dm',
+        ...(triggerSummary ? { triggerSummary } : {})
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[refreshBackstoryForPc] refresher threw:',
+        (e as Error).message
+      );
+    } finally {
+      const next = new Set(this.refreshInFlight);
+      next.delete(pcId);
+      this.refreshInFlight = next;
+      this.requestUpdate();
+    }
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — DM-only one-line summary of which
+   * player-visible fields changed.  This is what lands in the
+   * proposal's `triggerSummary` (stripped at the wire by the
+   * PER_KIND_SCRUBBER + filterForViewer per Adversarial P1 #5).
+   * The synthesized player-safe summary on the inbox card comes
+   * from the same delta, computed independently at the render call
+   * — this string never reaches the player.
+   */
+  private summarizeDeltaForDm(delta: {
+    nameChanged?: { from: string; to: string };
+    pronounsChanged?: { from: string; to: string };
+    tagsAdded?: readonly string[];
+    tagsRemoved?: readonly string[];
+  }): string {
+    const parts: string[] = [];
+    if (delta.nameChanged) {
+      parts.push(`name "${delta.nameChanged.from}"→"${delta.nameChanged.to}"`);
+    }
+    if (delta.pronounsChanged) {
+      parts.push(
+        `pronouns "${delta.pronounsChanged.from}"→"${delta.pronounsChanged.to}"`
+      );
+    }
+    if (delta.tagsAdded && delta.tagsAdded.length > 0) {
+      parts.push(`+tag ${delta.tagsAdded.join(', +')}`);
+    }
+    if (delta.tagsRemoved && delta.tagsRemoved.length > 0) {
+      parts.push(`-tag ${delta.tagsRemoved.join(', -')}`);
+    }
+    return parts.length > 0
+      ? parts.join('; ')
+      : 'light touch-up requested from chargen-dm-review';
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — host-side tooltip for the
+   * disabled refresh button.  Null = enabled.  When no API key is
+   * configured for the active provider, surfaces "AI not configured"
+   * so the DM sees why the button doesn't fire.  Read by
+   * `<chargen-dm-review>` via `refreshBackstoryDisabledReason`.
+   */
+  private refreshBackstoryDisabledReasonForHost(): string | null {
+    if (!this.aiKeys.apiKeys[this.aiProvider]) {
+      return `AI not configured (no ${this.aiProvider} API key in DM settings)`;
+    }
+    return null;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — player-side accept of a pending
+   * backstory-refresh proposal.  Per R-F the player path goes
+   * directly to `pc-edit field:backstory` (no proposal-resolve
+   * event).  The proposal's LWW slot is dismissed locally via
+   * `dismissedRefreshProposals` so the inbox card hides; a fresh
+   * proposal with a later `ts` would un-dismiss naturally.
+   *
+   * Gate: the local viewer MUST control the seat for `pcId`
+   * (peerId match) — defense in depth alongside the render-time
+   * gate.  Returns false when not allowed.
+   */
+  acceptBackstoryRefreshProposal(pcId: string): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    if (!this.controlsSeatForPc(pcId)) return false;
+    const proposal = v.filteredShared.backstoryRefreshProposals?.[pcId];
+    if (!proposal) return false;
+    this.submitPcEdit(pcId, 'backstory', proposal.proposedBackstory);
+    this.dismissRefreshProposalLocal(pcId, proposal.ts);
+    return true;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — player-side reject: clear the
+   * local inbox card without changing the backstory.  No event
+   * (per state.ts §730 design comment — a future fresh refresh
+   * would replace the LWW slot anyway).
+   */
+  rejectBackstoryRefreshProposal(pcId: string): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    if (!this.controlsSeatForPc(pcId)) return false;
+    const proposal = v.filteredShared.backstoryRefreshProposals?.[pcId];
+    if (!proposal) return false;
+    this.dismissRefreshProposalLocal(pcId, proposal.ts);
+    return true;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — player-side "Try again…": kicks
+   * the DM-initiated refresh again via the coord path.  Player
+   * peers don't have coord rights so this currently no-ops on
+   * non-coord viewers; the player UX is that the button is hidden
+   * for non-coord viewers OR the click surfaces a "ask your DM"
+   * toast.  For v1 we route to a local dismiss + log so a future
+   * pass can wire a player-initiated refresh primitive.
+   */
+  tryAgainBackstoryRefreshProposal(pcId: string, hint?: string): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    if (!this.controlsSeatForPc(pcId)) return false;
+    const proposal = v.filteredShared.backstoryRefreshProposals?.[pcId];
+    if (!proposal) return false;
+    // Local-dismiss the current card (a fresh proposal with a later
+    // ts would surface a new card).  The actual "ask the DM" flow
+    // is a future polish; for now this clears the card and logs.
+    this.dismissRefreshProposalLocal(pcId, proposal.ts);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[backstory-refresh-inbox] try-again from player for pc=${pcId}, hint=${hint ?? '(none)'}`
+    );
+    return true;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — does the local peer control the
+   * seat that holds `pcId`?  Used to gate the player-side inbox
+   * card accept/reject so the rendering AND the action share a
+   * single peerId-match check.
+   */
+  private controlsSeatForPc(pcId: string): boolean {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return false;
+    for (const seat of Object.values(v.filteredShared.pcSlots)) {
+      if (seat.pcId === pcId && seat.controllerPeerId === v.peerId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — local-only dismissal of a
+   * proposal slot keyed by (pcId, ts).  Stored in a @state Map so
+   * accept/reject hides the inbox card immediately; a fresh
+   * proposal with a NEW ts re-surfaces the card (the map keys on
+   * ts so a stale dismissal can't suppress a follow-up).
+   */
+  private dismissRefreshProposalLocal(pcId: string, ts: number): void {
+    const next = new Map(this.dismissedRefreshProposals);
+    next.set(pcId, ts);
+    this.dismissedRefreshProposals = next;
+    this.requestUpdate();
   }
 
   /**
@@ -3713,6 +3997,7 @@ export class QuireApp extends LitElement {
         ) => this.submitPcTagOp(pcId, op)}
         .onRefreshBackstory=${async (pcId: string) =>
           this.refreshBackstoryForPc(pcId)}
+        .refreshBackstoryDisabledReason=${this.refreshBackstoryDisabledReasonForHost()}
         .answersLookup=${(slot: number) =>
           this.chargen.loadPersistedAnswers(slot)}
         .spoilerScan=${(text: string) => this.spoilerTokenHits(text)}
@@ -5397,6 +5682,7 @@ export class QuireApp extends LitElement {
     const switcherEntries = this.computeSwitcherEntries(bound.id);
     const retirePip = this.computeRetirePip(bound.id);
     return html`
+      ${this.renderPlayerBackstoryRefreshInbox(bound)}
       <player-rail
         .character=${bound}
         .effective=${r}
@@ -8678,6 +8964,7 @@ export class QuireApp extends LitElement {
 
     return html`
       ${this.renderDmCharacterAffordances(character)}
+      ${this.renderPlayerBackstoryRefreshInbox(character)}
       <player-rail
         .character=${character}
         .effective=${r}
@@ -8947,6 +9234,119 @@ export class QuireApp extends LitElement {
       }
     ></dm-pc-detail>`;
   }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-3 player-side inbox card.
+   * Mounts `<backstory-refresh-inbox>` on the bound player's PC
+   * surface when there's a pending proposal AND the local viewer
+   * actually controls the seat AND they haven't locally dismissed
+   * the current ts.
+   *
+   * R-G discipline: the proposal's player-visible fields flow
+   * through `state.backstoryRefreshProposals` which the
+   * `filterBackstoryRefreshProposalsForViewer` strip already
+   * scoped to the bound player.  The `triggerSummary` DM-only
+   * sub-field is stripped at BOTH the persistence boundary
+   * (PER_KIND_SCRUBBERS) and the render boundary — so this method
+   * never has access to it.  The player-safe summary string is
+   * (re)computed here from the local current backstory vs the
+   * proposal's diff (length-based heuristic — a future polish
+   * could parse the AI's structured delta when it's exposed).
+   *
+   * Hidden when:
+   *   - character is not a PC (NPCs never have refresh proposals)
+   *   - no pending proposal exists for this pcId
+   *   - the local viewer doesn't control the seat (peerId match)
+   *   - the local viewer dismissed the current ts via accept/reject
+   */
+  private renderPlayerBackstoryRefreshInbox(
+    character: LoadedCharacter
+  ): TemplateResult | typeof nothing {
+    if (character.kind !== 'pc') return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    const proposal = v.filteredShared.backstoryRefreshProposals?.[character.id];
+    if (!proposal) return nothing;
+    if (!this.controlsSeatForPc(character.id)) return nothing;
+    const dismissedTs = this.dismissedRefreshProposals.get(character.id);
+    if (dismissedTs !== undefined && dismissedTs >= proposal.ts) return nothing;
+    const r = this.effectiveCharacter(character);
+    const currentBackstory =
+      typeof r.backstory === 'string' ? r.backstory : '';
+    const pcDisplayName =
+      typeof r.name === 'string' && r.name.length > 0 ? r.name : character.id;
+    // Player-safe change summary — synthesized HERE from the
+    // diff direction (additions vs deletions) and a string-length
+    // heuristic.  Avoids reading from `proposal.triggerSummary`
+    // (already stripped) and avoids leaking a DM-side reason
+    // string.
+    const playerSafeChangeSummary = this.synthesizePlayerSafeChangeSummary(
+      currentBackstory,
+      proposal.proposedBackstory
+    );
+    const pcId = character.id;
+    const pending: PendingBackstoryRefreshProposal = {
+      pcId: proposal.pcId,
+      proposedBackstory: proposal.proposedBackstory,
+      baselineHash: proposal.baselineHash,
+      initiator: proposal.initiator,
+      ts: proposal.ts
+    };
+    // Compute baseline hash lazily after the first render; for the
+    // initial paint pass an empty string disables the staleness
+    // banner (a stale proposal would still let the diff render).
+    const cachedHash = this.currentBackstoryHashes.get(character.id);
+    if (cachedHash?.text !== currentBackstory) {
+      // Fire-and-forget: recompute and rerender.
+      void this.sha256HexUtil(currentBackstory).then((hex) => {
+        const next = new Map(this.currentBackstoryHashes);
+        next.set(character.id, { text: currentBackstory, hex });
+        this.currentBackstoryHashes = next;
+        this.requestUpdate();
+      });
+    }
+    const hashHex = cachedHash?.text === currentBackstory ? cachedHash.hex : '';
+    return html`
+      <backstory-refresh-inbox
+        class="player-backstory-refresh-inbox"
+        data-pc-id=${pcId}
+        .proposal=${pending}
+        .currentBackstory=${currentBackstory}
+        .currentBackstoryHash=${hashHex}
+        .pcDisplayName=${pcDisplayName}
+        .playerSafeChangeSummary=${playerSafeChangeSummary}
+        .onAccept=${() => this.acceptBackstoryRefreshProposal(pcId)}
+        .onReject=${() => this.rejectBackstoryRefreshProposal(pcId)}
+        .onTryAgain=${(hint?: string) =>
+          this.tryAgainBackstoryRefreshProposal(pcId, hint)}
+      ></backstory-refresh-inbox>
+    `;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — synthesize a player-safe
+   * one-phrase summary of the diff direction.  Reads only the
+   * baseline + proposed backstory strings (both player-visible),
+   * never the DM-only `triggerSummary`.  String-length heuristic
+   * is intentionally fuzzy — the inbox card has the inline diff
+   * doing the heavy lifting; this string is a header garnish.
+   */
+  private synthesizePlayerSafeChangeSummary(
+    baseline: string,
+    proposed: string
+  ): string {
+    if (baseline === proposed) return 'small details';
+    const delta = proposed.length - baseline.length;
+    if (delta > 40) return 'expanded details';
+    if (delta < -40) return 'tighter details';
+    return 'small details';
+  }
+
+  /** Memo cache for sha256(currentBackstory) per PC; rebuilt on text change. */
+  @state() private currentBackstoryHashes: ReadonlyMap<
+    string,
+    { text: string; hex: string }
+  > = new Map();
 
   /**
    * M3a.8 (P2-4): DM-only NPC pin/unpin button on the NPC

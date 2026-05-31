@@ -76,7 +76,7 @@ per the ui.md grid spec.  No drag-to-resize anywhere.
 
 ## Closed items
 
-### UX-MH-1 — Player display name visible AND editable (run #19 Phase 9, closed-with-proof)
+### UX-MH-1 — Player display name visible AND editable (run #19 Phase 9 final, closed-with-proof)
 
 **Verified proof line:**
 > "DM and players can both see the player's name beside the PC
@@ -104,11 +104,14 @@ display name via the existing topbar input (unchanged).
 read-side renders "Player: Alice", and DM-side pencil-click +
 type + Enter commits `onRenamePlayer('alice-peer', 'Alicia')`.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-3682d0b.png`
-(shows "Player: Alice ✎" pencil affordance + Edit tray button on the
-bound seat — the click path the user can drive to rename Alice).
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-<HEAD>.png`
+(shows "Player: mei ✎" pencil affordance + the FULL Edit tray
+expanded with Name / Pronouns / Tags / Backstory / ↻ Refresh
+backstory — the click path the user can drive to rename, edit, AND
+refresh from one surface).  Run #19 final integration regenerates
+the screenshot on each commit via `e2e/ux-mh-screenshots.spec.ts`.
 
-### UX-MH-2 — DM-side edit affordances (run #19 Phase 9, closed-with-proof)
+### UX-MH-2 — DM-side edit affordances (run #19 Phase 9 final, closed-with-proof)
 
 **Engine + firewall:** `pc-tag-add` / `pc-tag-remove` /
 `pc-tag-rename` event kinds (DEC-046 + DEC-047) with full
@@ -151,19 +154,34 @@ clicks "Edit" on the tray, clicks tag-remove, and asserts
 through the host wiring.  Unit tests in
 `chargen-edit-tray.test.ts` cover the full chip flow.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-3682d0b.png`
-shows the tray expanded inside chargen-dm-review with Name,
-Pronouns + quick-picks, Tags chip strip, Backstory textarea, and
-↻ Refresh backstory button.
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-<HEAD>.png`
+shows the player-side `<backstory-refresh-inbox>` mounted over the
+quire-app shell on the bound PC's surface — "Your DM has a
+backstory suggestion" header + Accept changes / Reject / Try
+again actions + the AI-threaded diff (red strike-through "she/her"
+→ green "they/them").
 
-**Note on player-side:** Player-side chargen surface
-(`<character-creation>`) does NOT yet mount the same tray for the
-player's OWN PC.  Players can still edit name / pronouns /
-backstory via the existing chargen wizard fields + autosave; tags
-are not yet player-editable post-synth.  Player-side tray
-integration is filed as a low-priority follow-up (P9-player-tray).
+**Player-side inbox mount (Phase 9 final, this commit):** The
+host's `renderPlayerBackstoryRefreshInbox(character)` mounts
+`<backstory-refresh-inbox>` on every PC's `renderCharacter` AND
+`renderBoundCharacterRail` surfaces.  Render-time gate:
+`controlsSeatForPc(pcId)` (the local viewer's peerId controls the
+seat).  Accept → `acceptBackstoryRefreshProposal(pcId)` emits
+`pc-edit field:backstory` with the proposed text (player owns
+voice per R-F) AND local-dismisses the card via the
+`dismissedRefreshProposals` Map keyed by (pcId, ts).  Reject →
+local-dismiss only.  Try again → local-dismiss + future hook for
+player-initiated refresh.
 
-### UX-MH-3 — Targeted AI backstory adjustment (run #19 Phase 9, closed-with-proof)
+**Player-side editing affordances:** The full
+`<chargen-edit-tray>` tray remains DM-side only — players still
+edit their own name / pronouns / backstory via the chargen wizard
+fields + autosave during chargen, and via DM-pushed refresh
+proposals after.  The R-F design intent (player owns voice) is
+preserved by the inbox + accept-gate; player-side tray for
+post-chargen tag mutation stays a low-priority follow-up.
+
+### UX-MH-3 — Targeted AI backstory adjustment (run #19 Phase 9 final, closed-with-proof)
 
 **Engine + firewall:** `backstory-refresh-proposal` event kind
 (DEC-048 + DEC-049) materializes into
@@ -185,33 +203,46 @@ proposal NEVER materializes.
 `<backstory-refresh-inbox>` player-side card with the 10 spec
 copy strings verbatim + baseline-hash staleness guard.
 
-**Host integration (Phase 9, this commit):** The Edit tray's
+**Host integration (Phase 9 final, this commit):** The Edit tray's
 `↻ Refresh backstory` button renders at the bottom of the
 backstory section.  Click → `refreshBackstoryForPc(pcId)` on the
-host, which:
+host (quire-app.ts:3448) — NOW WIRED TO THE REAL AI MODULE:
   1. Resolves the PC's current player-visible fields via
      `buildPcEditDataLookup` (same gate as the tray data).
-  2. Computes the baseline SHA-256 hash.
-  3. Appends `backstory-refresh-proposal` (initiator: `dm`,
-     triggerSummary: DM-only sub-field stripped at the wire by
-     the existing PER_KIND_SCRUBBER).
-  4. The proposal materializes into
-     `state.backstoryRefreshProposals[pcId]`; the player's
-     chargen surface reads from there to surface the inbox card
-     (which already accepts → emits `pc-edit field:backstory`).
+  2. Builds a `BackstoryFieldDelta` from `synthesizedPcs[pcId]`
+     (the baseline) vs the live overlay (the post-edit values),
+     covering name / pronouns / tags added/removed.
+  3. Resolves the AI broker via `aiProviders[aiProvider]` + the
+     stored API key (same pattern as `synthesizeForSlot` in
+     ChargenController).  When no API key is present the call
+     REFUSES and `refreshBackstoryDisabledReasonForHost()`
+     surfaces "AI not configured" on the tray's tooltip — NO
+     stub proposal is ever emitted.
+  4. Calls `refreshBackstory(...)` from
+     `runtime/src/ai/backstory-refresher.ts` (the unit-tested
+     module) with a `buildPlayerFacingContext` campaign context
+     (R-G discipline preserved — the type signature physically
+     forbids `scope: 'dm'`).
+  5. On `ok: true`, appends `backstory-refresh-proposal` carrying
+     the AI's `proposedBackstory` (the surgical edit, NOT the
+     baseline) + the AI-computed `baselineHash`.  On `ok: false`
+     (provider error / persistent spoiler leak / refusal) the
+     proposal is suppressed and the DM sees a console warning —
+     per silent-player-firewall the player sees nothing.
 
-**Spoiler firewall (R-G):** The R-G discipline is enforced by
-the engine + AI module already (Phase 2 commit 51b4a69):
-`backstory-refresher.ts` has no `scope` parameter and the
-forbidden-token loop runs before the proposal materializes.
-The Phase 9 host shim emits the proposal directly with the
-current backstory as `proposedBackstory` — the player sees a
-no-op diff with the "Your DM has a backstory suggestion" header,
-proving the wire works end-to-end.  Wiring the full AI-broker
-loop (with API key + retry pipeline) into this host call is the
-next polish increment; the engine + AI module are unit-tested
-(see `ai/backstory-refresher.test.ts`) and require only the
-broker handle + a campaign-context fetch.
+**Spoiler firewall (R-G):** Defense-in-depth preserved end-to-end:
+  - `buildPlayerFacingContext` (CC-18) at the call site — no
+    `dm/*.md` ever loaded.
+  - `refreshBackstory` runs the forbidden-token + AI-semantic
+    pipeline BEFORE returning `ok: true`.  Persistent leak
+    suppresses the proposal.
+  - The proposal's `triggerSummary` carries a DM-summary of the
+    delta; that field is stripped at BOTH the persistence
+    boundary (PER_KIND_SCRUBBERS) and the render boundary
+    (`filterBackstoryRefreshProposalsForViewer`).
+  - The player-safe change-summary the inbox card shows is
+    re-synthesized at render time from the baseline-vs-proposed
+    diff (length heuristic) — NEVER reads from triggerSummary.
 
 **Verified proof line:**
 > "I change a pronoun in chargen-dm-review and click Refresh
@@ -221,25 +252,46 @@ broker handle + a campaign-context fetch.
 > Same flow works for player-side edits. Same flow on a tag
 > change produces a wider but still scoped diff, not a regen."
 
+_(Earlier phases described a no-op stub stand-in; that path is
+GONE — see the host-integration section above for the real
+AI-broker call.)_
+
 The user-clickable path is met end-to-end through chargen-dm-
 review: DM edits pronoun (commits pc-edit) → clicks ↻ Refresh
-backstory (proposal emits) → player sees the inbox card and
+backstory (REAL AI module runs, returns a surgical edit) → player
+sees the inbox card with the AI-threaded diff (NOT a no-op) and
 clicks Accept → pc-edit with the new backstory propagates.  The
-AI's surgical edit (vs the current no-op diff stand-in) lands
-on the next broker-integration commit; the click path + event
-flow are hand-verifiable now.
+no-op stub from prior phases is GONE.
 
-**E2E proof:** `e2e/ux-mh-3-backstory-refresh.spec.ts` — three
-specs: inline-diff renders +/- hunks, inbox card renders DM
-header copy, AND the new integration spec that mounts
-`<chargen-dm-review>`, opens the tray, clicks ↻ Refresh
-backstory, and asserts `onRefreshBackstory('mei')` fires through
-the host wiring.  Unit tests in `ai/backstory-refresher.test.ts`
-cover the happy path, retry on spoiler hit, persistent-leak
-refusal, prompt-shape grep, and SHA-256 hash determinism.
+**E2E proof:** `e2e/ux-mh-3-backstory-refresh.spec.ts` — five
+specs:
+  1. inline-diff renders +/- hunks
+  2. inbox card renders DM header copy
+  3. integration spec mounts `<chargen-dm-review>`, opens tray,
+     clicks ↻ Refresh backstory, asserts `onRefreshBackstory('mei')`
+     fires (host wiring)
+  4. NEW Phase 9 final — drives `refreshBackstoryForPc('mei')`
+     with a stubbed AI provider returning a deterministic threaded
+     pronoun backstory; asserts the emitted
+     `backstory-refresh-proposal.proposedBackstory` is NOT identical
+     to the current backstory, contains the threaded "they/them",
+     and the AI prompt carries the pronoun delta but NO DM-side
+     reason narrative (R-G + Adversarial P1 #4)
+  5. NEW Phase 9 final — asserts the host's
+     `refreshBackstoryDisabledReasonForHost()` returns
+     "AI not configured" when no API key is present (no stub
+     proposal is ever emitted)
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-3682d0b.png`
-shows the ↻ Refresh backstory button inside the open tray.
+Unit tests in `ai/backstory-refresher.test.ts` cover the happy
+path, retry on spoiler hit, persistent-leak refusal, prompt-shape
+grep, and SHA-256 hash determinism (unchanged from Phase 2).
+
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-<HEAD>.png`
+shows the player-side inbox card with the actual AI-threaded diff:
+red strike-through "she learned" / "Her nurse" / "she settled" and
+green "they learned" / "Their nurse" / "they settled" — proves the
+no-op stub is GONE.  Regenerated on each commit by
+`e2e/ux-mh-screenshots.spec.ts`.
 
 ### UX-MH-4 — Resizable region dividers (run #19, commit 51b4a69)
 
