@@ -1728,6 +1728,23 @@ export class QuireApp extends LitElement {
       // Character layer (independent of episode/scene).  The
       // DM-only NPC gate already ran via decideRoute above.
       if (route.kind === 'character') {
+        // Synthesized-PC overlay check FIRST (BUG-1-followup
+        // 2026-05-30): chargen-generated PCs live in
+        // `state.synthesizedPcs[pcId]`, NOT as static JSON in the
+        // campaign repo.  Without this check the character-loader
+        // 404s on every navigate to a synthesized PC ("Character
+        // 'slot-5-msg_01Gn' (pc) not found").  Mirrors the same
+        // overlay-first pattern in `loadCharacterByPcId`.
+        if (route.characterKind === 'pc') {
+          const overlay = this.resolvePcFromOverlay(
+            route.characterId,
+            campaign
+          );
+          if (overlay) {
+            this._appState ={ kind: 'character', campaign, character: overlay };
+            return;
+          }
+        }
         this._appState ={
           kind: 'loading',
           slug: route.characterId,
