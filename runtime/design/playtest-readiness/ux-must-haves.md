@@ -104,12 +104,11 @@ display name via the existing topbar input (unchanged).
 read-side renders "Player: Alice", and DM-side pencil-click +
 type + Enter commits `onRenamePlayer('alice-peer', 'Alicia')`.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-6dec6bc.png`
-(captured pre-Phase-9 commit; the integration is identical and
-the SHA-suffixed name will be updated by the next screenshot run
-after this commit lands).
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-3682d0b.png`
+(shows "Player: Alice ✎" pencil affordance + Edit tray button on the
+bound seat — the click path the user can drive to rename Alice).
 
-### UX-MH-2 — DM-side edit affordances (run #19, partial)
+### UX-MH-2 — DM-side edit affordances (run #19 Phase 9, closed-with-proof)
 
 **Engine + firewall:** `pc-tag-add` / `pc-tag-remove` /
 `pc-tag-rename` event kinds (DEC-046 + DEC-047) with full
@@ -152,7 +151,7 @@ clicks "Edit" on the tray, clicks tag-remove, and asserts
 through the host wiring.  Unit tests in
 `chargen-edit-tray.test.ts` cover the full chip flow.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-6dec6bc.png`
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-3682d0b.png`
 shows the tray expanded inside chargen-dm-review with Name,
 Pronouns + quick-picks, Tags chip strip, Backstory textarea, and
 ↻ Refresh backstory button.
@@ -239,7 +238,7 @@ the host wiring.  Unit tests in `ai/backstory-refresher.test.ts`
 cover the happy path, retry on spoiler hit, persistent-leak
 refusal, prompt-shape grep, and SHA-256 hash determinism.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-6dec6bc.png`
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-3682d0b.png`
 shows the ↻ Refresh backstory button inside the open tray.
 
 ### UX-MH-4 — Resizable region dividers (run #19, commit 51b4a69)
