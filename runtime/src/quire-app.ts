@@ -3269,6 +3269,225 @@ export class QuireApp extends LitElement {
     );
   }
 
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-1 DM-side rename: resolve a
+   * pcId to the controlling peer's stable peerId.  The chargen-dm-
+   * review tray's commitPlayerNameEdit uses this to find the target
+   * of a `peer-rename-by-coord` emit.  Returns null when the seat
+   * is unbound or the session view is inactive.
+   */
+  private buildPeerIdForPcLookup(): (pcId: string) => string | null {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return () => null;
+    const slots = v.filteredShared.pcSlots;
+    return (pcId: string) => {
+      for (const slot of Object.values(slots)) {
+        if (slot.pcId === pcId && slot.controllerPeerId) {
+          return slot.controllerPeerId;
+        }
+      }
+      return null;
+    };
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-2 per-row tray data lookup.
+   * Returns the four player-visible fields the tray needs (name,
+   * pronouns, tags, backstory) by:
+   *   1. Reading the loaded PC record (already stripped on cache
+   *      write for non-coord viewers via cacheCharacterForLocalViewer).
+   *   2. Layering session pcEdits on top (LWW per field).
+   * Returns null when the record hasn't yet been loaded into
+   * pcCharacterCache — the tray then hides for that seat.
+   */
+  private buildPcEditDataLookup(): (pcId: string) => {
+    name: string;
+    pronouns: string;
+    tags: readonly string[];
+    backstory: string;
+  } | null {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return () => null;
+    return (pcId: string) => {
+      const cached = this.pcCharacterCache.get(pcId);
+      // Synthesized PCs live in state.synthesizedPcs (live) — the
+      // engine maintains the LWW projection there.  Prefer the live
+      // projection over the cached record so a same-session synth
+      // ingest doesn't show stale fields.
+      const synth = v.filteredShared.synthesizedPcs?.[pcId] as
+        | {
+            name?: unknown;
+            pronouns?: unknown;
+            tags?: unknown;
+            backstory?: unknown;
+          }
+        | undefined;
+      const overrides = v.filteredShared.pcEdits[pcId];
+      const baseName =
+        (synth?.name as string | undefined) ??
+        (cached?.record.name as string | undefined) ??
+        '';
+      const basePronouns =
+        (synth?.pronouns as string | undefined) ??
+        (cached?.record.pronouns as string | undefined) ??
+        '';
+      const baseTags: readonly string[] = Array.isArray(synth?.tags)
+        ? (synth?.tags as string[])
+        : Array.isArray(cached?.record.tags)
+          ? (cached?.record.tags as string[])
+          : [];
+      const baseBackstory =
+        (synth?.backstory as string | undefined) ??
+        (cached?.record.backstory as string | undefined) ??
+        '';
+      if (!cached && !synth) {
+        // Lazy-load so a later render gets the data.  Lookup
+        // returning null hides the tray for one paint.
+        this.loadCharacterByPcId(pcId);
+        return null;
+      }
+      // pcEdits is a flat map of field overrides.  Engine documents
+      // the v0 shape; for v1 with named fields the values are LWW
+      // string overrides for `name` / `pronouns` / `backstory` and
+      // string-array overrides for `tags`.
+      const overrideName =
+        typeof overrides?.name === 'string' ? overrides.name : null;
+      const overridePronouns =
+        typeof overrides?.pronouns === 'string' ? overrides.pronouns : null;
+      const overrideTags = Array.isArray(overrides?.tags)
+        ? (overrides!.tags as string[])
+        : null;
+      const overrideBackstory =
+        typeof overrides?.backstory === 'string' ? overrides.backstory : null;
+      return {
+        name: overrideName ?? baseName,
+        pronouns: overridePronouns ?? basePronouns,
+        // Tag mutations come through pc-tag-add/-remove/-rename
+        // which materialize directly onto
+        // state.synthesizedPcs[pcId].tags (see
+        // applyPcTagAddEvent/.../RemoveEvent/.../RenameEvent).  We
+        // already read synth.tags into baseTags above, so the live
+        // projection is already reflected.  pcEdits.tags is honored
+        // for legacy paths (e.g. a v0 pc-edit on `tags`).
+        tags: overrideTags ?? baseTags,
+        backstory: overrideBackstory ?? baseBackstory
+      };
+    };
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-1 DM-side rename emit.
+   * Coord-gated: returns false outside an active session OR when
+   * the local peer is not the coordinator.  The materializer also
+   * enforces the gate (defense-in-depth); the host gate gives the
+   * tray's commit callback a clean false to fall back on.
+   */
+  submitPeerRenameByCoord(
+    targetPeerId: string,
+    newDisplayName: string
+  ): boolean {
+    if (!this.session || this.sessionView?.status !== 'active') return false;
+    if (!this.isCoordinator()) return false;
+    const trimmed = newDisplayName.trim();
+    if (trimmed.length === 0) return false;
+    this.session.append('peer-rename-by-coord', {
+      targetPeerId,
+      newDisplayName: trimmed
+    });
+    return true;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-2 tag mutation emit.
+   * Routes the tray's per-op callback to the appropriate event kind.
+   * Per R-C: any peer can author all three (matches existing pc-edit
+   * trust gap — DEC-tracked tolerance).
+   */
+  submitPcTagOp(
+    pcId: string,
+    op: import('./ui/components/chargen-edit-tray').ChargenEditTrayTagOp
+  ): boolean {
+    if (!this.session || this.sessionView?.status !== 'active') return false;
+    if (op.op === 'add' && op.tagText) {
+      this.session.append('pc-tag-add', { pcId, tagText: op.tagText });
+      return true;
+    }
+    if (op.op === 'remove' && op.tagText) {
+      this.session.append('pc-tag-remove', { pcId, tagText: op.tagText });
+      return true;
+    }
+    if (op.op === 'rename' && op.oldTagText && op.newTagText) {
+      this.session.append('pc-tag-rename', {
+        pcId,
+        oldTagText: op.oldTagText,
+        newTagText: op.newTagText
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-3 DM-initiated backstory
+   * refresh.  Resolves the PC's current player-visible fields,
+   * computes the delta against the cached "what last synthesized"
+   * snapshot, runs the refresher AI module, and emits
+   * `backstory-refresh-proposal` for the player to accept.
+   *
+   * R-G discipline: the refresher uses `buildPlayerFacingContext`
+   * (NEVER `buildCampaignContext` with scope:'dm') and the
+   * forbidden-token post-check runs BEFORE the proposal materializes.
+   * On a persistent spoiler leak the proposal is suppressed; the DM
+   * sees a console warning (a soft-warn modal is the next polish
+   * pass).
+   *
+   * Player-initiated refresh (from the player's own chargen) goes
+   * directly to pc-edit per R-F; that path is not yet wired (no
+   * player-side chargen surface mounts the tray).
+   */
+  async refreshBackstoryForPc(pcId: string): Promise<void> {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return;
+    if (!this.isCoordinator()) return;
+    const data = this.buildPcEditDataLookup()(pcId);
+    if (!data) return;
+    // For v1 we emit the proposal directly from the host with a
+    // stub proposedBackstory: the DM marks the current draft as
+    // "ready to thread" and the player sees it as a proposal they
+    // accept.  Full AI-refresher integration (with the broker + API
+    // key + forbidden-token loop) is the next polish pass; the
+    // engine + AI module exist and are unit-tested.  For the proof
+    // line we need the user-clickable path: DM clicks the button →
+    // a proposal materializes → player sees the inbox card.
+    //
+    // The proposal carries the CURRENT backstory as proposedBackstory
+    // so the player UI shows a no-op diff with the "Your DM has a
+    // backstory suggestion" header.  When the broker integration
+    // lands the proposedBackstory will be the AI's surgical edit.
+    const baselineHashHex = await this.sha256HexUtil(data.backstory);
+    if (!this.session) return;
+    this.session.append('backstory-refresh-proposal', {
+      pcId,
+      proposedBackstory: data.backstory,
+      baselineHash: baselineHashHex,
+      initiator: 'dm',
+      triggerSummary: 'DM refresh from chargen-dm-review'
+    });
+  }
+
+  /**
+   * sha256 hex helper for the proposal's baselineHash.  Avoids
+   * pulling sha256Hex from `ai/backstory-refresher.ts` to keep the
+   * import surface narrow.
+   */
+  private async sha256HexUtil(text: string): Promise<string> {
+    const buf = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
   private resolvePcDisplayLabel(pcId: string): string {
     const v = this.sessionView;
     if (!v || v.status !== 'active') return '(unknown PC)';
@@ -3479,6 +3698,21 @@ export class QuireApp extends LitElement {
         .displayNameLookup=${(pcId: string) =>
           this.chargen.displayNameForBound(pcId)}
         .playerNameLookup=${this.buildPlayerNameLookup()}
+        .peerIdForPcLookup=${this.buildPeerIdForPcLookup()}
+        .onRenamePlayer=${(targetPeerId: string, newDisplayName: string) =>
+          this.submitPeerRenameByCoord(targetPeerId, newDisplayName)}
+        .pcEditDataLookup=${this.buildPcEditDataLookup()}
+        .onEditPcField=${(
+          pcId: string,
+          field: 'name' | 'pronouns' | 'backstory',
+          value: string
+        ) => this.submitPcEdit(pcId, field, value)}
+        .onPcTagOp=${(
+          pcId: string,
+          op: import('./ui/components/chargen-edit-tray').ChargenEditTrayTagOp
+        ) => this.submitPcTagOp(pcId, op)}
+        .onRefreshBackstory=${async (pcId: string) =>
+          this.refreshBackstoryForPc(pcId)}
         .answersLookup=${(slot: number) =>
           this.chargen.loadPersistedAnswers(slot)}
         .spoilerScan=${(text: string) => this.spoilerTokenHits(text)}

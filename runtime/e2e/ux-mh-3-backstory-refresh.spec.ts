@@ -8,7 +8,10 @@
  * AI module (a live network call would be flaky); the AI surface
  * is unit-tested in src/ai/backstory-refresher.test.ts.
  *
- * Run #19 (2026-05-30) — UX-MH-3 closure proof.
+ * Run #19 (2026-05-30) — UX-MH-3 closure proof.  Phase 9 extends the
+ * spec with an integration test that mounts <chargen-dm-review>
+ * and asserts the DM-side "↻ Refresh backstory" click path fires
+ * the host's onRefreshBackstory callback with the right pcId.
  */
 
 import { test, expect } from '@playwright/test';
@@ -101,5 +104,71 @@ test.describe('UX-MH-3 — backstory refresh inbox card', () => {
     expect(result.hasAccept).toBe(true);
     expect(result.hasReject).toBe(true);
     expect(result.hasTryAgain).toBe(true);
+  });
+
+  test('DM opens the per-row tray inside chargen-dm-review and clicks "↻ Refresh backstory" → host onRefreshBackstory fires with the right pcId', async ({
+    page
+  }) => {
+    await page.goto('/');
+    await page.waitForSelector('quire-app', { timeout: 10000 });
+    const result = await page.evaluate(async () => {
+      await import('/src/ui/regions/chargen-dm-review.ts');
+      type Seat = { pcId?: string; controllerPeerId?: string; state?: string };
+      const el = document.createElement('chargen-dm-review') as HTMLElement & {
+        pcSlots: Record<number, Seat>;
+        synthResults: Map<number, unknown>;
+        pcEditDataLookup:
+          | ((pcId: string) => {
+              name: string;
+              pronouns: string;
+              tags: readonly string[];
+              backstory: string;
+            } | null)
+          | null;
+        onRefreshBackstory: ((pcId: string) => Promise<void>) | null;
+      };
+      el.pcSlots = {
+        1: { pcId: 'mei', controllerPeerId: 'alice', state: 'bound-active' }
+      };
+      el.synthResults = new Map();
+      el.pcEditDataLookup = (pcId) =>
+        pcId === 'mei'
+          ? {
+              name: 'Mei',
+              pronouns: 'they/them',
+              tags: ['nurse'],
+              backstory: 'Mei grew up by the Underleaf.'
+            }
+          : null;
+      const captured: string[] = [];
+      el.onRefreshBackstory = async (pcId) => {
+        captured.push(pcId);
+      };
+      document.body.appendChild(el);
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      const tray = el.querySelector(
+        'chargen-edit-tray[data-slot="1"]'
+      ) as HTMLElement | null;
+      if (!tray) return { stage: 'no-tray', captured };
+      const editBtn = tray.querySelector(
+        '.chargen-edit-tray-toggle'
+      ) as HTMLButtonElement | null;
+      if (!editBtn) return { stage: 'no-edit-btn', captured };
+      editBtn.click();
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      const refreshBtn = tray.querySelector(
+        '.chargen-edit-tray-refresh'
+      ) as HTMLButtonElement | null;
+      if (!refreshBtn) return { stage: 'no-refresh-btn', captured };
+      refreshBtn.click();
+      // The callback is async — wait one microtask + paint.
+      await Promise.resolve();
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      return { stage: 'committed', captured };
+    });
+    expect(result.stage).toBe('committed');
+    expect(result.captured).toEqual(['mei']);
   });
 });

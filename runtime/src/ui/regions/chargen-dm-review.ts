@@ -40,6 +40,8 @@ import type { Seat } from '../../core/state';
 import '../components/quire-modal';
 import '../components/chip-editor';
 import '../components/seat-card';
+import '../components/chargen-edit-tray';
+import type { ChargenEditTrayTagOp } from '../components/chargen-edit-tray';
 
 /**
  * Phase B-prime (2026-05-25): the 9-slot grid that pre-dated this
@@ -264,6 +266,91 @@ export class ChargenDmReview extends LitElement {
    */
   @property({ attribute: false })
   playerNameLookup: ((pcId: string) => string | null) | null = null;
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-1 DM-side rename of a
+   * player's display name.  Resolve a pcId to the controlling peer's
+   * stable id (or null when no peer is bound).  Used to look up the
+   * target of a `peer-rename-by-coord` emit when the DM commits the
+   * inline rename input.
+   */
+  @property({ attribute: false })
+  peerIdForPcLookup: ((pcId: string) => string | null) | null = null;
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-1 DM-side rename of a
+   * player.  Host wires to QuireApp.submitPeerRenameByCoord which
+   * appends the `peer-rename-by-coord` event.  Returns false when
+   * the local peer is not coord (defense-in-depth — the seat-card's
+   * pencil affordance is also gated on isCoord upstream).
+   */
+  @property({ attribute: false })
+  onRenamePlayer:
+    | ((targetPeerId: string, newDisplayName: string) => boolean)
+    | null = null;
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-2 per-row Edit/Review tray
+   * data lookup.  Returns the latest player-visible field bundle
+   * (name / pronouns / tags / backstory) the tray should display.
+   * Returns null when the bound PC has not yet been loaded (the
+   * tray button hides in that case so the DM can't open an empty
+   * editor).
+   */
+  @property({ attribute: false })
+  pcEditDataLookup:
+    | ((pcId: string) => {
+        name: string;
+        pronouns: string;
+        tags: readonly string[];
+        backstory: string;
+      } | null)
+    | null = null;
+
+  /**
+   * UX-MH-2 (2026-05-30): emit a pc-edit for one of the four
+   * editable fields.  Host wires to `submitPcEdit`.  Returns true
+   * on append.  Per R-E: the host SHOULD route backstory edits
+   * through the DM-spoiler-edit pipeline before append.
+   */
+  @property({ attribute: false })
+  onEditPcField:
+    | ((
+        pcId: string,
+        field: 'name' | 'pronouns' | 'backstory',
+        value: string
+      ) => boolean)
+    | null = null;
+
+  /**
+   * UX-MH-2 (2026-05-30): emit a pc-tag-add/-remove/-rename event.
+   * Host wires to QuireApp.submitPcTagOp.
+   */
+  @property({ attribute: false })
+  onPcTagOp:
+    | ((
+        pcId: string,
+        op: ChargenEditTrayTagOp
+      ) => boolean)
+    | null = null;
+
+  /**
+   * UX-MH-3 (2026-05-30): DM-initiated backstory refresh — emits a
+   * `backstory-refresh-proposal` after running the AI refresher on
+   * the current PC's fields.  Host wires to
+   * QuireApp.refreshBackstoryForPc.  Returns void; the host owns
+   * the in-flight state + soft-warn modal lifecycle.
+   */
+  @property({ attribute: false })
+  onRefreshBackstory: ((pcId: string) => Promise<void>) | null = null;
+
+  /**
+   * UX-MH-3 (2026-05-30): host-supplied tooltip when the refresh
+   * button is disabled (e.g. no API key, no campaign loaded).  When
+   * null the refresh button stays enabled.
+   */
+  @property({ attribute: false })
+  refreshBackstoryDisabledReason: string | null = null;
 
   /** CC-24 accept gate.  Host wires to controller.acceptSlot. */
   @property({ attribute: false }) onAccept: AcceptCallback | null = null;
@@ -539,6 +626,21 @@ export class ChargenDmReview extends LitElement {
     slot: number;
     field: 'name' | 'pronouns';
   } | null = null;
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-2: per-slot tray open state.
+   * Tray is collapsed by default; the DM clicks the "Edit" button to
+   * expand.  Local @state — no propagation to other peers (purely a
+   * UI affordance).
+   */
+  @state() private openTraySlots: Set<number> = new Set();
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-1: which slot's player-name
+   * field is in inline-edit mode (DM-side rename).  Single-edit at a
+   * time — opening one closes any other.
+   */
+  @state() private editingPlayerNameSlot: number | null = null;
 
   /**
    * Wave 2 (2026-05-25): the cell selected to be the first half of
@@ -1693,9 +1795,39 @@ export class ChargenDmReview extends LitElement {
         ${quickOpen ? this.renderQuickGenForm(slot, quickInFlight) : nothing}
         ${url ? this.renderInviteResult(slot, url) : nothing}
         ${synth ? this.renderSynthResult(slot, synth) : nothing}
+        ${bound ? this.renderBoundSeatTray(slot) : nothing}
         </seat-card>
       </li>
     `;
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — for bound seats (whether or not
+   * they have a synth result), render the player-name line + the
+   * per-row Edit/Review tray.  This is the integration point for
+   * UX-MH-1 (DM-side rename) + UX-MH-2 (DM-side edit) + UX-MH-3
+   * (DM-side refresh button) — the three primitives are mounted
+   * here so the proof lines are hand-clickable from chargen-dm-
+   * review.
+   *
+   * When the seat ALSO has a synth-ok result, the player-name line
+   * is rendered both here (always) and inside renderSynthResult
+   * (legacy placement for the existing layout); both render the
+   * same data so the DM sees the name in either context.  The
+   * canonical edit affordance is the one inside the tray; the
+   * synth-result line is read-only.
+   */
+  private renderBoundSeatTray(slot: number): TemplateResult | typeof nothing {
+    const seat = this.pcSlots[slot];
+    if (!seat?.pcId) return nothing;
+    // Don't show the tray after the seat is retired/archived — those
+    // are read-only states.  pc-edit emissions on retired PCs are
+    // accepted by the engine but the UX intent is don't-touch.
+    if (seat.state !== 'bound-active') return nothing;
+    return html`<div class="chargen-dm-review-bound-tray-wrap">
+      ${this.renderPlayerNameLine(slot)}
+      ${this.renderEditTray(slot)}
+    </div>`;
   }
 
   private renderQuickGenForm(
@@ -2228,12 +2360,138 @@ export class ChargenDmReview extends LitElement {
     if (!seat || !seat.pcId) return nothing;
     const playerName = this.playerNameLookup(seat.pcId);
     if (!playerName) return nothing;
+    const editing = this.editingPlayerNameSlot === slot;
+    // Run #19 Phase 9 (2026-05-30) — UX-MH-1 DM-side rename
+    // affordance.  When `onRenamePlayer` is wired AND the host has
+    // resolved the target peerId for this pcId, the DM can click
+    // the name to enter inline-edit mode.  Commit emits
+    // peer-rename-by-coord which the coord-only materializer applies
+    // to state.peers[targetPeerId].displayName.
+    const canEdit =
+      !!this.onRenamePlayer && !!this.peerIdForPcLookup?.(seat.pcId);
+    if (editing) {
+      return html`<div
+        class="chargen-dm-review-player-name chargen-dm-review-player-name-editing"
+      >
+        <span class="chargen-dm-review-player-name-label">Player:</span>
+        <input
+          type="text"
+          class="chargen-dm-review-player-name-input"
+          maxlength="80"
+          .value=${playerName}
+          aria-label="Edit player display name"
+          autofocus
+          @keydown=${(e: KeyboardEvent) =>
+            this.handlePlayerNameInputKey(e, slot)}
+          @blur=${(e: FocusEvent) =>
+            this.commitPlayerNameEdit(
+              slot,
+              (e.target as HTMLInputElement).value
+            )}
+        />
+      </div>`;
+    }
+    if (canEdit) {
+      return html`<button
+        type="button"
+        class="chargen-dm-review-player-name chargen-dm-review-player-name-editable"
+        aria-label="Edit player display name (currently ${playerName})"
+        title="Click to rename player"
+        @click=${() => {
+          this.editingPlayerNameSlot = slot;
+        }}
+      >
+        Player: ${playerName}
+        <span
+          class="chargen-dm-review-player-name-pencil"
+          aria-hidden="true"
+          >✎</span
+        >
+      </button>`;
+    }
     return html`<div
       class="chargen-dm-review-player-name"
       aria-label="Player display name"
     >
       Player: ${playerName}
     </div>`;
+  }
+
+  private handlePlayerNameInputKey(e: KeyboardEvent, slot: number): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.commitPlayerNameEdit(slot, (e.target as HTMLInputElement).value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this.editingPlayerNameSlot = null;
+    }
+  }
+
+  private commitPlayerNameEdit(slot: number, value: string): void {
+    this.editingPlayerNameSlot = null;
+    const seat = this.pcSlots[slot];
+    if (!seat?.pcId) return;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return;
+    const current = this.playerNameLookup?.(seat.pcId) ?? '';
+    if (trimmed === current) return;
+    const targetPeerId = this.peerIdForPcLookup?.(seat.pcId);
+    if (!targetPeerId) return;
+    this.onRenamePlayer?.(targetPeerId, trimmed);
+  }
+
+  /**
+   * Run #19 Phase 9 (2026-05-30) — UX-MH-2 per-row Edit/Review tray.
+   * Renders the <chargen-edit-tray> below the bound seat's read-only
+   * summary.  Collapsed by default — the toggle button lives in the
+   * tray itself.
+   *
+   * Hidden when:
+   *   - the seat is not bound (no pcId — nothing to edit)
+   *   - the host hasn't wired the lookup (defense-in-depth)
+   *   - the lookup returns null (PC record not yet loaded — the DM
+   *     would see empty fields and accidentally clear them on edit)
+   */
+  private renderEditTray(slot: number): TemplateResult | typeof nothing {
+    const seat = this.pcSlots[slot];
+    if (!seat?.pcId) return nothing;
+    if (!this.pcEditDataLookup) return nothing;
+    const data = this.pcEditDataLookup(seat.pcId);
+    if (!data) return nothing;
+    const pcId = seat.pcId;
+    const open = this.openTraySlots.has(slot);
+    const refreshEnabled =
+      !!this.onRefreshBackstory && !this.refreshBackstoryDisabledReason;
+    return html`<chargen-edit-tray
+      class="chargen-dm-review-edit-tray"
+      data-slot=${slot}
+      .open=${open}
+      .pcName=${data.name}
+      .pcPronouns=${data.pronouns}
+      .pcTags=${data.tags}
+      .pcBackstory=${data.backstory}
+      .showRefreshButton=${!!this.onRefreshBackstory}
+      .refreshButtonDisabledReason=${this.refreshBackstoryDisabledReason ??
+      undefined}
+      .onNameChange=${(value: string) =>
+        this.onEditPcField?.(pcId, 'name', value)}
+      .onPronounsChange=${(value: string) =>
+        this.onEditPcField?.(pcId, 'pronouns', value)}
+      .onBackstoryChange=${(value: string) =>
+        this.onEditPcField?.(pcId, 'backstory', value)}
+      .onTagOp=${(op: ChargenEditTrayTagOp) => this.onPcTagOp?.(pcId, op)}
+      .onRefreshBackstory=${refreshEnabled
+        ? () => void this.onRefreshBackstory?.(pcId)
+        : undefined}
+      @tray-toggle=${() => this.toggleTraySlot(slot)}
+    ></chargen-edit-tray>`;
+  }
+
+  private toggleTraySlot(slot: number): void {
+    const next = new Set(this.openTraySlots);
+    if (next.has(slot)) next.delete(slot);
+    else next.add(slot);
+    this.openTraySlots = next;
   }
 
   private renderHeaderField(

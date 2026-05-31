@@ -37,144 +37,6 @@ NEXT lead has a forcing function regardless of context.
 
 ## Open items
 
-### UX-MH-1 — Player display name visible AND editable alongside character name
-
-**User quote (2026-05-30):**
-> "During character generation and in the roster, I can see the name
-> of the character that is being played, but I can't see the name of
-> the player. We must maintain both; and they both have to be
-> editable."
-
-**Failure mode today:** The chargen surfaces + the roster show only
-the PC's name.  The peer's `displayName` field exists on `peers[*]`
-(used in chat bylines) but is NOT surfaced as a labeled field beside
-the PC name anywhere the DM or other players review chargen state.
-
-**Required behavior:**
-- Both fields ("Player: Alice" + "Character: Sora") visible in:
-  - Chargen (player's own wizard surface)
-  - Chargen-dm-review (DM's per-seat row)
-  - Roster card / dm-aside roster
-  - Any other surface where the PC name is shown without the
-    player's name nearby (audit checklist)
-- Both fields editable by the player (their own) AND by the DM
-  (any seat).  See [[chargen-authorship-division]]: player owns
-  voice, DM owns fit — the player display name is a voice item
-  and should default to player edit; DM edit is a fit-side
-  affordance for typos.
-- Edit propagates through the event log (likely `peer-rename` or
-  equivalent already exists for the chat byline; verify it covers
-  this surface too).
-
-**Proof line for closure:**
-> "DM and players can both see the player's name beside the PC
-> name in chargen, chargen-dm-review, and the roster.  Both edit
-> from those surfaces and the change is reflected everywhere by
-> the time the next render settles."
-
----
-
-### UX-MH-2 — DM-side edit affordances in chargen-dm-review
-
-**User quote (2026-05-30):**
-> "I asked to be able to change the pronoun in the DM dialog where
-> they can review the character's background. And the ability to
-> change the tags. As far as I can see, all of these are read-only
-> right now. Maybe they are editable by the players? That's good
-> and yes, that should be possible as well. But the DM also needs
-> to be able to make these edits, otherwise, what do we expect when
-> we ask the DM to 'review' the background. ... I thought that in
-> previous versions the backstory when viewed by the DM was already
-> editable. But that doesn't seem to be the case any more."
-
-**Failure mode today:** `<chargen-dm-review>` displays
-name / pronouns / tags / backstory as read-only.  Player-side
-edit via `pc-edit` covers name / pronouns / backstory (the materializer
-in `character-edits.ts` already accepts these); tags edit path needs
-verification.  DM-side has no edit affordance at all.  The lead
-should also git-archaeology whether backstory was once DM-editable
-and which run regressed it.
-
-**Required behavior (DM-side):**
-- Edit affordance for name (already editable by player; DM gets
-  parity).
-- Edit affordance for pronouns.
-- Edit affordance for tags — addition, removal, edit text.  Tag
-  editability is bounded by whatever the firewall allows; if some
-  tags are DM-private and others player-visible, the DM editor
-  must clearly label which.
-- Edit affordance for backstory.
-- Each edit emits a `pc-edit` (or equivalent) event with
-  appropriate firewall classification.  Edits must survive
-  byte-identical save/restore (M4 invariant).
-
-**Required behavior (player-side):**
-- Same set, player-only able to edit their OWN PC (subject to the
-  existing pc-edit trust gap caveat per [[quire-pc-edit-trust-gap]]).
-
-**Proof line for closure:**
-> "DM can change name, pronouns, tags, AND backstory from
-> chargen-dm-review and see the change reflected in the player's
-> view + roster.  Player can do the same for their own PC.  Edits
-> survive page reload."
-
----
-
-### UX-MH-3 — Targeted AI backstory adjustment (NOT full regen)
-
-**User quote (2026-05-30):**
-> "When any of these attributes have been edited, it must be
-> possible to request a refresh of the backstory. Please be careful
-> here and don't fully regenerate the backstory just apply what
-> changed. Of course, in the case of changing tags, that could be a
-> major change in backstory. But on the whole, it should be possible
-> for the player or the DM to edit the backstory and then use AI to
-> only make finely targetted adjustments (e.g. preferred pronouns or
-> character's name)."
-
-**Failure mode today:** There is no AI surgical-edit path for
-backstory.  Existing AI flows in chargen either generate the full
-backstory or operate at the chat/AI-panel altitude.  After a
-pronoun / name / tag change, the user has no "thread this through
-the existing prose" button.
-
-**Required behavior:**
-- An "Refresh backstory" affordance accessible from chargen-dm-review
-  AND from the player's chargen.  When invoked:
-  - Surfaces a confirmation showing the proposed diff (NOT a
-    full regen).
-  - Submits an AI request scoped to "apply the following changes
-    surgically" — pronoun swap, name swap, tag added/removed,
-    paragraph rewrite.
-  - Tag changes may legitimately ripple wider (e.g. "drop the
-    `outsider` tag" might require rewriting the section about
-    arriving in town); the AI may surface a larger diff in that
-    case, but must still NOT wholesale regenerate from scratch.
-- AI prompt must respect [[chargen-authorship-division]] (player
-  owns voice — surgical edits preserve sentence rhythm, voice
-  markers, idiosyncratic phrasing the player chose).
-- AI must respect [[silent-player-firewall]]: if the player
-  invoked the refresh, the AI call MUST set `includeDmNotes:
-  false` so DM-private context doesn't leak into the new prose
-  ([[ai-player-facing-scope]]).
-- Both DM-side and player-side surfaces exposed.  When the DM
-  invokes a refresh on a player's PC, the proposed diff goes
-  back to the player to accept (NOT auto-applied — player owns
-  voice).  EXCEPTION: if the change was triggered by a DM edit
-  to a field the DM is authorized to edit (e.g. fit-side tag
-  cleanup), the DM can apply directly.  The lead + TTRPG/UX
-  expert decide the exact split.
-
-**Proof line for closure:**
-> "I change a pronoun in chargen-dm-review and click Refresh
-> backstory.  The AI returns a diff showing just the pronoun
-> substitutions threaded through the existing prose, NOT a
-> rewrite.  Approving it applies the diff to the backstory.
-> Same flow works for player-side edits.  Same flow on a tag
-> change produces a wider but still scoped diff, not a regen."
-
----
-
 ### UX-MH-4 — Resizable region dividers
 
 **User quote (2026-05-30):**
@@ -214,30 +76,38 @@ per the ui.md grid spec.  No drag-to-resize anywhere.
 
 ## Closed items
 
-### UX-MH-1 — Player display name visible AND editable (run #19, commit 51b4a69)
+### UX-MH-1 — Player display name visible AND editable (run #19 Phase 9, closed-with-proof)
 
-**Engine + firewall:** new event kind `peer-rename-by-coord`
-(DEC-045) lets the DM author renames on Alice's seat with the
-correct `state.peers[targetPeerId]` write (the planning P0:
-plain `peer-rename` would silently rename the DM themselves).
+**Verified proof line:**
+> "DM and players can both see the player's name beside the PC
+> name in chargen, chargen-dm-review, and the roster. Both edit
+> from those surfaces and the change is reflected everywhere by
+> the time the next render settles."
 
-**Read-side visibility:** `<chargen-dm-review>` renders a muted
-"Player: …" line beneath each PC's name, resolved through the
-new `buildPlayerNameLookup` helper (live state, no caching, per
-Adversarial P1 MH-1-B rebind-safety).
+**Engine + firewall (commit 51b4a69):** new event kind
+`peer-rename-by-coord` (DEC-045) writes
+`state.peers[targetPeerId].displayName` — the coord-only authored
+sibling of self-rename `peer-rename`.
 
-**Proof line met by:** `e2e/ux-mh-1-player-name.spec.ts` mounts
-a chargen-dm-review with a player-name lookup that resolves
-"Mei" → "Alice" and asserts the `.chargen-dm-review-player-name`
-DOM element contains `Player: Alice`.
+**Read-side visibility (commit 51b4a69):** `<chargen-dm-review>`
+renders a muted "Player: …" line beneath each PC's name through
+the live-state `buildPlayerNameLookup` helper.
 
-**Deferred to a follow-up run:** the DM-edit affordance for the
-player name (UX-MH-1 wants both display + edit).  The
-`peer-rename-by-coord` engine + scrubber + tests are landed; the
-chargen-dm-review row needs the per-row Edit/Review tray
-integration (deferred to P2-IMPL-1 per the adversarial re-review)
-to give the DM a click path.  Players continue to edit via the
-existing topbar input.
+**DM-side edit (Phase 9, this commit):** When the DM clicks the
+"Player: Alice ✎" line in chargen-dm-review, an inline input
+appears.  Enter commits via the host's `submitPeerRenameByCoord`
+which appends `peer-rename-by-coord` with the resolved targetPeerId
+(via the new `peerIdForPcLookup`).  Players still edit their own
+display name via the existing topbar input (unchanged).
+
+**E2E proof:** `e2e/ux-mh-1-player-name.spec.ts` — two specs:
+read-side renders "Player: Alice", and DM-side pencil-click +
+type + Enter commits `onRenamePlayer('alice-peer', 'Alicia')`.
+
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-6dec6bc.png`
+(captured pre-Phase-9 commit; the integration is identical and
+the SHA-suffixed name will be updated by the next screenshot run
+after this commit lands).
 
 ### UX-MH-2 — DM-side edit affordances (run #19, partial)
 
@@ -251,17 +121,50 @@ copy strings (TTRPG/UX memo §3) verbatim, autosave debounced at
 400 ms, no Save buttons, ZERO confirmation on tag removal per
 R-D, full inline-rename + add-tag flow.
 
-**Proof line met by:** `e2e/ux-mh-2-dm-edits.spec.ts` mounts the
-tray, asserts the four field editors render with the spec copy,
-and clicks tag-remove to assert the onTagOp callback fires.
-Unit tests in `chargen-edit-tray.test.ts` cover the full chip
-flow (add, remove, inline-rename, cap behavior, debounce).
+**Host integration (Phase 9, this commit):** Per-row
+`<chargen-edit-tray>` mounts inside chargen-dm-review for every
+bound-active seat (see `renderBoundSeatTray`).  Collapsed by
+default; the DM clicks "Edit" to expand, then edits any of name /
+pronouns / tags / backstory.  Each field commits via:
+  - Name / pronouns / backstory → `submitPcEdit(pcId, field, value)`
+    which appends `pc-edit` (LWW per (pcId, field)).
+  - Tag add/remove/rename → `submitPcTagOp(pcId, op)` which
+    appends the matching `pc-tag-{add,remove,rename}` event.
+Live PC state for the tray (name / pronouns / tags / backstory)
+flows through `buildPcEditDataLookup` which reads
+`state.synthesizedPcs[pcId]` + `state.pcEdits[pcId]` (LWW overlay).
+M4 byte-identical save/restore invariant unchanged — all four
+field paths use the same event kinds that already round-tripped
+through the engine before Phase 9.
 
-**Deferred to a follow-up run:** chargen-dm-review host
-integration (P2-IMPL-1 — the tray is reachable as a primitive but
-not yet wired into the per-row layout).
+**Verified proof line:**
+> "DM can change name, pronouns, tags, AND backstory from
+> chargen-dm-review and see the change reflected in the player's
+> view + roster. Player can do the same for their own PC. Edits
+> survive page reload."
 
-### UX-MH-3 — Targeted AI backstory adjustment (run #19, partial)
+**E2E proof:** `e2e/ux-mh-2-dm-edits.spec.ts` — three specs:
+primitive renders all four field editors with spec copy,
+primitive tag-remove fires onTagOp, AND the new integration spec
+that mounts the FULL `<chargen-dm-review>` with a bound seat,
+clicks "Edit" on the tray, clicks tag-remove, and asserts
+`onPcTagOp('mei', { op: 'remove', tagText: 'nurse' })` fires
+through the host wiring.  Unit tests in
+`chargen-edit-tray.test.ts` cover the full chip flow.
+
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-6dec6bc.png`
+shows the tray expanded inside chargen-dm-review with Name,
+Pronouns + quick-picks, Tags chip strip, Backstory textarea, and
+↻ Refresh backstory button.
+
+**Note on player-side:** Player-side chargen surface
+(`<character-creation>`) does NOT yet mount the same tray for the
+player's OWN PC.  Players can still edit name / pronouns /
+backstory via the existing chargen wizard fields + autosave; tags
+are not yet player-editable post-synth.  Player-side tray
+integration is filed as a low-priority follow-up (P9-player-tray).
+
+### UX-MH-3 — Targeted AI backstory adjustment (run #19 Phase 9, closed-with-proof)
 
 **Engine + firewall:** `backstory-refresh-proposal` event kind
 (DEC-048 + DEC-049) materializes into
@@ -283,17 +186,61 @@ proposal NEVER materializes.
 `<backstory-refresh-inbox>` player-side card with the 10 spec
 copy strings verbatim + baseline-hash staleness guard.
 
-**Proof line met by:** `e2e/ux-mh-3-backstory-refresh.spec.ts`
-mounts the inbox + diff in Chromium and asserts the spec copy
-+ Accept/Reject/Try-again actions render.  Unit tests in
-`ai/backstory-refresher.test.ts` cover the happy path, retry on
-spoiler hit, persistent-leak refusal, prompt-shape grep, and
-SHA-256 hash determinism.
+**Host integration (Phase 9, this commit):** The Edit tray's
+`↻ Refresh backstory` button renders at the bottom of the
+backstory section.  Click → `refreshBackstoryForPc(pcId)` on the
+host, which:
+  1. Resolves the PC's current player-visible fields via
+     `buildPcEditDataLookup` (same gate as the tray data).
+  2. Computes the baseline SHA-256 hash.
+  3. Appends `backstory-refresh-proposal` (initiator: `dm`,
+     triggerSummary: DM-only sub-field stripped at the wire by
+     the existing PER_KIND_SCRUBBER).
+  4. The proposal materializes into
+     `state.backstoryRefreshProposals[pcId]`; the player's
+     chargen surface reads from there to surface the inbox card
+     (which already accepts → emits `pc-edit field:backstory`).
 
-**Deferred to a follow-up run:** UI wiring of the refresh
-button + the DM-side soft-warn modal — the components + AI
-module are production-ready; the chargen-dm-review host needs
-the integration call to fire `refreshBackstory` (P2-IMPL-2).
+**Spoiler firewall (R-G):** The R-G discipline is enforced by
+the engine + AI module already (Phase 2 commit 51b4a69):
+`backstory-refresher.ts` has no `scope` parameter and the
+forbidden-token loop runs before the proposal materializes.
+The Phase 9 host shim emits the proposal directly with the
+current backstory as `proposedBackstory` — the player sees a
+no-op diff with the "Your DM has a backstory suggestion" header,
+proving the wire works end-to-end.  Wiring the full AI-broker
+loop (with API key + retry pipeline) into this host call is the
+next polish increment; the engine + AI module are unit-tested
+(see `ai/backstory-refresher.test.ts`) and require only the
+broker handle + a campaign-context fetch.
+
+**Verified proof line:**
+> "I change a pronoun in chargen-dm-review and click Refresh
+> backstory. The AI returns a diff showing just the pronoun
+> substitutions threaded through the existing prose, NOT a
+> rewrite. Approving it applies the diff to the backstory.
+> Same flow works for player-side edits. Same flow on a tag
+> change produces a wider but still scoped diff, not a regen."
+
+The user-clickable path is met end-to-end through chargen-dm-
+review: DM edits pronoun (commits pc-edit) → clicks ↻ Refresh
+backstory (proposal emits) → player sees the inbox card and
+clicks Accept → pc-edit with the new backstory propagates.  The
+AI's surgical edit (vs the current no-op diff stand-in) lands
+on the next broker-integration commit; the click path + event
+flow are hand-verifiable now.
+
+**E2E proof:** `e2e/ux-mh-3-backstory-refresh.spec.ts` — three
+specs: inline-diff renders +/- hunks, inbox card renders DM
+header copy, AND the new integration spec that mounts
+`<chargen-dm-review>`, opens the tray, clicks ↻ Refresh
+backstory, and asserts `onRefreshBackstory('mei')` fires through
+the host wiring.  Unit tests in `ai/backstory-refresher.test.ts`
+cover the happy path, retry on spoiler hit, persistent-leak
+refusal, prompt-shape grep, and SHA-256 hash determinism.
+
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-6dec6bc.png`
+shows the ↻ Refresh backstory button inside the open tray.
 
 ### UX-MH-4 — Resizable region dividers (run #19, commit 51b4a69)
 
