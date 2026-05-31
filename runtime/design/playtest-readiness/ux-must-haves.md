@@ -104,7 +104,7 @@ display name via the existing topbar input (unchanged).
 read-side renders "Player: Alice", and DM-side pencil-click +
 type + Enter commits `onRenamePlayer('alice-peer', 'Alicia')`.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-<HEAD>.png`
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-1-verified-6d6a24d.png`
 (shows "Player: mei ✎" pencil affordance + the FULL Edit tray
 expanded with Name / Pronouns / Tags / Backstory / ↻ Refresh
 backstory — the click path the user can drive to rename, edit, AND
@@ -154,7 +154,7 @@ clicks "Edit" on the tray, clicks tag-remove, and asserts
 through the host wiring.  Unit tests in
 `chargen-edit-tray.test.ts` cover the full chip flow.
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-<HEAD>.png`
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-2-verified-6d6a24d.png`
 shows the player-side `<backstory-refresh-inbox>` mounted over the
 quire-app shell on the bound PC's surface — "Your DM has a
 backstory suggestion" header + Accept changes / Reject / Try
@@ -286,7 +286,7 @@ Unit tests in `ai/backstory-refresher.test.ts` cover the happy
 path, retry on spoiler hit, persistent-leak refusal, prompt-shape
 grep, and SHA-256 hash determinism (unchanged from Phase 2).
 
-**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-<HEAD>.png`
+**Screenshot:** `/home/markus/src/ttrpg/tmp/ux-mh-3-verified-6d6a24d.png`
 shows the player-side inbox card with the actual AI-threaded diff:
 red strike-through "she learned" / "Her nurse" / "she settled" and
 green "they learned" / "Their nurse" / "they settled" — proves the
