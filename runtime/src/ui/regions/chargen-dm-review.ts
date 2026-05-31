@@ -355,6 +355,18 @@ export class ChargenDmReview extends LitElement {
   /** CC-24 accept gate.  Host wires to controller.acceptSlot. */
   @property({ attribute: false }) onAccept: AcceptCallback | null = null;
 
+  /**
+   * BUG-1 hotfix (2026-05-30): navigate to a PC's character page.
+   * Host wires this to quire-app.navigate; the chargen-dm-review
+   * bond-count pip uses it to route the DM to <dm-pc-detail>
+   * where the pending-bond Ratify form lives.  Without this, the
+   * DM accepts a seat with pending chargen bonds and sees "N
+   * pending bonds" on the chargen card with no path forward —
+   * the user reported it as "something is unresolved" + dead end.
+   */
+  @property({ attribute: false })
+  onOpenPcSheet: ((pcId: string) => void) | null = null;
+
   /** P3T-19 revise.  Host wires to controller.requestReviseSlot. */
   @property({ attribute: false }) onRevise: ReviseCallback | null = null;
 
@@ -2295,11 +2307,29 @@ export class ChargenDmReview extends LitElement {
     if (typeof pcId !== 'string' || pcId.length === 0) return nothing;
     const count = this.pendingBondCounts?.[pcId] ?? 0;
     if (count === 0) return nothing;
+    const label = `${count} pending bond${count === 1 ? '' : 's'}`;
+    // BUG-1 hotfix (2026-05-30): when the host wires `onOpenPcSheet`
+    // the pip becomes a button that routes the DM straight to
+    // <dm-pc-detail> where the Ratify form lives.  The user reported
+    // "something is unresolved" after Accept and a dead-end on the
+    // chargen card; this is the breadcrumb that closes the loop.
+    // Falls back to the legacy display-only span when the callback
+    // is absent (e.g., in standalone unit tests).
+    if (this.onOpenPcSheet) {
+      return html`<button
+        type="button"
+        class="chargen-dm-review-bond-pip chargen-dm-review-bond-pip-button"
+        title="Open this PC's sheet to ratify the pending bond proposal(s)."
+        @click=${() => this.onOpenPcSheet?.(pcId)}
+      >
+        ${label} — Review →
+      </button>`;
+    }
     return html`<span
       class="chargen-dm-review-bond-pip"
       title="This PC has bond proposals awaiting DM ratification.  Open their character page to review."
     >
-      ${count} pending bond${count === 1 ? '' : 's'}
+      ${label}
     </span>`;
   }
 

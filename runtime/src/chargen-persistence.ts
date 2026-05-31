@@ -38,8 +38,17 @@ import {
   MAX_BOND_TARGET_LEN,
   MAX_BOND_TEXT_LEN
 } from './chargen-pack';
+import type { SynthesizeBackstoryResult } from './ai/backstory-synthesizer';
 
 export const CHARGEN_STORAGE_PREFIX = 'quire.chargen.';
+/**
+ * BUG-3 hotfix (2026-05-30): synth results live in a parallel key
+ * family.  Separate from the player-side answers/bondDrafts blob so
+ * the DM-side rehydration doesn't have to round-trip the player's
+ * full draft (the answer state may be empty on the DM device when
+ * a pack came in over the wire / via file-import).
+ */
+export const CHARGEN_SYNTH_STORAGE_PREFIX = 'quire.chargen.synth.';
 
 export interface ChargenPersistedState {
   chosenPath: 'qa' | 'free-write' | 'pre-gen' | '';
@@ -217,6 +226,121 @@ export function clearChargenState(
   let key: string;
   try {
     key = chargenStorageKey(campaignSlug, slot);
+  } catch {
+    return;
+  }
+  try {
+    window.localStorage?.removeItem(key);
+  } catch {
+    /* silent */
+  }
+  // BUG-3 hotfix: a slot wipe must drop the parallel synth-result
+  // entry too, so a player-leave/seat-retire doesn't leave a stale
+  // backstory rehydrating on next load.
+  clearChargenSynthResult(campaignSlug, slot);
+}
+
+// ============ BUG-3 hotfix: synth-result persistence ============
+//
+// The DM's `SynthesizeBackstoryResult` for a slot lived only in the
+// controller's in-memory map.  If the DM reloaded the tab between
+// Synthesize and Accept, the backstory was gone — the user reported
+// "after refresh only the filename remains."  These helpers persist
+// the synth result keyed by campaign+slot so the controller can
+// rehydrate it on boot.  The shape is the same discriminated union
+// returned by the synthesizer; JSON.parse + a light shape-check
+// guard against future drift.
+
+/** Compute the synth-result key for a campaign+slot. */
+export function chargenSynthStorageKey(
+  campaignSlug: string,
+  slot: number
+): string {
+  if (!Number.isInteger(slot) || slot < 1 || slot > 9) {
+    throw new Error(`Chargen slot must be in [1, 9]; got ${slot}`);
+  }
+  const safe = campaignSlug.replace(/[^A-Za-z0-9_-]/g, '-');
+  return `${CHARGEN_SYNTH_STORAGE_PREFIX}${safe}:slot${slot}`;
+}
+
+/** Save the synth result for a slot.  Returns true on success. */
+export function saveChargenSynthResult(
+  campaignSlug: string,
+  slot: number,
+  result: SynthesizeBackstoryResult
+): boolean {
+  let key: string;
+  try {
+    key = chargenSynthStorageKey(campaignSlug, slot);
+  } catch {
+    return false;
+  }
+  try {
+    const ls = window.localStorage;
+    if (!ls) return false;
+    ls.setItem(key, JSON.stringify(result));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Load the persisted synth result for a slot.  Returns null when
+ * absent, corrupt, or localStorage is unavailable.  Defensive
+ * shape-check: requires `ok` to be boolean and (on the success arm)
+ * `response.name + response.backstory` to be strings.  A future
+ * provider-schema bump that adds fields parses cleanly; a stored
+ * blob that's missing the load-bearing fields drops out.
+ */
+export function loadChargenSynthResult(
+  campaignSlug: string,
+  slot: number
+): SynthesizeBackstoryResult | null {
+  let key: string;
+  try {
+    key = chargenSynthStorageKey(campaignSlug, slot);
+  } catch {
+    return null;
+  }
+  let raw: string | null;
+  try {
+    raw = window.localStorage?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const p = parsed as Record<string, unknown>;
+  if (typeof p.ok !== 'boolean') return null;
+  if (p.ok) {
+    const resp = p.response as Record<string, unknown> | undefined;
+    if (!resp || typeof resp !== 'object') return null;
+    if (typeof resp.name !== 'string' || resp.name.length === 0) return null;
+    if (typeof resp.backstory !== 'string' || resp.backstory.length === 0) {
+      return null;
+    }
+  } else {
+    if (typeof p.code !== 'string') return null;
+    if (typeof p.message !== 'string') return null;
+  }
+  return parsed as SynthesizeBackstoryResult;
+}
+
+/** Clear the synth result for a slot (silent on failure). */
+export function clearChargenSynthResult(
+  campaignSlug: string,
+  slot: number
+): void {
+  let key: string;
+  try {
+    key = chargenSynthStorageKey(campaignSlug, slot);
   } catch {
     return;
   }

@@ -3971,6 +3971,12 @@ export class QuireApp extends LitElement {
   ): TemplateResult | typeof nothing {
     void this.chargen.loadDmReviewRegion();
     if (!this.chargen.dmReviewRegionDefined) return nothing;
+    // BUG-3 hotfix: hydrate persisted synth results lazily on each
+    // render of the DM-review surface.  Idempotent — already-loaded
+    // slots are skipped.  Belt-and-suspenders for the case where
+    // the region module was already loaded before the campaign
+    // (HMR / route re-entry).
+    this.chargen.hydrateSynthResultsFromStorage();
     const campaign = this.getCurrentCampaign();
     return html`
       <chargen-dm-review
@@ -4029,6 +4035,27 @@ export class QuireApp extends LitElement {
           })}
         .onAccept=${(slot: number, expectedResponseId?: string) =>
           this.chargen.acceptSlot(slot, expectedResponseId)}
+        .onOpenPcSheet=${(pcId: string) => {
+          // BUG-1 hotfix (2026-05-30): route to <dm-pc-detail> so
+          // the DM can ratify the pending bond proposals the
+          // chargen surface only summarizes.  Slug fallback empty
+          // — navigate() validates the route and no-ops on bad
+          // input.  Synthetic Event satisfies the navigate API;
+          // there's no real click target on the pip itself.
+          const slug = campaign ? this.slugFor(campaign) : '';
+          if (!slug) return;
+          this.navigate(new Event('synthetic'), {
+            kind: 'character',
+            slug,
+            characterKind: 'pc',
+            characterId: pcId
+          });
+          // Same hint event <dm-aside> fires so dm-pc-detail
+          // scrolls the bond-proposals section into view.
+          window.dispatchEvent(
+            new CustomEvent('dm-aside-bond-nav', { detail: { pcId } })
+          );
+        }}
         .onAcceptWithEdits=${(
           slot: number,
           edits: { name: string; backstory: string }

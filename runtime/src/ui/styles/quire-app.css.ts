@@ -247,6 +247,21 @@ export const quireAppStyles = css`
     /* Phase 3a Cluster E step 2: unified DM review surface.  Per-seat
        card replacing the prior 3-card stack (invite-manager + seat-strip
        + dm-aside).  Step 6 deletes the legacy mounts. */
+    /*
+     * BUG-2 hotfix (2026-05-30): the <chargen-dm-review> custom
+     * element uses light-DOM rendering and defaults to display
+     * inline. Inside the shell grid + scroll containers an inline
+     * host whose intrinsic children include long flex columns
+     * causes the aside to grow without bound — successive pack
+     * imports compound the overflow, eventually painting a duplicate
+     * of the entire app DOM beneath the cockpit (probed at
+     * htmlScrollHeight=2200 vs bodyScrollHeight=900). Pinning the
+     * host to display:block restores the shell containment so the
+     * scroll math stays sane across N pack imports.
+     */
+    chargen-dm-review {
+      display: block;
+    }
     .chargen-dm-review-intro {
       margin: 0 0 0.6rem;
     }
@@ -1378,10 +1393,25 @@ export const quireAppStyles = css`
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .chargen-dm-review-import-label {
+      /*
+       * BUG-2 hotfix (2026-05-30): containing block for the
+       * absolutely-positioned file input below.  Without this, the
+       * <input> resolves its containing block to the document and
+       * each pack-import status-banner adds 83 px of phantom html
+       * scrollHeight (the absolutely-positioned 1x1 input
+       * "anchors" at its flow position relative to <html>).
+       * Pinning the label as the positioned ancestor confines the
+       * input to the seat card.
+       */
+      position: relative;
+    }
     .chargen-dm-review-import-input {
       /* Hide the native input but keep it focusable for keyboard
          users; clicking the <label> opens the picker. */
       position: absolute;
+      top: 0;
+      left: 0;
       width: 1px;
       height: 1px;
       opacity: 0;
@@ -1671,6 +1701,25 @@ export const quireAppStyles = css`
       border: 1px solid light-dark(#60a5fa, #3b82f6);
       border-radius: 3px;
       align-self: center;
+    }
+    /*
+     * BUG-1 hotfix (2026-05-30): the bond-count pip is a button when
+     * the host wires the navigate callback — DM clicks to jump to
+     * the PC's <dm-pc-detail> Ratify form.  Inherits the same
+     * blue-rail palette as the span variant; hover/focus reads as
+     * interactive without overriding the pip's compact footprint.
+     */
+    button.chargen-dm-review-bond-pip-button {
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+    button.chargen-dm-review-bond-pip-button:hover,
+    button.chargen-dm-review-bond-pip-button:focus-visible {
+      background: light-dark(#bfdbfe, #2540a0);
+      border-color: light-dark(#2563eb, #60a5fa);
+      color: light-dark(#1e3a8a, #dbeafe);
     }
     .chargen-dm-review-accept {
       padding: 0.35rem 0.85rem;

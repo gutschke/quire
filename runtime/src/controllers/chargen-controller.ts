@@ -43,7 +43,13 @@ import {
   encodeInviteToken
 } from '../invite-token';
 import { routeToSearch } from '../routing';
-import { loadChargenState, saveChargenState } from '../chargen-persistence';
+import {
+  loadChargenState,
+  saveChargenState,
+  saveChargenSynthResult,
+  loadChargenSynthResult,
+  clearChargenSynthResult
+} from '../chargen-persistence';
 import { ChargenPersistenceQueue } from './chargen-persistence-queue';
 import { ChargenAcceptanceMachine } from './chargen-acceptance-machine';
 import { ChargenSynthLifecycle } from './chargen-synth-lifecycle';
@@ -649,10 +655,14 @@ export class ChargenController implements ReactiveController {
       if (!(key in origAny)) origAny[key] = respClone[key];
       respClone[key] = patchAny[key];
     }
-    this.synth.setResult(slot, {
+    const edited: SynthesizeBackstoryResult = {
       ...result,
       response: respClone as unknown as PcBackstorySynthesisResponse
-    });
+    };
+    this.synth.setResult(slot, edited);
+    // BUG-3 hotfix (2026-05-30): pre-accept edits update the
+    // persisted blob so a reload doesn't drop the DM's tweaks.
+    this.persistSynthResultIfPossible(slot, edited);
     // Any further edit invalidates the prior pronoun-patch hint —
     // the DM has moved on or the prose changed again.
     this.acceptance.clearPronounPatched(slot);
@@ -661,6 +671,21 @@ export class ChargenController implements ReactiveController {
     this.acceptance.clearResyncFailure(slot);
     this.host.requestUpdate();
     return true;
+  }
+
+  /**
+   * BUG-3 hotfix helper: persist a synth result to localStorage.
+   * Silent on no-campaign (chargen never runs without a campaign,
+   * but be defensive).
+   */
+  private persistSynthResultIfPossible(
+    slot: number,
+    result: SynthesizeBackstoryResult
+  ): void {
+    const campaign = this.env.getCurrentCampaign();
+    if (!campaign) return;
+    const slug = this.env.getCampaignSlug(campaign);
+    saveChargenSynthResult(slug, slot, result);
   }
 
   /**
@@ -783,7 +808,13 @@ export class ChargenController implements ReactiveController {
       ...deepCloneSynthResponse(result.response),
       backstory: text
     };
-    this.synth.setResult(slot, { ...result, response: respClone });
+    const patched: SynthesizeBackstoryResult = {
+      ...result,
+      response: respClone
+    };
+    this.synth.setResult(slot, patched);
+    // BUG-3 hotfix: keep persisted blob in sync with patched edits.
+    this.persistSynthResultIfPossible(slot, patched);
     const pronounWasPatched = patchable.includes('pronouns');
     for (const field of patchable) {
       delete (drift as Record<string, unknown>)[field];
@@ -1022,6 +1053,16 @@ export class ChargenController implements ReactiveController {
         `Phase-B fields present at accept for slot ${slot}: ${phaseBPresent.join(', ')}.`
       );
     }
+    // BUG-3 hotfix: drop persisted synth blob — the PC is now
+    // materialized into shared state; the cached synth is no
+    // longer needed and a stale blob would just clutter
+    // localStorage.  Use the acceptSlug we already resolved above.
+    if (acceptCampaign) {
+      clearChargenSynthResult(
+        this.env.getCampaignSlug(acceptCampaign),
+        slot
+      );
+    }
     this.host.requestUpdate();
   }
 
@@ -1069,6 +1110,10 @@ export class ChargenController implements ReactiveController {
       retried: true
     };
     this.synth.setResult(slot, cleaned);
+    // BUG-3 hotfix: persist hand-edited result too — acceptSlot will
+    // clear the persisted blob below, but if it bails for any reason
+    // (no campaign, race) we still want the edit to survive reload.
+    this.persistSynthResultIfPossible(slot, cleaned);
     this.host.requestUpdate();
     // Now commit via the normal accept path.
     this.acceptSlot(slot);
@@ -1110,6 +1155,17 @@ export class ChargenController implements ReactiveController {
       return;
     }
     this.synth.deleteResult(slot);
+    // BUG-3 hotfix: clear persisted blob on revise so it doesn't
+    // re-appear after a reload.
+    {
+      const reviseCampaign = this.env.getCurrentCampaign();
+      if (reviseCampaign) {
+        clearChargenSynthResult(
+          this.env.getCampaignSlug(reviseCampaign),
+          slot
+        );
+      }
+    }
     this.acceptance.resetForRevise(slot);
     const trimmedReason = reason?.trim() ?? '';
     const parts: string[] = [
@@ -1556,6 +1612,12 @@ export class ChargenController implements ReactiveController {
       '../ui/regions/chargen-dm-review'
     ).then(() => {
       this.dmReviewRegionDefined = true;
+      // BUG-3 hotfix (2026-05-30): rehydrate any persisted synth
+      // results now that the region is defined.  This is the DM-
+      // first-load path — if the user reloaded the tab between
+      // Synthesize and Accept, the in-memory map is empty but
+      // localStorage carries the result.  Idempotent on re-mount.
+      this.hydrateSynthResultsFromStorage();
       this.host.requestUpdate();
     });
     return this.dmReviewRegionLoaded;
@@ -1721,6 +1783,12 @@ export class ChargenController implements ReactiveController {
         return result;
       }
       this.synth.setResult(slot, result);
+      // BUG-3 hotfix (2026-05-30): persist the synth result so a
+      // tab reload between Synthesize and Accept rehydrates the
+      // backstory + Accept button instead of dropping back to an
+      // empty seat.  Best-effort: localStorage failures (quota,
+      // sandbox) don't break the in-memory flow.
+      this.persistSynthResultIfPossible(slot, result);
       // Re-synthesizing clears any prior accept for the same slot —
       // accepting the OLD result and then re-synthesizing would
       // otherwise leave the accept stale.  When this was a
@@ -1904,7 +1972,48 @@ export class ChargenController implements ReactiveController {
     // (acceptance.resetForDelete clears the flag below).
     const had = this.synth.clearSlot(slot) || this.acceptance.isAccepted(slot);
     this.acceptance.resetForDelete(slot);
+    // BUG-3 hotfix: drop the persisted synth blob so it doesn't
+    // rehydrate on the next reload.  The synth.clearSlot above
+    // already bumped the generation counter so any in-flight
+    // synthesis won't write back.
+    const campaign = this.env.getCurrentCampaign();
+    if (campaign) {
+      const slug = this.env.getCampaignSlug(campaign);
+      clearChargenSynthResult(slug, slot);
+    }
     if (had) this.host.requestUpdate();
+  }
+
+  /**
+   * BUG-3 hotfix (2026-05-30): rehydrate cached synth results from
+   * localStorage on app load.  Called by the host after the
+   * campaign is loaded + the DM-review region is mounted, before
+   * the DM can interact.  Idempotent — re-running is a no-op when
+   * the in-memory map already has the slot.  Failures are silent
+   * (corrupt/absent entries fall through to "no cached result").
+   *
+   * The user-visible effect: a DM who imported a pack, ran
+   * Synthesize, then reloaded the tab before clicking Accept sees
+   * the proposed backstory + Accept button rehydrate instead of
+   * an empty slot.
+   */
+  hydrateSynthResultsFromStorage(): void {
+    const campaign = this.env.getCurrentCampaign();
+    if (!campaign) return;
+    const slug = this.env.getCampaignSlug(campaign);
+    const slots = this.env.getPcSlots();
+    let anyRestored = false;
+    for (const slotStr of Object.keys(slots)) {
+      const slot = Number(slotStr);
+      if (!Number.isInteger(slot) || slot < 1 || slot > 9) continue;
+      if (this.synth.hasResult(slot)) continue;
+      const persisted = loadChargenSynthResult(slug, slot);
+      if (persisted) {
+        this.synth.setResult(slot, persisted);
+        anyRestored = true;
+      }
+    }
+    if (anyRestored) this.host.requestUpdate();
   }
 
   // ---- display-name resolution (P3U-12) ----
