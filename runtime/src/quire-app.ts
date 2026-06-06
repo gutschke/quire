@@ -1728,6 +1728,22 @@ export class QuireApp extends LitElement {
       // Character layer (independent of episode/scene).  The
       // DM-only NPC gate already ran via decideRoute above.
       if (route.kind === 'character') {
+        // 2026-06-06 P0 fix: if the DM is in a mode-overlay
+        // (session-wrap-marks, session-open, dm-operational), the
+        // renderAppState short-circuit at the top of the switch
+        // ignores `appState`.  Navigating to a PC sheet from inside
+        // wrap-marks (dm-aside link "Review on X's sheet") looked
+        // dead — the appState flipped to `character`, but the wrap
+        // UI kept rendering.  Drop the mode overlay so the new
+        // appState becomes visible.  The DM can re-enter wrap mode
+        // from the wrap button when they finish reviewing the sheet.
+        if (
+          this.appMode === 'session-wrap-marks' ||
+          this.appMode === 'session-open' ||
+          this.appMode === 'dm-operational'
+        ) {
+          this.appMode = 'in-session';
+        }
         // Synthesized-PC overlay check FIRST (BUG-1-followup
         // 2026-05-30): chargen-generated PCs live in
         // `state.synthesizedPcs[pcId]`, NOT as static JSON in the
