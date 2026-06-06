@@ -535,7 +535,8 @@ function drawSectionHeader(
 export function drawIdentityBand(
   ctx: PageContext,
   pc: CharacterRecord,
-  startY: number
+  startY: number,
+  playerName?: string
 ): number {
   drawText(ctx.page, {
     x: ctx.contentLeft,
@@ -545,6 +546,19 @@ export function drawIdentityBand(
     size: 22,
     color: COLORS.underleafGreen
   });
+  // 2026-06-06 (feedback_show_both_names): when a player is bound,
+  // surface "played by <playerName>" inline next to the PC name so
+  // every printed sheet carries both identities visibly.
+  if (playerName && playerName.length > 0) {
+    const pcNameW = ctx.fonts.sansBold.widthOfTextAtSize(pc.name, 22);
+    ctx.page.drawText(`  played by ${playerName}`, {
+      x: ctx.contentLeft + pcNameW + 4,
+      y: startY - 22 + 4,
+      font: ctx.fonts.sans,
+      size: 10,
+      color: COLORS.inkSecondary
+    });
+  }
   const subParts: string[] = [];
   if (pc.pronouns) subParts.push(pc.pronouns);
   if (pc.alignment) subParts.push(pc.alignment);

@@ -50,8 +50,15 @@ export interface DmAsideBondProposal {
   id: string;
   /** PC the bond is FOR (the source PC). */
   pcId: string;
-  /** Display name of the source PC. */
+  /** Display name of the source PC (the character). */
   pcLabel: string;
+  /**
+   * 2026-06-06 (feedback_show_both_names): the human player's
+   * display name for the source PC, when a peer is bound to the
+   * seat.  Omitted when no peer controls the seat (e.g., the
+   * controllerPeerId is unset between sessions or after revoke).
+   */
+  pcPlayerLabel?: string;
   /**
    * Display label for the bond target.  For a resolved bond this
    * is the target PC's name; for a D5.5-B chargen PLACEHOLDER
@@ -60,6 +67,20 @@ export interface DmAsideBondProposal {
    * DM knows they must pick a real target at ratify.
    */
   targetLabel: string;
+  /**
+   * 2026-06-06 (feedback_show_both_names): the human player's
+   * display name for the bond target PC, when a peer is bound.
+   * Omitted for unresolved placeholders or when no peer controls
+   * the target seat.
+   */
+  targetPlayerLabel?: string;
+  /**
+   * 2026-06-06 (feedback_show_both_names): the human display name
+   * of the player who proposed the bond, when known.  When
+   * undefined the row falls back to the raw peer id (current
+   * behavior).
+   */
+  proposedByPlayerLabel?: string;
   /**
    * D5.5-B (2026-05-27): true when the target is an unresolved
    * free-text placeholder.  The renderer flags it so the DM sees
@@ -158,11 +179,27 @@ export class DmAside extends LitElement {
       characterKind: 'pc',
       characterId: p.pcId
     };
+    // 2026-06-06 (feedback_show_both_names): always render the
+    // human player name alongside the PC name when the seat is
+    // bound.  Falls back gracefully when a player label is absent.
+    const pcDisplay = p.pcPlayerLabel
+      ? html`<strong>${p.pcLabel}</strong
+          ><span class="dm-aside-bond-queue-player-name"
+            > · ${p.pcPlayerLabel}</span
+          >`
+      : html`<strong>${p.pcLabel}</strong>`;
+    const targetDisplay = p.targetPlayerLabel
+      ? html`<strong>${p.targetLabel}</strong
+          ><span class="dm-aside-bond-queue-player-name"
+            > · ${p.targetPlayerLabel}</span
+          >`
+      : html`<strong>${p.targetLabel}</strong>`;
+    const proposedByDisplay = p.proposedByPlayerLabel ?? p.proposedByPeerId;
     return html`<li class="dm-aside-bond-queue-row">
       <p class="dm-aside-bond-queue-summary">
-        <strong>${p.pcLabel}</strong>
+        ${pcDisplay}
         <span class="muted"> → </span>
-        <strong>${p.targetLabel}</strong>
+        ${targetDisplay}
         ${p.unresolved
           ? html`<span
               class="dm-aside-bond-queue-unresolved"
@@ -170,7 +207,7 @@ export class DmAside extends LitElement {
               >· unresolved target</span
             >`
           : nothing}
-        <span class="muted"> · ${p.proposedByPeerId}</span>
+        <span class="muted"> · proposed by ${proposedByDisplay}</span>
       </p>
       <p class="dm-aside-bond-queue-text">${p.text}</p>
       ${p.spoilerHits && p.spoilerHits.length > 0

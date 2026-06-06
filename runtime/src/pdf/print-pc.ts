@@ -64,6 +64,13 @@ export interface RenderOptions {
    * Example: `{ 'slot-5-sam-msg_01Gn': 'Sam' }`.
    */
   pcNames?: Record<string, string>;
+  /**
+   * 2026-06-06 (feedback_show_both_names): the human display name
+   * of the player bound to this PC.  Surfaced in the identity band
+   * as "PC name — played by <playerName>".  Omitted gracefully
+   * when no peer is bound or the caller does not supply one.
+   */
+  playerName?: string;
 }
 
 export async function renderPcPdf(
@@ -119,7 +126,7 @@ export async function renderPcPdf(
 
   let currentCtx = page0;
   let cursorY = page0.height - page0.marginY;
-  cursorY = drawIdentityBand(page0, scrubbed, cursorY);
+  cursorY = drawIdentityBand(page0, scrubbed, cursorY, options.playerName);
   cursorY = drawHarmStressBand(page0, scrubbed, cursorY);
   cursorY = drawStatsStrip(page0, scrubbed, cursorY);
   cursorY = drawSkillsTagsChips(page0, scrubbed, cursorY);

@@ -3910,10 +3910,28 @@ export class QuireApp extends LitElement {
     const out: Array<
       import('./ui/regions/dm-aside').DmAsideBondProposal
     > = [];
+    // 2026-06-06 (feedback_show_both_names): per the rule
+    // "always show both player and PC", build pcId → playerName
+    // lookups so the bond row can render BOTH the character and
+    // the human.
+    const peerNameById = new Map<string, string>();
+    for (const peer of Object.values(v.shared.peers)) {
+      if (peer.name) peerNameById.set(peer.peerId, peer.name);
+    }
+    const playerNameForPc = (pcId: string): string | undefined => {
+      for (const seat of Object.values(v.shared.pcSlots)) {
+        if (seat.pcId === pcId && seat.controllerPeerId) {
+          return peerNameById.get(seat.controllerPeerId);
+        }
+      }
+      return undefined;
+    };
+
     for (const [pcId, proposals] of Object.entries(
       v.shared.pcBondProposals ?? {}
     )) {
       const pcLabel = this.resolvePcDisplayLabel(pcId);
+      const pcPlayerLabel = playerNameForPc(pcId);
       for (const p of proposals) {
         // D5.5-B: a chargen placeholder bond has targetPcId === ''
         // + a free-text targetPlaceholder.  Surface the player's
@@ -3926,13 +3944,20 @@ export class QuireApp extends LitElement {
           p.text,
           p.targetPlaceholder
         );
+        const targetPlayerLabel = isPlaceholder
+          ? undefined
+          : playerNameForPc(p.targetPcId);
+        const proposedByPlayerLabel = peerNameById.get(p.proposedByPeerId);
         out.push({
           id: p.id,
           pcId,
           pcLabel,
+          ...(pcPlayerLabel ? { pcPlayerLabel } : {}),
           targetLabel: isPlaceholder
             ? (p.targetPlaceholder as string)
             : this.resolvePcDisplayLabel(p.targetPcId),
+          ...(targetPlayerLabel ? { targetPlayerLabel } : {}),
+          ...(proposedByPlayerLabel ? { proposedByPlayerLabel } : {}),
           unresolved: isPlaceholder,
           text: p.text,
           proposedByPeerId: p.proposedByPeerId,
@@ -9157,35 +9182,101 @@ export class QuireApp extends LitElement {
     if (character.kind !== 'pc') return nothing;
     const v = this.sessionView;
     if (!v || v.status !== 'active') return nothing;
-    const audience = this.isCoordinator() ? 'dm' : 'player';
+    const isCoord = this.isCoordinator();
+
+    // Build pcId → display-name map for the bond name resolver, so
+    // bonds print "→ Sam:" instead of "→ slot-5-sam:".
+    const pcNames: Record<string, string> = {};
+    // 2026-06-06 (feedback_show_both_names): also build a peerName
+    // lookup so the PDF identity band can render "played by <player>"
+    // alongside the PC name.
+    const peerNameById = new Map<string, string>();
+    for (const peer of Object.values(v.shared.peers)) {
+      if (peer.name) peerNameById.set(peer.peerId, peer.name);
+    }
+    let activePlayerName: string | undefined;
+    // Use filteredShared.synthesizedPcs — for a non-coord viewer
+    // this is wiped/per-entry-scrubbed; for the DM it's identical
+    // to shared.  Either way it's the firewall-correct read.
+    const synthMap = v.filteredShared.synthesizedPcs ?? {};
+    for (const seat of Object.values(v.shared.pcSlots)) {
+      if (!seat.pcId) continue;
+      const rec = synthMap[seat.pcId];
+      if (rec?.name) pcNames[seat.pcId] = rec.name;
+      if (
+        character.kind === 'pc' &&
+        seat.pcId === character.id &&
+        seat.controllerPeerId
+      ) {
+        activePlayerName = peerNameById.get(seat.controllerPeerId);
+      }
+    }
+
+    const print = async (
+      audience: 'player' | 'dm',
+      label: string
+    ): Promise<void> => {
+      try {
+        const r = this.effectiveCharacter(character);
+        const mod = await import('./pdf/print-pc');
+        const bytes = await mod.renderPcPdf(r, {
+          audience,
+          pageSize: 'A4',
+          pcNames,
+          ...(activePlayerName ? { playerName: activePlayerName } : {})
+        });
+        const safeName = (r.name ?? 'pc').replace(/[^\w]+/g, '_');
+        mod.downloadPdf(bytes, `${safeName}-${label}-sheet.pdf`);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('print-pc failed', err);
+      }
+    };
+
+    // DMs get TWO choices: forward-to-players (player audience,
+    // DM-only fields stripped) and DM-with-dossier.  Players get
+    // the single player-audience button.
+    if (isCoord) {
+      return html`
+        <div
+          class="print-pc-affordance"
+          role="region"
+          aria-label="Print PC sheet"
+        >
+          <button
+            type="button"
+            class="print-pc-button"
+            @click=${() => print('player', 'player')}
+            title="Player-safe PDF — DM-only fields stripped.  Forward this to the player."
+          >
+            Print PC sheet
+            <span class="print-pc-audience">for player (no DM notes)</span>
+          </button>
+          <button
+            type="button"
+            class="print-pc-button"
+            @click=${() => print('dm', 'dm')}
+            title="Full PDF with the DM dossier (thread debt, accidental grants, dmNotes).  DM only."
+          >
+            Print PC sheet
+            <span class="print-pc-audience">DM + dossier</span>
+          </button>
+        </div>
+      `;
+    }
     return html`
-      <div class="print-pc-affordance" role="region" aria-label="Print PC sheet">
+      <div
+        class="print-pc-affordance"
+        role="region"
+        aria-label="Print PC sheet"
+      >
         <button
           type="button"
           class="print-pc-button"
-          @click=${async () => {
-            try {
-              const r = this.effectiveCharacter(character);
-              const mod = await import('./pdf/print-pc');
-              const bytes = await mod.renderPcPdf(r, {
-                audience,
-                pageSize: 'A4'
-              });
-              const safeName = (r.name ?? 'pc').replace(/[^\w]+/g, '_');
-              mod.downloadPdf(
-                bytes,
-                `${safeName}-${audience}-sheet.pdf`
-              );
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.error('print-pc failed', err);
-            }
-          }}
+          @click=${() => print('player', 'player')}
         >
           Print PC sheet (PDF)
-          <span class="print-pc-audience"
-            >${audience === 'dm' ? 'DM + dossier' : 'player'}</span
-          >
+          <span class="print-pc-audience">player</span>
         </button>
       </div>
     `;

@@ -6304,6 +6304,14 @@ export const quireAppStyles = css`
       font-size: 0.82rem;
       color: light-dark(#1d4ed8, #93c5fd);
     }
+    /* 2026-06-06 (feedback_show_both_names): faint sibling of the
+       character name showing the human player so the DM never has
+       to guess who's playing whom. */
+    .dm-aside-bond-queue-player-name {
+      color: light-dark(#64748b, #94a3b8);
+      font-weight: 400;
+      font-size: 0.92em;
+    }
 
     .dm-aside-pinned {
       list-style: none;
