@@ -63,6 +63,22 @@ export interface SessionDigestPromptInput {
    * visibility as the new digest will have.
    */
   priorDigestMarkdown?: string;
+  /**
+   * 2026-06-06 (user-reported): the DM's chronological scratch
+   * notes from the session, filtered to those after the last
+   * digest cutoff.  DM-private input — the model uses them as a
+   * pointer to what happened, just as a co-DM would.  The output
+   * markdown is still gated by DM review before player exposure.
+   *
+   * Pass an empty array if there are no notes; pass the notes
+   * verbatim otherwise (this function wraps them in
+   * `<untrusted_content>` for the prompt).
+   */
+  dmScratchNotes?: ReadonlyArray<{
+    ts: number;
+    text: string;
+    scenePath?: string;
+  }>;
 }
 
 export const SESSION_DIGEST_SYSTEM_PROMPT = `You are a co-DM helping a TTRPG group remember last session by producing a campfire recap.
@@ -75,6 +91,7 @@ You will receive:
 - Campaign anchor (name + current episode/scene)
 - (Optional) the most recent prior recap, as a "previously" anchor
 - A timeline of player-visible events: chat lines, dice rolls (with stat + outcome), scene reveals, PC state changes (harm/stress/marks the players know about), focus grants, retirements
+- (Optional) the DM's scratch notes from the session — DM-typed pointers to what mattered.  Anchor the recap on the notes: a beat the DM wrote down is a beat the DM cares about; weave those in as the spine of the narrative.  Do not quote DM-only phrasing about hidden mechanics (thread debt rungs, accidental-grant labels, etc.) verbatim — translate to fiction.
 - Optional DM guidance
 
 # Hard constraints
@@ -210,6 +227,19 @@ export function buildSessionDigestPrompt(
   parts.push('');
   parts.push('# Event timeline (player-visible, chronological)');
   parts.push(renderEventTimeline(input.events));
+  if (input.dmScratchNotes && input.dmScratchNotes.length > 0) {
+    parts.push('');
+    parts.push(
+      '# DM scratch notes (chronological, DM-typed; treat as authoritative for what mattered)'
+    );
+    const body = input.dmScratchNotes
+      .map((n) => {
+        const tag = n.scenePath ? ` [scene: ${n.scenePath}]` : '';
+        return `- ${new Date(n.ts).toISOString()}${tag}: ${n.text}`;
+      })
+      .join('\n');
+    parts.push(wrapUntrusted(body, 'dm-scratch-notes'));
+  }
   if (input.dmGuidance && input.dmGuidance.trim().length > 0) {
     parts.push('');
     parts.push(

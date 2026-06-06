@@ -46,7 +46,15 @@ const BULLET_LABEL: Record<keyof AdvancementMarkBullets, string> = {
 
 export interface WrapMarksPcEntry {
   pcId: string;
+  /** PC character name (e.g. "Marcus Vance"). */
   name: string;
+  /**
+   * 2026-06-06 (user-reported): the human player's display name
+   * (e.g. "Markus"), if the seat has a controllerPeerId and that
+   * peer has registered a display name.  Always show alongside
+   * the PC name so the DM and table can correlate fiction ↔ chair.
+   */
+  playerName?: string;
   bullets: AdvancementMarkBullets;
 }
 
@@ -115,6 +123,11 @@ export class SessionWrapMarks extends LitElement {
     return html`<li class="session-wrap-marks-pc">
       <header class="session-wrap-marks-pc-head">
         <strong>${entry.name}</strong>
+        ${entry.playerName
+          ? html`<span class="session-wrap-marks-player-name"
+              >· played by ${entry.playerName}</span
+            >`
+          : nothing}
         <span
           class="session-wrap-marks-counter ${advancementReady
             ? 'session-wrap-marks-counter-ready'
@@ -169,7 +182,13 @@ export class SessionWrapMarks extends LitElement {
 export function buildWrapMarksEntries(
   records: Record<string, CharacterRecord>,
   bulletsByPcId: Record<string, AdvancementMarkBullets>,
-  pcIds: string[]
+  pcIds: string[],
+  /**
+   * 2026-06-06: optional pcId → player display name lookup.  When
+   * provided, each entry carries the human's name alongside the
+   * PC's so the DM sees "Marcus Vance · played by Markus".
+   */
+  playerNameByPcId?: (pcId: string) => string | undefined
 ): WrapMarksPcEntry[] {
   const out: WrapMarksPcEntry[] = [];
   for (const pcId of pcIds) {
@@ -177,7 +196,13 @@ export function buildWrapMarksEntries(
     if (!record) continue;
     const name = typeof record.name === 'string' ? record.name : pcId;
     const bullets = bulletsByPcId[pcId] ?? {};
-    out.push({ pcId, name, bullets });
+    const playerName = playerNameByPcId?.(pcId);
+    out.push({
+      pcId,
+      name,
+      bullets,
+      ...(playerName ? { playerName } : {})
+    });
   }
   return out;
 }

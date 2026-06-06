@@ -63,8 +63,8 @@ const FIREWALL_ALLOWLIST: ReadonlyMap<
   [
     'quire-app.ts',
     {
-      maxReads: 25,
-      note: 'All reads are in coord-gated render/handler methods (or the own-seat bond-count carve-out).'
+      maxReads: 26,
+      note: 'All reads are in coord-gated render/handler methods (or the own-seat bond-count carve-out).  2026-06-06: +1 — generateSessionDigest reads v.shared.scratchNotes (already coord-gated via isCoordinator at the top of the method) to feed DM scratch notes into the AI prompt.'
     }
   ]
 ]);

@@ -1744,6 +1744,51 @@ export class QuireApp extends LitElement {
             this._appState ={ kind: 'character', campaign, character: overlay };
             return;
           }
+          // P0 2026-06-06: between-sessions PC click was failing
+          // silently (or 404ing on the static-file fallback) when
+          // the session wasn't active.  Auto-host + replay the
+          // staged resume doc so the DM can always open PC sheets
+          // between sessions; then retry the overlay lookup.  If
+          // there's no autosave to replay, fall through to the
+          // static-file path with a meaningful CharacterLoadError.
+          if (
+            this.sessionView?.status !== 'active' &&
+            (this.resumePromptDoc !== null ||
+              this.autosave.checkResume(campaign.base.source) !== null)
+          ) {
+            await this.startHosting();
+            if (signal.aborted || !this.isConnected) return;
+            const overlayAfterResume = this.resolvePcFromOverlay(
+              route.characterId,
+              campaign
+            );
+            if (overlayAfterResume) {
+              this._appState = {
+                kind: 'character',
+                campaign,
+                character: overlayAfterResume
+              };
+              return;
+            }
+            // Resume completed but the PC isn't in state.  Surface a
+            // clear error rather than the static-file 404.
+            this._appState = {
+              kind: 'error',
+              message: `This PC (${route.characterId}) is not in the resumed session state.`,
+              details:
+                'The character may have been created in a different campaign, or the autosave may be from before they were added.'
+            };
+            return;
+          }
+          if (this.sessionView?.status !== 'active') {
+            this._appState = {
+              kind: 'error',
+              message: 'Start a session to view this PC.',
+              details:
+                'Chargen-created PCs live in session state. Host or join a session, then click the PC again.'
+            };
+            return;
+          }
         }
         this._appState ={
           kind: 'loading',
@@ -2845,10 +2890,30 @@ export class QuireApp extends LitElement {
         <p class="muted">Loading…</p>
       </section>`;
     }
+    // 2026-06-06: resolve player display name per PC so the wrap UI
+    // shows "Marcus Vance · played by Markus".  Reads the bound peer
+    // from pcSlots[].controllerPeerId, then looks up the peer's
+    // display name from the peer roster.
+    const peerNameById = new Map<string, string>();
+    for (const peer of Object.values(v.shared.peers)) {
+      if (peer.name) peerNameById.set(peer.peerId, peer.name);
+    }
+    const pcToPeer = new Map<string, string>();
+    for (const seat of Object.values(v.shared.pcSlots)) {
+      if (seat.pcId && seat.controllerPeerId) {
+        pcToPeer.set(seat.pcId, seat.controllerPeerId);
+      }
+    }
+    const playerNameByPcId = (pcId: string): string | undefined => {
+      const peerId = pcToPeer.get(pcId);
+      if (!peerId) return undefined;
+      return peerNameById.get(peerId);
+    };
     const entries = _wrapModeChunk.buildWrapMarksEntries(
       recordMap,
       bulletsByPcId,
-      pcIds
+      pcIds,
+      playerNameByPcId
     );
     // D1-C (2026-05-26): wrap is now a STEPPER not a single scroll.
     // The marks pane is step 1; digest is step 2; diff-review is
@@ -4578,13 +4643,25 @@ export class QuireApp extends LitElement {
     if (this.appState.kind === 'scene') {
       campaignContext.currentScene = this.appState.scene.path;
     }
+    // 2026-06-06: include the DM's scratch notes from this session
+    // (those after `cutoff`).  Authoritative-DM input; the AI uses
+    // them as the spine of the recap.  Output still goes through
+    // DM review before reaching players.
+    const scratchNotes = v.shared.scratchNotes
+      .filter((n) => n.ts > cutoff)
+      .map((n) =>
+        n.scenePath
+          ? { ts: n.ts, text: n.text, scenePath: n.scenePath }
+          : { ts: n.ts, text: n.text }
+      );
     const { system, user } = buildSessionDigestPrompt({
       events: bundled,
       campaignContext,
       ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {}),
       ...(lastDigest?.markdown
         ? { priorDigestMarkdown: lastDigest.markdown }
-        : {})
+        : {}),
+      ...(scratchNotes.length > 0 ? { dmScratchNotes: scratchNotes } : {})
     });
     const provider = this.aiProviders[this.aiProvider];
     try {
