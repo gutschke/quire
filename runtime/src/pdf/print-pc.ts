@@ -33,6 +33,7 @@ import {
   drawResolutionCrib,
   drawSlimFooter,
   drawDmDossier,
+  decorateProsePage,
   MM,
   type PageContext,
   type PageSize
@@ -45,6 +46,24 @@ export interface RenderOptions {
   deterministic?: boolean;
   /** Override font bytes — tests pass these directly. */
   fontBytes?: FontBytes;
+  /**
+   * v3: when audience='player', controls scrub strength.
+   *   - selfExport=true (default): narrow scrub — preserves the PC's
+   *     own knowsTheyCanCast + tax (Realization self-knowledge).
+   *   - selfExport=false: broader scrub — also strips
+   *     knowsTheyCanCast + tax, for cross-PC export (player printing
+   *     another player's PC).
+   * Ignored when audience='dm'.
+   */
+  selfExport?: boolean;
+  /**
+   * v3: resolve bond targetPcId → display name.  Surfaces a real
+   * name on the printed sheet instead of the slot-id slug.  Falls
+   * back to the slug if the resolver returns undefined.
+   *
+   * Example: `{ 'slot-5-sam-msg_01Gn': 'Sam' }`.
+   */
+  pcNames?: Record<string, string>;
 }
 
 export async function renderPcPdf(
@@ -56,7 +75,14 @@ export async function renderPcPdf(
 
   // Firewall — DM-only fields stripped BEFORE layout for player
   // audience.  DM audience sees the unmodified record.
-  const scrubbed = scrubForAudience(pc, options.audience) as CharacterRecord;
+  const scrubbed = scrubForAudience(
+    pc,
+    options.audience,
+    options.selfExport ?? true
+  ) as CharacterRecord;
+  const resolveName = options.pcNames
+    ? (id: string): string => options.pcNames?.[id] ?? id
+    : (id: string): string => id;
 
   const doc = await PDFDocument.create();
   if (deterministic) {
@@ -99,19 +125,32 @@ export async function renderPcPdf(
   cursorY = drawSkillsTagsChips(page0, scrubbed, cursorY);
   cursorY = drawFoci(page0, scrubbed, cursorY);
   cursorY = drawMagicSection(page0, scrubbed, cursorY);
-  cursorY = drawConditionsInventory(page0, scrubbed, cursorY);
-  cursorY = drawMoneyAndLanguages(page0, scrubbed, cursorY);
 
-  // Pagination gate: if bonds + at least one line of backstory
-  // won't fit above the advancement floor, push the prose tail to
-  // page 2.  Sparse PCs (sub-`sectionFloor + BONDS_MIN_HEIGHT`
-  // savings) keep single-page.
-  if (cursorY < sectionFloor + BONDS_MIN_HEIGHT) {
-    currentCtx = makePage(doc, pageSize, fonts, allPages.length);
-    allPages.push(currentCtx);
-    cursorY = currentCtx.height - currentCtx.marginY;
+  // v3: section-floor cascade.  Each section below "magic" gets a
+  // pre-draw fit check; if it would draw into the advancement strip
+  // territory, everything from that section onward flows to a new
+  // page.  Once we've left page 0, the new pages have no advancement
+  // strip — they use a smaller floor.
+  const COND_INV_MIN_HEIGHT = 30 * MM;
+  const MONEY_MIN_HEIGHT = 16 * MM;
+  const BONDS_MIN_HEIGHT_GATE = BONDS_MIN_HEIGHT;
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  function ensureSpace(minHeight: number) {
+    const onP0 = currentCtx === page0;
+    const floor = onP0 ? sectionFloor : currentCtx.marginY + 8 * MM;
+    if (cursorY < floor + minHeight) {
+      currentCtx = makePage(doc, pageSize, fonts, allPages.length);
+      allPages.push(currentCtx);
+      cursorY = currentCtx.height - currentCtx.marginY;
+    }
   }
-  cursorY = drawBonds(currentCtx, scrubbed, cursorY);
+
+  ensureSpace(COND_INV_MIN_HEIGHT);
+  cursorY = drawConditionsInventory(currentCtx, scrubbed, cursorY);
+  ensureSpace(MONEY_MIN_HEIGHT);
+  cursorY = drawMoneyAndLanguages(currentCtx, scrubbed, cursorY);
+  ensureSpace(BONDS_MIN_HEIGHT_GATE);
+  cursorY = drawBonds(currentCtx, scrubbed, cursorY, resolveName);
 
   // Backstory floor is the advancement strip only when we're still
   // on page 0; otherwise it's the page bottom margin (continuation
@@ -130,6 +169,13 @@ export async function renderPcPdf(
   // Advancement strip + resolution crib live on page 0 only.
   drawAdvancement(page0, scrubbed, page0.marginY + 16 * MM);
   drawResolutionCrib(page0);
+
+  // v3: decorate every non-cockpit prose page (sprig + dot-grid)
+  // BEFORE the DM dossier appends.  The dossier has its own amber
+  // chrome and should not receive the Underleaf prose motifs.
+  for (let i = 1; i < allPages.length; i++) {
+    decorateProsePage(allPages[i]);
+  }
 
   if (options.audience === 'dm') {
     drawDmDossier(doc, pc, pageSize, fonts, allPages.length, allPages);

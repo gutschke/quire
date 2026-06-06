@@ -3,27 +3,28 @@
  *
  * Two audiences:
  *
- *   - `player` — what the player whose PC this is should see on a
- *     printed sheet at the table.  Strips DM-PRIVATE metadata (the
- *     DM's notes about the PC, the antagonist-attention ladder, the
- *     accidental-grants log, alignment drift, the magic-phase enum
- *     itself, and per-bond DM annotations).  PRESERVES self-
- *     knowledge: `knowsTheyCanCast` (after Realization, the player
- *     knows — see rules.md:174-188 + memory `feedback_engineering_
- *     practices_from_reviews.md` post-Realization legibility fix) and
- *     `tax` (the player feels the -2 in fiction).
+ *   - `player` — what a player should see on a printed sheet.  Two
+ *     scrub strengths controlled by `selfExport`:
+ *       * selfExport=true (DEFAULT — the player whose PC this is):
+ *         narrow scrub.  Strips DM-private metadata (dmNotes,
+ *         accidentalGrants, threadDebt, alignmentDrift, magicPhase,
+ *         per-bond dmNotes, foci[].notes).  PRESERVES self-knowledge:
+ *         `knowsTheyCanCast` and `tax` (after Realization the player
+ *         knows; rules.md:174-188).
+ *       * selfExport=false (cross-PC export — someone else's PC):
+ *         broader scrub.  ALSO strips knowsTheyCanCast and tax so
+ *         one player can't see another PC's magic state.  Aligns
+ *         with `DM_ONLY_CHARACTER_FIELDS` for cross-PC viewing.
  *
  *   - `dm` — the full record with no strip.  The DM page-2 dossier
  *     surfaces the DM-private fields.
  *
- * This is INTENTIONALLY narrower than `stripDmOnlyFromCharacter` in
- * character-loader.ts.  That projection is for "other players viewing
- * this PC" (cross-PC firewall) and strips knowsTheyCanCast etc to
- * hide one PC's magic state from another player.  For a printable
- * sheet the canonical use case is the PC's OWN player exporting it —
- * in which case self-knowledge must come through.  Other-PC exports
- * already received a further-scrubbed projection in their local
- * state, so this narrower strip is a no-op on already-scrubbed data.
+ * Defense-in-depth: in production an other-player's record reaching
+ * the renderer is already cross-PC stripped at the state layer.  The
+ * `selfExport=false` strip is a no-op on already-stripped data; the
+ * value is that the PDF code self-describes the firewall and a
+ * future state-layer regression doesn't silently leak through this
+ * surface.
  */
 
 import type { Bond, CharacterRecord } from '../character-loader';
@@ -31,8 +32,9 @@ import type { Bond, CharacterRecord } from '../character-loader';
 export type Audience = 'player' | 'dm';
 
 /**
- * DM-private metadata fields stripped from player-audience PDFs.
- * Narrower than `DM_ONLY_CHARACTER_FIELDS` — see file header.
+ * DM-private metadata fields stripped from EVERY player-audience
+ * PDF, regardless of selfExport.  These are author-side notes the
+ * PC's own player should not see about themselves either.
  */
 export const PDF_PLAYER_STRIP_FIELDS = [
   'magicPhase',
@@ -42,25 +44,38 @@ export const PDF_PLAYER_STRIP_FIELDS = [
   'dmNotes'
 ] as const satisfies ReadonlyArray<keyof CharacterRecord>;
 
+/**
+ * Additional fields stripped when `selfExport === false` — these
+ * are fields the OWN player legitimately knows about themselves
+ * (after Realization) but another player MUST NOT see about a
+ * sibling PC.  When the PDF code is asked to render a record the
+ * caller cannot vouch is the caller's own, set selfExport=false.
+ */
+export const PDF_CROSS_PC_STRIP_FIELDS = [
+  'knowsTheyCanCast',
+  'tax'
+] as const satisfies ReadonlyArray<keyof CharacterRecord>;
+
 export function scrubForAudience(
   pc: CharacterRecord,
-  audience: Audience
+  audience: Audience,
+  selfExport = true
 ): CharacterRecord {
   if (audience === 'dm') return pc;
   const out: CharacterRecord = { ...pc };
   for (const field of PDF_PLAYER_STRIP_FIELDS) {
     delete (out as unknown as Record<string, unknown>)[field];
   }
+  if (!selfExport) {
+    for (const field of PDF_CROSS_PC_STRIP_FIELDS) {
+      delete (out as unknown as Record<string, unknown>)[field];
+    }
+  }
   if (Array.isArray(out.bonds)) {
     out.bonds = out.bonds.map(
       (b: Bond): Bond => ({ targetPcId: b.targetPcId, text: b.text })
     );
   }
-  // v1.1 (adversarial NIT P1): foci[].notes carries DM-flavor text
-  // in fixtures (e.g., Rae's "broke during the Pier 14 cast" reveals
-  // the cast vocabulary pre-Realization).  Layout does not currently
-  // render f.notes, but the firewall must strip it so a future
-  // render-layer change cannot leak it.  Defense-in-depth.
   if (Array.isArray(out.foci)) {
     out.foci = out.foci.map((f) => {
       const safe = { ...f };

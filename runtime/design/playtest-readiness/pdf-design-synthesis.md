@@ -193,6 +193,48 @@ downloadPdf(bytes, `${pc.name}-pc-sheet.pdf`);
 - **Bundle gate (`bundle-gate.test.ts`)**: add an assertion that a chunk
   named `print-pc-<hash>.js` classifies as `other` (uncapped).
 
+## v3 outcomes (2026-06-06)
+
+User asked to work the deferred v2 list.  v3 shipped:
+
+- **Bezier fold-rule** — section dividers now have a real 1.2mm
+  upward curve at each margin end (`drawSvgPath` with quadratic
+  bezier).  v1/v2 shipped straight-line approximations.
+- **Stacked-arcs Quire mark** — three nested arcs evoking a folded
+  gathering of pages, rendered via three quadratic-bezier paths +
+  a small filled glyph at the heart.  v1/v2 shipped flat circles.
+- **Quiet dot-grid backdrop** on every prose page (not just backstory
+  overflow): a 2.4mm orthogonal grid of low-opacity dots spanning
+  the content area.  Signals the Underleaf "implicit order" motif
+  without competing with body text.
+- **Botanical sprig** in the lower-right margin of every prose page:
+  S-curve stem + 3 alternating leaflets, drawn as quadratic-bezier
+  almond shapes.  Marks the long-form record visually.
+- **Bond name resolver** — `pcNames: Record<string, string>` option
+  resolves `targetPcId` → display name (e.g., `slot-5-sam` → `Sam`).
+  Falls back to the slug if the resolver returns undefined.  The
+  Quire app passes `pcSlotBindings.map(b => [b.pcId, b.displayName])`
+  when wiring this up.
+- **`selfExport` flag** for explicit cross-PC defense-in-depth.
+  `selfExport=true` (default): narrow scrub preserves the PC's own
+  `knowsTheyCanCast` + `tax`.  `selfExport=false`: broader scrub
+  also strips those for sibling-PC exports.  Aligns with
+  `DM_ONLY_CHARACTER_FIELDS`.  Documented in `print-pc-firewall.ts`.
+- **Section-floor pagination cascade** — extended the v2 bonds gate
+  to also cover conditions/inventory and money/languages.  Each
+  section that would draw into the advancement-strip floor pushes
+  itself + everything after to a new page.  Eliminates any chance
+  of a dense PC's sections bleeding into the advancement strip.
+
+v3 deferred to v4:
+- Full 1F/1B/2F/2B double-sided choreography (still single-page
+  cockpit + multi-page prose tail; the TTRPG expert's per-face
+  identity design needs more conversation).
+- DM dossier surfaces `advancementHistory` (currently rendered, but
+  the layout could be tightened for densely-advanced PCs).
+- Markdown emphasis in *other* prose fields (bond text, focus
+  boundFor) — currently parsed only in backstory + dmNotes.
+
 ## v2 outcomes (2026-06-06)
 
 User flagged three real flaws after v1.1 ship: literal `*` separators

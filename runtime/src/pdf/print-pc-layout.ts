@@ -357,7 +357,17 @@ export function drawText(page: PDFPage, opts: DrawTextOptions): number {
 // Decorative motifs
 // ============================================================
 
-/** Section hairline with a faint upward curve at the margin ends. */
+/**
+ * Section hairline with a true 1.2mm upward bezier curve at each
+ * margin end — mimics the spine-curve of a folded page about to be
+ * turned (v1 shipped straight strokes; visual-designer P1 fix).
+ * Implemented as `drawSvgPath` with a quadratic bezier at each end
+ * because pdf-lib's drawLine cannot produce curves.
+ *
+ * pdf-lib's drawSvgPath inverts the y-axis: a positive y in the SVG
+ * path moves DOWN the page from the (x, y) anchor.  So an "upward"
+ * curve in PDF orientation needs negative y in the path.
+ */
 export function drawFoldRule(
   page: PDFPage,
   ctx: PageContext,
@@ -365,49 +375,137 @@ export function drawFoldRule(
 ): void {
   const curveLen = 6 * MM;
   const rise = 1.2 * MM;
-  const flatLeft = ctx.contentLeft + curveLen;
   const flatRight = ctx.contentRight - curveLen;
-  page.drawLine({
-    start: { x: flatLeft, y },
-    end: { x: flatRight, y },
-    thickness: 0.5,
-    color: COLORS.rule
-  });
-  page.drawLine({
-    start: { x: ctx.contentLeft, y: y + rise },
-    end: { x: flatLeft, y },
-    thickness: 0.5,
-    color: COLORS.rule
-  });
-  page.drawLine({
-    start: { x: flatRight, y },
-    end: { x: ctx.contentRight, y: y + rise },
-    thickness: 0.5,
-    color: COLORS.rule
+  // Quadratic bezier ends + flat middle.
+  // The SVG path coordinate system here starts at (contentLeft, y);
+  // y values are PDF-relative (positive y = up, but drawSvgPath
+  // flips, so SVG-negative y = PDF-up).
+  const d =
+    `M 0 0 ` +
+    `Q ${curveLen / 2} ${-rise} ${curveLen} 0 ` +
+    `L ${flatRight - ctx.contentLeft} 0 ` +
+    `Q ${flatRight - ctx.contentLeft + curveLen / 2} ${-rise} ${ctx.contentRight - ctx.contentLeft} 0`;
+  page.drawSvgPath(d, {
+    x: ctx.contentLeft,
+    y,
+    borderColor: COLORS.rule,
+    borderWidth: 0.5
   });
 }
 
 /**
- * Quire mark — three nested arcs approximated as nested circles
- * (pdf-lib has no arc primitive without Bezier paths).  Top-right
- * of the identity band on every page.
+ * Quire mark — three stacked arcs evoking the cross-section of a
+ * folded gathering of pages.  Each arc is a thin quadratic bezier
+ * opening downward; the innermost gets a small accent fill.
+ *
+ * Sits top-right of the identity band on every page.
  */
 export function drawQuireMark(
   page: PDFPage,
   centerX: number,
   centerY: number
 ): void {
-  for (let i = 0; i < 3; i++) {
-    const r = 2.4 * MM - i * 0.6 * MM;
-    page.drawCircle({
+  const radii = [3.0 * MM, 2.1 * MM, 1.3 * MM];
+  for (let i = 0; i < radii.length; i++) {
+    const r = radii[i];
+    const arcDepth = r * 0.55;
+    // Arc opening downward: from (-r, 0) up over (0, -arcDepth) down to (r, 0)
+    const d = `M ${-r} 0 Q 0 ${-arcDepth} ${r} 0`;
+    page.drawSvgPath(d, {
       x: centerX,
-      y: centerY,
-      size: r,
+      y: centerY - 0.5 * MM,
       borderColor: COLORS.accent,
-      borderWidth: 0.6,
-      color: i === 2 ? COLORS.accent : undefined,
-      opacity: i === 2 ? 0.6 : 1
+      borderWidth: 0.7
     });
+  }
+  // Innermost: a small filled glyph anchoring the mark.
+  page.drawCircle({
+    x: centerX,
+    y: centerY - 0.5 * MM + 0.4 * MM,
+    size: 0.45 * MM,
+    color: COLORS.accent
+  });
+}
+
+/**
+ * Botanical marginal sprig — Underleaf motif.  A thin stem with
+ * three small leaflets, drawn as quadratic-bezier petals.  Used
+ * on prose (continuation) pages only, low-right margin; signals
+ * "this is the long-form / writable side".
+ */
+export function drawBotanicalSprig(
+  page: PDFPage,
+  baseX: number,
+  baseY: number
+): void {
+  // Stem: a gentle S-curve going up.  pdf-lib's drawSvgPath flips
+  // the y-axis, so negative path-y moves UP on the printed page.
+  const stemHeight = 12 * MM;
+  page.drawSvgPath(
+    `M 0 0 C ${1.5 * MM} ${-stemHeight / 4} ${-1 * MM} ${-stemHeight / 2} ${1 * MM} ${-stemHeight}`,
+    {
+      x: baseX,
+      y: baseY,
+      borderColor: COLORS.underleafGreen,
+      borderWidth: 0.7,
+      opacity: 0.55
+    }
+  );
+  // Three leaflets — alternating sides along the stem, sized to fan
+  // outward.  Drawn as quadratic-bezier almond shapes with stroke +
+  // light fill.
+  const leaf = (
+    offsetY: number,
+    lobeLength: number,
+    mirror: boolean
+  ): void => {
+    const sign = mirror ? -1 : 1;
+    const stemPivot = mirror ? -0.5 * MM : 0.5 * MM;
+    const d =
+      `M ${stemPivot} 0 ` +
+      `Q ${sign * (lobeLength / 2)} ${-lobeLength * 0.6} ${sign * lobeLength} 0 ` +
+      `Q ${sign * (lobeLength / 2)} ${lobeLength * 0.5} ${stemPivot} 0 ` +
+      `Z`;
+    page.drawSvgPath(d, {
+      x: baseX,
+      y: baseY - offsetY,
+      borderColor: COLORS.underleafGreen,
+      borderWidth: 0.6,
+      color: COLORS.underleafGreen,
+      opacity: 0.35
+    });
+  };
+  leaf(3 * MM, 4 * MM, false);
+  leaf(6.5 * MM, 3.5 * MM, true);
+  leaf(9.5 * MM, 2.8 * MM, false);
+}
+
+/**
+ * Quiet dot-grid backdrop — a faint 2mm orthogonal grid of small
+ * dots under prose blocks.  Signals the Underleaf "Quiet" motif:
+ * implicit order beneath visible content.  Drawn at low opacity so
+ * it does not compete with the body text.
+ */
+export function drawDotGrid(
+  page: PDFPage,
+  x: number,
+  y: number,
+  width: number,
+  height: number
+): void {
+  const spacing = 2.4 * MM;
+  const cols = Math.floor(width / spacing);
+  const rows = Math.floor(height / spacing);
+  for (let r = 0; r <= rows; r++) {
+    for (let c = 0; c <= cols; c++) {
+      page.drawCircle({
+        x: x + c * spacing,
+        y: y - r * spacing,
+        size: 0.35,
+        color: COLORS.quiet,
+        opacity: 0.18
+      });
+    }
   }
 }
 
@@ -1147,7 +1245,8 @@ export function drawMoneyAndLanguages(
 export function drawBonds(
   ctx: PageContext,
   pc: CharacterRecord,
-  startY: number
+  startY: number,
+  resolveName: (targetPcId: string) => string = (id) => id
 ): number {
   let cursor = drawSectionHeader(ctx, startY, 'Bonds');
   const bonds = pc.bonds ?? [];
@@ -1164,7 +1263,8 @@ export function drawBonds(
   } else {
     for (const b of bonds) {
       const target = b.targetPcId || 'unknown';
-      const prefix = `→ ${target}: `;
+      const display = resolveName(target);
+      const prefix = `→ ${display}: `;
       ctx.page.drawText(prefix, {
         x: ctx.contentLeft,
         y: cursor,
@@ -1358,6 +1458,13 @@ export function drawBackstoryWithEmphasis(
   const text = pc.backstory ?? '';
   if (!text) return { ctx };
 
+  /**
+   * Mark prose continuation pages with the Quiet dot-grid backdrop
+   * + a marginal botanical sprig.  We tag the ctx so the caller's
+   * decoration pass can find them later.
+   */
+  const proseContinuationPages = new Set<PageContext>();
+
   let currentCtx = ctx;
   const runs = parseEmphasis(text);
   const bodySize = 10.5;
@@ -1417,6 +1524,7 @@ export function drawBackstoryWithEmphasis(
         currentCtx.pageIndex + 1
       );
       allPages.push(currentCtx);
+      proseContinuationPages.add(currentCtx);
       cursor = currentCtx.height - currentCtx.marginY;
       cursor = drawSectionHeader(currentCtx, cursor, 'Backstory (continued)');
     }
@@ -1434,7 +1542,37 @@ export function drawBackstoryWithEmphasis(
     );
     cursor -= lineHeight;
   }
+
+  // Decorate continuation pages with the Quiet dot-grid + sprig.
+  for (const proseCtx of proseContinuationPages) {
+    decorateProsePage(proseCtx);
+  }
+
   return { ctx: currentCtx };
+}
+
+/**
+ * Brand decorations for prose continuation pages.  Each gets a
+ * faint Quiet dot-grid backdrop spanning the content area + a
+ * small Underleaf sprig in the lower-right margin.  Both render
+ * at very low opacity so they tint the page without competing
+ * with the body text.
+ */
+export function decorateProsePage(ctx: PageContext): void {
+  // Dot-grid covering the writable content area.
+  drawDotGrid(
+    ctx.page,
+    ctx.contentLeft,
+    ctx.height - ctx.marginY,
+    ctx.contentWidth,
+    ctx.height - 2 * ctx.marginY
+  );
+  // Marginal botanical sprig in the lower-right gutter.
+  drawBotanicalSprig(
+    ctx.page,
+    ctx.contentRight - 10 * MM,
+    ctx.marginY + 22 * MM
+  );
 }
 
 // ============================================================

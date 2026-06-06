@@ -95,6 +95,43 @@ describe('renderPcPdf', () => {
     expect(loaded.getAuthor() ?? '').toBe('');
   });
 
+  it('pcNames resolves bond targets to display names', async () => {
+    // Subset fonts encode glyphs as opaque indices, so the literal
+    // name string won't appear in the raw bytes.  Verify the
+    // resolver runs by comparing two renders that differ ONLY by
+    // the bond display string — different glyph sequences produce
+    // different byte sizes.
+    const withoutResolver = await renderPcPdf(SLOT_1_MARCUS, {
+      audience: 'player',
+      fontBytes
+    });
+    const withResolver = await renderPcPdf(SLOT_1_MARCUS, {
+      audience: 'player',
+      fontBytes,
+      pcNames: { 'slot-5-sam': 'Sam Reyes' }
+    });
+    expect(withResolver.byteLength).not.toBe(withoutResolver.byteLength);
+  });
+
+  it('selfExport=false strips knowsTheyCanCast + tax', async () => {
+    // Use Yui (post-Realization, tax active).  With selfExport=true
+    // (default), the magic section + tax appear on the player PDF.
+    // With selfExport=false, the broader scrub kicks in and the
+    // magic section is absent (knowsTheyCanCast stripped).
+    const own = await renderPcPdf(ALL_FIXTURES[1], {
+      audience: 'player',
+      fontBytes,
+      selfExport: true
+    });
+    const cross = await renderPcPdf(ALL_FIXTURES[1], {
+      audience: 'player',
+      fontBytes,
+      selfExport: false
+    });
+    // Cross-PC export should be smaller (no magic section).
+    expect(cross.byteLength).toBeLessThan(own.byteLength);
+  });
+
   it('handles a PC with no foci, no inventory, no bonds gracefully', async () => {
     const minimal = {
       $schemaVersion: '0.1.0',
