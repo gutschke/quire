@@ -20,7 +20,8 @@
     "dompurify": "^3.4.5",
     "js-yaml": "^4.1.1",
     "lit": "^3.2.1",
-    "marked": "^18.0.4"
+    "marked": "^18.0.4",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",

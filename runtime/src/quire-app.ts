@@ -9045,6 +9045,56 @@ export class QuireApp extends LitElement {
       ></player-rail>
       ${this.renderRollPanel()}
       ${this.renderDmPcDetail(character)}
+      ${this.renderPrintPcButton(character)}
+    `;
+  }
+
+  /**
+   * "Print PC sheet" affordance.  Lazy-loads the pdf-lib bundle
+   * (separate "other" chunk, uncapped by check-bundle-size.mjs) and
+   * downloads an A4 PDF when clicked.  Audience auto-picks: DM gets
+   * the dossier-included DM export; players get the player export.
+   *
+   * Only rendered for PC characters in an active session — NPCs and
+   * the no-session landing have no use for it.
+   */
+  private renderPrintPcButton(
+    character: LoadedCharacter
+  ): TemplateResult | typeof nothing {
+    if (character.kind !== 'pc') return nothing;
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    const audience = this.isCoordinator() ? 'dm' : 'player';
+    return html`
+      <div class="print-pc-affordance" role="region" aria-label="Print PC sheet">
+        <button
+          type="button"
+          class="print-pc-button"
+          @click=${async () => {
+            try {
+              const r = this.effectiveCharacter(character);
+              const mod = await import('./pdf/print-pc');
+              const bytes = await mod.renderPcPdf(r, {
+                audience,
+                pageSize: 'A4'
+              });
+              const safeName = (r.name ?? 'pc').replace(/[^\w]+/g, '_');
+              mod.downloadPdf(
+                bytes,
+                `${safeName}-${audience}-sheet.pdf`
+              );
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error('print-pc failed', err);
+            }
+          }}
+        >
+          Print PC sheet (PDF)
+          <span class="print-pc-audience"
+            >${audience === 'dm' ? 'DM + dossier' : 'player'}</span
+          >
+        </button>
+      </div>
     `;
   }
 

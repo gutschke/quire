@@ -7094,4 +7094,38 @@ export const quireAppStyles = css`
     .version-mismatch-banner strong {
       color: inherit;
     }
+
+    /* Run #20: "Print PC sheet" affordance under the character view.
+       Lazy-loads pdf-lib on click — see src/pdf/print-pc.ts. */
+    .print-pc-affordance {
+      margin: 1rem 0 2rem;
+      display: flex;
+      justify-content: flex-end;
+    }
+    .print-pc-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5em;
+      padding: 0.4em 0.9em;
+      border: 1px solid light-dark(#cdd1d6, #3a3f44);
+      border-radius: 4px;
+      background: light-dark(#fff, #2a2e33);
+      color: inherit;
+      cursor: pointer;
+      font-size: 0.9em;
+      font-family: inherit;
+    }
+    .print-pc-button:hover {
+      background: light-dark(#f4f5f7, #353a41);
+      border-color: light-dark(#9aa0a6, #5a6068);
+    }
+    .print-pc-button:focus-visible {
+      outline: 2px solid var(--accent-teal);
+      outline-offset: 2px;
+    }
+    .print-pc-audience {
+      font-size: 0.8em;
+      color: light-dark(#6a6e74, #a8acb1);
+      font-style: italic;
+    }
 `;
