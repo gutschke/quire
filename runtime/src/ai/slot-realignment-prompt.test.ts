@@ -78,7 +78,7 @@ describe('buildSlotRealignmentPrompt (v2 pair-atomic)', () => {
       ],
       playerSamples: []
     });
-    expect(user).toContain('# Slot fingerprints');
+    expect(user).toContain('<CAMPAIGN_SLOT_FINGERPRINTS>');
     expect(user).toContain('scenes/03-the-hack.md');
     expect(user).toContain('SDR');
     expect(user).toContain('slot 3');
@@ -91,7 +91,7 @@ describe('buildSlotRealignmentPrompt (v2 pair-atomic)', () => {
       slotFingerprints: [],
       playerSamples: []
     });
-    expect(user).toContain('Default to noChangeNeeded=true');
+    expect(user).toContain('set noChangeNeeded: true');
   });
 });
 
