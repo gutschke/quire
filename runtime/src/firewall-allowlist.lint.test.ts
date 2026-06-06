@@ -63,8 +63,8 @@ const FIREWALL_ALLOWLIST: ReadonlyMap<
   [
     'quire-app.ts',
     {
-      maxReads: 26,
-      note: 'All reads are in coord-gated render/handler methods (or the own-seat bond-count carve-out).  2026-06-06: +1 — generateSessionDigest reads v.shared.scratchNotes (already coord-gated via isCoordinator at the top of the method) to feed DM scratch notes into the AI prompt.'
+      maxReads: 28,
+      note: 'All reads are in coord-gated render/handler methods (or the own-seat bond-count carve-out).  2026-06-06: +1 for generateSessionDigest reading v.shared.scratchNotes (coord-gated via isCoordinator).  2026-06-06 #2: +2 for the AI-assisted slot-realignment feature reading v.shared.synthesizedPcs in generateSlotRealignment + renderPcSlotRealignment (both coord-gated; the renderer also has the explicit isCoordinator() guard).'
     }
   ]
 ]);

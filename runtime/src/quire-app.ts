@@ -176,6 +176,7 @@ import {
 // discrete DM-only surface that hosts <backups-card>; the consent
 // dialog is the shared consent ceremony component.
 import './ui/regions/dm-operational-view';
+import './ui/regions/pc-slot-realignment';
 import './ui/regions/cloud-push-consent-dialog';
 import './ui/regions/start-fresh-confirm-dialog';
 import type { CloudPushConsentDialog } from './ui/regions/cloud-push-consent-dialog';
@@ -849,6 +850,24 @@ export class QuireApp extends LitElement {
   @state() loadStatus: { kind: 'idle' | 'loading' | 'loaded' | 'error'; message?: string } =
     { kind: 'idle' };
   @state() resumePromptDoc: SaveDocument | null = null;
+
+  /**
+   * 2026-06-06: AI-proposed PC↔slot realignment local state.
+   * Lives on the host until the DM accepts proposals; not
+   * persisted (rerunning the AI is cheap, and the result is
+   * advisory).  All four fields reset when the DM closes the
+   * operational view or starts a new session.
+   */
+  @state() private slotRealignmentBusy: boolean = false;
+  @state() private slotRealignmentError: string = '';
+  @state() private slotRealignmentNoChange: boolean = false;
+  @state() private slotRealignmentReasoning: string = '';
+  @state() private slotRealignmentProposals: Array<{
+    slot: number;
+    currentPcId: string;
+    proposedPcId: string;
+    rationale: string;
+  }> = [];
   /**
    * M6a-FS-3 (run #10) — cross-device probe outcome (§FS.11 / §A11).
    * Surfaces a `[Load it] [Start fresh]` prompt next to the resume
@@ -2296,7 +2315,111 @@ export class QuireApp extends LitElement {
         void this.handleBackupsPullRequest(e)}
       @pc-revoke-request=${(e: Event) =>
         void this.handlePcRevokeRequest(e)}
-    ></dm-operational-view>`;
+    ></dm-operational-view>
+    ${dm ? this.renderPcSlotRealignment() : nothing}`;
+  }
+
+  /**
+   * 2026-06-06: render the PC↔slot AI-realignment surface inside the
+   * DM Operational view.  Coord-only and session-active only.  The
+   * AI call lives on the host; the region just shows current state
+   * + proposal list + apply buttons.
+   */
+  private renderPcSlotRealignment(): TemplateResult | typeof nothing {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return nothing;
+    if (!this.isCoordinator()) return nothing;
+
+    const peerNameById = new Map<string, string>();
+    for (const peer of Object.values(v.shared.peers)) {
+      if (peer.name) peerNameById.set(peer.peerId, peer.name);
+    }
+    const synthMap = v.shared.synthesizedPcs ?? {};
+    const rows: Array<{
+      slot: number;
+      playerName?: string;
+      pcName?: string;
+      pcId?: string;
+    }> = [];
+    const pcNameById = new Map<string, string>();
+    for (const [slotStr, seat] of Object.entries(v.shared.pcSlots)) {
+      const slot = Number(slotStr);
+      if (!Number.isFinite(slot)) continue;
+      const pcName = seat.pcId ? (synthMap[seat.pcId]?.name ?? seat.pcId) : undefined;
+      if (seat.pcId && pcName) pcNameById.set(seat.pcId, pcName);
+      const playerName = seat.controllerPeerId
+        ? peerNameById.get(seat.controllerPeerId)
+        : undefined;
+      rows.push({
+        slot,
+        ...(playerName ? { playerName } : {}),
+        ...(pcName ? { pcName } : {}),
+        ...(seat.pcId ? { pcId: seat.pcId } : {})
+      });
+    }
+    rows.sort((a, b) => a.slot - b.slot);
+
+    // Decorate proposals with PC display names + the seat's player name.
+    const displayProposals = this.slotRealignmentProposals.map((p) => {
+      const seat = v.shared.pcSlots[p.slot];
+      const playerName = seat?.controllerPeerId
+        ? peerNameById.get(seat.controllerPeerId)
+        : undefined;
+      return {
+        ...p,
+        currentPcName: pcNameById.get(p.currentPcId) ?? p.currentPcId,
+        proposedPcName: pcNameById.get(p.proposedPcId) ?? p.proposedPcId,
+        ...(playerName ? { playerName } : {})
+      };
+    });
+
+    return html`<pc-slot-realignment
+      data-testid="pc-slot-realignment"
+      .bindings=${rows}
+      .proposals=${displayProposals}
+      .reasoning=${this.slotRealignmentReasoning}
+      ?busy=${this.slotRealignmentBusy}
+      .error=${this.slotRealignmentError}
+      ?noChangeNeeded=${this.slotRealignmentNoChange}
+      .onAskAi=${async (guidance: string) => {
+        this.slotRealignmentBusy = true;
+        this.slotRealignmentError = '';
+        this.slotRealignmentNoChange = false;
+        try {
+          const r = await this.generateSlotRealignment({
+            ...(guidance.trim() ? { dmGuidance: guidance.trim() } : {})
+          });
+          if (!r.ok) {
+            this.slotRealignmentError = r.message;
+            this.slotRealignmentProposals = [];
+            return { ok: false, message: r.message } as const;
+          }
+          this.slotRealignmentReasoning = r.reasoning;
+          this.slotRealignmentNoChange = r.noChangeNeeded;
+          this.slotRealignmentProposals = r.proposals;
+          return { ok: true, reasoning: r.reasoning } as const;
+        } finally {
+          this.slotRealignmentBusy = false;
+        }
+      }}
+      .onApplySwap=${(p: {
+        slot: number;
+        proposedPcId: string;
+      }) => {
+        this.bindPcSlot(p.slot, p.proposedPcId);
+        this.slotRealignmentProposals = this.slotRealignmentProposals.filter(
+          (q) => q.slot !== p.slot
+        );
+      }}
+      .onApplyAll=${(
+        ps: Array<{ slot: number; proposedPcId: string }>
+      ) => {
+        for (const p of ps) {
+          this.bindPcSlot(p.slot, p.proposedPcId);
+        }
+        this.slotRealignmentProposals = [];
+      }}
+    ></pc-slot-realignment>`;
   }
 
   /**
@@ -4751,6 +4874,231 @@ export class QuireApp extends LitElement {
         message: `Provider call failed: ${(e as Error).message}`
       };
     }
+  }
+
+  /**
+   * 2026-06-06: AI-assisted PC↔slot realignment.  Coord-only.
+   * Reads current bindings + each PC's record + recent chat samples
+   * per peer + the most recent session digest, asks the AI to
+   * propose swaps, validates the proposal forms a valid permutation,
+   * and returns the per-slot proposal list for DM review.
+   *
+   * The DM accepts proposals individually via `bindPcSlot(slot,
+   * pcId)` — the materializer preserves controllerPeerId, so only
+   * the PC moves; the human stays in their slot.
+   */
+  async generateSlotRealignment(opts?: {
+    dmGuidance?: string;
+    signal?: AbortSignal;
+  }): Promise<
+    | {
+        ok: true;
+        noChangeNeeded: boolean;
+        reasoning: string;
+        proposals: Array<{
+          slot: number;
+          currentPcId: string;
+          proposedPcId: string;
+          rationale: string;
+        }>;
+      }
+    | {
+        ok: false;
+        code:
+          | 'no-session'
+          | 'no-coord'
+          | 'no-key'
+          | 'no-bindings'
+          | 'invalid-ai-response'
+          | 'provider-error'
+          | 'provider-refused'
+          | 'aborted';
+        message: string;
+      }
+  > {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') {
+      return { ok: false, code: 'no-session', message: 'No active session.' };
+    }
+    if (!this.isCoordinator()) {
+      return {
+        ok: false,
+        code: 'no-coord',
+        message: 'Only the coord (DM) can ask AI for slot realignment.'
+      };
+    }
+    if (!this.aiApiKey || this.aiApiKey.length === 0) {
+      return { ok: false, code: 'no-key', message: 'Set your AI API key first.' };
+    }
+
+    // Bindings + PC sheets.
+    const peerNameById = new Map<string, string>();
+    for (const peer of Object.values(v.shared.peers)) {
+      if (peer.name) peerNameById.set(peer.peerId, peer.name);
+    }
+    const synthMap = v.shared.synthesizedPcs ?? {};
+    const bindings: import('./ai/slot-realignment-prompt').SlotRealignmentBinding[] =
+      [];
+    const pcsByPcId = new Map<
+      string,
+      import('./ai/slot-realignment-prompt').SlotRealignmentPcSheet
+    >();
+    for (const [slotStr, seat] of Object.entries(v.shared.pcSlots)) {
+      const slot = Number(slotStr);
+      if (!Number.isFinite(slot)) continue;
+      if (!seat.pcId) continue;
+      const rec = synthMap[seat.pcId];
+      const pcName = rec?.name ?? seat.pcId;
+      const playerName = seat.controllerPeerId
+        ? (peerNameById.get(seat.controllerPeerId) ?? seat.controllerPeerId)
+        : '(unbound)';
+      bindings.push({ slot, playerName, pcId: seat.pcId, pcName });
+      if (!pcsByPcId.has(seat.pcId)) {
+        pcsByPcId.set(seat.pcId, {
+          pcId: seat.pcId,
+          name: pcName,
+          ...(typeof rec?.backstory === 'string'
+            ? { backstory: rec.backstory }
+            : {}),
+          ...(Array.isArray(rec?.tags)
+            ? { tags: rec.tags as ReadonlyArray<string> }
+            : {}),
+          ...(typeof rec?.alignment === 'string'
+            ? { alignment: rec.alignment }
+            : {}),
+          ...(typeof rec?.pronouns === 'string'
+            ? { pronouns: rec.pronouns }
+            : {})
+        });
+      }
+    }
+    if (bindings.length < 2) {
+      return {
+        ok: false,
+        code: 'no-bindings',
+        message:
+          'Need at least two bound player ↔ PC pairs to consider a realignment.'
+      };
+    }
+
+    // Player chat samples — last 10 lines per bound peer.
+    const chatByPeer = new Map<string, string[]>();
+    const allEvents = this.session?.getEvents() ?? [];
+    for (const e of allEvents) {
+      if (e.kind !== 'chat') continue;
+      const text = (e.payload as { text?: unknown } | undefined)?.text;
+      if (typeof text !== 'string' || text.length === 0) continue;
+      const bucket = chatByPeer.get(e.peerId) ?? [];
+      bucket.push(text);
+      chatByPeer.set(e.peerId, bucket);
+    }
+    const playerSamples: import('./ai/slot-realignment-prompt').SlotRealignmentPlayerSample[] =
+      [];
+    for (const b of bindings) {
+      const peerId = this.findPeerIdForSlot(b.slot);
+      const lines = peerId ? (chatByPeer.get(peerId) ?? []) : [];
+      playerSamples.push({
+        playerName: b.playerName,
+        chatLines: lines.slice(-10) // most recent 10
+      });
+    }
+
+    const lastDigest =
+      v.shared.sessionDigests[v.shared.sessionDigests.length - 1];
+
+    const { buildSlotRealignmentPrompt, SLOT_REALIGNMENT_CALL_SCHEMA, validateRealignmentResponse } =
+      await import('./ai/slot-realignment-prompt');
+    const pcs = Array.from(pcsByPcId.values());
+    const { system, user } = buildSlotRealignmentPrompt({
+      bindings,
+      pcs,
+      playerSamples,
+      ...(lastDigest?.markdown
+        ? { recentDigestMarkdown: lastDigest.markdown }
+        : {}),
+      ...(opts?.dmGuidance ? { dmGuidance: opts.dmGuidance } : {})
+    });
+
+    const provider = this.aiProviders[this.aiProvider];
+    try {
+      const result = await provider.callStructured<{
+        noChangeNeeded?: boolean;
+        reasoning?: string;
+        proposals?: Array<{
+          slot?: number;
+          currentPcId?: string;
+          proposedPcId?: string;
+          rationale?: string;
+        }>;
+      }>(
+        {
+          apiKey: this.aiApiKey,
+          model: this.aiModel,
+          systemPrompt: system,
+          prompt: user,
+          ...(opts?.signal ? { signal: opts.signal } : {})
+        },
+        SLOT_REALIGNMENT_CALL_SCHEMA
+      );
+      if (!result.ok) {
+        return {
+          ok: false,
+          code:
+            result.refusal.kind === 'provider-error'
+              ? 'provider-error'
+              : 'provider-refused',
+          message: result.refusal.message
+        };
+      }
+      const val = result.value;
+      if (!val || typeof val.noChangeNeeded !== 'boolean') {
+        return {
+          ok: false,
+          code: 'invalid-ai-response',
+          message: 'AI returned malformed structured response.'
+        };
+      }
+      const resp: import('./ai/slot-realignment-prompt').SlotRealignmentResponse = {
+        noChangeNeeded: val.noChangeNeeded,
+        reasoning: val.reasoning ?? '',
+        proposals: (val.proposals ?? []).map((p) => ({
+          slot: Number(p.slot),
+          currentPcId: String(p.currentPcId ?? ''),
+          proposedPcId: String(p.proposedPcId ?? ''),
+          rationale: String(p.rationale ?? '')
+        }))
+      };
+      const issues = validateRealignmentResponse(resp, bindings, pcs);
+      if (issues.length > 0) {
+        return {
+          ok: false,
+          code: 'invalid-ai-response',
+          message: `AI proposal validation failed: ${issues.join('; ')}`
+        };
+      }
+      return {
+        ok: true,
+        noChangeNeeded: resp.noChangeNeeded,
+        reasoning: resp.reasoning,
+        proposals: resp.proposals
+      };
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') {
+        return { ok: false, code: 'aborted', message: 'Cancelled.' };
+      }
+      return {
+        ok: false,
+        code: 'provider-error',
+        message: `Provider call failed: ${(e as Error).message}`
+      };
+    }
+  }
+
+  /** Look up the controllerPeerId currently bound to a slot. */
+  private findPeerIdForSlot(slot: number): string | undefined {
+    const v = this.sessionView;
+    if (!v || v.status !== 'active') return undefined;
+    return v.shared.pcSlots[slot]?.controllerPeerId;
   }
 
   /**
