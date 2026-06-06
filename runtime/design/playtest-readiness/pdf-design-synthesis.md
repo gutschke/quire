@@ -193,6 +193,84 @@ downloadPdf(bytes, `${pc.name}-pc-sheet.pdf`);
 - **Bundle gate (`bundle-gate.test.ts`)**: add an assertion that a chunk
   named `print-pc-<hash>.js` classifies as `other` (uncapped).
 
+## v2 outcomes (2026-06-06)
+
+User flagged three real flaws after v1.1 ship: literal `*` separators
+that looked like leftover markdown, no thought given to multi-sheet
+flow, no edge-case fixtures. Three parallel experts (TTRPG, visual,
+adversarial artifact-hunter) confirmed the issues + sketched fixes.
+
+**Highest-leverage fix (one change, kills six findings):** swap
+StandardFonts (Helvetica/Times) for embedded Liberation Sans + Serif
+via fontkit.  Eliminates the `asciify` table and unlocks `·`, `→`,
+`≤`, `—`, `…`, real italic from parsed `*emphasis*`.
+
+**v2 changes shipped:**
+- Liberation Sans + Serif embedded via `@pdf-lib/fontkit` (lazy chunk
+  ~512 KB gz, uncapped).  OFL license bundled in `src/pdf/fonts/`.
+- Markdown `*…*` → italic-run renderer for backstory + DM notes.
+  Wrap algorithm preserves italic state across line breaks.
+- Replaced `*` separators with real `·` middle-dot throughout.
+- Skills + Tags as a chip cluster (mint-tint background, sans-bold
+  for skills, sans-regular for tags).
+- Foci promote to 2-column at ≥3 entries.
+- Status glyphs (active / broken / faded / corrupted / transformed)
+  drawn as vector primitives, not Unicode geometric shapes — works
+  identically across font-coverage edges.
+- "The Quiet" magic block: 2×3 tier-card grid (Free / Cheap / Costly
+  / Hard / Prohibited / Foci-rule) replacing the prior compressed
+  prose.
+- 2d6 resolution reminder: 2×2 cell grid + doubles strip at the
+  bottom of page 1.
+- Section-overflow-aware pagination: when the post-magic cursor falls
+  below the advancement-strip floor + bonds-min-height, the entire
+  prose tail (bonds + backstory) flows to page 2.  Page 1 stays the
+  table-glance "cockpit"; page 2 is the long-form record.
+- Slim footer on continuation pages (`name · page X of Y`); the 2d6
+  reminder lives on page 1 only.
+- Backstory header bound to its body — never orphans at the bottom of
+  page 1.
+- Section header gray bumped to ~#555 (WCAG-AA on white).
+- DM dossier banner full-width amber band + white warning text,
+  passes the paper-shuffle test.
+
+**4 edge-case fixtures added** (TTRPG-expert recommendation):
+- `SLOT_6_VETERAN` (Vance Sato) — session-15: 6 advancements, 3 foci
+  with state badges (active/broken/transformed), 3 conditions, 7
+  inventory items, layered backstory.
+- `SLOT_7_STORM` (Iris Chen) — 5 active conditions on a harm-3 PC.
+- `SLOT_8_LONG_BACKSTORY` (Eleanor Vasquez-Marsh) — ~1100-word
+  backstory across 7 paragraphs, 4 bonds.
+- `SLOT_9_SPARSE` (Kit) — minimal everything, tests empty-state.
+
+**Render shape under load (verified empirically):**
+- Sparse (Marcus, Hadrian, Iris, Eleanor early, Kit) → 1 page.
+- Medium / post-Realization (Yui, Rae, Sam) → 2 pages (cockpit +
+  prose tail).
+- Dense veteran (Vance) → 2 pages with multi-col foci on page 1.
+
+**Multi-sheet flow strategy** (per TTRPG + visual designer briefs):
+- Page 1: live-state cockpit — identity / harm / stress / stats /
+  skills+tags / foci / magic (when revealed) / conditions / inventory
+  / money + languages / advancement strip / 2d6 crib.
+- Page 2+: prose record — bonds, backstory, slim footer with page
+  number.
+- DM audience appends a dossier sheet AFTER the player content.
+
+**v3 (deferred, tracked in this doc):**
+- True fold-rule curve (still straight strokes).
+- Stacked-arcs Quire mark (still nested circles).
+- Botanical marginal sprig (Underleaf motif).
+- Quiet dot-grid backdrop on prose pages.
+- TTRPG-expert's 4-page double-sided choreography (1F/1B/2F/2B with
+  distinct per-page motifs).
+- `selfExport: true` flag to make cross-PC self-knowledge explicit.
+- DM dossier surfaces `advancementHistory`.
+- Bond name resolver — surface PC display names instead of slot ids.
+- Section-floor-aware pagination for conditions / inventory / money
+  + languages (currently page-1 advancement strip can clip a dense
+  money rule).
+
 ## v1.1 critique outcomes (2026-06-06)
 
 Four parallel critics (TTRPG/UX, visual designer, print/accessibility,

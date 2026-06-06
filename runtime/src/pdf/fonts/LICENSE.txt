@@ -1,0 +1,19 @@
+Liberation fonts shipped with the Quire PDF generator are licensed under
+the SIL Open Font License, Version 1.1.
+
+  Copyright (c) 2007 Red Hat, Inc.  All rights reserved.
+  LIBERATION is a trademark of Red Hat, Inc.
+
+The fonts are bundled here so the printable-PC-sheet feature can embed
+them into generated PDFs (text-searchable, deterministic, Letter and
+Arial metrically compatible).  They are downloaded by the browser on
+first use of the Print PC sheet feature.
+
+The complete SIL Open Font License 1.1 text is available at:
+  https://scripts.sil.org/OFL
+
+Files:
+  LiberationSans-Regular.ttf   — sans, chrome / labels / chips
+  LiberationSans-Bold.ttf      — sans bold, headers / emphasis
+  LiberationSerif-Regular.ttf  — serif, body prose / backstory
+  LiberationSerif-Italic.ttf   — serif italic, markdown emphasis

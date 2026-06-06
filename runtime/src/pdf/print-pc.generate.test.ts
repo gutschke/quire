@@ -12,15 +12,32 @@
  * check (which calls pdftotext on the emitted files).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { renderPcPdf } from './print-pc';
 import {
   ALL_FIXTURES,
   DM_ONLY_FIXTURE_PHRASES
 } from './print-pc-fixtures';
+import type { FontBytes } from './print-pc-fonts';
+
+let fontBytes: FontBytes;
+
+beforeAll(async () => {
+  const fontsDir = join(dirname(fileURLToPath(import.meta.url)), 'fonts');
+  const read = async (name: string): Promise<Uint8Array> =>
+    new Uint8Array(await readFile(join(fontsDir, name)));
+  fontBytes = {
+    sansRegular: await read('LiberationSans-Regular.ttf'),
+    sansBold: await read('LiberationSans-Bold.ttf'),
+    serifRegular: await read('LiberationSerif-Regular.ttf'),
+    serifItalic: await read('LiberationSerif-Italic.ttf')
+  };
+});
 
 const OUT_DIR = '/home/markus/src/ttrpg/tmp/pdf-out';
 const ENABLED = process.env.PDF_GENERATE === '1';
@@ -30,12 +47,12 @@ function slugify(name: string): string {
 }
 
 describe.runIf(ENABLED)('PDF generation + firewall inspection', () => {
-  it('emits 10 fixture PDFs (5 PCs * 2 audiences) to tmp/pdf-out/', async () => {
+  it('emits fixture PDFs (N PCs * 2 audiences) to tmp/pdf-out/', { timeout: 60000 }, async () => {
     if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true });
     for (const pc of ALL_FIXTURES) {
       const slug = slugify(pc.name);
       for (const audience of ['player', 'dm'] as const) {
-        const bytes = await renderPcPdf(pc, { audience, pageSize: 'A4' });
+        const bytes = await renderPcPdf(pc, { audience, pageSize: 'A4', fontBytes });
         const out = join(OUT_DIR, `${slug}-${audience}.pdf`);
         writeFileSync(out, bytes);
         // eslint-disable-next-line no-console

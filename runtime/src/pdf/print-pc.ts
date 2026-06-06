@@ -1,35 +1,40 @@
 /**
  * Public entry for the printable-PDF feature.  Lazy-loaded by the
- * UI affordance so the pdf-lib bytes never enter the main bundle.
+ * UI affordance so pdf-lib + fontkit + the embedded Liberation
+ * fonts never enter the main bundle.
  *
  *   const { renderPcPdf, downloadPdf } = await import('./pdf/print-pc');
  *   const bytes = await renderPcPdf(pc, { audience, pageSize: 'A4' });
  *   downloadPdf(bytes, `${pc.name}-sheet.pdf`);
  *
  * The chunk name `print-pc-<hash>.js` falls into the bundle-gate's
- * "other" classification (uncapped) — see check-bundle-size.mjs
- * and the regression test in bundle-gate.test.ts.
+ * "other" classification (uncapped) — see check-bundle-size.mjs and
+ * the regression test in bundle-gate.test.ts.
  */
 
 import { PDFDocument } from 'pdf-lib';
 import type { CharacterRecord } from '../character-loader';
 import { scrubForAudience, type Audience } from './print-pc-firewall';
+import { loadFontBytes, type FontBytes } from './print-pc-fonts';
 import {
   embedFonts,
   makePage,
   drawIdentityBand,
   drawHarmStressBand,
   drawStatsStrip,
-  drawSkillsTags,
+  drawSkillsTagsChips,
   drawFoci,
   drawMagicSection,
   drawConditionsInventory,
   drawMoneyAndLanguages,
   drawBonds,
   drawAdvancement,
-  drawBackstory,
-  drawFooter,
+  drawBackstoryWithEmphasis,
+  drawResolutionCrib,
+  drawSlimFooter,
   drawDmDossier,
+  MM,
+  type PageContext,
   type PageSize
 } from './print-pc-layout';
 
@@ -38,6 +43,8 @@ export interface RenderOptions {
   pageSize?: PageSize;
   /** For golden-byte tests: zero out timestamps + metadata. Default true. */
   deterministic?: boolean;
+  /** Override font bytes — tests pass these directly. */
+  fontBytes?: FontBytes;
 }
 
 export async function renderPcPdf(
@@ -47,12 +54,11 @@ export async function renderPcPdf(
   const pageSize: PageSize = options.pageSize ?? 'A4';
   const deterministic = options.deterministic ?? true;
 
-  // Firewall — DM-only fields are stripped BEFORE layout runs for
-  // player audience.  DM audience sees the unmodified record.
+  // Firewall — DM-only fields stripped BEFORE layout for player
+  // audience.  DM audience sees the unmodified record.
   const scrubbed = scrubForAudience(pc, options.audience) as CharacterRecord;
 
   const doc = await PDFDocument.create();
-
   if (deterministic) {
     doc.setCreationDate(new Date(0));
     doc.setModificationDate(new Date(0));
@@ -60,53 +66,83 @@ export async function renderPcPdf(
     doc.setCreator('');
     doc.setAuthor('');
     doc.setSubject('');
-    // Title is fixed (no PC name in metadata - PII surface).
     doc.setTitle('PC Sheet');
   }
 
-  const fonts = await embedFonts(doc);
-  const ctx = makePage(doc, pageSize, fonts);
+  const fontBytes = options.fontBytes ?? (await loadFontBytes());
+  const fonts = await embedFonts(doc, fontBytes);
 
-  // Player-audience page (the player sheet — the DM gets this too
-  // verbatim as the first page of their export so they can see
-  // exactly what the player sees).
-  let cursorY = ctx.height - ctx.marginY;
-  cursorY = drawIdentityBand(ctx, scrubbed, cursorY);
-  cursorY = drawHarmStressBand(ctx, scrubbed, cursorY);
-  cursorY = drawStatsStrip(ctx, scrubbed, cursorY);
-  cursorY = drawSkillsTags(ctx, scrubbed, cursorY);
-  cursorY = drawFoci(ctx, scrubbed, cursorY);
-  cursorY = drawMagicSection(ctx, scrubbed, cursorY);
-  cursorY = drawConditionsInventory(ctx, scrubbed, cursorY);
-  cursorY = drawMoneyAndLanguages(ctx, scrubbed, cursorY);
-  cursorY = drawBonds(ctx, scrubbed, cursorY);
+  // Track all pages so the footer pass knows the page count for the
+  // "page X of Y" slim footer.
+  const allPages: PageContext[] = [];
+  const page0 = makePage(doc, pageSize, fonts, 0);
+  allPages.push(page0);
 
-  // Reserve space for advancement strip + footer at the bottom.
-  const footerReserve = ctx.marginY + 14 * 2.834645669; // 14mm for footer + reminder
-  const advancementReserve = footerReserve + 8 * 2.834645669;
-  const backstoryFloor = advancementReserve + 8 * 2.834645669;
+  // Page-1 fixtures live at fixed Y near the bottom: advancement
+  // strip + resolution crib.  Live-state sections above must stop
+  // before these reservations; bonds + backstory flow to page 2
+  // when page 1 is full (TTRPG expert + visual designer v2 brief).
+  const cribReserve = page0.marginY + 18 * MM;
+  const advanceReserve = cribReserve + 8 * MM;
+  const sectionFloor = advanceReserve + 6 * MM;
+  // Minimum vertical needed for the bonds section to fit on the
+  // current page without bleeding into the advancement strip.  If
+  // the bonds-or-larger payload won't fit here, the entire prose
+  // tail (bonds + backstory) moves to page 2.
+  const BONDS_MIN_HEIGHT = 28 * MM;
 
-  const backstoryResult = drawBackstory(
+  let currentCtx = page0;
+  let cursorY = page0.height - page0.marginY;
+  cursorY = drawIdentityBand(page0, scrubbed, cursorY);
+  cursorY = drawHarmStressBand(page0, scrubbed, cursorY);
+  cursorY = drawStatsStrip(page0, scrubbed, cursorY);
+  cursorY = drawSkillsTagsChips(page0, scrubbed, cursorY);
+  cursorY = drawFoci(page0, scrubbed, cursorY);
+  cursorY = drawMagicSection(page0, scrubbed, cursorY);
+  cursorY = drawConditionsInventory(page0, scrubbed, cursorY);
+  cursorY = drawMoneyAndLanguages(page0, scrubbed, cursorY);
+
+  // Pagination gate: if bonds + at least one line of backstory
+  // won't fit above the advancement floor, push the prose tail to
+  // page 2.  Sparse PCs (sub-`sectionFloor + BONDS_MIN_HEIGHT`
+  // savings) keep single-page.
+  if (cursorY < sectionFloor + BONDS_MIN_HEIGHT) {
+    currentCtx = makePage(doc, pageSize, fonts, allPages.length);
+    allPages.push(currentCtx);
+    cursorY = currentCtx.height - currentCtx.marginY;
+  }
+  cursorY = drawBonds(currentCtx, scrubbed, cursorY);
+
+  // Backstory floor is the advancement strip only when we're still
+  // on page 0; otherwise it's the page bottom margin (continuation
+  // pages have no advancement strip).
+  const backstoryFloor =
+    currentCtx === page0 ? sectionFloor : currentCtx.marginY + 8 * MM;
+  drawBackstoryWithEmphasis(
     doc,
-    ctx,
+    currentCtx,
     scrubbed,
     cursorY,
-    backstoryFloor
+    backstoryFloor,
+    allPages
   );
-  // After backstory may have flowed to additional pages; advancement
-  // strip lives on the FIRST page only (it is the at-a-glance
-  // status, not the prose).  Use the original ctx.
-  drawAdvancement(ctx, scrubbed, ctx.marginY + 16 * 2.834645669);
-  drawFooter(ctx);
 
-  // If backstory overflowed, give the continuation page its own
-  // footer too so the page-frame is consistent.
-  if (backstoryResult.ctx !== ctx) {
-    drawFooter(backstoryResult.ctx);
-  }
+  // Advancement strip + resolution crib live on page 0 only.
+  drawAdvancement(page0, scrubbed, page0.marginY + 16 * MM);
+  drawResolutionCrib(page0);
 
   if (options.audience === 'dm') {
-    drawDmDossier(doc, pc, pageSize, fonts);
+    drawDmDossier(doc, pc, pageSize, fonts, allPages.length, allPages);
+  }
+
+  // Slim footer on every page beyond the first (and on the DM
+  // dossier).  The first page has its own resolution crib in lieu
+  // of a footer-meta band — the crib IS the footer.
+  const pageCount = allPages.length;
+  if (pageCount > 1) {
+    for (let i = 1; i < pageCount; i++) {
+      drawSlimFooter(allPages[i], pc.name ?? 'PC', i + 1, pageCount);
+    }
   }
 
   return doc.save({ useObjectStreams: false });
@@ -120,8 +156,6 @@ export function downloadPdf(bytes: Uint8Array, filename: string): void {
   const safeBase =
     filename.replace(/[^\w.\-]+/g, '_').slice(0, 100) || 'pc.pdf';
   const safe = safeBase.endsWith('.pdf') ? safeBase : `${safeBase}.pdf`;
-  // Re-wrap so the Blob ctor's BlobPart typing matches across TS
-  // versions (Uint8Array<ArrayBufferLike> vs ArrayBuffer).
   const blob = new Blob([bytes.slice().buffer], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -131,7 +165,5 @@ export function downloadPdf(bytes: Uint8Array, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  // Revoke on next tick — Safari aborts the download if revoked
-  // synchronously.
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }

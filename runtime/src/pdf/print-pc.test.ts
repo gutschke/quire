@@ -15,11 +15,29 @@
  * requires pdftotext and is gated behind PDF_TOOLS=1.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { PDFDocument } from 'pdf-lib';
 import { renderPcPdf } from './print-pc';
 import { ALL_FIXTURES, SLOT_1_MARCUS } from './print-pc-fixtures';
 import { classifyChunk } from '../bundle-gate';
+import type { FontBytes } from './print-pc-fonts';
+
+let fontBytes: FontBytes;
+
+beforeAll(async () => {
+  const fontsDir = join(dirname(fileURLToPath(import.meta.url)), 'fonts');
+  const read = async (name: string): Promise<Uint8Array> =>
+    new Uint8Array(await readFile(join(fontsDir, name)));
+  fontBytes = {
+    sansRegular: await read('LiberationSans-Regular.ttf'),
+    sansBold: await read('LiberationSans-Bold.ttf'),
+    serifRegular: await read('LiberationSerif-Regular.ttf'),
+    serifItalic: await read('LiberationSerif-Italic.ttf')
+  };
+});
 
 const PDF_MAGIC = '%PDF-';
 const PDF_TRAILER = '%%EOF';
@@ -29,9 +47,9 @@ function asString(bytes: Uint8Array): string {
 }
 
 describe('renderPcPdf', () => {
-  it('emits a valid PDF stream for each fixture (player audience)', async () => {
+  it('emits a valid PDF stream for each fixture (player audience)', { timeout: 30000 }, async () => {
     for (const pc of ALL_FIXTURES) {
-      const bytes = await renderPcPdf(pc, { audience: 'player' });
+      const bytes = await renderPcPdf(pc, { audience: 'player', fontBytes });
       const s = asString(bytes);
       expect(s.startsWith(PDF_MAGIC)).toBe(true);
       // Trailer must be near the end (may have trailing newline).
@@ -42,7 +60,7 @@ describe('renderPcPdf', () => {
   });
 
   it('emits a DM-audience PDF that includes a second page', async () => {
-    const bytes = await renderPcPdf(SLOT_1_MARCUS, { audience: 'dm' });
+    const bytes = await renderPcPdf(SLOT_1_MARCUS, { audience: 'dm', fontBytes });
     // pdf-lib emits one /Type /Page per page; count for a quick check.
     const s = asString(bytes);
     const pageCount = (s.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
@@ -52,11 +70,13 @@ describe('renderPcPdf', () => {
   it('is deterministic for a fixed fixture (same bytes across runs)', async () => {
     const a = await renderPcPdf(SLOT_1_MARCUS, {
       audience: 'player',
-      deterministic: true
+      deterministic: true,
+      fontBytes
     });
     const b = await renderPcPdf(SLOT_1_MARCUS, {
       audience: 'player',
-      deterministic: true
+      deterministic: true,
+      fontBytes
     });
     expect(a.byteLength).toBe(b.byteLength);
     // Byte-for-byte equality.
@@ -68,7 +88,7 @@ describe('renderPcPdf', () => {
   });
 
   it('player export has fixed-string /Title (PC name is NOT in metadata)', async () => {
-    const bytes = await renderPcPdf(SLOT_1_MARCUS, { audience: 'player' });
+    const bytes = await renderPcPdf(SLOT_1_MARCUS, { audience: 'player', fontBytes });
     const loaded = await PDFDocument.load(bytes);
     expect(loaded.getTitle()).toBe('PC Sheet');
     expect(loaded.getTitle()).not.toContain(SLOT_1_MARCUS.name);
@@ -81,7 +101,7 @@ describe('renderPcPdf', () => {
       name: 'Empty PC',
       stats: { str: 0, dex: 0, con: 0, int: 0, wis: 0, cha: 0 }
     } as typeof SLOT_1_MARCUS;
-    const bytes = await renderPcPdf(minimal, { audience: 'player' });
+    const bytes = await renderPcPdf(minimal, { audience: 'player', fontBytes });
     expect(bytes.byteLength).toBeGreaterThan(2 * 1024);
   });
 });

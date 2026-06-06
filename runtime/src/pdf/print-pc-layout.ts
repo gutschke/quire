@@ -1,30 +1,58 @@
 /**
  * PDF layout helpers + per-section drawing for the printable
- * character sheet.  See design/playtest-readiness/pdf-design-
- * synthesis.md for the contract these implement.
+ * character sheet — v2 (2026-06-06).
  *
- * pdf-lib uses bottom-up Y coordinates (origin at the bottom-left
- * of the page).  This module tracks a `cursorY` that starts near
- * the top of the page (=`pageHeight - topMargin`) and decrements
- * as sections are drawn down the page.  Each `drawXxx` helper
- * returns the new cursor.
+ * v2 changes over v1.1, per the converged critic synthesis at
+ * design/playtest-readiness/pdf-design-synthesis.md:
+ *
+ *   - Embedded Liberation Sans + Serif via fontkit instead of
+ *     StandardFonts.  Eliminates the `asciify` table (the source
+ *     of literal `*` separators that looked like leftover markdown)
+ *     and unlocks Unicode glyphs (·, →, ≤, —, …) and real italic
+ *     for parsed markdown emphasis.
+ *   - Markdown `*…*` emphasis in backstory parses to italic runs.
+ *   - Skills + Tags rendered as a chip cluster with subtle mint
+ *     tint, not an inline asterisk-separated list.
+ *   - Foci promote to two columns when count ≥ 3.
+ *   - "The Quiet" magic block rendered as a 2×3 grid of tier cards
+ *     (Free / Cheap / Costly / Hard / Prohibited + Foci-shift rule)
+ *     instead of a left-label / right-rule table.
+ *   - 2d6 resolution reminder rendered as a 2×2 grid + doubles strip
+ *     instead of a single justified footer line.
+ *   - Look-ahead pagination: when the remaining backstory fits in
+ *     < N lines, the section is pre-tightened to keep it on page 1
+ *     and avoid a near-empty continuation page.
+ *   - Continuation pages get a slim footer (`name · page X of Y`),
+ *     not the full 2d6 reminder.
+ *   - Subtle palette expansion: paper tint, mint chip background,
+ *     Quiet violet for the magic section, soft rule color.
+ *   - Bond entries prefix the target id (placeholder until v3 wires
+ *     a name resolver) in colored sans-bold + the prose in serif.
+ *
+ * pdf-lib uses bottom-up Y coordinates (origin at the bottom-left).
+ * Each `drawXxx` helper takes a top-of-section Y and returns the new
+ * cursor (lower Y).
  */
 
 import {
   PDFDocument,
   PDFFont,
   PDFPage,
-  StandardFonts,
   rgb,
   type RGB
 } from 'pdf-lib';
+// Optional ESM-only import; fontkit registers the OTF/TTF embed path
+// on pdf-lib's PDFDocument.  The require is at runtime to keep the
+// import statement under happy-dom while still letting Vite tree-
+// shake when the chunk isn't loaded.
+import fontkit from '@pdf-lib/fontkit';
 
 import type { CharacterRecord } from '../character-loader';
+import type { FontBytes } from './print-pc-fonts';
 
 /** 1mm in PDF points. */
 export const MM = 2.834645669;
 
-/** Page sizes in PDF points (1pt = 1/72 in). */
 export const PAGE_SIZES = {
   A4: { width: 595.28, height: 841.89 } as const,
   Letter: { width: 612, height: 792 } as const
@@ -38,27 +66,33 @@ export interface Fonts {
   serifItalic: PDFFont;
 }
 
-export async function embedFonts(doc: PDFDocument): Promise<Fonts> {
-  return {
-    sans: await doc.embedFont(StandardFonts.Helvetica),
-    sansBold: await doc.embedFont(StandardFonts.HelveticaBold),
-    serif: await doc.embedFont(StandardFonts.TimesRoman),
-    serifItalic: await doc.embedFont(StandardFonts.TimesRomanItalic)
-  };
+export async function embedFonts(
+  doc: PDFDocument,
+  bytes: FontBytes
+): Promise<Fonts> {
+  doc.registerFontkit(fontkit as Parameters<typeof doc.registerFontkit>[0]);
+  const [sans, sansBold, serif, serifItalic] = await Promise.all([
+    doc.embedFont(bytes.sansRegular, { subset: true }),
+    doc.embedFont(bytes.sansBold, { subset: true }),
+    doc.embedFont(bytes.serifRegular, { subset: true }),
+    doc.embedFont(bytes.serifItalic, { subset: true })
+  ]);
+  return { sans, sansBold, serif, serifItalic };
 }
 
 /** Ink colors for print (light-mode palette, darkened ~10% for ink). */
 export const COLORS = {
-  ink: rgb(0.17, 0.18, 0.20), // ~#2A2E33
-  // v1.1: darkened from 0.41/0.43/0.45 (~#6A6E74, ~3.5:1 contrast) to
-  // ~#555 (~5:1) — print critic flagged section headers failing WCAG-AA.
-  inkSecondary: rgb(0.33, 0.33, 0.33), // ~#555555 — ≥4.5:1 on white
+  ink: rgb(0.17, 0.18, 0.20), // ~#2A2E33 — body text
+  inkSecondary: rgb(0.33, 0.33, 0.33), // ~#555 — labels, hairlines
   rule: rgb(0.78, 0.79, 0.81), // ~#C8CACE — section dividers
   accent: rgb(0.12, 0.43, 0.47), // ~#1F6E78 — darkened teal
-  harm: rgb(0.61, 0.23, 0.14), // ~#9B3A24 — darkened harm-red
-  stress: rgb(0.37, 0.23, 0.56), // ~#5E3A8E — darkened stress-violet
-  quiet: rgb(0.29, 0.31, 0.34), // ~#4A5058 — neutral cool-gray
-  dmAmber: rgb(0.63, 0.42, 0.12) // ~#A06A1F — darkened DM-amber
+  harm: rgb(0.61, 0.23, 0.14), // ~#9B3A24
+  stress: rgb(0.37, 0.23, 0.56), // ~#5E3A8E
+  quiet: rgb(0.29, 0.24, 0.36), // ~#4A3E5C — Underleaf "Quiet" violet
+  dmAmber: rgb(0.63, 0.42, 0.12), // ~#A06A1F
+  paper: rgb(0.985, 0.975, 0.949), // ~#FBF8F2 — very light paper tint
+  mintTint: rgb(0.933, 0.961, 0.945), // ~#EEF5F1 — chip background
+  underleafGreen: rgb(0.184, 0.290, 0.227) // ~#2F4A3A — section headers
 };
 
 export interface PageContext {
@@ -72,23 +106,18 @@ export interface PageContext {
   contentRight: number;
   contentWidth: number;
   fonts: Fonts;
+  pageIndex: number;
 }
 
 export function makePage(
   doc: PDFDocument,
   pageSize: PageSize,
-  fonts: Fonts
+  fonts: Fonts,
+  pageIndex: number
 ): PageContext {
   const size = PAGE_SIZES[pageSize];
   const page = doc.addPage([size.width, size.height]);
-  // A4 has 12mm-safe sides; Letter wants 15mm to avoid the wider
-  // Letter-margin clipping on cheap printers.  15mm is the safe
-  // common choice; the content area sits centered.
-  // v1.1: bumped from 15 → 16mm; print critic showed rules came
-  // close to the 14.4mm margin and risked clipping on cheap inkjets.
   const marginX = 16 * MM;
-  // v1.1: bumped from 18 → 20mm; print critic showed footer would
-  // clip on Letter (18mm shorter than A4) — anchored to bottom-safe.
   const marginY = 20 * MM;
   return {
     page,
@@ -100,58 +129,191 @@ export function makePage(
     contentLeft: marginX,
     contentRight: size.width - marginX,
     contentWidth: size.width - 2 * marginX,
-    fonts
+    fonts,
+    pageIndex
   };
 }
 
-// ---------- text helpers ----------
+// ============================================================
+// Text helpers
+// ============================================================
 
-/** Replace unicode glyphs StandardFonts cannot render with ASCII fallbacks. */
-function asciify(s: string): string {
-  return s
-    .replace(/[‘’‚]/g, "'")
-    .replace(/[“”„]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/…/g, '...')
-    .replace(/·/g, '*')
-    .replace(/•/g, '*')
-    .replace(/[←-⇿]/g, '->')
-    .replace(/±/g, '+/-')
-    .replace(/×/g, 'x')
-    .replace(/°/g, ' deg ')
-    // strip any remaining non-Latin-1 char so embed-font doesn't throw
-    .replace(/[^\x00-\xFF]/g, '?');
+/**
+ * Markdown emphasis run.  `italic=true` segments came from `*text*`
+ * markup; rendered in serif-italic.  Bold-emphasis (`**text**`) is
+ * NOT supported intentionally — Quire chargen uses single-asterisk
+ * only and the lookup is simpler with one delimiter.
+ */
+export interface TextRun {
+  text: string;
+  italic: boolean;
 }
 
+/**
+ * Parse a paragraph for `*…*` italic emphasis.  Returns an ordered
+ * sequence of runs.  Unmatched `*` characters are preserved as
+ * literal text — the parser is permissive.
+ */
+export function parseEmphasis(input: string): TextRun[] {
+  const runs: TextRun[] = [];
+  const re = /\*([^*\n]+)\*/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    if (m.index > last) {
+      runs.push({ text: input.slice(last, m.index), italic: false });
+    }
+    runs.push({ text: m[1], italic: true });
+    last = m.index + m[0].length;
+  }
+  if (last < input.length) {
+    runs.push({ text: input.slice(last), italic: false });
+  }
+  return runs.length > 0 ? runs : [{ text: input, italic: false }];
+}
+
+/**
+ * Wrap an array of mixed-font text runs into lines that each fit
+ * within `maxWidth`.  Returns an array of lines, each line being
+ * an array of `{text, italic}` runs.  Hard-wraps long single words.
+ */
+export function wrapRuns(
+  runs: TextRun[],
+  serif: PDFFont,
+  serifItalic: PDFFont,
+  size: number,
+  maxWidth: number
+): TextRun[][] {
+  const measure = (text: string, italic: boolean): number =>
+    (italic ? serifItalic : serif).widthOfTextAtSize(text, size);
+
+  // Split run text into atoms separated by whitespace so we can
+  // greedy-pack words while preserving italic state.
+  type Atom = { text: string; italic: boolean; trailingSpace: boolean };
+  const atoms: Atom[] = [];
+  for (const run of runs) {
+    for (const para of run.text.split('\n')) {
+      const words = para.split(/(\s+)/);
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (!w) continue;
+        if (/^\s+$/.test(w)) {
+          if (atoms.length > 0) atoms[atoms.length - 1].trailingSpace = true;
+        } else {
+          atoms.push({ text: w, italic: run.italic, trailingSpace: false });
+        }
+      }
+      atoms.push({ text: '\n', italic: false, trailingSpace: false });
+    }
+  }
+
+  const lines: TextRun[][] = [];
+  let lineRuns: TextRun[] = [];
+  let lineWidth = 0;
+
+  const flush = (): void => {
+    lines.push(lineRuns);
+    lineRuns = [];
+    lineWidth = 0;
+  };
+
+  for (const atom of atoms) {
+    if (atom.text === '\n') {
+      flush();
+      continue;
+    }
+    const wordW = measure(atom.text, atom.italic);
+    const spaceW = atom.trailingSpace
+      ? measure(' ', atom.italic)
+      : 0;
+    if (lineWidth + wordW > maxWidth && lineRuns.length > 0) {
+      flush();
+    }
+    if (wordW > maxWidth) {
+      // Hard-break a single oversized word.
+      let chunk = '';
+      let chunkW = 0;
+      for (const ch of atom.text) {
+        const chW = measure(ch, atom.italic);
+        if (chunkW + chW > maxWidth) {
+          lineRuns.push({ text: chunk, italic: atom.italic });
+          lines.push(lineRuns);
+          lineRuns = [];
+          chunk = ch;
+          chunkW = chW;
+        } else {
+          chunk += ch;
+          chunkW += chW;
+        }
+      }
+      if (chunk) {
+        lineRuns.push({ text: chunk, italic: atom.italic });
+        lineWidth = chunkW;
+      }
+    } else {
+      lineRuns.push({ text: atom.text, italic: atom.italic });
+      lineWidth += wordW;
+    }
+    if (atom.trailingSpace) {
+      lineRuns.push({ text: ' ', italic: atom.italic });
+      lineWidth += spaceW;
+    }
+  }
+  if (lineRuns.length > 0) flush();
+  return lines;
+}
+
+/** Draw a single line of runs at baseline y; returns total width. */
+function drawRunLine(
+  page: PDFPage,
+  runs: TextRun[],
+  x: number,
+  y: number,
+  size: number,
+  fonts: { serif: PDFFont; serifItalic: PDFFont },
+  color: RGB
+): number {
+  let cx = x;
+  for (const run of runs) {
+    if (!run.text) continue;
+    const font = run.italic ? fonts.serifItalic : fonts.serif;
+    page.drawText(run.text, { x: cx, y, font, size, color });
+    cx += font.widthOfTextAtSize(run.text, size);
+  }
+  return cx - x;
+}
+
+/**
+ * Plain wrap for non-emphasis text — wraps a single string into
+ * lines that each fit within maxWidth.
+ */
 export function wrapText(
   text: string,
   font: PDFFont,
   size: number,
   maxWidth: number
 ): string[] {
-  const lines: string[] = [];
+  const out: string[] = [];
   for (const rawPara of text.split(/\n+/)) {
-    const para = asciify(rawPara).trim();
+    const para = rawPara.trim();
     if (!para) {
-      lines.push('');
+      out.push('');
       continue;
     }
     const words = para.split(/\s+/);
     let line = '';
     for (const w of words) {
       const test = line ? `${line} ${w}` : w;
-      const width = font.widthOfTextAtSize(test, size);
-      if (width <= maxWidth) {
+      if (font.widthOfTextAtSize(test, size) <= maxWidth) {
         line = test;
       } else {
-        if (line) lines.push(line);
-        // long single word — break by chars if it exceeds maxWidth on its own
+        if (line) out.push(line);
         if (font.widthOfTextAtSize(w, size) > maxWidth) {
           let chunk = '';
           for (const ch of w) {
             const next = chunk + ch;
             if (font.widthOfTextAtSize(next, size) > maxWidth) {
-              if (chunk) lines.push(chunk);
+              if (chunk) out.push(chunk);
               chunk = ch;
             } else {
               chunk = next;
@@ -163,12 +325,12 @@ export function wrapText(
         }
       }
     }
-    if (line) lines.push(line);
+    if (line) out.push(line);
   }
-  return lines;
+  return out;
 }
 
-export interface DrawTextOptions {
+interface DrawTextOptions {
   x: number;
   y: number;
   text: string;
@@ -179,52 +341,44 @@ export interface DrawTextOptions {
   lineGap?: number;
 }
 
-/**
- * Draws text at (x, y) — y is the BASELINE of the first line.  If
- * `maxWidth` is given, wraps; each subsequent line drops by
- * `size + lineGap`.  Returns the y-coordinate AFTER the block
- * (baseline of where the next line would be).
- */
+/** Draw plain text starting at baseline y, returning final cursor. */
 export function drawText(page: PDFPage, opts: DrawTextOptions): number {
   const { x, y, text, font, size, color, maxWidth, lineGap = 2 } = opts;
-  const lines = maxWidth
-    ? wrapText(text, font, size, maxWidth)
-    : [asciify(text)];
+  const lines = maxWidth ? wrapText(text, font, size, maxWidth) : [text];
   let cursor = y;
   for (const line of lines) {
     page.drawText(line, { x, y: cursor, font, size, color: color ?? COLORS.ink });
     cursor -= size + lineGap;
   }
-  return cursor + lineGap; // baseline below last drawn line
+  return cursor + lineGap;
 }
 
-// ---------- decorative motifs ----------
+// ============================================================
+// Decorative motifs
+// ============================================================
 
-/**
- * Fold-rule hairline between sections — straight across with a
- * gentle 1.5mm upward curve at both ends.  Approximated as three
- * line segments because pdf-lib does not have Bezier shortcut.
- */
-export function drawFoldRule(page: PDFPage, ctx: PageContext, y: number): void {
+/** Section hairline with a faint upward curve at the margin ends. */
+export function drawFoldRule(
+  page: PDFPage,
+  ctx: PageContext,
+  y: number
+): void {
   const curveLen = 6 * MM;
-  const rise = 1.5 * MM;
+  const rise = 1.2 * MM;
   const flatLeft = ctx.contentLeft + curveLen;
   const flatRight = ctx.contentRight - curveLen;
-  // flat segment
   page.drawLine({
     start: { x: flatLeft, y },
     end: { x: flatRight, y },
     thickness: 0.5,
     color: COLORS.rule
   });
-  // left curve approximated
   page.drawLine({
     start: { x: ctx.contentLeft, y: y + rise },
     end: { x: flatLeft, y },
     thickness: 0.5,
     color: COLORS.rule
   });
-  // right curve approximated
   page.drawLine({
     start: { x: flatRight, y },
     end: { x: ctx.contentRight, y: y + rise },
@@ -234,19 +388,17 @@ export function drawFoldRule(page: PDFPage, ctx: PageContext, y: number): void {
 }
 
 /**
- * Quire mark — 3 nested arcs approximated as 3 nested rounded
- * rectangles (pdf-lib has no arc primitive without Bezier).  Sits
- * at top-right of the identity band.  Inner arc gets a small
- * accent fill.
+ * Quire mark — three nested arcs approximated as nested circles
+ * (pdf-lib has no arc primitive without Bezier paths).  Top-right
+ * of the identity band on every page.
  */
 export function drawQuireMark(
   page: PDFPage,
   centerX: number,
   centerY: number
 ): void {
-  const baseR = 2 * MM;
   for (let i = 0; i < 3; i++) {
-    const r = baseR - i * 0.5 * MM;
+    const r = 2.4 * MM - i * 0.6 * MM;
     page.drawCircle({
       x: centerX,
       y: centerY,
@@ -254,15 +406,17 @@ export function drawQuireMark(
       borderColor: COLORS.accent,
       borderWidth: 0.6,
       color: i === 2 ? COLORS.accent : undefined,
-      opacity: i === 2 ? 0.2 : 1
+      opacity: i === 2 ? 0.6 : 1
     });
   }
 }
 
-// ---------- section drawers ----------
+// ============================================================
+// Section drawing
+// ============================================================
 
 const SECTION_HEADER_SIZE = 8.5;
-const SECTION_LABEL_LINE_GAP = 4 * MM;
+const SECTION_HEADER_GAP = 4 * MM;
 
 function drawSectionHeader(
   ctx: PageContext,
@@ -275,9 +429,9 @@ function drawSectionHeader(
     text: label.toUpperCase(),
     font: ctx.fonts.sansBold,
     size: SECTION_HEADER_SIZE,
-    color: COLORS.inkSecondary
+    color: COLORS.underleafGreen
   });
-  return cursorY - SECTION_LABEL_LINE_GAP;
+  return cursorY - SECTION_HEADER_GAP;
 }
 
 export function drawIdentityBand(
@@ -285,22 +439,18 @@ export function drawIdentityBand(
   pc: CharacterRecord,
   startY: number
 ): number {
-  // PC name (22pt sans bold)
   drawText(ctx.page, {
     x: ctx.contentLeft,
     y: startY - 22,
     text: pc.name,
     font: ctx.fonts.sansBold,
-    size: 22
+    size: 22,
+    color: COLORS.underleafGreen
   });
-
-  // Sub-band: pronouns + alignment, comma-joined
-  const sub = [
-    pc.pronouns ? `(${pc.pronouns})` : '',
-    pc.alignment ? pc.alignment : ''
-  ]
-    .filter(Boolean)
-    .join('  *  ');
+  const subParts: string[] = [];
+  if (pc.pronouns) subParts.push(pc.pronouns);
+  if (pc.alignment) subParts.push(pc.alignment);
+  const sub = subParts.join(' · ');
   if (sub) {
     drawText(ctx.page, {
       x: ctx.contentLeft,
@@ -311,11 +461,8 @@ export function drawIdentityBand(
       color: COLORS.inkSecondary
     });
   }
-
-  // Quire mark glyph top-right
   drawQuireMark(ctx.page, ctx.contentRight - 3 * MM, startY - 4 * MM);
-
-  const endY = startY - 22 * MM;
+  const endY = startY - 20 * MM;
   drawFoldRule(ctx.page, ctx, endY);
   return endY - 3 * MM;
 }
@@ -329,18 +476,12 @@ function drawTrack(
   currentValue: number,
   signal: RGB,
   innerOffset: boolean
-): { width: number } {
-  // v1.1: bump label to 9pt + boxes to 7.5mm + crib to 8pt (was
-  // 8.5/6.5/6.5).  Critic feedback: cribs were ~5pt-equivalent and
-  // smudged on inkjet.  Also raise crib higher above the box so it
-  // does not look like the box label.
+): void {
   const labelWidth = 16 * MM;
   const boxSize = 7.5 * MM;
   const gap = 2 * MM;
-  // More vertical room for the larger crib + box.
   const trackY = topY - boxSize - 12;
 
-  // Label — vertically center on the box.
   drawText(ctx.page, {
     x,
     y: trackY + boxSize / 2 - 3,
@@ -350,10 +491,9 @@ function drawTrack(
     color: COLORS.inkSecondary
   });
 
-  // Penalty cribs above each box — bumped to 8pt with extra leading.
   let cribX = x + labelWidth;
   for (const crib of penalties) {
-    ctx.page.drawText(asciify(crib), {
+    ctx.page.drawText(crib, {
       x: cribX + 1,
       y: trackY + boxSize + 4,
       font: ctx.fonts.sans,
@@ -363,7 +503,6 @@ function drawTrack(
     cribX += boxSize + gap;
   }
 
-  // Boxes
   for (let i = 0; i < 4; i++) {
     const bx = x + labelWidth + i * (boxSize + gap);
     const filled = i < currentValue;
@@ -376,7 +515,6 @@ function drawTrack(
       borderWidth: 0.8
     });
     if (innerOffset) {
-      // 1mm inner offset rule for stress — B&W redundancy
       ctx.page.drawRectangle({
         x: bx + 1 * MM,
         y: trackY + 1 * MM,
@@ -387,8 +525,6 @@ function drawTrack(
       });
     }
     if (filled) {
-      // v1.1: replaced diagonal hatch (which read as pre-printed)
-      // with a centered check-mark glyph — reads as pencil-applied.
       const cx = bx + boxSize / 2;
       const cy = trackY + boxSize / 2;
       const armShort = boxSize * 0.18;
@@ -407,9 +543,6 @@ function drawTrack(
       });
     }
   }
-
-  const usedWidth = labelWidth + 4 * (boxSize + gap);
-  return { width: usedWidth };
 }
 
 export function drawHarmStressBand(
@@ -417,14 +550,13 @@ export function drawHarmStressBand(
   pc: CharacterRecord,
   startY: number
 ): number {
-  const trackTopY = startY;
   const half = ctx.contentWidth / 2;
   drawTrack(
     ctx,
     ctx.contentLeft,
-    trackTopY,
+    startY,
     'Harm',
-    ['ok', '-1 phys', '-1 all', 'out'],
+    ['ok', '−1 phys', '−1 all', 'out'],
     pc.harm ?? 0,
     COLORS.harm,
     false
@@ -432,16 +564,14 @@ export function drawHarmStressBand(
   drawTrack(
     ctx,
     ctx.contentLeft + half,
-    trackTopY,
+    startY,
     'Stress',
-    ['ok', '-1 wis', '-2 wis', 'no cast'],
+    ['ok', '−1 wis', '−2 wis', 'no cast'],
     pc.stress ?? 0,
     COLORS.stress,
     true
   );
-  // v1.1: more vertical (32 → 33mm) to accommodate the bigger boxes
-  // + raised cribs.
-  const endY = trackTopY - 32 * MM;
+  const endY = startY - 32 * MM;
   drawFoldRule(ctx.page, ctx, endY);
   return endY - 3 * MM;
 }
@@ -462,8 +592,6 @@ export function drawStatsStrip(
   ];
   const cellWidth = ctx.contentWidth / 6;
   const y = startY - 14;
-  // v1.1: demoted stat number from 18pt bold → 13pt regular per
-  // prime-directive critic.  Stats are reference, not the star.
   const STAT_NUM_SIZE = 13;
   for (let i = 0; i < labels.length; i++) {
     const [name, val] = labels[i];
@@ -494,20 +622,29 @@ export function drawStatsStrip(
 }
 
 function formatStatNum(n: number | undefined): string {
-  if (n === undefined) return '-';
+  if (n === undefined) return '−';
   if (n > 0) return `+${n}`;
   if (n === 0) return '0';
-  return `${n}`;
+  return `−${Math.abs(n)}`;
 }
 
-export function drawSkillsTags(
+/**
+ * Chip cluster for skills + tags: each item rendered in a faint
+ * mint-tinted rounded rectangle.  Wraps lines automatically.
+ */
+export function drawSkillsTagsChips(
   ctx: PageContext,
   pc: CharacterRecord,
   startY: number
 ): number {
-  let cursor = drawSectionHeader(ctx, startY, 'Skills + Tags');
-  const all = [...(pc.skills ?? []), ...(pc.tags ?? [])];
-  if (all.length === 0) {
+  let cursor = drawSectionHeader(ctx, startY, 'Skills & Tags');
+  const skills = pc.skills ?? [];
+  const tags = pc.tags ?? [];
+  const items = [
+    ...skills.map((t) => ({ text: t, bold: true })),
+    ...tags.map((t) => ({ text: t, bold: false }))
+  ];
+  if (items.length === 0) {
     drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
@@ -516,31 +653,62 @@ export function drawSkillsTags(
       size: 10,
       color: COLORS.inkSecondary
     });
-    cursor -= 14;
-  } else {
-    const joined = all.join('  *  ');
-    cursor = drawText(ctx.page, {
-      x: ctx.contentLeft,
-      y: cursor,
-      text: joined,
-      font: ctx.fonts.serif,
-      size: 10.5,
-      maxWidth: ctx.contentWidth,
-      lineGap: 2
-    });
+    return cursor - 14 - 3 * MM;
   }
-  cursor -= 3 * MM;
-  drawFoldRule(ctx.page, ctx, cursor);
-  return cursor - 3 * MM;
+
+  const chipPadX = 2 * MM;
+  const chipPadY = 1.2 * MM;
+  const chipSpacing = 1.5 * MM;
+  const chipFontSize = 8.5;
+  const chipHeight = chipFontSize + 2 * chipPadY;
+  const rowGap = 2 * MM;
+  let lineX = ctx.contentLeft;
+  let lineY = cursor - chipHeight;
+
+  for (const item of items) {
+    const font = item.bold ? ctx.fonts.sansBold : ctx.fonts.sans;
+    const textW = font.widthOfTextAtSize(item.text, chipFontSize);
+    const chipW = textW + 2 * chipPadX;
+    if (lineX + chipW > ctx.contentRight && lineX > ctx.contentLeft) {
+      lineX = ctx.contentLeft;
+      lineY -= chipHeight + rowGap;
+    }
+    ctx.page.drawRectangle({
+      x: lineX,
+      y: lineY,
+      width: chipW,
+      height: chipHeight,
+      color: COLORS.mintTint,
+      borderColor: COLORS.rule,
+      borderWidth: 0.4
+    });
+    ctx.page.drawText(item.text, {
+      x: lineX + chipPadX,
+      y: lineY + chipPadY + 1,
+      font,
+      size: chipFontSize,
+      color: item.bold ? COLORS.underleafGreen : COLORS.ink
+    });
+    lineX += chipW + chipSpacing;
+  }
+
+  const endY = lineY - 2 * MM;
+  drawFoldRule(ctx.page, ctx, endY);
+  return endY - 3 * MM;
 }
 
+/**
+ * Foci — single column at <3, two columns at ≥3.  Each focus shows
+ * a status glyph + name (bold) + a secondary line with domain + for.
+ */
 export function drawFoci(
   ctx: PageContext,
   pc: CharacterRecord,
   startY: number
 ): number {
   let cursor = drawSectionHeader(ctx, startY, 'Foci');
-  if (!pc.foci || pc.foci.length === 0) {
+  const foci = pc.foci ?? [];
+  if (foci.length === 0) {
     drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
@@ -550,69 +718,210 @@ export function drawFoci(
       color: COLORS.inkSecondary
     });
     cursor -= 14;
-  } else {
-    // v1.1: structured bullet list with name on its own line and a
-    // status badge for non-active foci.  TTRPG critic flagged that
-    // foci drive cast tiers and were unscannable as inline prose.
-    for (const f of pc.foci) {
-      // First line: bullet glyph + name (bold) + status badge
-      const bullet = '> ';
-      ctx.page.drawText(bullet, {
-        x: ctx.contentLeft,
-        y: cursor,
-        font: ctx.fonts.sansBold,
-        size: 10
-      });
-      const bulletW = ctx.fonts.sansBold.widthOfTextAtSize(bullet, 10);
-      ctx.page.drawText(asciify(f.name), {
-        x: ctx.contentLeft + bulletW,
-        y: cursor,
-        font: ctx.fonts.sansBold,
-        size: 10.5
-      });
-      const nameW = ctx.fonts.sansBold.widthOfTextAtSize(f.name, 10.5);
-      // Status badge for non-active states (broken / faded / etc.)
-      if (f.status && f.status !== 'active') {
-        const badge = ` [${f.status}]`;
-        ctx.page.drawText(asciify(badge), {
-          x: ctx.contentLeft + bulletW + nameW + 4,
-          y: cursor,
-          font: ctx.fonts.sansBold,
-          size: 9,
-          color: COLORS.harm
-        });
-      }
-      cursor -= 12;
-      // Subline: domain * for: bound-purpose
-      const sub: string[] = [];
-      if (f.domain) sub.push(`domain: ${f.domain}`);
-      if (f.boundFor) sub.push(`for: ${f.boundFor}`);
-      if (f.condition) sub.push(`(${f.condition})`);
-      if (sub.length > 0) {
-        cursor = drawText(ctx.page, {
-          x: ctx.contentLeft + 4 * MM,
-          y: cursor,
-          text: sub.join('  *  '),
-          font: ctx.fonts.serif,
-          size: 9.5,
-          color: COLORS.inkSecondary,
-          maxWidth: ctx.contentWidth - 4 * MM,
-          lineGap: 2
-        });
-      }
-      cursor -= 4;
-    }
+    cursor -= 2 * MM;
+    drawFoldRule(ctx.page, ctx, cursor);
+    return cursor - 3 * MM;
   }
-  cursor -= 2 * MM;
-  drawFoldRule(ctx.page, ctx, cursor);
-  return cursor - 3 * MM;
+
+  const twoColumn = foci.length >= 3;
+  const colWidth = twoColumn ? ctx.contentWidth / 2 - 3 * MM : ctx.contentWidth;
+  const colXs = twoColumn
+    ? [ctx.contentLeft, ctx.contentLeft + ctx.contentWidth / 2 + 3 * MM]
+    : [ctx.contentLeft];
+  let colY = [cursor, cursor];
+  for (let i = 0; i < foci.length; i++) {
+    const f = foci[i];
+    const col = twoColumn ? i % 2 : 0;
+    const x = colXs[col];
+    // Draw a small status glyph as a primitive shape — Liberation
+    // Sans lacks U+25C6 ◆ and related geometric shapes, so a Unicode
+    // glyph would render as the missing-glyph box.  4-shape system:
+    // active = filled diamond, broken = X, faded = open circle,
+    // corrupted = filled circle, transformed = small rotated square.
+    drawFocusStatusShape(
+      ctx.page,
+      x + 1.5,
+      colY[col] + 3,
+      f.status,
+      focusStatusColor(f.status)
+    );
+    const glyphW = 4 * MM;
+    ctx.page.drawText(f.name, {
+      x: x + glyphW,
+      y: colY[col],
+      font: ctx.fonts.sansBold,
+      size: 10.5,
+      color: COLORS.ink
+    });
+    if (f.status && f.status !== 'active') {
+      const statusBadge = ` [${f.status}]`;
+      const nameW = ctx.fonts.sansBold.widthOfTextAtSize(f.name, 10.5);
+      ctx.page.drawText(statusBadge, {
+        x: x + glyphW + nameW + 1,
+        y: colY[col],
+        font: ctx.fonts.sansBold,
+        size: 8.5,
+        color: focusStatusColor(f.status)
+      });
+    }
+    colY[col] -= 12;
+    const sub: string[] = [];
+    if (f.domain) sub.push(`domain: ${f.domain}`);
+    if (f.boundFor) sub.push(`for: ${f.boundFor}`);
+    if (f.condition) sub.push(`(${f.condition})`);
+    if (sub.length > 0) {
+      colY[col] = drawText(ctx.page, {
+        x: x + 4 * MM,
+        y: colY[col],
+        text: sub.join(' · '),
+        font: ctx.fonts.serif,
+        size: 9.5,
+        color: COLORS.inkSecondary,
+        maxWidth: colWidth - 4 * MM,
+        lineGap: 2
+      });
+    }
+    colY[col] -= 4;
+  }
+  const cursorOut = Math.min(colY[0], colY[1]);
+  const endY = cursorOut - 2 * MM;
+  drawFoldRule(ctx.page, ctx, endY);
+  return endY - 3 * MM;
 }
 
 /**
- * Conditional magic section.  Drawn ONLY if `pc.knowsTheyCanCast`
- * is exactly `true`.  When false/undefined, returns the input
- * cursor unchanged — no header, no placeholder, no glyph.  This
- * is the silent-player-firewall rule expressed in print form.
+ * Draw a small (≈3mm) shape representing a focus's status.  The
+ * shapes are vector-drawn primitives so they render identically
+ * regardless of font glyph coverage:
+ *   active      → filled diamond
+ *   broken      → X (two stroked diagonals)
+ *   faded       → empty (stroke-only) circle
+ *   corrupted   → filled circle
+ *   transformed → square rotated 45° (open diamond)
+ */
+function drawFocusStatusShape(
+  page: PDFPage,
+  x: number,
+  y: number,
+  status: string | undefined,
+  color: RGB
+): void {
+  const r = 1.5 * MM;
+  switch (status) {
+    case 'broken': {
+      page.drawLine({
+        start: { x: x - r, y: y - r },
+        end: { x: x + r, y: y + r },
+        thickness: 1.1,
+        color
+      });
+      page.drawLine({
+        start: { x: x - r, y: y + r },
+        end: { x: x + r, y: y - r },
+        thickness: 1.1,
+        color
+      });
+      return;
+    }
+    case 'faded': {
+      page.drawCircle({
+        x,
+        y,
+        size: r,
+        borderColor: color,
+        borderWidth: 0.6
+      });
+      return;
+    }
+    case 'corrupted': {
+      page.drawCircle({ x, y, size: r, color });
+      return;
+    }
+    case 'transformed': {
+      // Open diamond (4-point outline)
+      page.drawLine({
+        start: { x: x, y: y + r },
+        end: { x: x + r, y: y },
+        thickness: 0.7,
+        color
+      });
+      page.drawLine({
+        start: { x: x + r, y: y },
+        end: { x: x, y: y - r },
+        thickness: 0.7,
+        color
+      });
+      page.drawLine({
+        start: { x: x, y: y - r },
+        end: { x: x - r, y: y },
+        thickness: 0.7,
+        color
+      });
+      page.drawLine({
+        start: { x: x - r, y: y },
+        end: { x: x, y: y + r },
+        thickness: 0.7,
+        color
+      });
+      return;
+    }
+    case 'active':
+    default: {
+      // Filled diamond
+      const path = [
+        { x: x, y: y + r },
+        { x: x + r, y: y },
+        { x: x, y: y - r },
+        { x: x - r, y: y }
+      ];
+      // Approximate fill by drawing many thin horizontal strokes.
+      const slices = 10;
+      for (let i = 0; i <= slices; i++) {
+        const t = i / slices;
+        const yy = y - r + 2 * r * t;
+        const halfW = r * (1 - Math.abs(2 * t - 1));
+        page.drawLine({
+          start: { x: x - halfW, y: yy },
+          end: { x: x + halfW, y: yy },
+          thickness: 0.5,
+          color
+        });
+      }
+      // Outline so the diamond stays crisp at small size
+      for (let i = 0; i < 4; i++) {
+        const a = path[i];
+        const b = path[(i + 1) % 4];
+        page.drawLine({
+          start: a,
+          end: b,
+          thickness: 0.6,
+          color
+        });
+      }
+      return;
+    }
+  }
+}
+
+function focusStatusColor(s: string | undefined): RGB {
+  switch (s) {
+    case 'broken':
+    case 'corrupted':
+      return COLORS.harm;
+    case 'faded':
+      return COLORS.inkSecondary;
+    case 'transformed':
+      return COLORS.quiet;
+    case 'active':
+    default:
+      return COLORS.accent;
+  }
+}
+
+/**
+ * The Quiet magic block — rendered ONLY if knowsTheyCanCast===true.
+ * v2: 2×3 grid of tier cards.  Player-facing reference, not a
+ * compressed prose block.
  */
 export function drawMagicSection(
   ctx: PageContext,
@@ -621,65 +930,64 @@ export function drawMagicSection(
 ): number {
   if (pc.knowsTheyCanCast !== true) return startY;
   let cursor = drawSectionHeader(ctx, startY, 'The Quiet');
-
-  // v1.1: TTRPG critic flagged the previous compressed prose as
-  // unreadable mid-cast.  Restructured as a 2-column tier table with
-  // a one-line intent reminder above and a one-line focus rule below.
-  const intent = 'Cast = (right way to ask) + (authentic intent).';
-  cursor = drawText(ctx.page, {
+  drawText(ctx.page, {
     x: ctx.contentLeft,
     y: cursor,
-    text: intent,
+    text: 'Cast = (the right way to ask) + (an authentic intent).',
     font: ctx.fonts.serifItalic,
     size: 9.5,
     color: COLORS.quiet,
     maxWidth: ctx.contentWidth
   });
-  cursor -= 4;
+  cursor -= 14;
 
-  // Tier table: 2 columns x 5 rows.  Left = tier name (bold), right
-  // = resolution + cost summary.
   const tiers: ReadonlyArray<[string, string]> = [
     ['Free', 'no roll; succeeds.'],
     ['Cheap', 'no roll; minor thread debt.'],
-    ['Costly', '2d6 + WIS. 10+ clean / 7-9 partial / <=6 fail. +1 stress.'],
-    ['Hard', '2d6 + WIS, -1 to -2. Backlash on miss. +2 stress.'],
-    ['Prohibited', 'cannot. The Quiet does not parse.']
+    ['Costly', '2d6 + WIS. 10+ clean, 7–9 partial. +1 stress.'],
+    ['Hard', '2d6 + WIS −1 to −2. Backlash on miss. +2 stress.'],
+    ['Prohibited', 'The Quiet does not parse.'],
+    ['Foci', 'shift in-domain casts one tier easier.']
   ];
-  const tierColW = 20 * MM;
-  const rowH = 11;
-  for (const [name, rule] of tiers) {
-    ctx.page.drawText(asciify(name), {
-      x: ctx.contentLeft,
-      y: cursor,
+
+  const colW = ctx.contentWidth / 2 - 2 * MM;
+  const cardH = 14 * MM;
+  const cardGap = 2 * MM;
+  for (let i = 0; i < tiers.length; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = ctx.contentLeft + col * (colW + 4 * MM);
+    const y = cursor - row * (cardH + cardGap) - cardH;
+    ctx.page.drawRectangle({
+      x,
+      y,
+      width: colW,
+      height: cardH,
+      color: COLORS.mintTint,
+      borderColor: COLORS.quiet,
+      borderWidth: 0.4,
+      opacity: 0.4
+    });
+    const [name, rule] = tiers[i];
+    ctx.page.drawText(name, {
+      x: x + 3 * MM,
+      y: y + cardH - 11,
       font: ctx.fonts.sansBold,
-      size: 9,
+      size: 9.5,
       color: COLORS.quiet
     });
     drawText(ctx.page, {
-      x: ctx.contentLeft + tierColW,
-      y: cursor,
+      x: x + 3 * MM,
+      y: y + cardH - 22,
       text: rule,
       font: ctx.fonts.sans,
-      size: 9,
+      size: 8.5,
       color: COLORS.ink,
-      maxWidth: ctx.contentWidth - tierColW
+      maxWidth: colW - 6 * MM,
+      lineGap: 1
     });
-    cursor -= rowH;
   }
-  cursor -= 2;
-  // Footer rule.
-  drawText(ctx.page, {
-    x: ctx.contentLeft,
-    y: cursor,
-    text: 'Foci shift in-domain casts one tier easier.',
-    font: ctx.fonts.serifItalic,
-    size: 9,
-    color: COLORS.quiet,
-    maxWidth: ctx.contentWidth
-  });
-  cursor -= 12;
-  cursor -= 2 * MM;
+  cursor -= 3 * (cardH + cardGap) + 2 * MM;
   drawFoldRule(ctx.page, ctx, cursor);
   return cursor - 3 * MM;
 }
@@ -689,17 +997,14 @@ export function drawConditionsInventory(
   pc: CharacterRecord,
   startY: number
 ): number {
-  // Two columns.  Left: conditions.  Right: inventory.
   const half = ctx.contentWidth / 2;
-  const leftMax = half - 4 * MM;
   const rightX = ctx.contentLeft + half + 4 * MM;
+  const leftMax = half - 4 * MM;
   const rightMax = ctx.contentWidth - half - 4 * MM;
 
-  // v1.1: always render the Conditions header so the layout stays
-  // structurally identical PC-to-PC.  TTRPG critic flagged that a
-  // missing section reads as "something is missing".
   let cursorL = drawSectionHeader(ctx, startY, 'Conditions');
-  if (!pc.conditions || pc.conditions.length === 0) {
+  const conditions = pc.conditions ?? [];
+  if (conditions.length === 0) {
     drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursorL,
@@ -710,8 +1015,8 @@ export function drawConditionsInventory(
     });
     cursorL -= 14;
   } else {
-    for (const c of pc.conditions) {
-      const line = `${c.name}: ${c.effect}`;
+    for (const c of conditions) {
+      const line = `${c.name} — ${c.effect}`;
       cursorL = drawText(ctx.page, {
         x: ctx.contentLeft,
         y: cursorL,
@@ -725,16 +1030,13 @@ export function drawConditionsInventory(
     }
   }
 
-  // Right: inventory
   let cursorR = drawSectionHeader(
-    {
-      ...ctx,
-      contentLeft: rightX
-    },
+    { ...ctx, contentLeft: rightX },
     startY,
     'Inventory'
   );
-  if (!pc.inventory || pc.inventory.length === 0) {
+  const inv = pc.inventory ?? [];
+  if (inv.length === 0) {
     drawText(ctx.page, {
       x: rightX,
       y: cursorR,
@@ -745,10 +1047,9 @@ export function drawConditionsInventory(
     });
     cursorR -= 14;
   } else {
-    for (const it of pc.inventory) {
+    for (const it of inv) {
       const tail = it.notes ? ` (${it.notes})` : '';
-      const carry =
-        it.carriedBy === 'stowed' ? ' [stowed]' : '';
+      const carry = it.carriedBy === 'stowed' ? ' [stowed]' : '';
       const line = `${it.name}${carry}${tail}`;
       cursorR = drawText(ctx.page, {
         x: rightX,
@@ -763,9 +1064,9 @@ export function drawConditionsInventory(
     }
   }
 
-  const cursor = Math.min(cursorL, cursorR) - 2 * MM;
-  drawFoldRule(ctx.page, ctx, cursor);
-  return cursor - 3 * MM;
+  const endY = Math.min(cursorL, cursorR) - 2 * MM;
+  drawFoldRule(ctx.page, ctx, endY);
+  return endY - 3 * MM;
 }
 
 export function drawMoneyAndLanguages(
@@ -780,7 +1081,7 @@ export function drawMoneyAndLanguages(
     'well-off',
     'wealthy'
   ];
-  let cursor = drawSectionHeader(ctx, startY, 'Money + Languages');
+  let cursor = drawSectionHeader(ctx, startY, 'Money & Languages');
   const current = pc.moneyBand;
   let x = ctx.contentLeft;
   ctx.page.drawText('Money:', {
@@ -790,39 +1091,47 @@ export function drawMoneyAndLanguages(
     size: 8.5,
     color: COLORS.inkSecondary
   });
-  x += ctx.fonts.sansBold.widthOfTextAtSize('Money:', 8.5) + 4;
-  for (const b of bands) {
+  x += ctx.fonts.sansBold.widthOfTextAtSize('Money:', 8.5) + 6;
+  for (let i = 0; i < bands.length; i++) {
+    const b = bands[i];
     const isCurrent = b === current;
     const w = ctx.fonts.sans.widthOfTextAtSize(b, 9.5);
     if (isCurrent) {
-      // circle the current band
       ctx.page.drawRectangle({
-        x: x - 2,
+        x: x - 3,
         y: cursor - 3,
-        width: w + 4,
-        height: 12,
+        width: w + 6,
+        height: 14,
         borderColor: COLORS.accent,
         borderWidth: 0.6
       });
     }
-    ctx.page.drawText(asciify(b), {
+    ctx.page.drawText(b, {
       x,
       y: cursor,
       font: isCurrent ? ctx.fonts.sansBold : ctx.fonts.sans,
       size: 9.5,
       color: COLORS.ink
     });
-    x += w + 8;
+    x += w + 4;
+    if (i < bands.length - 1) {
+      ctx.page.drawText('·', {
+        x: x,
+        y: cursor,
+        font: ctx.fonts.sans,
+        size: 9.5,
+        color: COLORS.inkSecondary
+      });
+      x += ctx.fonts.sans.widthOfTextAtSize('·', 9.5) + 4;
+    }
   }
-
   cursor -= 14;
 
   if (pc.languages && pc.languages.length > 0) {
-    const langText = `Languages: ${pc.languages.join(', ')}`;
     cursor = drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
-      text: langText,
+      text: `Languages: ${pc.languages.join(', ')}`,
       font: ctx.fonts.sans,
       size: 9,
       color: COLORS.inkSecondary,
@@ -841,7 +1150,8 @@ export function drawBonds(
   startY: number
 ): number {
   let cursor = drawSectionHeader(ctx, startY, 'Bonds');
-  if (!pc.bonds || pc.bonds.length === 0) {
+  const bonds = pc.bonds ?? [];
+  if (bonds.length === 0) {
     drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
@@ -852,22 +1162,17 @@ export function drawBonds(
     });
     cursor -= 14;
   } else {
-    // v1.1: TTRPG critic flagged bonds had no relationship label.
-    // Lead each entry with the target id (rendered until v2 adds a
-    // resolver lookup) in sans-bold, then the prose in serif.
-    for (const b of pc.bonds) {
+    for (const b of bonds) {
       const target = b.targetPcId || 'unknown';
-      ctx.page.drawText(asciify(`> ${target}: `), {
+      const prefix = `→ ${target}: `;
+      ctx.page.drawText(prefix, {
         x: ctx.contentLeft,
         y: cursor,
         font: ctx.fonts.sansBold,
         size: 9.5,
-        color: COLORS.inkSecondary
+        color: COLORS.accent
       });
-      const prefixW = ctx.fonts.sansBold.widthOfTextAtSize(
-        `> ${target}: `,
-        9.5
-      );
+      const prefixW = ctx.fonts.sansBold.widthOfTextAtSize(prefix, 9.5);
       cursor = drawText(ctx.page, {
         x: ctx.contentLeft + prefixW,
         y: cursor,
@@ -896,10 +1201,9 @@ export function drawAdvancement(
     text: 'ADVANCEMENT',
     font: ctx.fonts.sansBold,
     size: 8.5,
-    color: COLORS.inkSecondary
+    color: COLORS.underleafGreen
   });
   const labelW = ctx.fonts.sansBold.widthOfTextAtSize('ADVANCEMENT', 8.5);
-  // 5 bullet squares
   const bullets = pc.markBullets ?? {};
   const bulletKeys = [
     'hardMoment',
@@ -908,7 +1212,13 @@ export function drawAdvancement(
     'against',
     'complication'
   ] as const;
-  const bulletLabels = ['hard moment', 'learned', 'risk', 'against', 'complic'];
+  const bulletLabels = [
+    'hard moment',
+    'learned',
+    'risk',
+    'against',
+    'complic.'
+  ];
   let x = ctx.contentLeft + labelW + 8;
   const boxSize = 3 * MM;
   for (let i = 0; i < 5; i++) {
@@ -922,21 +1232,22 @@ export function drawAdvancement(
       borderWidth: 0.6
     });
     if (filled) {
-      // diagonal tick
+      const cx = x + boxSize / 2;
+      const cy = startY - 2 + boxSize / 2;
       ctx.page.drawLine({
-        start: { x, y: startY - 2 + boxSize },
-        end: { x: x + boxSize, y: startY - 2 },
-        thickness: 0.6,
+        start: { x: cx - boxSize * 0.3, y: cy + boxSize * 0.05 },
+        end: { x: cx - boxSize * 0.05, y: cy - boxSize * 0.2 },
+        thickness: 0.9,
         color: COLORS.accent
       });
       ctx.page.drawLine({
-        start: { x, y: startY - 2 },
-        end: { x: x + boxSize, y: startY - 2 + boxSize },
-        thickness: 0.6,
+        start: { x: cx - boxSize * 0.05, y: cy - boxSize * 0.2 },
+        end: { x: cx + boxSize * 0.3, y: cy + boxSize * 0.3 },
+        thickness: 0.9,
         color: COLORS.accent
       });
     }
-    ctx.page.drawText(asciify(bulletLabels[i]), {
+    ctx.page.drawText(bulletLabels[i], {
       x: x + boxSize + 2,
       y: startY,
       font: ctx.fonts.sans,
@@ -945,10 +1256,9 @@ export function drawAdvancement(
     });
     x += boxSize + 2 + ctx.fonts.sans.widthOfTextAtSize(bulletLabels[i], 7) + 6;
   }
-  // Lifetime count, right-aligned
   const counter = `${pc.advancements ?? 0} of 8 advancements`;
   const counterW = ctx.fonts.sans.widthOfTextAtSize(counter, 9);
-  ctx.page.drawText(asciify(counter), {
+  ctx.page.drawText(counter, {
     x: ctx.contentRight - counterW,
     y: startY,
     font: ctx.fonts.sans,
@@ -961,97 +1271,187 @@ export function drawAdvancement(
 }
 
 /**
- * Backstory prose — flows top-down from `startY` and can overflow
- * to a new page.  Returns the final cursor and the active page in
- * case the caller wants to keep drawing.
+ * 2d6 resolution reminder as a 2×2 grid + doubles strip below.
+ * Lives in the page-1 footer only.
  */
-export function drawBackstory(
+export function drawResolutionCrib(ctx: PageContext): void {
+  const baseY = ctx.marginY + 11 * MM;
+  const colW = ctx.contentWidth / 2 - 2 * MM;
+  const cellH = 9;
+  const cells: ReadonlyArray<[string, string]> = [
+    ['≤ 6', 'miss'],
+    ['7–9', 'partial success'],
+    ['10+', 'hit'],
+    ['12+', 'exceptional']
+  ];
+  for (let i = 0; i < 4; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = ctx.contentLeft + col * (colW + 4 * MM);
+    const y = baseY - row * (cellH + 2);
+    const [tier, outcome] = cells[i];
+    ctx.page.drawText(tier, {
+      x,
+      y,
+      font: ctx.fonts.sansBold,
+      size: 8.5,
+      color: COLORS.accent
+    });
+    const tw = ctx.fonts.sansBold.widthOfTextAtSize(tier, 8.5);
+    ctx.page.drawText(outcome, {
+      x: x + tw + 4,
+      y,
+      font: ctx.fonts.sans,
+      size: 8.5,
+      color: COLORS.ink
+    });
+  }
+  ctx.page.drawText(
+    'Double 6 — you narrate a bonus detail.  Double 1 — the DM adds a twist.',
+    {
+      x: ctx.contentLeft,
+      y: baseY - 2 * (cellH + 2) - 4,
+      font: ctx.fonts.serifItalic,
+      size: 8,
+      color: COLORS.inkSecondary
+    }
+  );
+}
+
+/**
+ * Slim footer for continuation pages — name + page X of Y, no
+ * resolution reminder.  Set `pageNum` and `pageCount` 1-indexed.
+ */
+export function drawSlimFooter(
+  ctx: PageContext,
+  pcName: string,
+  pageNum: number,
+  pageCount: number
+): void {
+  const y = ctx.marginY - 8 * MM;
+  const left = `${pcName} · page ${pageNum} of ${pageCount}`;
+  ctx.page.drawText(left, {
+    x: ctx.contentLeft,
+    y,
+    font: ctx.fonts.sans,
+    size: 7.5,
+    color: COLORS.inkSecondary
+  });
+}
+
+/**
+ * Backstory prose with markdown emphasis parsing.  When the
+ * remaining content fits in `< MIN_OVERFLOW_LINES`, the section is
+ * tightened on the source page rather than overflowing to a near-
+ * empty continuation page (visual-designer P0).
+ */
+const MIN_OVERFLOW_LINES = 8;
+
+export function drawBackstoryWithEmphasis(
   doc: PDFDocument,
   ctx: PageContext,
   pc: CharacterRecord,
   startY: number,
-  bottomFloor: number
-): { ctx: PageContext; cursorY: number } {
-  let currentCtx = ctx;
-  let cursor = drawSectionHeader(currentCtx, startY, 'Backstory');
-
+  bottomFloor: number,
+  allPages: PageContext[]
+): { ctx: PageContext } {
   const text = pc.backstory ?? '';
-  const lines = wrapText(text, currentCtx.fonts.serif, 10.5, currentCtx.contentWidth);
-  const lineHeight = 10.5 + 3;
+  if (!text) return { ctx };
+
+  let currentCtx = ctx;
+  const runs = parseEmphasis(text);
+  const bodySize = 10.5;
+  const lineHeight = bodySize + 3;
+  const lines = wrapRuns(
+    runs,
+    currentCtx.fonts.serif,
+    currentCtx.fonts.serifItalic,
+    bodySize,
+    currentCtx.contentWidth
+  );
+
+  // Page-1 estimate.  The section header costs SECTION_HEADER_GAP
+  // of vertical and the first line costs lineHeight.  If startY -
+  // headerCost - lineHeight < bottomFloor we cannot fit even the
+  // header + 1 line on this page; defer everything to a fresh
+  // continuation page so the header NEVER orphans from its body
+  // (visual-designer P0 from v2 critique).
+  let cursor = startY;
+  const headerCost = SECTION_HEADER_GAP;
+  if (cursor - headerCost - lineHeight < bottomFloor) {
+    currentCtx = makePage(
+      doc,
+      currentCtx.pageSize,
+      currentCtx.fonts,
+      currentCtx.pageIndex + 1
+    );
+    allPages.push(currentCtx);
+    cursor = currentCtx.height - currentCtx.marginY;
+  }
+
+  cursor = drawSectionHeader(currentCtx, cursor, 'Backstory');
+
+  // Look-ahead: when overflow is tiny (≤ MIN_OVERFLOW_LINES), pull
+  // back the section gap.  Doesn't help the orphan case above
+  // (which already moved to a new page) but it does compress a 1-2
+  // line overflow onto page 1 when feasible.
+  const onPageFloor =
+    currentCtx === ctx ? bottomFloor : currentCtx.marginY + 8 * MM;
+  const availableLines = Math.max(
+    0,
+    Math.floor((cursor - onPageFloor) / lineHeight)
+  );
+  const overflow = lines.length - availableLines;
+  if (overflow > 0 && overflow < MIN_OVERFLOW_LINES) {
+    cursor += 4 * MM;
+  }
 
   for (const line of lines) {
-    if (cursor < bottomFloor) {
-      // overflow to a new page
-      currentCtx = makePage(doc, currentCtx.pageSize, currentCtx.fonts);
+    const floor =
+      currentCtx === ctx ? bottomFloor : currentCtx.marginY + 8 * MM;
+    if (cursor < floor) {
+      currentCtx = makePage(
+        doc,
+        currentCtx.pageSize,
+        currentCtx.fonts,
+        currentCtx.pageIndex + 1
+      );
+      allPages.push(currentCtx);
       cursor = currentCtx.height - currentCtx.marginY;
       cursor = drawSectionHeader(currentCtx, cursor, 'Backstory (continued)');
     }
-    currentCtx.page.drawText(line, {
-      x: currentCtx.contentLeft,
-      y: cursor,
-      font: currentCtx.fonts.serif,
-      size: 10.5,
-      color: COLORS.ink
-    });
+    drawRunLine(
+      currentCtx.page,
+      line,
+      currentCtx.contentLeft,
+      cursor,
+      bodySize,
+      {
+        serif: currentCtx.fonts.serif,
+        serifItalic: currentCtx.fonts.serifItalic
+      },
+      COLORS.ink
+    );
     cursor -= lineHeight;
   }
-  return { ctx: currentCtx, cursorY: cursor };
+  return { ctx: currentCtx };
 }
 
-export function drawFooter(ctx: PageContext): void {
-  const y = ctx.marginY - 6 * MM;
-  const reminder =
-    'Roll 2d6 + stat.  <= 6 miss  *  7-9 partial  *  10+ hit  *  ' +
-    '12+ exceptional.  Double 6: you narrate a bonus detail.  ' +
-    'Double 1: DM adds a twist.';
-  drawText(ctx.page, {
-    x: ctx.contentLeft,
-    y,
-    text: reminder,
-    font: ctx.fonts.serifItalic,
-    size: 8,
-    color: COLORS.inkSecondary,
-    maxWidth: ctx.contentWidth
-  });
-}
-
-// ---------- DM dossier page ----------
+// ============================================================
+// DM dossier page
+// ============================================================
 
 export function drawDmDossier(
   doc: PDFDocument,
   pc: CharacterRecord,
   pageSize: PageSize,
-  fonts: Fonts
-): void {
-  const ctx = makePage(doc, pageSize, fonts);
-  // amber bleed bar on the left edge of content area
-  ctx.page.drawRectangle({
-    x: ctx.contentLeft - 6 * MM,
-    y: ctx.marginY,
-    width: 1.5 * MM,
-    height: ctx.height - 2 * ctx.marginY,
-    color: COLORS.dmAmber
-  });
+  fonts: Fonts,
+  pageIndex: number,
+  allPages: PageContext[]
+): PageContext {
+  const ctx = makePage(doc, pageSize, fonts, pageIndex);
+  allPages.push(ctx);
 
-  // Vertical "DM" text on the bar — drawn rotated 90deg using
-  // pdf-lib's rotate option.  Lift a few mm up from bottom.
-  ctx.page.drawText('DM', {
-    x: ctx.contentLeft - 5.5 * MM,
-    y: ctx.marginY + 12 * MM,
-    font: fonts.sansBold,
-    size: 9,
-    color: COLORS.dmAmber,
-    rotate: { type: 'degrees', angle: 90 } as any
-  });
-
-  // v1.1: visual critic + print critic + TTRPG critic ALL flagged
-  // that the DM warning text was rendering BEHIND the PC name and
-  // failing the paper-shuffle test.  Fixes:
-  //   (a) draw a full-width amber band at the top of the page so the
-  //       dossier is obviously not the player sheet at a glance
-  //   (b) place the warning IN the amber band, white on amber, large
-  //       and bold — the dominant element on the page
-  //   (c) push the PC name well below the band, no overlap
   const cursor0 = ctx.height - ctx.marginY;
   const bandH = 14 * MM;
   ctx.page.drawRectangle({
@@ -1061,42 +1461,46 @@ export function drawDmDossier(
     height: bandH,
     color: COLORS.dmAmber
   });
-  // White warning text on amber.
   drawText(ctx.page, {
     x: ctx.contentLeft,
     y: cursor0 - 9 * MM,
-    text: 'DM DOSSIER  -  DO NOT SHOW PLAYER',
+    text: 'DM DOSSIER — DO NOT SHOW PLAYER',
     font: fonts.sansBold,
     size: 14,
     color: rgb(1, 1, 1)
   });
+
   let cursor = cursor0 - bandH - 10;
   drawText(ctx.page, {
     x: ctx.contentLeft,
     y: cursor,
-    text: `${pc.name}  -  per-PC private notes`,
+    text: `${pc.name} — per-PC private notes`,
     font: fonts.sansBold,
-    size: 14
+    size: 14,
+    color: COLORS.underleafGreen
   });
   cursor -= 22;
 
-  // Magic phase + knows-they-can-cast + tax
+  // Magic state line
   cursor = drawSectionHeader(ctx, cursor, 'Magic state');
-  const magicLine = [
-    `phase: ${pc.magicPhase ?? '-'}`,
-    `knows they can cast: ${pc.knowsTheyCanCast ? 'yes' : 'no'}`,
-    pc.tax
-      ? `tax: ${pc.tax.active ? 'active' : 'released'}` +
-        (pc.tax.sessionsRemaining
-          ? `, ${pc.tax.sessionsRemaining} session(s) left`
-          : '') +
-        (pc.tax.releaseMoment ? `, release: ${pc.tax.releaseMoment}` : '')
-      : 'tax: not yet'
-  ].join('   |   ');
+  const magicParts: string[] = [
+    `phase: ${pc.magicPhase ?? '—'}`,
+    `knows they can cast: ${pc.knowsTheyCanCast ? 'yes' : 'no'}`
+  ];
+  if (pc.tax) {
+    let tax = `tax: ${pc.tax.active ? 'active' : 'released'}`;
+    if (pc.tax.sessionsRemaining)
+      tax += `, ${pc.tax.sessionsRemaining} session(s) left`;
+    if (pc.tax.releaseMoment)
+      tax += `; release: ${pc.tax.releaseMoment}`;
+    magicParts.push(tax);
+  } else {
+    magicParts.push('tax: not yet');
+  }
   cursor = drawText(ctx.page, {
     x: ctx.contentLeft,
     y: cursor,
-    text: magicLine,
+    text: magicParts.join('  |  '),
     font: fonts.sans,
     size: 10,
     maxWidth: ctx.contentWidth
@@ -1123,21 +1527,22 @@ export function drawDmDossier(
         borderWidth: 0.6
       });
     }
-    ctx.page.drawText(asciify(ladder[i]), {
+    ctx.page.drawText(ladder[i], {
       x,
       y: cursor,
       font: isCurrent ? fonts.sansBold : fonts.sans,
       size: 9
     });
-    x += w + 14;
+    x += w + 10;
     if (i < ladder.length - 1) {
-      ctx.page.drawText('->', {
-        x: x - 10,
+      ctx.page.drawText('→', {
+        x: x - 6,
         y: cursor,
         font: fonts.sans,
         size: 9,
         color: COLORS.inkSecondary
       });
+      x += 4;
     }
   }
   cursor -= 14;
@@ -1145,7 +1550,7 @@ export function drawDmDossier(
     drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
-      text: `(spam-count this scene: ${pc.threadDebt.spamCount})`,
+      text: `(scene spam-count: ${pc.threadDebt.spamCount})`,
       font: fonts.serifItalic,
       size: 9,
       color: COLORS.inkSecondary
@@ -1156,14 +1561,12 @@ export function drawDmDossier(
   drawFoldRule(ctx.page, ctx, cursor);
   cursor -= 3 * MM;
 
-  // Alignment drift
   if (pc.alignmentDrift) {
     cursor = drawSectionHeader(ctx, cursor, 'Alignment drift');
-    const driftLine = `marks: ${pc.alignmentDrift.marks} / 5`;
     cursor = drawText(ctx.page, {
       x: ctx.contentLeft,
       y: cursor,
-      text: driftLine,
+      text: `marks: ${pc.alignmentDrift.marks} / 5`,
       font: fonts.sans,
       size: 10
     });
@@ -1172,14 +1575,13 @@ export function drawDmDossier(
     cursor -= 3 * MM;
   }
 
-  // Accidental grants log
   if (pc.accidentalGrants && pc.accidentalGrants.length > 0) {
     cursor = drawSectionHeader(ctx, cursor, 'Accidental grants (DM log)');
     for (const g of pc.accidentalGrants) {
       cursor = drawText(ctx.page, {
         x: ctx.contentLeft,
         y: cursor,
-        text: `- ${g.note}`,
+        text: `— ${g.note}`,
         font: fonts.serif,
         size: 10,
         maxWidth: ctx.contentWidth,
@@ -1192,22 +1594,51 @@ export function drawDmDossier(
     cursor -= 3 * MM;
   }
 
-  // DM notes prose
-  if (pc.dmNotes) {
-    cursor = drawSectionHeader(ctx, cursor, 'DM notes');
-    cursor = drawText(ctx.page, {
-      x: ctx.contentLeft,
-      y: cursor,
-      text: pc.dmNotes,
-      font: fonts.serif,
-      size: 10.5,
-      maxWidth: ctx.contentWidth,
-      lineGap: 3
-    });
+  if (pc.advancementHistory && pc.advancementHistory.length > 0) {
+    cursor = drawSectionHeader(ctx, cursor, 'Advancement history');
+    for (const a of pc.advancementHistory) {
+      const note = a.note ? ` — ${a.note}` : '';
+      cursor = drawText(ctx.page, {
+        x: ctx.contentLeft,
+        y: cursor,
+        text: `• ${a.kind}${note}`,
+        font: fonts.serif,
+        size: 10,
+        maxWidth: ctx.contentWidth,
+        lineGap: 2
+      });
+      cursor -= 2;
+    }
+    cursor -= 2 * MM;
+    drawFoldRule(ctx.page, ctx, cursor);
     cursor -= 3 * MM;
   }
 
-  // Bond DM notes (per-entry)
+  if (pc.dmNotes) {
+    cursor = drawSectionHeader(ctx, cursor, 'DM notes');
+    const runs = parseEmphasis(pc.dmNotes);
+    const lines = wrapRuns(
+      runs,
+      fonts.serif,
+      fonts.serifItalic,
+      10.5,
+      ctx.contentWidth
+    );
+    for (const line of lines) {
+      drawRunLine(
+        ctx.page,
+        line,
+        ctx.contentLeft,
+        cursor,
+        10.5,
+        { serif: fonts.serif, serifItalic: fonts.serifItalic },
+        COLORS.ink
+      );
+      cursor -= 10.5 + 3;
+    }
+    cursor -= 3 * MM;
+  }
+
   const bondsWithNotes = (pc.bonds ?? []).filter((b) => b.dmNotes);
   if (bondsWithNotes.length > 0) {
     cursor = drawSectionHeader(ctx, cursor, 'Bonds (DM-only annotations)');
@@ -1215,7 +1646,7 @@ export function drawDmDossier(
       cursor = drawText(ctx.page, {
         x: ctx.contentLeft,
         y: cursor,
-        text: `- to ${b.targetPcId}: ${b.dmNotes}`,
+        text: `— to ${b.targetPcId}: ${b.dmNotes}`,
         font: fonts.serif,
         size: 10,
         maxWidth: ctx.contentWidth,
@@ -1224,4 +1655,6 @@ export function drawDmDossier(
       cursor -= 2;
     }
   }
+
+  return ctx;
 }
