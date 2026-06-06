@@ -862,10 +862,11 @@ export class QuireApp extends LitElement {
   @state() private slotRealignmentError: string = '';
   @state() private slotRealignmentNoChange: boolean = false;
   @state() private slotRealignmentReasoning: string = '';
-  @state() private slotRealignmentProposals: Array<{
-    slot: number;
-    currentPcId: string;
-    proposedPcId: string;
+  @state() private slotRealignmentPermutation: Array<{
+    newSlot: number;
+    currentSlot: number;
+    pairKey: { pcId: string; peerId: string };
+    slotFingerprintMatched: string;
     rationale: string;
   }> = [];
   /**
@@ -2359,24 +2360,21 @@ export class QuireApp extends LitElement {
     }
     rows.sort((a, b) => a.slot - b.slot);
 
-    // Decorate proposals with PC display names + the seat's player name.
-    const displayProposals = this.slotRealignmentProposals.map((p) => {
-      const seat = v.shared.pcSlots[p.slot];
-      const playerName = seat?.controllerPeerId
-        ? peerNameById.get(seat.controllerPeerId)
-        : undefined;
+    // Build display permutation entries with resolved names.
+    const displayPermutation = this.slotRealignmentPermutation.map((p) => {
+      const pair = pcNameById.get(p.pairKey.pcId);
+      const playerName = peerNameById.get(p.pairKey.peerId);
       return {
         ...p,
-        currentPcName: pcNameById.get(p.currentPcId) ?? p.currentPcId,
-        proposedPcName: pcNameById.get(p.proposedPcId) ?? p.proposedPcId,
-        ...(playerName ? { playerName } : {})
+        pcName: pair ?? p.pairKey.pcId,
+        playerName: playerName ?? p.pairKey.peerId
       };
     });
 
     return html`<pc-slot-realignment
       data-testid="pc-slot-realignment"
       .bindings=${rows}
-      .proposals=${displayProposals}
+      .permutation=${displayPermutation}
       .reasoning=${this.slotRealignmentReasoning}
       ?busy=${this.slotRealignmentBusy}
       .error=${this.slotRealignmentError}
@@ -2391,33 +2389,37 @@ export class QuireApp extends LitElement {
           });
           if (!r.ok) {
             this.slotRealignmentError = r.message;
-            this.slotRealignmentProposals = [];
+            this.slotRealignmentPermutation = [];
             return { ok: false, message: r.message } as const;
           }
           this.slotRealignmentReasoning = r.reasoning;
           this.slotRealignmentNoChange = r.noChangeNeeded;
-          this.slotRealignmentProposals = r.proposals;
+          this.slotRealignmentPermutation = r.permutation;
           return { ok: true, reasoning: r.reasoning } as const;
         } finally {
           this.slotRealignmentBusy = false;
         }
       }}
-      .onApplySwap=${(p: {
-        slot: number;
-        proposedPcId: string;
-      }) => {
-        this.bindPcSlot(p.slot, p.proposedPcId);
-        this.slotRealignmentProposals = this.slotRealignmentProposals.filter(
-          (q) => q.slot !== p.slot
-        );
-      }}
-      .onApplyAll=${(
-        ps: Array<{ slot: number; proposedPcId: string }>
+      .onApplyPermutation=${(
+        entries: ReadonlyArray<{
+          newSlot: number;
+          pairKey: { pcId: string; peerId: string };
+        }>
       ) => {
-        for (const p of ps) {
-          this.bindPcSlot(p.slot, p.proposedPcId);
+        // Apply the entire permutation as a sequence of pc-slot-bind
+        // events.  Each event carries BOTH pcId AND controllerPeerId
+        // so the pair stays welded.  The intermediate state during
+        // the sequence may transiently duplicate a pcId across two
+        // slot indices; that's materializer-permitted and resolves
+        // at the final event.
+        for (const e of entries) {
+          this.bindPcSlotWithPeer(
+            e.newSlot,
+            e.pairKey.pcId,
+            e.pairKey.peerId
+          );
         }
-        this.slotRealignmentProposals = [];
+        this.slotRealignmentPermutation = [];
       }}
     ></pc-slot-realignment>`;
   }
@@ -4877,15 +4879,27 @@ export class QuireApp extends LitElement {
   }
 
   /**
-   * 2026-06-06: AI-assisted PC↔slot realignment.  Coord-only.
-   * Reads current bindings + each PC's record + recent chat samples
-   * per peer + the most recent session digest, asks the AI to
-   * propose swaps, validates the proposal forms a valid permutation,
-   * and returns the per-slot proposal list for DM review.
+   * 2026-06-06 (v2 rewrite, per TTRPG-expert correction):
+   * AI-assisted SLOT RENUMBERING.  Coord-only.
    *
-   * The DM accepts proposals individually via `bindPcSlot(slot,
-   * pcId)` — the materializer preserves controllerPeerId, so only
-   * the PC moves; the human stays in their slot.
+   * The campaign script addresses players by slot label (`{{pc:N}}`).
+   * The author wrote those references before chargen.  After session
+   * 1 we know the actual (player + PC) pairs.  This method:
+   *
+   *   1. Scans the loaded campaign's episode files for `{{pc:N}}`
+   *      references and builds slot fingerprints (the role / prop /
+   *      skill cues per slot).
+   *   2. Bundles current pair bindings (slot → pcId + peerId), the
+   *      PCs in play, optional chat samples + session digest + DM
+   *      nudge.
+   *   3. Asks the AI to propose a renumbering as a bijection over
+   *      pairs.  Pairs are ATOMIC — Markus keeps playing Marcus
+   *      Vance; what moves is which slot label addresses them.
+   *   4. Validates the response forms a valid permutation.
+   *
+   * Returns the proposal for DM review.  Applying it emits
+   * pc-slot-bind events with BOTH pcId AND controllerPeerId for
+   * each pair, preserving the (peer, pc) bond.
    */
   async generateSlotRealignment(opts?: {
     dmGuidance?: string;
@@ -4895,10 +4909,11 @@ export class QuireApp extends LitElement {
         ok: true;
         noChangeNeeded: boolean;
         reasoning: string;
-        proposals: Array<{
-          slot: number;
-          currentPcId: string;
-          proposedPcId: string;
+        permutation: Array<{
+          newSlot: number;
+          pairKey: { pcId: string; peerId: string };
+          currentSlot: number;
+          slotFingerprintMatched: string;
           rationale: string;
         }>;
       }
@@ -4909,6 +4924,7 @@ export class QuireApp extends LitElement {
           | 'no-coord'
           | 'no-key'
           | 'no-bindings'
+          | 'no-fingerprints'
           | 'invalid-ai-response'
           | 'provider-error'
           | 'provider-refused'
@@ -4931,28 +4947,33 @@ export class QuireApp extends LitElement {
       return { ok: false, code: 'no-key', message: 'Set your AI API key first.' };
     }
 
-    // Bindings + PC sheets.
+    // Bindings: each occupied seat with its atomic (pcId, peerId) pair.
     const peerNameById = new Map<string, string>();
     for (const peer of Object.values(v.shared.peers)) {
       if (peer.name) peerNameById.set(peer.peerId, peer.name);
     }
     const synthMap = v.shared.synthesizedPcs ?? {};
-    const bindings: import('./ai/slot-realignment-prompt').SlotRealignmentBinding[] =
+    const bindings: import('./ai/slot-realignment-prompt').RealignmentBinding[] =
       [];
     const pcsByPcId = new Map<
       string,
-      import('./ai/slot-realignment-prompt').SlotRealignmentPcSheet
+      import('./ai/slot-realignment-prompt').RealignmentPcSheet
     >();
     for (const [slotStr, seat] of Object.entries(v.shared.pcSlots)) {
       const slot = Number(slotStr);
       if (!Number.isFinite(slot)) continue;
-      if (!seat.pcId) continue;
+      if (!seat.pcId || !seat.controllerPeerId) continue;
       const rec = synthMap[seat.pcId];
       const pcName = rec?.name ?? seat.pcId;
-      const playerName = seat.controllerPeerId
-        ? (peerNameById.get(seat.controllerPeerId) ?? seat.controllerPeerId)
-        : '(unbound)';
-      bindings.push({ slot, playerName, pcId: seat.pcId, pcName });
+      const playerName =
+        peerNameById.get(seat.controllerPeerId) ?? seat.controllerPeerId;
+      bindings.push({
+        slot,
+        playerName,
+        pcId: seat.pcId,
+        pcName,
+        peerId: seat.controllerPeerId
+      });
       if (!pcsByPcId.has(seat.pcId)) {
         pcsByPcId.set(seat.pcId, {
           pcId: seat.pcId,
@@ -4977,11 +4998,69 @@ export class QuireApp extends LitElement {
         ok: false,
         code: 'no-bindings',
         message:
-          'Need at least two bound player ↔ PC pairs to consider a realignment.'
+          'Need at least two bound (player + PC) pairs to consider a realignment.'
       };
     }
 
-    // Player chat samples — last 10 lines per bound peer.
+    // Slot fingerprints from campaign episode files.  Fetches each
+    // declared scene + dmDoc file; bundles {{pc:N}} excerpts.
+    const campaign = this.getCurrentCampaign();
+    const { extractSlotFingerprints, type: fpType } = await import(
+      './ai/slot-fingerprints'
+    ).then((m) => ({ extractSlotFingerprints: m.extractSlotFingerprints, type: 'ok' as const }));
+    const docs: Array<{ path: string; body: string }> = [];
+    if (campaign) {
+      const { fetchCampaignFile, loadEpisode } = await import(
+        './episode-loader'
+      ).then(async (m) => ({
+        loadEpisode: m.loadEpisode,
+        fetchCampaignFile: (await import('./campaign-loader')).fetchCampaignFile
+      }));
+      const episodeSlugs = campaign.base.manifest.episodes ?? [];
+      for (const slug of episodeSlugs) {
+        try {
+          const ep = await loadEpisode(campaign.base.source, slug, {});
+          const paths: string[] = [
+            ...(ep.manifest.scenes ?? []).map(
+              (s: string) => `episodes/${slug}/${s}`
+            ),
+            ...(ep.manifest.dmDocs ?? []).map(
+              (d: string) => `episodes/${slug}/${d}`
+            )
+          ];
+          for (const path of paths) {
+            try {
+              const body = await fetchCampaignFile(
+                campaign.base.source,
+                path,
+                {}
+              );
+              if (typeof body === 'string') {
+                docs.push({ path, body });
+              }
+            } catch {
+              // skip a single missing file; the campaign manifest may
+              // declare a scene the repo hasn't yet shipped.
+            }
+          }
+        } catch {
+          /* missing episode is non-fatal */
+        }
+      }
+    }
+    void fpType;
+    const slotFingerprints = extractSlotFingerprints(docs);
+
+    if (slotFingerprints.length === 0) {
+      return {
+        ok: false,
+        code: 'no-fingerprints',
+        message:
+          'No {{pc:N}} references found in the campaign episode files.  Without script-author intent there is nothing for the AI to optimize against.'
+      };
+    }
+
+    // Player chat samples (tiebreaker).
     const chatByPeer = new Map<string, string[]>();
     const allEvents = this.session?.getEvents() ?? [];
     for (const e of allEvents) {
@@ -4992,26 +5071,29 @@ export class QuireApp extends LitElement {
       bucket.push(text);
       chatByPeer.set(e.peerId, bucket);
     }
-    const playerSamples: import('./ai/slot-realignment-prompt').SlotRealignmentPlayerSample[] =
+    const playerSamples: import('./ai/slot-realignment-prompt').RealignmentPlayerSample[] =
       [];
     for (const b of bindings) {
-      const peerId = this.findPeerIdForSlot(b.slot);
-      const lines = peerId ? (chatByPeer.get(peerId) ?? []) : [];
+      const lines = chatByPeer.get(b.peerId) ?? [];
       playerSamples.push({
         playerName: b.playerName,
-        chatLines: lines.slice(-10) // most recent 10
+        chatLines: lines.slice(-8)
       });
     }
 
     const lastDigest =
       v.shared.sessionDigests[v.shared.sessionDigests.length - 1];
 
-    const { buildSlotRealignmentPrompt, SLOT_REALIGNMENT_CALL_SCHEMA, validateRealignmentResponse } =
-      await import('./ai/slot-realignment-prompt');
+    const {
+      buildSlotRealignmentPrompt,
+      SLOT_REALIGNMENT_CALL_SCHEMA,
+      validateRealignmentResponse
+    } = await import('./ai/slot-realignment-prompt');
     const pcs = Array.from(pcsByPcId.values());
     const { system, user } = buildSlotRealignmentPrompt({
       bindings,
       pcs,
+      slotFingerprints,
       playerSamples,
       ...(lastDigest?.markdown
         ? { recentDigestMarkdown: lastDigest.markdown }
@@ -5024,10 +5106,11 @@ export class QuireApp extends LitElement {
       const result = await provider.callStructured<{
         noChangeNeeded?: boolean;
         reasoning?: string;
-        proposals?: Array<{
-          slot?: number;
-          currentPcId?: string;
-          proposedPcId?: string;
+        permutation?: Array<{
+          newSlot?: number;
+          pairKey?: { pcId?: string; peerId?: string };
+          currentSlot?: number;
+          slotFingerprintMatched?: string;
           rationale?: string;
         }>;
       }>(
@@ -5058,17 +5141,21 @@ export class QuireApp extends LitElement {
           message: 'AI returned malformed structured response.'
         };
       }
-      const resp: import('./ai/slot-realignment-prompt').SlotRealignmentResponse = {
+      const resp: import('./ai/slot-realignment-prompt').RealignmentResponse = {
         noChangeNeeded: val.noChangeNeeded,
         reasoning: val.reasoning ?? '',
-        proposals: (val.proposals ?? []).map((p) => ({
-          slot: Number(p.slot),
-          currentPcId: String(p.currentPcId ?? ''),
-          proposedPcId: String(p.proposedPcId ?? ''),
+        permutation: (val.permutation ?? []).map((p) => ({
+          newSlot: Number(p.newSlot),
+          pairKey: {
+            pcId: String(p.pairKey?.pcId ?? ''),
+            peerId: String(p.pairKey?.peerId ?? '')
+          },
+          currentSlot: Number(p.currentSlot),
+          slotFingerprintMatched: String(p.slotFingerprintMatched ?? ''),
           rationale: String(p.rationale ?? '')
         }))
       };
-      const issues = validateRealignmentResponse(resp, bindings, pcs);
+      const issues = validateRealignmentResponse(resp, bindings);
       if (issues.length > 0) {
         return {
           ok: false,
@@ -5076,11 +5163,16 @@ export class QuireApp extends LitElement {
           message: `AI proposal validation failed: ${issues.join('; ')}`
         };
       }
+      // Filter out identity entries (newSlot === currentSlot); they
+      // don't add information to the UI and don't need to be applied.
+      const nonTrivial = resp.permutation.filter(
+        (p) => p.newSlot !== p.currentSlot
+      );
       return {
         ok: true,
-        noChangeNeeded: resp.noChangeNeeded,
+        noChangeNeeded: resp.noChangeNeeded || nonTrivial.length === 0,
         reasoning: resp.reasoning,
-        proposals: resp.proposals
+        permutation: nonTrivial
       };
     } catch (e) {
       if ((e as Error).name === 'AbortError') {
@@ -5094,12 +5186,33 @@ export class QuireApp extends LitElement {
     }
   }
 
-  /** Look up the controllerPeerId currently bound to a slot. */
-  private findPeerIdForSlot(slot: number): string | undefined {
+  /**
+   * 2026-06-06 v2: rebind a slot's PC AND controller peer in a
+   * single event.  Used by slot-realignment to move (player + PC)
+   * pairs across slot labels.  Coord-only.  When `controllerPeerId`
+   * is undefined falls back to `bindPcSlot`'s preserve-controller
+   * behavior (kept for callers that just want to rebind the PC).
+   */
+  bindPcSlotWithPeer(
+    slot: number,
+    pcId: string,
+    controllerPeerId: string
+  ): boolean {
+    if (!this.session) return false;
     const v = this.sessionView;
-    if (!v || v.status !== 'active') return undefined;
-    return v.shared.pcSlots[slot]?.controllerPeerId;
+    if (!v || v.status !== 'active' || !this.isCoordinator()) return false;
+    if (!Number.isInteger(slot) || slot < 1 || slot > this.currentSeatCap()) {
+      return false;
+    }
+    this.session.append('pc-slot-bind', {
+      v: 1,
+      slot,
+      pcId,
+      controllerPeerId
+    });
+    return true;
   }
+
 
   /**
    * D4 (2026-05-26): commit a (possibly DM-edited) session-recap

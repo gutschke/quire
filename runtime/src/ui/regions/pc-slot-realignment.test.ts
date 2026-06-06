@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import './pc-slot-realignment';
 import type {
   PcSlotRealignment,
-  SlotRealignmentProposalDisplay,
-  SlotRealignmentRow
+  RealignmentProposalEntry,
+  RealignmentRow
 } from './pc-slot-realignment';
 
 function makeEl(): PcSlotRealignment {
@@ -14,140 +14,172 @@ function makeEl(): PcSlotRealignment {
   return el;
 }
 
-const ROWS: SlotRealignmentRow[] = [
-  { slot: 1, playerName: 'Markus', pcId: 'pc-marcus', pcName: 'Marcus Vance' },
-  { slot: 2, playerName: 'Yui', pcId: 'pc-yui', pcName: 'Yui Tanaka' }
+const ROWS: RealignmentRow[] = [
+  {
+    slot: 1,
+    playerName: 'Markus',
+    pcId: 'pc-marcus',
+    pcName: 'Marcus Vance',
+    peerId: 'peer-markus'
+  },
+  {
+    slot: 3,
+    playerName: 'Yui',
+    pcId: 'pc-yui',
+    pcName: 'Yui Tanaka',
+    peerId: 'peer-yui'
+  }
 ];
 
-describe('<pc-slot-realignment>', () => {
-  it('renders current bindings with BOTH player + PC name (memory ttrpg-show-both-names)', async () => {
+describe('<pc-slot-realignment> (v2 pair-atomic)', () => {
+  it('renders current bindings with both player + PC name', async () => {
     const el = makeEl();
     el.bindings = ROWS;
     await el.updateComplete;
     const txt = el.textContent ?? '';
-    expect(txt).toContain('Slot 1');
+    expect(txt).toContain('slot 1');
     expect(txt).toContain('Markus');
     expect(txt).toContain('Marcus Vance');
-    expect(txt).toContain('Slot 2');
+    expect(txt).toContain('slot 3');
     expect(txt).toContain('Yui');
     expect(txt).toContain('Yui Tanaka');
   });
 
-  it('shows the empty-state hint when no bindings exist', async () => {
-    const el = makeEl();
-    el.bindings = [];
-    await el.updateComplete;
-    expect(el.textContent ?? '').toContain('No bindings yet');
-  });
-
-  it('disables the Ask-AI button while busy', async () => {
+  it('renders the proposed renumbering with slot N → slot M arrows', async () => {
     const el = makeEl();
     el.bindings = ROWS;
-    el.busy = true;
+    const permutation: RealignmentProposalEntry[] = [
+      {
+        newSlot: 3,
+        currentSlot: 1,
+        pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+        pcName: 'Marcus Vance',
+        playerName: 'Markus',
+        slotFingerprintMatched: 'SDR / radio hobbyist',
+        rationale:
+          'Marcus is the hacker; pc:3 carries the SDR — better match.'
+      }
+    ];
+    el.permutation = permutation;
+    el.reasoning = 'The hacker fingerprint sits on slot 3.';
     await el.updateComplete;
-    const btn = el.querySelector<HTMLButtonElement>(
-      '.pc-slot-realignment-ask'
-    );
-    expect(btn?.disabled).toBe(true);
-    expect(btn?.textContent).toContain('Asking AI');
+    const txt = el.textContent ?? '';
+    expect(txt).toContain('slot 1');
+    expect(txt).toContain('slot 3');
+    expect(txt).toContain('Marcus Vance');
+    expect(txt).toContain('Markus');
+    expect(txt).toContain('SDR');
+    expect(txt).toContain('matched');
   });
 
-  it('renders no-change message when noChangeNeeded is true', async () => {
+  it('hides the proposal section when permutation is empty', async () => {
+    const el = makeEl();
+    el.bindings = ROWS;
+    el.permutation = [];
+    await el.updateComplete;
+    expect(el.querySelector('.pc-slot-realignment-proposal')).toBeFalsy();
+  });
+
+  it('shows no-change-recommended when noChangeNeeded is true', async () => {
     const el = makeEl();
     el.bindings = ROWS;
     el.noChangeNeeded = true;
-    el.reasoning = 'Both players sound aligned with their PCs.';
+    el.reasoning = 'Both pairs match their current slots well.';
     await el.updateComplete;
-    const txt = el.textContent ?? '';
-    expect(txt).toContain('no change recommended');
-    expect(txt).toContain('Both players sound aligned');
+    expect(el.textContent ?? '').toContain('no change recommended');
+    expect(el.textContent ?? '').toContain('match their current slots');
   });
 
-  it('renders proposals with rationale + Apply button', async () => {
+  it('opens a confirm dialog before applying — atomic permutation gate', async () => {
     const el = makeEl();
     el.bindings = ROWS;
-    const proposals: SlotRealignmentProposalDisplay[] = [
+    const permutation: RealignmentProposalEntry[] = [
       {
-        slot: 1,
-        currentPcId: 'pc-marcus',
-        proposedPcId: 'pc-yui',
-        rationale: 'Markus kept stabilizing patients.',
-        currentPcName: 'Marcus Vance',
-        proposedPcName: 'Yui Tanaka',
-        playerName: 'Markus'
+        newSlot: 3,
+        currentSlot: 1,
+        pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+        pcName: 'Marcus Vance',
+        playerName: 'Markus',
+        slotFingerprintMatched: 'radio',
+        rationale: 'r'
       }
     ];
-    el.proposals = proposals;
-    el.reasoning = 'Markus played the medic, Yui played the hacker.';
+    el.permutation = permutation;
+    let applied: ReadonlyArray<RealignmentProposalEntry> | null = null;
+    el.onApplyPermutation = (entries) => {
+      applied = [...entries];
+    };
     await el.updateComplete;
-    const txt = el.textContent ?? '';
-    expect(txt).toContain('Marcus Vance');
-    expect(txt).toContain('Yui Tanaka');
-    expect(txt).toContain('stabilizing patients');
-    expect(txt).toContain('Apply this swap');
-    const applyBtn = el.querySelector<HTMLButtonElement>(
+    const apply = el.querySelector<HTMLButtonElement>(
       '.pc-slot-realignment-apply'
     );
-    expect(applyBtn?.disabled).toBe(true); // no onApplySwap wired in this test
+    apply!.click();
+    await el.updateComplete;
+    // Confirm dialog should be visible; nothing applied yet.
+    expect(el.querySelector('.pc-slot-realignment-confirm')).toBeTruthy();
+    expect(applied).toBeNull();
+    // Confirm copy reassures the DM that no sheet data is touched.
+    const norm = (el.textContent ?? '').replace(/\s+/g, ' ');
+    expect(norm).toContain('No character sheets');
+    expect(norm).toContain('bonds are touched');
+    const confirmBtn = el.querySelector<HTMLButtonElement>(
+      '.pc-slot-realignment-confirm-apply'
+    );
+    confirmBtn!.click();
+    await el.updateComplete;
+    expect(applied).not.toBeNull();
+    expect((applied as unknown as RealignmentProposalEntry[])[0].newSlot).toBe(
+      3
+    );
   });
 
-  it('Apply-all button appears only when 2+ proposals exist', async () => {
+  it('cancels confirm without applying', async () => {
     const el = makeEl();
     el.bindings = ROWS;
-    const one: SlotRealignmentProposalDisplay[] = [
+    el.permutation = [
       {
-        slot: 1,
-        currentPcId: 'pc-marcus',
-        proposedPcId: 'pc-yui',
-        rationale: 'r',
-        currentPcName: 'Marcus Vance',
-        proposedPcName: 'Yui Tanaka'
+        newSlot: 3,
+        currentSlot: 1,
+        pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+        pcName: 'Marcus Vance',
+        playerName: 'Markus',
+        slotFingerprintMatched: '',
+        rationale: 'r'
       }
     ];
-    el.proposals = one;
+    let applied = false;
+    el.onApplyPermutation = () => {
+      applied = true;
+    };
     await el.updateComplete;
-    expect(
-      el.querySelector('.pc-slot-realignment-apply-all')
-    ).toBeFalsy();
-
-    el.proposals = [
-      ...one,
-      {
-        slot: 2,
-        currentPcId: 'pc-yui',
-        proposedPcId: 'pc-marcus',
-        rationale: 'r',
-        currentPcName: 'Yui Tanaka',
-        proposedPcName: 'Marcus Vance'
-      }
-    ];
+    el.querySelector<HTMLButtonElement>(
+      '.pc-slot-realignment-apply'
+    )!.click();
     await el.updateComplete;
-    expect(
-      el.querySelector('.pc-slot-realignment-apply-all')
-    ).toBeTruthy();
+    el.querySelector<HTMLButtonElement>(
+      '.pc-slot-realignment-confirm-cancel'
+    )!.click();
+    await el.updateComplete;
+    expect(applied).toBe(false);
   });
 
-  it('calls onAskAi with the DM-guidance draft when Ask is clicked', async () => {
+  it('calls onAskAi with the DM-guidance draft', async () => {
     const el = makeEl();
     el.bindings = ROWS;
-    let called: string | null = null;
+    let captured: string | null = null;
     el.onAskAi = async (guidance) => {
-      called = guidance;
+      captured = guidance;
       return { ok: true, reasoning: '' };
     };
     await el.updateComplete;
     const input = el.querySelector<HTMLInputElement>(
       '.pc-slot-realignment-guidance'
     );
-    input!.value = 'Markus seems frustrated';
+    input!.value = 'try a different angle';
     input!.dispatchEvent(new Event('input'));
     await el.updateComplete;
-    const btn = el.querySelector<HTMLButtonElement>(
-      '.pc-slot-realignment-ask'
-    );
-    btn!.click();
-    // Wait a microtask for the async callback.
+    el.querySelector<HTMLButtonElement>('.pc-slot-realignment-ask')!.click();
     await new Promise((r) => setTimeout(r, 0));
-    expect(called).toBe('Markus seems frustrated');
+    expect(captured).toBe('try a different angle');
   });
 });

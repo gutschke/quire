@@ -4,20 +4,32 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSlotRealignmentPrompt,
   validateRealignmentResponse,
-  type SlotRealignmentBinding,
-  type SlotRealignmentPcSheet
+  type RealignmentBinding,
+  type RealignmentPcSheet
 } from './slot-realignment-prompt';
 
-const BINDINGS: SlotRealignmentBinding[] = [
-  { slot: 1, playerName: 'Markus', pcId: 'pc-marcus', pcName: 'Marcus Vance' },
-  { slot: 2, playerName: 'Yui', pcId: 'pc-yui', pcName: 'Yui Tanaka' }
+const BINDINGS: RealignmentBinding[] = [
+  {
+    slot: 1,
+    playerName: 'Markus',
+    pcId: 'pc-marcus',
+    pcName: 'Marcus Vance',
+    peerId: 'peer-markus'
+  },
+  {
+    slot: 3,
+    playerName: 'Yui',
+    pcId: 'pc-yui',
+    pcName: 'Yui Tanaka',
+    peerId: 'peer-yui'
+  }
 ];
 
-const PCS: SlotRealignmentPcSheet[] = [
+const PCS: RealignmentPcSheet[] = [
   {
     pcId: 'pc-marcus',
     name: 'Marcus Vance',
-    backstory: 'A hacker who learned to hold intent under government pressure.',
+    backstory: 'A hacker with a Flipper Zero who ran red-team work.',
     tags: ['hacker', 'ex-government'],
     alignment: 'chaotic-good',
     pronouns: 'he/him'
@@ -25,156 +37,185 @@ const PCS: SlotRealignmentPcSheet[] = [
   {
     pcId: 'pc-yui',
     name: 'Yui Tanaka',
-    backstory:
-      'A nurse who stabilized a man on the highway when bystanders insisted she stop.',
-    tags: ['nurse', 'first responder'],
+    backstory: 'A nurse who stabilized a man on the highway.',
+    tags: ['nurse'],
     alignment: 'chaotic-neutral',
     pronouns: 'she/her'
   }
 ];
 
-describe('buildSlotRealignmentPrompt', () => {
-  it('includes both players, both PCs, and the digest in the user prompt', () => {
+describe('buildSlotRealignmentPrompt (v2 pair-atomic)', () => {
+  it('renders bindings with both names AND peerIds (pairs as atomic)', () => {
     const { system, user } = buildSlotRealignmentPrompt({
       bindings: BINDINGS,
       pcs: PCS,
-      playerSamples: [
-        {
-          playerName: 'Markus',
-          chatLines: ['I check his vitals first', 'I stabilize him']
-        },
-        {
-          playerName: 'Yui',
-          chatLines: ['I look for an open SSH port']
-        }
-      ],
-      recentDigestMarkdown: 'Markus stabilized the man on the highway.'
-    });
-    expect(system).toContain('co-DM');
-    expect(user).toContain('Slot 1');
-    expect(user).toContain('Marcus Vance');
-    expect(user).toContain('Yui Tanaka');
-    expect(user).toContain('Markus');
-    expect(user).toContain('I check his vitals');
-    expect(user).toContain('I look for an open SSH port');
-    expect(user).toContain('stabilized the man on the highway');
-  });
-
-  it('wraps dmGuidance in untrusted_content', () => {
-    const { user } = buildSlotRealignmentPrompt({
-      bindings: BINDINGS,
-      pcs: PCS,
-      playerSamples: [],
-      dmGuidance: 'Markus seems frustrated — try a different PC.'
-    });
-    expect(user).toContain('<untrusted_content source="dm-realignment-guidance">');
-    expect(user).toContain('Markus seems frustrated');
-  });
-
-  it('omits sections when inputs are absent', () => {
-    const { user } = buildSlotRealignmentPrompt({
-      bindings: BINDINGS,
-      pcs: PCS,
+      slotFingerprints: [],
       playerSamples: []
     });
-    expect(user).not.toContain('# Recent session digest');
-    expect(user).not.toContain('# Player voice samples');
-    expect(user).not.toContain('# DM guidance');
+    expect(system).toContain('Pairs are ATOMIC');
+    expect(system).toContain('slot LABEL');
+    expect(user).toContain('peer-markus');
+    expect(user).toContain('peer-yui');
+    expect(user).toContain('player "Markus"');
+    expect(user).toContain('PC "Marcus Vance"');
+  });
+
+  it('includes slot fingerprints with excerpts when provided', () => {
+    const { user } = buildSlotRealignmentPrompt({
+      bindings: BINDINGS,
+      pcs: PCS,
+      slotFingerprints: [
+        {
+          slot: 3,
+          mentions: 2,
+          excerpts: [
+            {
+              path: 'scenes/03-the-hack.md',
+              excerpt: '{{pc:3}} carries a small SDR and runs an open-source decoder.'
+            }
+          ]
+        }
+      ],
+      playerSamples: []
+    });
+    expect(user).toContain('# Slot fingerprints');
+    expect(user).toContain('scenes/03-the-hack.md');
+    expect(user).toContain('SDR');
+    expect(user).toContain('slot 3');
+  });
+
+  it('tells AI to default to noChangeNeeded when there are no fingerprints', () => {
+    const { user } = buildSlotRealignmentPrompt({
+      bindings: BINDINGS,
+      pcs: PCS,
+      slotFingerprints: [],
+      playerSamples: []
+    });
+    expect(user).toContain('Default to noChangeNeeded=true');
   });
 });
 
-describe('validateRealignmentResponse', () => {
-  it('accepts a valid swap', () => {
+describe('validateRealignmentResponse (v2 pair-atomic)', () => {
+  it('accepts a valid swap permutation', () => {
     const issues = validateRealignmentResponse(
       {
         noChangeNeeded: false,
-        reasoning: 'Markus played the medic, Yui played the hacker.',
-        proposals: [
+        reasoning: 'The hack scene is slot 3; Marcus fits slot 3.',
+        permutation: [
           {
-            slot: 1,
-            currentPcId: 'pc-marcus',
-            proposedPcId: 'pc-yui',
-            rationale: 'Markus kept stabilizing patients.'
+            newSlot: 3,
+            pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+            currentSlot: 1,
+            slotFingerprintMatched: 'SDR / radio hobbyist',
+            rationale: 'Marcus is the hacker; pc:3 carries the SDR.'
           },
           {
-            slot: 2,
-            currentPcId: 'pc-yui',
-            proposedPcId: 'pc-marcus',
-            rationale: 'Yui kept opening SSH sessions.'
+            newSlot: 1,
+            pairKey: { pcId: 'pc-yui', peerId: 'peer-yui' },
+            currentSlot: 3,
+            slotFingerprintMatched: 'bag carrier at the gate',
+            rationale: 'Yui can carry the kit; pc:1 holds the bag.'
           }
         ]
       },
-      BINDINGS,
-      PCS
+      BINDINGS
     );
     expect(issues).toEqual([]);
   });
 
-  it('rejects a proposal that introduces an unknown pcId', () => {
+  it('rejects splitting a pair (currentSlot pairKey mismatch)', () => {
     const issues = validateRealignmentResponse(
       {
         noChangeNeeded: false,
         reasoning: '',
-        proposals: [
+        permutation: [
           {
-            slot: 1,
-            currentPcId: 'pc-marcus',
-            proposedPcId: 'pc-invented',
-            rationale: 'AI hallucinated.'
-          }
-        ]
-      },
-      BINDINGS,
-      PCS
-    );
-    expect(issues.some((i) => i.includes('pc-invented'))).toBe(true);
-  });
-
-  it('rejects duplicate proposed pcIds (invalid permutation)', () => {
-    const issues = validateRealignmentResponse(
-      {
-        noChangeNeeded: false,
-        reasoning: '',
-        proposals: [
-          {
-            slot: 1,
-            currentPcId: 'pc-marcus',
-            proposedPcId: 'pc-yui',
-            rationale: 'a'
-          },
-          {
-            slot: 2,
-            currentPcId: 'pc-yui',
-            proposedPcId: 'pc-yui',
-            rationale: 'b'
-          }
-        ]
-      },
-      BINDINGS,
-      PCS
-    );
-    expect(
-      issues.some((i) => i.includes('multiple proposals') && i.includes('pc-yui'))
-    ).toBe(true);
-  });
-
-  it('rejects currentPcId mismatch (AI mislabeled current state)', () => {
-    const issues = validateRealignmentResponse(
-      {
-        noChangeNeeded: false,
-        reasoning: '',
-        proposals: [
-          {
-            slot: 1,
-            currentPcId: 'pc-WRONG',
-            proposedPcId: 'pc-yui',
+            newSlot: 3,
+            // pair-split attempt — slot 1 actually has pc-marcus + peer-markus
+            pairKey: { pcId: 'pc-yui', peerId: 'peer-markus' },
+            currentSlot: 1,
+            slotFingerprintMatched: '',
             rationale: ''
           }
         ]
       },
-      BINDINGS,
-      PCS
+      BINDINGS
     );
-    expect(issues.some((i) => i.includes('mismatch'))).toBe(true);
+    expect(
+      issues.some((i) => i.includes('pair mismatch'))
+    ).toBe(true);
+  });
+
+  it('rejects when noChangeNeeded conflicts with non-empty permutation', () => {
+    const issues = validateRealignmentResponse(
+      {
+        noChangeNeeded: true,
+        reasoning: '',
+        permutation: [
+          {
+            newSlot: 3,
+            pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+            currentSlot: 1,
+            slotFingerprintMatched: '',
+            rationale: ''
+          }
+        ]
+      },
+      BINDINGS
+    );
+    expect(
+      issues.some((i) => i.includes('noChangeNeeded=true'))
+    ).toBe(true);
+  });
+
+  it('rejects duplicate newSlots (invalid bijection)', () => {
+    const issues = validateRealignmentResponse(
+      {
+        noChangeNeeded: false,
+        reasoning: '',
+        permutation: [
+          {
+            newSlot: 3,
+            pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+            currentSlot: 1,
+            slotFingerprintMatched: '',
+            rationale: ''
+          },
+          {
+            newSlot: 3, // duplicate
+            pairKey: { pcId: 'pc-yui', peerId: 'peer-yui' },
+            currentSlot: 3,
+            slotFingerprintMatched: '',
+            rationale: ''
+          }
+        ]
+      },
+      BINDINGS
+    );
+    expect(
+      issues.some((i) => i.includes('newSlot 3 appears more than once'))
+    ).toBe(true);
+  });
+
+  it('rejects unknown slot indices', () => {
+    const issues = validateRealignmentResponse(
+      {
+        noChangeNeeded: false,
+        reasoning: '',
+        permutation: [
+          {
+            newSlot: 99,
+            pairKey: { pcId: 'pc-marcus', peerId: 'peer-markus' },
+            currentSlot: 1,
+            slotFingerprintMatched: '',
+            rationale: ''
+          }
+        ]
+      },
+      BINDINGS
+    );
+    expect(
+      issues.some((i) => i.includes('newSlot 99 is not a known slot'))
+    ).toBe(true);
   });
 });
