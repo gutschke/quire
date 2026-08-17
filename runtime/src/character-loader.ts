@@ -275,6 +275,18 @@ export interface CharacterRecord {
     note?: string;
   }>;
   backstory?: string;
+  /**
+   * Player-visible: verbatim answer to the chargen "what in your life
+   * taught you to hold an intention against pressure?" question
+   * (id: `intent-moment`).  Preserved as a first-class structured
+   * field (not just folded into `backstory` prose) so it survives
+   * synthesis/re-sync without loss and remains accessible for the
+   * Phase-2 realization mechanic (`world/rules.md`:182 — tax
+   * recovery requires the DM grant a "quiet moment of release"
+   * that mirrors this formative intent).  DM-only mechanical
+   * gloss lives at `dmNotes.intentionUnderPressureNote`.
+   */
+  intentionUnderPressure?: string;
   description?: string; // NPC-typical
   voice?: string;
   signature?: string[];

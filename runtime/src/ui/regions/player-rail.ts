@@ -574,6 +574,16 @@ export class PlayerRail extends LitElement {
             </section>
           `
         : nothing}
+      ${r.intentionUnderPressure
+        ? html`
+            <section class="card">
+              <h2>Intention under pressure</h2>
+              <div class="markdown">
+                ${unsafeHTML(substitutePcSlots(renderMarkdown(r.intentionUnderPressure), this.pcSlotBindings))}
+              </div>
+            </section>
+          `
+        : nothing}
       ${r.backstory
         ? html`
             <section class="card">

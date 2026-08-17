@@ -175,6 +175,13 @@ export interface ChargenHost {
      */
     languages?: string[];
     moneyBand?: 'broke' | 'tight' | 'comfortable' | 'well-off' | 'wealthy';
+    /**
+     * Player's verbatim `intent-moment` chargen answer, preserved as
+     * a first-class field on the PC.  Optional so DM-direct authoring
+     * (no chargen answers pack) still works.  Bounded at the
+     * materializer (0 < length ≤ 800 chars).
+     */
+    intentionUnderPressure?: string;
   }): boolean;
   /**
    * Phase 3b-1: bind a slot to a pcId via the existing
@@ -958,6 +965,33 @@ export class ChargenController implements ReactiveController {
     if (r.languages !== undefined) phaseB.languages = [...r.languages];
     if (r.moneyBand !== undefined) phaseB.moneyBand = r.moneyBand;
 
+    // Preserve the chargen `intent-moment` answer as a first-class
+    // structured field on the PC.  Threaded from the persisted
+    // answers map rather than from the AI response so the player's
+    // verbatim wording survives — the AI is asked to keep the
+    // backstory consistent with the answer, not to re-render it.
+    // When the player skipped the question (older campaigns without
+    // the `intent-moment` id, or DM-direct authoring), the field is
+    // omitted from the payload and the materializer skips it too.
+    const intentPayload: { intentionUnderPressure?: string } = {};
+    {
+      const campaignForIntent = this.env.getCurrentCampaign();
+      if (campaignForIntent) {
+        const slugForIntent = this.env.getCampaignSlug(campaignForIntent);
+        const persistedForIntent = loadChargenState(slugForIntent, slot);
+        const rawIntentAnswer = persistedForIntent?.answers?.['intent-moment'];
+        // Trim so a whitespace-only answer doesn't render as an empty
+        // sheet card (the render section treats any truthy string as
+        // present).  The materializer's raw `.length === 0` guard
+        // wouldn't catch `"   "` on its own.
+        const intentAnswer =
+          typeof rawIntentAnswer === 'string' ? rawIntentAnswer.trim() : '';
+        if (intentAnswer.length > 0) {
+          intentPayload.intentionUnderPressure = intentAnswer;
+        }
+      }
+    }
+
     const appended = this.env.appendPcCreate({
       pcId,
       name: r.name,
@@ -968,7 +1002,8 @@ export class ChargenController implements ReactiveController {
       backstory: r.backstory,
       causedByResponseId: r.responseId,
       ...catchUp,
-      ...phaseB
+      ...phaseB,
+      ...intentPayload
     });
     if (!appended) return; // host gated (non-coord, no session) — preserve invariant
 

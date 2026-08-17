@@ -85,7 +85,13 @@
     },
     "backstory": {
       "type": "string",
-      "description": "Freeform Markdown. The primary place for character voice, history, and motivation. PCs in Underleaf should answer 'what in your life taught you to hold an intention against pressure?' somewhere in here."
+      "description": "Freeform Markdown. The primary place for character voice, history, and motivation. Should REFLECT (not restage) the intention-under-pressure moment — the verbatim player answer to that question is preserved separately as `intentionUnderPressure`."
+    },
+    "intentionUnderPressure": {
+      "type": "string",
+      "description": "Player-visible. The player's verbatim 2-4 sentence answer to the chargen prompt 'what in your life taught you to hold an intention against pressure?' — preserved as a first-class structured field (not just folded into `backstory` prose) so it survives synthesis/re-sync and remains accessible for the Phase-2 realization mechanic (see rules.md §Trying-too-hard — tax recovery requires a DM-granted 'quiet moment of release' that mirrors this formative intent). DM-only mechanical gloss lives under `dmNotes.intentionUnderPressureNote`.",
+      "minLength": 1,
+      "maxLength": 800
     },
     "relationships": {
       "type": "array",

@@ -178,6 +178,7 @@ function makeEnv(
       skills: string[];
       backstory: string;
       causedByResponseId?: string;
+      intentionUnderPressure?: string;
     }) => {
       pcCreates.push(payload);
       return true;
@@ -1008,6 +1009,13 @@ describe('ChargenController — accept/revise accessors (Engine M1, CC-24, P3T-1
     ]);
     expect(created.backstory).toBe('Mei grew up in the Mission.');
     expect(created.causedByResponseId).toBe('syn-a3f8b2c1e9d44');
+    // The player's verbatim intent-moment answer must be preserved
+    // as the structured `intentionUnderPressure` field, not just
+    // folded into backstory prose.  This is the invariant the whole
+    // add-intent-field change exists to enforce; if a future refactor
+    // silently drops the thread from answers-map → payload, this
+    // assertion should catch it before the sheet renderer does.
+    expect(created.intentionUnderPressure).toBe('I held the line.');
 
     // pc-slot-bind follows.
     expect(env.pcSlotBinds.length).toBe(1);
@@ -1863,6 +1871,102 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     ctrl.setJoiningSessionForSlot(1, 4);
     ctrl.clearSynth(1);
     expect(ctrl.joiningSessionForSlot(1)).toBe(1);
+  });
+
+  // ---- intentionUnderPressure preservation (chargen-artifact regression) ----
+  //
+  // Regression guard for the class of bug where a mandatory chargen
+  // prompt's answer gets consumed by the AI synthesizer and then
+  // discarded, surviving only as prose inside `backstory`.  The
+  // `intent-moment` answer is the canonical case (see
+  // [[project-quire-character-creation]] + world/rules.md:182 —
+  // Phase-2 tax recovery is grounded in this formative moment; the
+  // structured field is the DM's lever).  These tests assert:
+  //   1. When persisted answers include intent-moment, the acceptSlot
+  //      payload carries `intentionUnderPressure` verbatim.
+  //   2. When no intent-moment answer is present, the field is OMITTED
+  //      (not empty-string, not null) so downstream code + the
+  //      materializer's optional-only-when-present contract holds.
+  it('acceptSlot preserves intent-moment answer verbatim as intentionUnderPressure', async () => {
+    const verbatimAnswer =
+      'At 17 I stood in front of the fire and refused to leave until my grandmother was out. The neighbours pulled me back. She was already out; I hadn\'t heard.';
+    saveChargenState('o-r-main', 2, {
+      chosenPath: 'qa',
+      answers: {
+        archetype: 'hacker',
+        'intent-moment': verbatimAnswer
+      }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Kai',
+          pronouns: 'they/them',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'Kai lived through the fire.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-fire01'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(2);
+    ctrl.acceptSlot(2);
+    expect(env.pcCreates.length).toBe(1);
+    // Verbatim preservation — no AI-side re-rendering, no truncation,
+    // no whitespace mangling.  This is the load-bearing invariant.
+    expect(env.pcCreates[0].intentionUnderPressure).toBe(verbatimAnswer);
+    synthSpy.mockRestore();
+  });
+
+  it('acceptSlot omits intentionUnderPressure when no intent-moment answer was persisted', async () => {
+    // No saveChargenState — the seedResult helper bypasses persistence.
+    // Simulates DM-direct authoring / a campaign whose questionnaire
+    // doesn't include intent-moment.  Materializer contract: optional
+    // field, omitted when absent (not empty-string, not null).
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Noa',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'Noa has a life.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-nointent'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    // But we DO need to save at least an empty answers map so
+    // synthesizeForSlot doesn't bail — mimic the "player answered
+    // everything except intent-moment" branch.
+    saveChargenState('o-r-main', 3, {
+      chosenPath: 'qa',
+      answers: { archetype: 'hacker' }
+    });
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(3);
+    ctrl.acceptSlot(3);
+    expect(env.pcCreates.length).toBe(1);
+    expect(env.pcCreates[0].intentionUnderPressure).toBeUndefined();
+    synthSpy.mockRestore();
   });
 });
 

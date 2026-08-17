@@ -60,7 +60,7 @@ Avoid: high-fantasy register, grimdark, melodrama, trauma-as-origin, mystical hi
 Prefer: specific nouns, concrete places, named small objects, the texture of an ordinary week. Sentences of varied length. One vivid sensory detail per paragraph at most.
 
 # Content constraints
-- The backstory MUST answer, even obliquely, "what in their life taught them to hold an intention against pressure?" This is the mandatory question from the rules.
+- The backstory MUST be consistent with the player's answer to "what in their life taught them to hold an intention against pressure?" (the mandatory question from the rules). The runtime ALSO preserves the player's raw intent-moment answer verbatim as a separate structured character-sheet field (intentionUnderPressure), so you do NOT need to duplicate the answer word-for-word in the backstory prose — the backstory should REFLECT it, not RE-STATE it. Reference the shape of the moment obliquely (a repeated posture, an unexpressed cost, a habit that formed after) rather than restaging the scene.
 - The backstory MUST be set in or anchored to a real Bay Area place.
 - The backstory MUST NOT reference magic, The Quiet, retrocausality, premonition, fate, "being chosen," or any cosmological hint. The player will discover those in play.
 - The PC's name MUST differ from the player's name.

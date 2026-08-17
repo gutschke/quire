@@ -1423,6 +1423,17 @@ interface PcCreatePayload {
   skills: string[];
   backstory: string;
   /**
+   * Player's verbatim answer to the chargen intent-moment question
+   * ("what in your life taught you to hold an intention against
+   * pressure?").  Threaded through from the chargen answers map so
+   * the formative moment survives as a structured field rather than
+   * only as prose inside `backstory`.  Optional so pre-extension
+   * chargen paths and DM-direct pc-create authoring still work.
+   * The materializer bounds length; render-side is player-visible
+   * (not stripped by `DM_ONLY_CHARACTER_FIELDS`).
+   */
+  intentionUnderPressure?: string;
+  /**
    * Set when the event was authored from an AI-proposed accept
    * (Cluster E acceptSlot).  The DM-direct path doesn't set this
    * (no AI involvement); future audit tooling can trace the chain.
@@ -1461,6 +1472,7 @@ const PC_CREATE_MAX_TAGS = 5;
 const PC_CREATE_MIN_TAGS = 3;
 const PC_CREATE_MAX_TAG_LEN = 80;
 const PC_CREATE_MAX_BACKSTORY = 8000;
+const PC_CREATE_MAX_INTENTION = 800;
 const PC_CREATE_STAT_MIN = -3;
 const PC_CREATE_STAT_MAX = 3;
 const PC_CREATE_MAX_SKILLS = 4;
@@ -2776,6 +2788,22 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
   if (typeof p.backstory !== 'string') return;
   if (p.backstory.length === 0 || p.backstory.length > PC_CREATE_MAX_BACKSTORY) return;
 
+  // ---- intentionUnderPressure (optional) ----
+  // The verbatim `intent-moment` chargen answer.  Chargen bounds it
+  // 100-400 chars via the campaign question minLength/maxLength.  The
+  // materializer's PC_CREATE_MAX_INTENTION cap (800) is a defensive
+  // upper bound so a corrupt payload — a mismatched-campaign import,
+  // a hand-edited event, a future campaign with a looser maxLength —
+  // can't write an absurd blob.  Empty-string rejection so an
+  // explicit-but-empty field surfaces as a schema error rather than
+  // silently accepting a hollow value; whitespace-only rejection
+  // matches the trim() the chargen controller applies at write time.
+  if (p.intentionUnderPressure !== undefined) {
+    if (typeof p.intentionUnderPressure !== 'string') return;
+    if (p.intentionUnderPressure.trim().length === 0) return;
+    if (p.intentionUnderPressure.length > PC_CREATE_MAX_INTENTION) return;
+  }
+
   // ---- causedByResponseId (optional) ----
   if (p.causedByResponseId !== undefined) {
     if (typeof p.causedByResponseId !== 'string') return;
@@ -2866,6 +2894,9 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     advancements: startingAdvancements,
     marks: startingMarks
   };
+  if (p.intentionUnderPressure !== undefined) {
+    record.intentionUnderPressure = p.intentionUnderPressure;
+  }
   state.synthesizedPcs[p.pcId] = record;
 }
 

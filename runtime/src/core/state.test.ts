@@ -2768,6 +2768,65 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
     expect(state.synthesizedPcs).toEqual({});
   });
 
+  it('accepts intentionUnderPressure and stores it verbatim on the record', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    const intention =
+      'I refused to sign the report and lost the promotion; the next month I could sleep again.';
+    log.append(
+      'pc-create',
+      validPayload({ intentionUnderPressure: intention })
+    );
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record.intentionUnderPressure).toBe(intention);
+  });
+
+  it('omits intentionUnderPressure on the record when the payload does not set it', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload());
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record.intentionUnderPressure).toBeUndefined();
+  });
+
+  it('rejects intentionUnderPressure when empty, whitespace-only, wrong type, or > 800 chars', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'i1', intentionUnderPressure: '' })
+    );
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'i2', intentionUnderPressure: '   \n  \t  ' })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'i3',
+        intentionUnderPressure: 42 as unknown as string
+      })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'i4',
+        intentionUnderPressure: 'x'.repeat(801)
+      })
+    );
+    const state = materialize(log.events());
+    // All four should have been rejected — no record materialized for
+    // any of these pcIds.  The whitespace-only case is the delicate
+    // one; without a `.trim()` check the raw `length === 0` guard
+    // would let it through and render as an empty sheet card.
+    expect(state.synthesizedPcs.i1).toBeUndefined();
+    expect(state.synthesizedPcs.i2).toBeUndefined();
+    expect(state.synthesizedPcs.i3).toBeUndefined();
+    expect(state.synthesizedPcs.i4).toBeUndefined();
+  });
+
   it('rejects too-many skills (max 4)', () => {
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});

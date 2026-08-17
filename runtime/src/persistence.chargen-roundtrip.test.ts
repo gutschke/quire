@@ -110,6 +110,71 @@ describe('Chargen polish — pc-create round-trip preserves name/pronouns/backst
     expect(mei.backstory).toContain('Underleaf bramble');
   });
 
+  it('intentionUnderPressure survives the full save/restore cycle AND player-scope projection', async () => {
+    // Two invariants at once:
+    //   (a) Field round-trips through serialize → stringify → parse →
+    //       applySaveToLog → materialize.  Regression guard against
+    //       a future save-format change that silently drops it.
+    //   (b) Player projection (projectSaveForViewer + subsequent
+    //       materialize) keeps the field.  If someone accidentally
+    //       adds `intentionUnderPressure` to DM_ONLY_CHARACTER_FIELDS
+    //       or to a persistence scrubber allowlist, this fails.
+    const net = new InMemoryNetwork();
+    const dm = makePeer('dm-markus', net);
+    dm.append('peer-join', { name: 'Markus', knownKindsCount: 200 });
+    dm.append('coordinator-claim', {});
+    const intention =
+      'When my manager told me to bury the safety issue I signed my name to the memo instead and mailed it to legal on my way out.';
+    dm.append('pc-create', {
+      v: 1,
+      pcId: 'pc-mia',
+      name: 'Mia',
+      pronouns: 'she/her',
+      tags: ['scholar', 'curious', 'quiet'],
+      stats: { str: 0, dex: 0, con: 0, int: 1, wis: 1, cha: 0 },
+      skills: ['Lore'],
+      backstory: 'Mia carries the memo folded in her wallet.',
+      intentionUnderPressure: intention
+    });
+    await flush();
+
+    // (a) DM-scope full round-trip.
+    const dmDoc = serializeSession(dm.events(), CAMPAIGN, 'dm-markus');
+    const dmParsed = parseSaveDocument(stringifySave(dmDoc));
+    expect(dmParsed.ok).toBe(true);
+    if (!dmParsed.ok) return;
+    const dmFresh = new EventLog('fresh-dm');
+    applySaveToLog(dmFresh, dmParsed.doc);
+    const dmState = materialize(dmFresh.events());
+    expect(dmState.synthesizedPcs['pc-mia']?.intentionUnderPressure).toBe(
+      intention
+    );
+
+    // (b) Player-scope projection preserves the field.  This is the
+    // load-bearing invariant for the whole feature: the player sees
+    // their own intention answer on their own sheet.
+    // 3rd arg is the viewer's peerId; 4th arg is the current coord's
+    // peerId.  A viewer that differs from the coord gets the
+    // player-scope firewall projection — exactly what we want to
+    // verify preserves intentionUnderPressure.
+    const playerDoc = serializeSessionForViewer(
+      dm.events(),
+      CAMPAIGN,
+      'player-atticus',
+      'dm-markus'
+    );
+    const playerJson = stringifySave(playerDoc);
+    const playerParsed = parseSaveDocument(playerJson);
+    expect(playerParsed.ok).toBe(true);
+    if (!playerParsed.ok) return;
+    const playerFresh = new EventLog('fresh-player');
+    applySaveToLog(playerFresh, playerParsed.doc);
+    const playerState = materialize(playerFresh.events());
+    expect(playerState.synthesizedPcs['pc-mia']?.intentionUnderPressure).toBe(
+      intention
+    );
+  });
+
   it('non-ASCII name and pronouns survive cleanly', async () => {
     const net = new InMemoryNetwork();
     const dm = makePeer('dm-markus', net);
