@@ -93,6 +93,38 @@
       "minLength": 1,
       "maxLength": 800
     },
+    "meaningfulItem": {
+      "type": "string",
+      "description": "Player-visible. Verbatim answer to the chargen 'one personally meaningful item your PC carries' prompt. Load-bearing: this is typically the seed for the PC's `focus` (per underleaf archetypes.md).",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "specificPlace": {
+      "type": "string",
+      "description": "Player-visible. Verbatim answer to the chargen 'one specific Bay Area neighborhood, route, or place that is yours' prompt. DM uses at play time as a retrocausal-anchor scene lever.",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "temperamentUnderPressure": {
+      "type": "string",
+      "description": "Player-visible. Canonical MC value from the chargen 'when things get hard, what does your PC do?' prompt. Underleaf values: `quiet` / `argues` / `acts` / `question`. Voice signal for the AI + DM at play time.",
+      "maxLength": 40
+    },
+    "priorConnectionKind": {
+      "type": "string",
+      "description": "Canonical MC value from the chargen 'did your PC know one of the other PCs before Flight 887?' prompt. Underleaf values: `none` / `work` / `school` / `neighbors` / `estranged-family` / `online` / `history`. Threads with the bond-draft flow.",
+      "maxLength": 40
+    },
+    "flightReason": {
+      "type": "string",
+      "description": "Canonical MC value from the chargen 'why are you on Flight 887 to Taipei?' prompt. Underleaf values: `work` / `family` / `love` / `running-from` / `running-toward` / `opportunistic` / `last-72h`. Load-bearing for Ep 1.",
+      "maxLength": 40
+    },
+    "intentionHorizon": {
+      "type": "string",
+      "description": "Canonical MC value from the chargen 'the moment that taught you to hold an intention against pressure happened...' prompt. Underleaf values: `childhood` / `school` / `first-job` / `specific-year` / `ongoing`. Temporal companion to `intentionUnderPressure`.",
+      "maxLength": 40
+    },
     "relationships": {
       "type": "array",
       "description": "References to NPCs by id or name.",

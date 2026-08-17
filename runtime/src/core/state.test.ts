@@ -2791,6 +2791,109 @@ describe('materialize — pc-create (Phase 3b-1)', () => {
     expect(record.intentionUnderPressure).toBeUndefined();
   });
 
+  it('accepts + stores the six sweep-2 chargen fields (alignment + meaningfulItem + specificPlace + temperamentUnderPressure + priorConnectionKind + flightReason + intentionHorizon)', () => {
+    // Load-bearing invariant for the 2026-08-17 sweep: the six
+    // additional chargen answers materialize as first-class fields
+    // on the CharacterRecord.  If a future refactor drops one from
+    // the payload or the record-build block, this catches it.
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({
+        alignment: 'lawful-evil',
+        meaningfulItem: 'A cassette from before she left.',
+        specificPlace: 'The bandstand in Golden Gate Park at dawn.',
+        temperamentUnderPressure: 'quiet',
+        priorConnectionKind: 'online',
+        flightReason: 'last-72h',
+        intentionHorizon: 'first-job'
+      })
+    );
+    const state = materialize(log.events());
+    const record = state.synthesizedPcs['slot-1-a3f8b2c1'];
+    expect(record.alignment).toBe('lawful-evil');
+    expect(record.meaningfulItem).toBe('A cassette from before she left.');
+    expect(record.specificPlace).toBe(
+      'The bandstand in Golden Gate Park at dawn.'
+    );
+    expect(record.temperamentUnderPressure).toBe('quiet');
+    expect(record.priorConnectionKind).toBe('online');
+    expect(record.flightReason).toBe('last-72h');
+    expect(record.intentionHorizon).toBe('first-job');
+  });
+
+  it('rejects pc-create with an alignment value outside the 9-enum', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({ alignment: 'quantum-superposition' })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs).toEqual({});
+  });
+
+  it('rejects sweep-2 short-answer fields when empty, whitespace-only, wrong type, or oversize', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append('pc-create', validPayload({ pcId: 's1', meaningfulItem: '' }));
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 's2', meaningfulItem: '   \n  \t  ' })
+    );
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 's3', meaningfulItem: 'x'.repeat(401) })
+    );
+    log.append('pc-create', validPayload({ pcId: 's4', specificPlace: '' }));
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 's5', specificPlace: 'x'.repeat(401) })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 's6',
+        meaningfulItem: 42 as unknown as string
+      })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs.s1).toBeUndefined();
+    expect(state.synthesizedPcs.s2).toBeUndefined();
+    expect(state.synthesizedPcs.s3).toBeUndefined();
+    expect(state.synthesizedPcs.s4).toBeUndefined();
+    expect(state.synthesizedPcs.s5).toBeUndefined();
+    expect(state.synthesizedPcs.s6).toBeUndefined();
+  });
+
+  it('rejects sweep-2 MC fields when oversize (>40 chars) or wrong type', () => {
+    const log = new EventLog('alice');
+    log.append('coordinator-claim', {});
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'm1',
+        temperamentUnderPressure: 'x'.repeat(41)
+      })
+    );
+    log.append(
+      'pc-create',
+      validPayload({
+        pcId: 'm2',
+        priorConnectionKind: 99 as unknown as string
+      })
+    );
+    log.append(
+      'pc-create',
+      validPayload({ pcId: 'm3', flightReason: '' })
+    );
+    const state = materialize(log.events());
+    expect(state.synthesizedPcs.m1).toBeUndefined();
+    expect(state.synthesizedPcs.m2).toBeUndefined();
+    expect(state.synthesizedPcs.m3).toBeUndefined();
+  });
+
   it('rejects intentionUnderPressure when empty, whitespace-only, wrong type, or > 800 chars', () => {
     const log = new EventLog('alice');
     log.append('coordinator-claim', {});

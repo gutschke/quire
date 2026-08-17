@@ -179,6 +179,13 @@ function makeEnv(
       backstory: string;
       causedByResponseId?: string;
       intentionUnderPressure?: string;
+      alignment?: string;
+      meaningfulItem?: string;
+      specificPlace?: string;
+      temperamentUnderPressure?: string;
+      priorConnectionKind?: string;
+      flightReason?: string;
+      intentionHorizon?: string;
     }) => {
       pcCreates.push(payload);
       return true;
@@ -1925,6 +1932,115 @@ describe('ChargenController — editSynthFieldPreAccept (Wave 2)', () => {
     // Verbatim preservation — no AI-side re-rendering, no truncation,
     // no whitespace mangling.  This is the load-bearing invariant.
     expect(env.pcCreates[0].intentionUnderPressure).toBe(verbatimAnswer);
+    synthSpy.mockRestore();
+  });
+
+  it('acceptSlot preserves all seven sweep-2 chargen answers (alignment + 6 others) when the answers map supplies them', async () => {
+    // Regression guard for the 2026-08-17 chargen-artifact-loss
+    // sweep.  Each field must land verbatim on the pc-create payload
+    // so the materializer + sheet renderer see structured data
+    // rather than having to re-parse from backstory prose.  The
+    // `alignment` case in particular was silently broken before this
+    // sweep (a first-class schema field the AI synth path never
+    // populated).
+    saveChargenState('o-r-main', 6, {
+      chosenPath: 'qa',
+      answers: {
+        archetype: 'hacker',
+        'intent-moment': 'I stood there and did not move.',
+        alignment: 'chaotic-good',
+        'meaningful-item': 'A cassette my mother made me before she left.',
+        'specific-place': 'The old bandstand in Golden Gate Park at dawn.',
+        'temperament-under-pressure': 'quiet',
+        'prior-connection': 'online',
+        'flight-reason': 'last-72h',
+        'intent-horizon': 'first-job'
+      }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Sam',
+          pronouns: 'they/them',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'Sam kept the cassette in the box on the top shelf.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-sweep2'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(6);
+    ctrl.acceptSlot(6);
+    expect(env.pcCreates.length).toBe(1);
+    const created = env.pcCreates[0];
+    expect(created.intentionUnderPressure).toBe(
+      'I stood there and did not move.'
+    );
+    expect(created.alignment).toBe('chaotic-good');
+    expect(created.meaningfulItem).toBe(
+      'A cassette my mother made me before she left.'
+    );
+    expect(created.specificPlace).toBe(
+      'The old bandstand in Golden Gate Park at dawn.'
+    );
+    expect(created.temperamentUnderPressure).toBe('quiet');
+    expect(created.priorConnectionKind).toBe('online');
+    expect(created.flightReason).toBe('last-72h');
+    expect(created.intentionHorizon).toBe('first-job');
+    synthSpy.mockRestore();
+  });
+
+  it('acceptSlot skips alignment when the answer is not a valid enum value', async () => {
+    // Corrupt or campaign-mismatched alignment must not torpedo the
+    // whole pc-create — the controller drops the invalid value and
+    // lets the DM pc-edit it in later.  Materializer would reject
+    // anyway; the controller-side guard keeps the payload from ever
+    // carrying garbage.
+    saveChargenState('o-r-main', 7, {
+      chosenPath: 'qa',
+      answers: {
+        archetype: 'hacker',
+        'intent-moment': 'I stood there.',
+        alignment: 'quantum-superposition' // not a valid alignment
+      }
+    });
+    const synthSpy = vi
+      .spyOn(backstorySynthesizer, 'synthesizeBackstory')
+      .mockResolvedValue({
+        ok: true,
+        response: {
+          name: 'Kim',
+          pronouns: 'she/her',
+          tags: ['a', 'b', 'c'],
+          stats: { STR: 0, DEX: 1, CON: 1, INT: 2, WIS: 1, CHA: 0 },
+          skillMastery: ['Tech'],
+          backstory: 'Kim has a life.',
+          raw: '{}',
+          tokensIn: 0,
+          tokensOut: 0,
+          responseId: 'syn-badalign'
+        },
+        warnings: [],
+        retried: false
+      } as SynthesizeBackstoryResult);
+    const { host } = makeHost();
+    const env = makeEnv(makeCampaign());
+    const ctrl = new ChargenController(host, env);
+    await ctrl.synthesizeForSlot(7);
+    ctrl.acceptSlot(7);
+    expect(env.pcCreates.length).toBe(1);
+    expect(env.pcCreates[0].alignment).toBeUndefined();
+    expect(env.pcCreates[0].intentionUnderPressure).toBe('I stood there.');
     synthSpy.mockRestore();
   });
 

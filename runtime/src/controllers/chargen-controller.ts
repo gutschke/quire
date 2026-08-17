@@ -182,6 +182,29 @@ export interface ChargenHost {
      * materializer (0 < length ≤ 800 chars).
      */
     intentionUnderPressure?: string;
+    /**
+     * 2026-08-17 chargen-artifact-loss sweep: six additional chargen
+     * answers preserved verbatim.  MC-value fields carry the canonical
+     * option `value` (e.g. `alignment: 'lawful-evil'`); short-answer
+     * fields carry the player's text.  All optional; materializer
+     * validates.
+     */
+    alignment?:
+      | 'lawful-good'
+      | 'neutral-good'
+      | 'chaotic-good'
+      | 'lawful-neutral'
+      | 'true-neutral'
+      | 'chaotic-neutral'
+      | 'lawful-evil'
+      | 'neutral-evil'
+      | 'chaotic-evil';
+    meaningfulItem?: string;
+    specificPlace?: string;
+    temperamentUnderPressure?: string;
+    priorConnectionKind?: string;
+    flightReason?: string;
+    intentionHorizon?: string;
   }): boolean;
   /**
    * Phase 3b-1: bind a slot to a pcId via the existing
@@ -965,29 +988,118 @@ export class ChargenController implements ReactiveController {
     if (r.languages !== undefined) phaseB.languages = [...r.languages];
     if (r.moneyBand !== undefined) phaseB.moneyBand = r.moneyBand;
 
-    // Preserve the chargen `intent-moment` answer as a first-class
-    // structured field on the PC.  Threaded from the persisted
-    // answers map rather than from the AI response so the player's
-    // verbatim wording survives — the AI is asked to keep the
-    // backstory consistent with the answer, not to re-render it.
-    // When the player skipped the question (older campaigns without
-    // the `intent-moment` id, or DM-direct authoring), the field is
-    // omitted from the payload and the materializer skips it too.
-    const intentPayload: { intentionUnderPressure?: string } = {};
+    // Preserve chargen answers as first-class structured fields on
+    // the PC.  Threaded from the persisted answers map rather than
+    // from the AI response so the player's verbatim wording survives
+    // — the AI is asked to keep the backstory consistent with the
+    // answers, not to re-render them.  When the player skipped a
+    // question (older campaign without the id, or DM-direct
+    // authoring), the field is omitted from the payload and the
+    // materializer skips it too.
+    //
+    // Extended 2026-08-17 (chargen-artifact-loss sweep) to cover the
+    // seven fields identified by the TTRPG review: alignment (was
+    // silently unset — a first-class schema field with drift
+    // mechanics keyed off it that the AI synth path never
+    // populated), meaningfulItem + specificPlace (voice-sample /
+    // grounder short-answers), plus temperament / prior-connection /
+    // flight-reason / intent-horizon (MC values).
+    type IntentSweepPayload = {
+      intentionUnderPressure?: string;
+      alignment?:
+        | 'lawful-good'
+        | 'neutral-good'
+        | 'chaotic-good'
+        | 'lawful-neutral'
+        | 'true-neutral'
+        | 'chaotic-neutral'
+        | 'lawful-evil'
+        | 'neutral-evil'
+        | 'chaotic-evil';
+      meaningfulItem?: string;
+      specificPlace?: string;
+      temperamentUnderPressure?: string;
+      priorConnectionKind?: string;
+      flightReason?: string;
+      intentionHorizon?: string;
+    };
+    const intentPayload: IntentSweepPayload = {};
     {
       const campaignForIntent = this.env.getCurrentCampaign();
       if (campaignForIntent) {
         const slugForIntent = this.env.getCampaignSlug(campaignForIntent);
         const persistedForIntent = loadChargenState(slugForIntent, slot);
-        const rawIntentAnswer = persistedForIntent?.answers?.['intent-moment'];
-        // Trim so a whitespace-only answer doesn't render as an empty
-        // sheet card (the render section treats any truthy string as
-        // present).  The materializer's raw `.length === 0` guard
-        // wouldn't catch `"   "` on its own.
-        const intentAnswer =
-          typeof rawIntentAnswer === 'string' ? rawIntentAnswer.trim() : '';
-        if (intentAnswer.length > 0) {
-          intentPayload.intentionUnderPressure = intentAnswer;
+        const answersForIntent = persistedForIntent?.answers ?? {};
+        // Short-answer helper: trim, reject whitespace-only.  The
+        // materializer applies the same trim; the controller's copy
+        // keeps the sheet renderer honest (any truthy string is
+        // presumed rendered).
+        const takeShortAnswer = (id: string): string | undefined => {
+          const raw = answersForIntent[id];
+          if (typeof raw !== 'string') return undefined;
+          const trimmed = raw.trim();
+          return trimmed.length > 0 ? trimmed : undefined;
+        };
+        // MC helper: accept the value verbatim (no length trim for
+        // MC values — they're canonical enum strings, not player
+        // prose).  Empty string treated as omission.
+        const takeMcValue = (id: string): string | undefined => {
+          const raw = answersForIntent[id];
+          if (typeof raw !== 'string') return undefined;
+          return raw.length > 0 ? raw : undefined;
+        };
+        const alignmentValue = takeMcValue('alignment');
+        const VALID_ALIGNMENTS = [
+          'lawful-good',
+          'neutral-good',
+          'chaotic-good',
+          'lawful-neutral',
+          'true-neutral',
+          'chaotic-neutral',
+          'lawful-evil',
+          'neutral-evil',
+          'chaotic-evil'
+        ] as const;
+        const intentMoment = takeShortAnswer('intent-moment');
+        if (intentMoment !== undefined) {
+          intentPayload.intentionUnderPressure = intentMoment;
+        }
+        // Only assign alignment when it matches the enum — a
+        // corrupted campaign answer shouldn't torpedo the whole
+        // pc-create (the materializer would reject it anyway; we
+        // reject at the controller too so a well-formed but
+        // wrong-value answer just skips the field, letting the DM
+        // pc-edit it in later).
+        if (
+          alignmentValue !== undefined &&
+          (VALID_ALIGNMENTS as readonly string[]).includes(alignmentValue)
+        ) {
+          intentPayload.alignment =
+            alignmentValue as IntentSweepPayload['alignment'];
+        }
+        const meaningfulItem = takeShortAnswer('meaningful-item');
+        if (meaningfulItem !== undefined) {
+          intentPayload.meaningfulItem = meaningfulItem;
+        }
+        const specificPlace = takeShortAnswer('specific-place');
+        if (specificPlace !== undefined) {
+          intentPayload.specificPlace = specificPlace;
+        }
+        const temperament = takeMcValue('temperament-under-pressure');
+        if (temperament !== undefined) {
+          intentPayload.temperamentUnderPressure = temperament;
+        }
+        const priorConnection = takeMcValue('prior-connection');
+        if (priorConnection !== undefined) {
+          intentPayload.priorConnectionKind = priorConnection;
+        }
+        const flightReason = takeMcValue('flight-reason');
+        if (flightReason !== undefined) {
+          intentPayload.flightReason = flightReason;
+        }
+        const intentionHorizon = takeMcValue('intent-horizon');
+        if (intentionHorizon !== undefined) {
+          intentPayload.intentionHorizon = intentionHorizon;
         }
       }
     }

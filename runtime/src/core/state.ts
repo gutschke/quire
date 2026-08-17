@@ -1434,6 +1434,32 @@ interface PcCreatePayload {
    */
   intentionUnderPressure?: string;
   /**
+   * 2026-08-17 chargen-artifact-loss sweep: six additional chargen
+   * answers preserved verbatim as structured PC fields.  MC-value
+   * fields (alignment, temperamentUnderPressure, priorConnectionKind,
+   * flightReason, intentionHorizon) carry the canonical `value` from
+   * the campaign question's options[].  Short-answer fields
+   * (meaningfulItem, specificPlace) carry the player's verbatim text.
+   * All optional; materializer validates bounds.  See
+   * `CharacterRecord` in character-loader.ts for the full doc.
+   */
+  alignment?:
+    | 'lawful-good'
+    | 'neutral-good'
+    | 'chaotic-good'
+    | 'lawful-neutral'
+    | 'true-neutral'
+    | 'chaotic-neutral'
+    | 'lawful-evil'
+    | 'neutral-evil'
+    | 'chaotic-evil';
+  meaningfulItem?: string;
+  specificPlace?: string;
+  temperamentUnderPressure?: string;
+  priorConnectionKind?: string;
+  flightReason?: string;
+  intentionHorizon?: string;
+  /**
    * Set when the event was authored from an AI-proposed accept
    * (Cluster E acceptSlot).  The DM-direct path doesn't set this
    * (no AI involvement); future audit tooling can trace the chain.
@@ -1473,6 +1499,28 @@ const PC_CREATE_MIN_TAGS = 3;
 const PC_CREATE_MAX_TAG_LEN = 80;
 const PC_CREATE_MAX_BACKSTORY = 8000;
 const PC_CREATE_MAX_INTENTION = 800;
+// 2026-08-17 chargen-artifact-loss sweep: bounds for the six
+// additional preserved chargen answers.  MC fields cap at 40 chars
+// (longest enum value in campaign.json is "chaotic-neutral" @ 15);
+// short-answer fields mirror the campaign question's maxLength +
+// small defensive slack (campaign says 200 → materializer allows 400
+// so a future campaign with a looser cap can still land).  All caps
+// are upper bounds; the chargen UI enforces the tighter per-question
+// range, so a legitimate payload always fits.
+const PC_CREATE_MAX_MC_VALUE = 40;
+const PC_CREATE_MAX_MEANINGFUL_ITEM = 400;
+const PC_CREATE_MAX_SPECIFIC_PLACE = 400;
+const PC_CREATE_VALID_ALIGNMENTS = [
+  'lawful-good',
+  'neutral-good',
+  'chaotic-good',
+  'lawful-neutral',
+  'true-neutral',
+  'chaotic-neutral',
+  'lawful-evil',
+  'neutral-evil',
+  'chaotic-evil'
+] as const;
 const PC_CREATE_STAT_MIN = -3;
 const PC_CREATE_STAT_MAX = 3;
 const PC_CREATE_MAX_SKILLS = 4;
@@ -2804,6 +2852,53 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
     if (p.intentionUnderPressure.length > PC_CREATE_MAX_INTENTION) return;
   }
 
+  // ---- 2026-08-17 chargen-artifact-loss sweep validation ----
+  // Six additional preserved chargen answers.  All optional; if
+  // present, validated with the appropriate shape (enum / string
+  // bounds / non-whitespace).  Any invalid value fails the whole
+  // pc-create event so a corrupt payload can't half-materialize.
+  if (p.alignment !== undefined) {
+    if (typeof p.alignment !== 'string') return;
+    if (
+      !(PC_CREATE_VALID_ALIGNMENTS as readonly string[]).includes(p.alignment)
+    ) {
+      return;
+    }
+  }
+  const validateShortAnswer = (
+    val: unknown,
+    maxLen: number
+  ): 'ok' | 'reject' => {
+    if (val === undefined) return 'ok';
+    if (typeof val !== 'string') return 'reject';
+    if (val.trim().length === 0) return 'reject';
+    if (val.length > maxLen) return 'reject';
+    return 'ok';
+  };
+  if (
+    validateShortAnswer(p.meaningfulItem, PC_CREATE_MAX_MEANINGFUL_ITEM) ===
+    'reject'
+  ) {
+    return;
+  }
+  if (
+    validateShortAnswer(p.specificPlace, PC_CREATE_MAX_SPECIFIC_PLACE) ===
+    'reject'
+  ) {
+    return;
+  }
+  const validateMcValue = (val: unknown): 'ok' | 'reject' => {
+    if (val === undefined) return 'ok';
+    if (typeof val !== 'string') return 'reject';
+    if (val.length === 0) return 'reject';
+    if (val.length > PC_CREATE_MAX_MC_VALUE) return 'reject';
+    return 'ok';
+  };
+  if (validateMcValue(p.temperamentUnderPressure) === 'reject') return;
+  if (validateMcValue(p.priorConnectionKind) === 'reject') return;
+  if (validateMcValue(p.flightReason) === 'reject') return;
+  if (validateMcValue(p.intentionHorizon) === 'reject') return;
+
   // ---- causedByResponseId (optional) ----
   if (p.causedByResponseId !== undefined) {
     if (typeof p.causedByResponseId !== 'string') return;
@@ -2896,6 +2991,23 @@ function applyPcCreateEvent(state: SessionState, event: QuireEvent): void {
   };
   if (p.intentionUnderPressure !== undefined) {
     record.intentionUnderPressure = p.intentionUnderPressure;
+  }
+  // 2026-08-17 chargen-artifact-loss sweep — populate preserved
+  // chargen answers on the record.  Each is optional; only assign
+  // when the payload supplied it so downstream renderers can rely
+  // on `undefined` meaning "the campaign question wasn't answered".
+  if (p.alignment !== undefined) record.alignment = p.alignment;
+  if (p.meaningfulItem !== undefined) record.meaningfulItem = p.meaningfulItem;
+  if (p.specificPlace !== undefined) record.specificPlace = p.specificPlace;
+  if (p.temperamentUnderPressure !== undefined) {
+    record.temperamentUnderPressure = p.temperamentUnderPressure;
+  }
+  if (p.priorConnectionKind !== undefined) {
+    record.priorConnectionKind = p.priorConnectionKind;
+  }
+  if (p.flightReason !== undefined) record.flightReason = p.flightReason;
+  if (p.intentionHorizon !== undefined) {
+    record.intentionHorizon = p.intentionHorizon;
   }
   state.synthesizedPcs[p.pcId] = record;
 }

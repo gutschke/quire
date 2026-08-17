@@ -584,6 +584,16 @@ export class PlayerRail extends LitElement {
             </section>
           `
         : nothing}
+      ${r.meaningfulItem
+        ? html`
+            <section class="card">
+              <h2>Meaningful item</h2>
+              <div class="markdown">
+                ${unsafeHTML(substitutePcSlots(renderMarkdown(r.meaningfulItem), this.pcSlotBindings))}
+              </div>
+            </section>
+          `
+        : nothing}
       ${r.backstory
         ? html`
             <section class="card">

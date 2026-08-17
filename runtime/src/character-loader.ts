@@ -287,6 +287,23 @@ export interface CharacterRecord {
    * gloss lives at `dmNotes.intentionUnderPressureNote`.
    */
   intentionUnderPressure?: string;
+  /**
+   * Player-authored short-answer chargen artifact preservation
+   * (2026-08-17 sweep — see chargen-artifact-loss docs).  Each
+   * field mirrors a `characterCreation.questions[]` entry from
+   * `underleaf/campaign.json`; the runtime preserves the answer
+   * verbatim (short-answer) or as a canonical value string (MC)
+   * so it survives AI backstory synthesis/re-sync without loss.
+   * All player-visible (not in DM_ONLY_CHARACTER_FIELDS).  All
+   * optional; DM-direct-authored PCs / campaigns without the
+   * question can omit any of them.
+   */
+  meaningfulItem?: string;
+  specificPlace?: string;
+  temperamentUnderPressure?: string;
+  priorConnectionKind?: string;
+  flightReason?: string;
+  intentionHorizon?: string;
   description?: string; // NPC-typical
   voice?: string;
   signature?: string[];
