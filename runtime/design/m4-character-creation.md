@@ -156,7 +156,7 @@ These are the discrete work items the user can hand to experts for prioritizatio
 - CC-5 **[E]**. 6-step creation page region (`<character-creation>`): Landing → Read-first → Pick path → Work → Done → Resume.
 - CC-6 **[C]**. Q&A form for 7 MC + 3 SA questions with conditional follow-ups.  *Campaign declares the questions; engine renders.*
 - CC-7 **[E]**. Free-write markdown editor with the mandatory question pinned.
-- CC-8 **[H]**. Pre-gen browser with "edit after picking" affordance.  *Browser is engine; the pre-gens are campaign content.*
+- CC-8 **[H]**. Pre-gen browser with "edit after picking" affordance.  *Browser is engine; the pre-gens are campaign content.*  **UNBLOCKED 2026-08-16:** Underleaf now ships five canonical recommended PCs (see `underleaf/characters/pcs/{morgan-reyes,priya-iyer,mira-sun,dakota-whitmore,mars-faraone}.json`, registered in `campaign.json` `characters.pcs[]`). Engine reads that array at chargen-mode entry and renders a picker over the resolved PC JSONs. Design: the picker offers "use as-is" (imports the PC verbatim into the player's slot) vs. "start from this and edit" (opens the resulting PC in the free-write / Q&A editor with fields pre-populated). Recommended-PC files include `dmNotes` blocks — filter those out of the player-facing preview per [[project-quire-ai-player-facing-scope]] equivalent (dmNotes visibility is DM-only regardless of surface).
 - CC-9 **[E]**. Path toggle (Q&A ↔ free-write) with answer-preservation across switch.
 - CC-10 **[E]**. "Pack my character" file download + copy-as-token export.
 - CC-11 **[E]**. Resume-on-revisit + "wrong-device" empty state.
