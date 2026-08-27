@@ -87,6 +87,26 @@ export async function run(args) {
     if (e.code !== 'ENOENT') warnings.push(`episodes/: ${e.message}`);
   }
 
+  // Sessions: each dated subdir under sessions/ may hold a session.json log.
+  try {
+    const sessions = await readdir(join(root, 'sessions'), { withFileTypes: true });
+    for (const s of sessions) {
+      if (!s.isDirectory()) continue;
+      if (s.name.startsWith('.')) continue;
+      const logJson = join(root, 'sessions', s.name, 'session.json');
+      try {
+        const record = await readJson(logJson);
+        validate(relative(root, logJson), record, validators['session-log'], warnings);
+      } catch (e) {
+        if (e.code !== 'ENOENT') {
+          warnings.push(`sessions/${s.name}/session.json: ${e.message}`);
+        }
+      }
+    }
+  } catch (e) {
+    if (e.code !== 'ENOENT') warnings.push(`sessions/: ${e.message}`);
+  }
+
   if (warnings.length === 0) {
     console.log('OK: no warnings');
     return;
