@@ -91,6 +91,9 @@ Overlap notes: where two items describe the same work (e.g. V-5 ≡ M3D-4 ≡ pa
 | Q-CC-3 | E | "Use same device" wording — tone decision. | m4 |
 | Q-CC-4 | E | AI synthesis-at-scale UI: progress indicator + cancel-one-PC option? | m4 |
 | Q-CC-5 | H | Print-friendly character sheet — M5 carry or sooner? | m4 |
+| ADV-1 | E | **Surface advancement-mark provenance in the UI.** PC records now carry `markBullets` (which of the five criteria are ticked this cycle) and `markLog` (append-only: episode, bullet, note, and a `reconstructed` flag for marks reverse-engineered after the fact). Nothing renders either. A player should be able to see *why* they hold a mark — "Ep 3: you tore up your own satchel for kindling" is worth more to them than "3/5" — and the log deliberately survives the cycle reset so it can become a campaign-long record of what each PC has done. Schema landed 2026-08-27; `pc.schema.json` documents both fields. | m5 |
+| ADV-2 | E | **`record.marks` is inert and now ambiguous.** `character-loader.ts` derives the count from `markBullets` and warns that "anything reading `record.marks` directly was inert". The field is now maintained as a denormalised mirror for print output, which is a trap waiting for a future reader. Either remove it, or make the loader assert the mirror matches the derived count. | m5 |
+| ADV-3 | C | **Mark assignment is DM-side by house practice**, not player-side as `rules.md` describes ("each player may mark up to one"). Worth reconciling: either the rules text follows practice, or the UI offers both modes. Campaign policy, not engine. | m5 |
 | **M3c followups still open** | | | |
 | M3C-1 | E | Per-kind materializer extraction (slip-valve was used; state.ts has 32-case switch). | STATUS |
 | M3C-2 | E | Dice-roll dispatch placeholder fix (`result: 0, dice: []`). | STATUS |

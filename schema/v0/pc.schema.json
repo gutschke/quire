@@ -4,47 +4,92 @@
   "title": "Player character",
   "description": "A PC record. Only $schemaVersion and name are required. The runtime renders whatever fields are present; absent fields are simply omitted from view.",
   "type": "object",
-  "required": ["$schemaVersion", "name"],
+  "required": [
+    "$schemaVersion",
+    "name"
+  ],
   "additionalProperties": true,
   "properties": {
-    "$schemaVersion": { "type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+$" },
-    "name": { "type": "string", "minLength": 1 },
+    "$schemaVersion": {
+      "type": "string",
+      "pattern": "^0\\.[0-9]+\\.[0-9]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
     "player": {
       "type": "string",
       "description": "Optional name of the human player. May be a handle, real name, or omitted."
     },
-    "pronouns": { "type": "string" },
+    "pronouns": {
+      "type": "string"
+    },
     "alignment": {
       "type": "string",
       "description": "Standard 9-grid alignment.",
       "enum": [
-        "lawful-good", "neutral-good", "chaotic-good",
-        "lawful-neutral", "true-neutral", "chaotic-neutral",
-        "lawful-evil", "neutral-evil", "chaotic-evil"
+        "lawful-good",
+        "neutral-good",
+        "chaotic-good",
+        "lawful-neutral",
+        "true-neutral",
+        "chaotic-neutral",
+        "lawful-evil",
+        "neutral-evil",
+        "chaotic-evil"
       ]
     },
     "stats": {
       "type": "object",
       "description": "Six-stat block. Each defaults to 0 if absent.",
       "properties": {
-        "str": { "type": "integer", "minimum": -2, "maximum": 3 },
-        "dex": { "type": "integer", "minimum": -2, "maximum": 3 },
-        "con": { "type": "integer", "minimum": -2, "maximum": 3 },
-        "int": { "type": "integer", "minimum": -2, "maximum": 3 },
-        "wis": { "type": "integer", "minimum": -2, "maximum": 3 },
-        "cha": { "type": "integer", "minimum": -2, "maximum": 3 }
+        "str": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        },
+        "dex": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        },
+        "con": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        },
+        "int": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        },
+        "wis": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        },
+        "cha": {
+          "type": "integer",
+          "minimum": -2,
+          "maximum": 3
+        }
       },
       "additionalProperties": false
     },
     "skills": {
       "type": "array",
       "description": "Category masteries. Each name should match a known category (Action, Subterfuge, Knowledge, Insight, Influence, Tech, Craft, Medic) but the validator does not enforce this.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "tags": {
       "type": "array",
       "description": "Open free-text expertise tags from backstory.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "harm": {
       "type": "integer",
@@ -63,12 +108,30 @@
       "description": "Cognitive anchors for casting. Each focus has a domain and an optional condition.",
       "items": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "properties": {
-          "name": { "type": "string" },
-          "domain": { "type": "string", "description": "What category of intent this focus resonates with. E.g. 'identity', 'emotion', 'systems', 'motion'." },
-          "condition": { "type": "string", "enum": ["intact", "worn", "near-breaking", "broken", "transformed"] },
-          "notes": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string",
+            "description": "What category of intent this focus resonates with. E.g. 'identity', 'emotion', 'systems', 'motion'."
+          },
+          "condition": {
+            "type": "string",
+            "enum": [
+              "intact",
+              "worn",
+              "near-breaking",
+              "broken",
+              "transformed"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       }
     },
@@ -81,7 +144,7 @@
     "marks": {
       "type": "integer",
       "minimum": 0,
-      "description": "Accumulated session-end milestone marks. Every 5 marks unlocks an advancement."
+      "description": "Convenience mirror of the number of ticked markBullets. DERIVED — markBullets is the source of truth and the runtime counts those. Kept in sync for human readers and print output."
     },
     "backstory": {
       "type": "string",
@@ -130,18 +193,28 @@
       "description": "References to NPCs by id or name.",
       "items": {
         "type": "object",
-        "required": ["who"],
+        "required": [
+          "who"
+        ],
         "properties": {
-          "who": { "type": "string" },
-          "kind": { "type": "string" },
-          "notes": { "type": "string" }
+          "who": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       }
     },
     "resources": {
       "type": "array",
       "description": "Resources the PC has access to: safe houses, contacts, equipment, vehicles.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "threadDebt": {
       "type": "string",
@@ -156,6 +229,73 @@
       "type": "integer",
       "minimum": 0,
       "description": "Sessions remaining of the -2 'trying-too-hard' tax after realization. 0 when fully resolved."
+    },
+    "markBullets": {
+      "type": "object",
+      "description": "Which of the five advancement criteria are ticked in the current cycle. Five ticks unlocks an advancement and resets.",
+      "additionalProperties": false,
+      "properties": {
+        "hardMoment": {
+          "type": "boolean"
+        },
+        "learned": {
+          "type": "boolean"
+        },
+        "risk": {
+          "type": "boolean"
+        },
+        "against": {
+          "type": "boolean"
+        },
+        "complication": {
+          "type": "boolean"
+        }
+      }
+    },
+    "markLog": {
+      "type": "array",
+      "description": "Append-only record of WHY each mark was assigned, so the reason survives the cycle reset and can be surfaced in the UI. Entries persist across advancements even though markBullets clears.",
+      "items": {
+        "type": "object",
+        "required": [
+          "episode",
+          "bullet",
+          "note"
+        ],
+        "properties": {
+          "episode": {
+            "type": "string",
+            "description": "Episode id or number the mark was earned in."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Real-world date of the session."
+          },
+          "bullet": {
+            "type": "string",
+            "enum": [
+              "hardMoment",
+              "learned",
+              "risk",
+              "against",
+              "complication"
+            ]
+          },
+          "criterion": {
+            "type": "string",
+            "description": "The criterion's full text, denormalised for display."
+          },
+          "note": {
+            "type": "string",
+            "description": "What the PC actually did. This is the thing worth showing a player."
+          },
+          "reconstructed": {
+            "type": "boolean",
+            "description": "True if reverse-engineered after the fact rather than recorded at the table."
+          }
+        }
+      }
     }
   }
 }
