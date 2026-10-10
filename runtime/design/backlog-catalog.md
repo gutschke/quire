@@ -85,6 +85,7 @@ Overlap notes: where two items describe the same work (e.g. V-5 ≡ M3D-4 ≡ pa
 | V-7 | C | AI system-prompt language → campaign-declared tone anchors. *(≡ CC-19.)* | boundary, CC-19 |
 | V-8 | C | Chargen 10-question vocabulary → campaign-declared `characterCreation.questions[]`. *(≡ CC-6.)* | boundary, CC-6 |
 | V-10 | H | Underleaf-shaped event kinds (e.g. `caster-state-set`) → generic state-event with declared schema. *Long-term.* | boundary |
+| V-12 | C | **Thread-debt ladder labels are hard-coded and now stale** (`runtime/src/ui/regions/dm-pc-detail.ts` l.~105–106, l.~179–180; `quire/design/ui.md` l.174). Underleaf renamed the rungs on 2026-10-09: *Pushing Back* → **Strained**, *Hunted* → **Seized** (`underleaf/world/rules.md` §Magic). The tooltip *"Hunted — full antagonist attention"* also contradicts the campaign's cosmology: there is no antagonist attention, only friction. Fix: campaign-declared ladder labels and hints. **Keep the stored keys stable** (saves persist them) and change only the displayed labels, or migrate. Added 2026-10-09. | underleaf rules.md, ui.md |
 | **Open M4 questions (Q-CC)** | | | |
 | Q-CC-1 | H | Async-mode archetype-deviation policy: soft hint vs hard enforcement? | m4 |
 | Q-CC-2 | C | Pre-gen library scope: does Underleaf ship a 5-PC suite? Who writes? | m4 |
